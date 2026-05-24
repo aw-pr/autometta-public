@@ -1,6 +1,9 @@
 # Autometta
 
-A lightweight pattern library for headless agent orchestration on a single machine. It spins up worker agents with cross-family validation: Codex verifies Claude, and vice versa.
+**A lightweight pattern library for headless agent orchestration on a single machine. It spins up worker agents with cross-family validation: Codex verifies Claude, and vice versa.**
+
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 
 ## Why this exists
 
