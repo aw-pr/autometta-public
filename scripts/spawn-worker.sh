@@ -41,10 +41,16 @@ render_prompt() {
   local card_path="$2"
   local worker_identity="$3"
   local template_path="$repo_root/templates/worker-prompt.md"
+  local project_name
+
+  if [[ ! -f "$template_path" ]]; then
+    template_path="$script_dir/../templates/worker-prompt.md"
+  fi
+  project_name="$(basename "$repo_root")"
 
   sed \
     -e "s|<<worker-tier>>|${worker_identity}|g" \
-    -e "s|<<project-name>>|autometta|g" \
+    -e "s|<<project-name>>|${project_name}|g" \
     -e "s|<<orchestrator-identity>>|phat-controller|g" \
     -e "s|<<stage-card-path>>|${card_path}|g" \
     -e "s|<<family-specific-notes-or-none>>|None|g" \

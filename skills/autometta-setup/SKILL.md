@@ -25,18 +25,18 @@ Adopt pass 1 first. Add pass 2 only after at least one pass-1 cycle has run clea
 Are you adopting Autometta in another repo?
 ├── No  -> wrong skill, stop here
 └── Yes
-    ├── Do you want a daemon-style loop, or human-driven dispatch?
+    ├── Do you want an unattended cron loop, or human-driven dispatch?
     │   ├── Human-driven (recommended first)
     │   │   -> Pass 1 only. Skip to "Pass 1 adoption" below.
-    │   └── Daemon-style loop
+    │   └── Unattended cron loop
     │       -> Pass 1 + Pass 2. Do pass 1 first, validate one cycle, then pass 2.
-    └── Vendoring choice:
-        ├── Copy (simplest, owns the templates locally)
-        ├── Symlink (single source of truth on this machine, breaks on clone)
-        └── Submodule (single source of truth, survives clone, more git ceremony)
+    └── Deployment choice:
+        ├── Homebrew-local CLI + local manifest (default for one-machine phat-controller)
+        ├── Copy (simplest for one-off pass 1, owns templates locally)
+        └── Submodule (portable pinned provenance, more git ceremony)
 ```
 
-For a first adoption: **pass 1 only, copy vendoring.** Switch to symlink or submodule later if the template surface keeps changing upstream.
+For a first adoption: **pass 1 only, copy the stage card and prompt templates.** For pass 2, prefer the `autometta` CLI installed from the canonical checkout plus the gitignored `.autometta.local.yaml` manifest. Use a submodule only when the adopter repo must be portable and pinned.
 
 ## Pass 1 adoption
 
@@ -112,18 +112,19 @@ That is pass 1, end to end. The first cycle takes longer than steady-state becau
 
 ## Pass 2 adoption (optional, after one clean pass-1 cycle)
 
-Pass 2 adds the phat-controller autonomous loop. Vendor the scripts, run the init scripts, register the repo as a subscriber, install a cron entry. The full operator guide lives at `docs/setup.md` in Autometta; reference it directly rather than duplicating here.
+Pass 2 adds the phat-controller autonomous loop. Install the `autometta` CLI from the canonical checkout, register the repo as a subscriber, install a cron entry, and keep the adopter's `.autometta.local.yaml` manifest gitignored. The full operator guide lives at `docs/setup.md` in Autometta; reference it directly rather than duplicating here.
 
 Headline checklist (refer to `docs/setup.md` in Autometta for details):
 
-1. Confirm dependencies: `bash` 3.2+, `jq`, `git`, `codex`, `claude`, `python3`, `yq`. Autometta's `scripts/check-deps.sh` does this in one shot.
-2. Vendor `scripts/{tick,spawn-worker,spawn-verifier,budget,subscribe-repo,init-host,check-deps,add-stage}.sh` into the target repo. Keep them at `scripts/` for parity.
-3. Run `scripts/init-host.sh` once per machine (creates `~/.phat-controller/`).
-4. Run `scripts/subscribe-repo.sh <target-repo-root>` to register.
-5. Install a cron or launchd entry per `docs/setup.md` section 4.
-6. Confirm the loop ticks cleanly by firing `scripts/tick.sh` once manually before handing it to cron.
+1. Confirm dependencies: `bash` 3.2+, `jq`, `git`, `codex`, `claude`, `python3`, `yq`, and `agent-whoami`. `autometta check-deps` does this in one shot.
+2. Run `scripts/install-homebrew-local.sh` from the Autometta checkout.
+3. Run `autometta init <target-repo-root>` to create host state if needed and register the repo.
+4. Confirm the target repo has a gitignored `.autometta.local.yaml` manifest.
+5. Review and commit `.gitignore`, `state/state.yaml`, and `state/budget.json` before the first tick.
+6. Install a cron or launchd entry per `docs/setup.md` section 4.
+7. Confirm the loop ticks cleanly by firing `autometta tick` once manually before handing it to cron.
 
-If `state/budget.json` halts mid-run, `scripts/tick.sh --reset-halt` clears it. To add a new stage to the loop, `scripts/add-stage.sh <repo-root> <stage-card-path>` is the idempotent helper.
+If `state/budget.json` halts mid-run, `autometta tick --reset-halt` clears it. To add a new stage to the loop, `autometta add-stage <repo-root> <stage-card-path>` is the idempotent helper.
 
 **Strong recommendation:** add `state/` to `.gitignore` in the target repo. The directory holds runtime state, logs, and verifier artefacts, none of which belong in version control. Autometta's resolution of this is banked at `memory/feedback-state-yaml-leaks-home-path.md`.
 

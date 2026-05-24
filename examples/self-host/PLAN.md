@@ -2,7 +2,7 @@
 
 This is the rolling plan for autometta building itself with itself. Each stage produces an artefact AND adopts it for the next stage. The plan lives in-repo so any agent picking up a fresh session sees the same state. Status is the ground truth; the task list at the harness level shadows this file, not the other way round.
 
-## Status, 2026-05-21
+## Status, 2026-05-24
 
 | # | Stage | Status | Commit | Card |
 |---|---|---|---|---|
@@ -19,23 +19,25 @@ This is the rolling plan for autometta building itself with itself. Each stage p
 | 5c | phat-controller hardening round 2: verifier prompt template, kill -0 guards, branch save/restore, add-stage helper, --reset-halt | done | `8a3e60c` | [`05c-phat-controller-hardening-2.md`](./05c-phat-controller-hardening-2.md) |
 | 5d | autometta-setup skill (sibling to agent-orchestrator) for adopting autometta in other repos | done | `8837a7d` | (no card; small skill authored directly by Opus orchestrator) |
 | 6 | Self-host real dispatch test (scripts/health-check.sh) | done | `19bf097` | [`06-real-dispatch-test.md`](./06-real-dispatch-test.md) |
+| 7 | CLI install, manifest adoption, and passive observability cockpit | in progress | pending | (operator-authored improvement pass) |
 
 ## Stage 6 readiness
 
 Stage 5a closed all three production-blocking issues from stage 5: yq presence guard with halt_reason `yq-missing`, dirty-working-tree guard with halt_reason `dirty-working-tree` and a `state/`-exclusion pathspec, elapsed-time stall detection that parses the worker wall-clock budget from the stage card and applies 50% grace.
 
-Stage 5b shipped the init story: `scripts/check-deps.sh` for dependency probing, `scripts/init-host.sh` for the one-time machine setup of `~/.phat-controller/`, `scripts/subscribe-repo.sh` for per-repo registration with idempotent state file creation, and `docs/setup.md` as the operator guide.
+Stage 5b shipped the init story: dependency probing, the one-time machine setup of `~/.phat-controller/`, per-repo registration with idempotent state file creation, and `docs/setup.md` as the operator guide. The current operator surface is the `autometta` CLI, installed locally from the Autometta checkout.
 
 What the user needs to do before triggering stage 6:
 
-1. Run `scripts/check-deps.sh` to confirm the dependency set is present on the host (`bash 4+`, `jq`, `git`, `codex`, `claude`, `python3`; `yq` is optional but recommended).
-2. Run `scripts/init-host.sh` to create `~/.phat-controller/`.
-3. Run `scripts/subscribe-repo.sh "$PWD"` (from the repo root) to register this repo as a subscriber.
-4. Install a cron entry per the sample in `docs/setup.md` section 4 (or use launchd on macOS).
-5. Author the first real stage card the loop should pick up (the loop reads stage cards out of the subscribed repo; cards under `examples/self-host/` are historical and complete, so a new card in another location is needed for the loop to have work to do).
-6. Run the existing `repo-publish-guard-init` skill on autometta if public publication is on the horizon (see `docs/setup.md` section 6).
+1. Run `scripts/install-homebrew-local.sh` from this checkout.
+2. Run `autometta check-deps` to confirm the dependency set is present on the host (`bash` 3.2+, `jq`, `git`, `codex`, `claude`, `python3`, `yq`, and `agent-whoami`).
+3. Run `autometta init "$PWD"` from the repo root to register this repo as a subscriber.
+4. Review and commit `.gitignore`, `state/state.yaml`, and `state/budget.json` before the first tick.
+5. Install a cron entry per the sample in `docs/setup.md` section 4 (or use launchd on macOS).
+6. Author the first real stage card the loop should pick up (the loop reads stage cards out of the subscribed repo; cards under `examples/self-host/` are historical and complete, so a new card in another location is needed for the loop to have work to do).
+7. Run the existing `repo-publish-guard-init` skill on autometta if public publication is on the horizon (see `docs/setup.md` section 6).
 
-One known portability note for Linux (not a defect on the macOS target): `scripts/init-host.sh:25` uses BSD `stat -f '%Lp'`. See `memory/feedback-init-script-macos-specific.md`.
+One known portability note for Linux (not a defect on the macOS target): host mode detection has a BSD/GNU branch, but Homebrew-local packaging remains macOS-first.
 
 ## Decisions banked in `memory/`
 
@@ -72,7 +74,7 @@ When the orchestrator (Claude Opus 4.7 main session) is left running without a h
 
 - `git push` to any remote.
 - Modify `README.md`, `CLAUDE.md`, `AGENTS.md`, `docs/philosophy.md`, or `~/.claude/CLAUDE.md`. These are load-bearing identity files. Edits need explicit user instruction.
-- Execute code that the loop just produced. Stage 6 is deferred to the user for this reason; the orchestrator will not invoke `tick.sh` on its own backlog without explicit permission.
+- Execute code that the loop just produced. Stage 6 is deferred to the user for this reason; the orchestrator will not invoke `autometta tick` on its own backlog without explicit permission.
 - Install new dependencies, add new MCP servers, or modify `~/.claude/settings.json`.
 - Burn through more than two re-brief cycles on a single stage. After the second failure on the same stage, the orchestrator stops, writes a `STALLED` note into the relevant memory entry, and updates this table to `stalled` status.
 

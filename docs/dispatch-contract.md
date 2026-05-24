@@ -105,19 +105,19 @@ A stage that satisfies its own acceptance criteria may break the acceptance of a
 The dispatch contract is for one stage. Anything that spans stages is out of scope for pass 1.
 
 - **Queueing stages.** Pass 1 dispatches one stage at a time, by hand. Pass 2 layers a cron-driven tick on top of the dispatch contract to dispatch the next stage automatically. The loop is built on the contract, not in place of it. See the Future scope section below for the working name of the pass-2 layer.
-- **State persistence across stages.** Pass 1 uses git itself: one commit per stage, with the card and the deliverables in the same commit. Pass 2 introduces a state file. Until pass 2 ships, the git log is the state.
-- **Budget enforcement beyond wall-clock.** Pass 1 budgets are wall-clock per stage, stated in the card and enforced by the orchestrator. Pass 2 introduces a token/spend budget file as a hard stop. Pass 1 has no spend ceiling beyond the orchestrator's judgement.
+- **State persistence across stages.** Pass 1 uses git itself: one commit per stage, with the card and the deliverables in the same commit. Pass 2 uses `state/state.yaml` and verifier artefacts under `state/verifiers/`.
+- **Budget enforcement beyond wall-clock.** Pass 1 budgets are wall-clock per stage, stated in the card and enforced by the orchestrator. Pass 2 uses `state/budget.json` as a hard stop. Pass 1 has no spend ceiling beyond the orchestrator's judgement.
 - **Multi-worker stages.** The contract is for one worker per stage. Parallel workers are an orchestrator-level pattern (see the agent-orchestrator skill) and use the dispatch contract per worker. Coordination between parallel workers (disjoint file sets, integration order) is the orchestrator's responsibility, not the contract's.
 
-## Future scope
+## Pass-2 layer
 
-The artefacts named here under "future scope" do not exist in the repo yet. Do not refer to them from any pass-1 deliverable as if they did.
+The autonomous loop now exists as `phat-controller`. It is still layered on this contract:
 
-- `scripts/tick.sh`: pass 2 cron tick.
-- `state/state.yaml`: pass 2 state file.
-- `state/budget.json`: pass 2 budget file.
+- `autometta tick`: one cron-safe pass-2 tick.
+- `state/state.yaml`: per-repo queue state.
+- `state/budget.json`: per-repo budget and halt state.
 - `schemas/`: JSON schemas for the state and budget files.
-- `phat-controller`: working name for the pass-2 autonomous loop.
+- `autometta status` and `autometta attach`: read-only operator views.
 
 ## Reading order for a new operator
 
@@ -127,4 +127,5 @@ The artefacts named here under "future scope" do not exist in the repo yet. Do n
 4. `templates/orchestrator-checklist.md`: run through this before every dispatch.
 5. `docs/lessons.md` (stage 1): the gotchas in more detail, with incident notes from the source projects.
 6. `docs/verification.md` (stage 1): the gate model, in more detail than the acceptance section here.
-7. `examples/self-host/`: real stage cards used to build Autometta itself.
+7. `docs/setup.md`, `docs/deployment.md`, and `docs/observability.md`: pass-2 operator flow.
+8. `examples/self-host/`: real stage cards used to build Autometta itself.

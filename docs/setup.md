@@ -5,6 +5,7 @@
 Required commands:
 
 - `bash` 3.2+ (macOS default is fine; the scripts do not use bash 4+ features)
+- `brew` (for the local `autometta` CLI install)
 - `jq`
 - `git`
 - `codex`
@@ -22,10 +23,16 @@ brew install jq git python yq
 
 Install Codex CLI and Claude Code with your normal team path.
 
+Install or refresh the local CLI from the Autometta checkout:
+
+```sh
+scripts/install-homebrew-local.sh
+```
+
 Validate dependencies:
 
 ```sh
-scripts/check-deps.sh
+autometta check-deps
 ```
 
 ## 2. One-time machine setup
@@ -33,7 +40,7 @@ scripts/check-deps.sh
 Initialise the host controller home once per machine:
 
 ```sh
-scripts/init-host.sh
+autometta init-host
 ```
 
 This creates `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}` with:
@@ -43,30 +50,43 @@ This creates `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}` with:
 - `config.yaml`
 - `subscribers/template.yaml`
 
-The script is idempotent and safe to re-run.
+`config.yaml` records the installed Autometta root as `autometta_root`. For a
+checkout run, that is the source checkout; for the Homebrew-local install, that
+is the packaged install root. The script is idempotent and safe to re-run.
 
 ## 3. Per-repo subscription
 
 Subscribe one repository to the controller:
 
 ```sh
-scripts/subscribe-repo.sh <path-to-repo>
+autometta init <path-to-repo>
 ```
 
 Example:
 
 ```sh
-scripts/subscribe-repo.sh .
+autometta init .
 ```
 
 This creates repo-local state under `state/` and a subscriber file under `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers/`.
+It also creates a gitignored `.autometta.local.yaml` manifest that points back
+to the installed Autometta root.
+
+Before running `autometta tick`, review and commit the repo setup files. The tick
+refuses to operate with dirty non-state files.
+
+```sh
+git status --short
+git add .gitignore state/state.yaml state/budget.json
+git commit -m "Initialise Autometta"
+```
 
 ## 4. Scheduling
 
 Sample cron entry to run every 5 minutes from this repo root:
 
 ```sh
-*/5 * * * * cd /path/to/autometta && scripts/tick.sh >> "$HOME/.phat-controller/log/cron.log" 2>&1
+*/5 * * * * autometta tick >> "$HOME/.phat-controller/log/cron.log" 2>&1
 ```
 
 `launchd` is the macOS-native alternative if you prefer managed job lifecycle and logging.
@@ -89,10 +109,22 @@ cat state/state.yaml
 cat state/budget.json
 ```
 
+Check the controller at a glance:
+
+```sh
+autometta status
+```
+
+Open an optional tmux viewer:
+
+```sh
+autometta attach
+```
+
 Lint scripts without executing setup actions:
 
 ```sh
-bash -n scripts/check-deps.sh scripts/init-host.sh scripts/subscribe-repo.sh scripts/tick.sh
+bash -n bin/autometta scripts/check-deps.sh scripts/init-host.sh scripts/subscribe-repo.sh scripts/tick.sh
 ```
 
 ## 6. Publish guard

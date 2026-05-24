@@ -1,14 +1,14 @@
 # Autometta
 
-A pattern library for headless agent orchestration on a single machine.
+A lightweight pattern library for headless agent orchestration on a single machine. It spins up worker agents with cross-family validation: Codex verifies Claude, and vice versa.
 
 ## Why this exists
 
-Token-maxing is the gateway drug to AI psychosis. Managing several agent threads across several projects is draining. Patterns like Steve Yegge's Gas Town show that autonomous agent runs over long periods can yield good result, provided enough effort goes into specs, design, and verification artefacts.
+Token-maxing is the gateway drug to AI psychosis. Managing several agent threads across several projects is draining. Patterns like Steve Yegge's Gas Town show how multiple autonomous agents can run for long periods and produce good results, provided enough effort goes into specs, design, and verification artefacts.
 
-The open source or comercial orchestrators are either token heavy and api biased or cede control to higher-level interface surfaces. Some vendors are fussy about running their CLI inside another harness at all.
+The open source or commercial orchestrators are either token-heavy and API-biased, or cede control to higher-level interface surfaces. Some vendors are fussy about running their CLI inside another harness at all.
 
-Autometta is a small implementation of agent orchestration. Cron is the heartbeat that survives laptop lid close with power, as long as the machine is configued appropriatley. The contract dispatches worker and verifier roles as needed and runs against whichever auth the operator already has. Cross-family verification (Sonnet checking Codex, or the reverse) catches a class of failure that same-family self-verification silently misses.
+Autometta is a small implementation of agent orchestration. Cron is the heartbeat that survives laptop lid close with power, as long as the machine is configured appropriately. The contract dispatches worker and verifier roles as needed and runs against whichever auth the operator already has. Cross-family verification (Sonnet checking Codex, or the reverse) catches a class of failure that same-family self-verification silently misses.
 
 ## Two families, one tree
 
@@ -48,7 +48,7 @@ The loop layer is built on top of the dispatch layer. You can use dispatch witho
 ## Decision tree - which layer do I want?
 
 - **One stage, in front of me, I want to step through it** -> use the dispatch contract directly. Open an orchestrator session (Claude Code), fill in `templates/stage-card.md`, dispatch a Codex worker with `templates/worker-prompt.md`, verify yourself, commit.
-- **Many stages, well-defined, I want to run them overnight** -> use the autonomous loop. Author N stage cards, subscribe the repo via `scripts/subscribe-repo.sh`, install a cron entry per `docs/setup.md`, walk away. Inspect `state/state.yaml` and `~/.phat-controller/log/cron.log` in the morning.
+- **Many stages, well-defined, I want to run them overnight** -> use the autonomous loop. Author N stage cards, subscribe the repo via `autometta init`, install a cron entry per `docs/setup.md`, walk away. Inspect `autometta status`, `state/state.yaml`, and the controller log in the morning.
 - **One stage, exploratory, I'm not sure what "done" looks like** -> don't use Autometta. Use a normal Claude Code session.
 
 ## Adopted patterns (and what we ignored)
@@ -80,6 +80,8 @@ autometta/
 ├── README.md                 # this file
 ├── LICENSE
 ├── CLAUDE.md / AGENTS.md     # shared agent brief (AGENTS.md is a symlink)
+├── bin/
+│   └── autometta              # CLI wrapper over the shell scripts
 ├── docs/
 │   ├── philosophy.md         # design philosophy, scope, non-goals
 │   ├── dispatch-contract.md  # pass 1 - the contract
@@ -87,12 +89,15 @@ autometta/
 │   ├── lessons.md            # hard-won failure modes
 │   ├── phat-controller.md    # pass 2 - the autonomous loop design
 │   ├── setup.md              # pass 2 - operator setup guide
+│   ├── deployment.md         # central install, manifests, submodule escape hatch
+│   ├── observability.md      # status and attachable viewer model
 │   └── prior-art.md          # what was adopted and what was ignored
 ├── templates/
 │   ├── stage-card.md         # one card per dispatch
 │   ├── worker-prompt.md      # the prompt the worker reads
 │   └── orchestrator-checklist.md
 ├── scripts/                  # pass 2 runtime: tick, spawn, budget, init
+├── packaging/                # local Homebrew formula template
 ├── schemas/                  # state.yaml + budget.json schemas
 ├── state/                    # per-repo runtime state (gitignored content)
 ├── memory/                   # cross-session agent memory (in-repo)
@@ -110,6 +115,7 @@ autometta/
 4. `templates/stage-card.md` and `templates/worker-prompt.md` - copy these, fill them in.
 5. `docs/verification.md` - how to gate the worker's output.
 6. `docs/phat-controller.md` and `docs/setup.md` - when you want to put the dispatch contract under cron.
+7. `docs/deployment.md` and `docs/observability.md` - when you want to adopt it across repos and watch the loop.
 
 ## Your first dispatch (five minutes)
 
@@ -129,11 +135,34 @@ The fastest way to see what this is.
 
 That is pass 1. No `scripts/`, no `tick.sh`, no cron. Read `docs/dispatch-contract.md` for the full seven-step protocol; read `docs/lessons.md` for the five gotchas before your second dispatch.
 
-When the same loop is worth automating, follow `docs/setup.md` to subscribe the repo to phat-controller and put it under cron.
+When the same loop is worth automating, install the local CLI and initialise the repo:
 
-## About the name
+```sh
+scripts/install-homebrew-local.sh
+autometta init /path/to/target-repo
+git -C /path/to/target-repo add .gitignore state/state.yaml state/budget.json
+git -C /path/to/target-repo commit -m "Initialise Autometta"
+autometta status
+```
 
-Metta is Pali for loving-kindness. Autometta is a form of automata that tries to be kind to the human driving it: an orchestrator that spins up the right worker for each unit of work and a verifier from a different model family to check it, so the operator stays the director rather than becoming a micro-manager.
+Then follow `docs/setup.md` to put `autometta tick` under cron. Read `docs/deployment.md` first if the repo needs pinned provenance rather than the default central install.
+
+## Updating an existing repo
+
+For an already-subscribed repo such as `fractals-from-the-90s`, update the
+installed Autometta CLI from this checkout, then check the subscriber:
+
+```sh
+cd /path/to/autometta
+git pull --ff-only
+scripts/install-homebrew-local.sh
+autometta status
+```
+
+You do not normally rerun `autometta init` for the target repo unless its
+subscription or local manifest is missing. The current local Homebrew path is a
+rendered formula, so `brew update` alone is not enough; rerun
+`scripts/install-homebrew-local.sh` after updating this checkout.
 
 ## Licence
 

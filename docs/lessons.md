@@ -98,7 +98,7 @@ Source project: agentic-rag-kimble pass 28-29, described in named inputs as a co
 Multiple state sources drift, then dispatch decisions and status reporting diverge.
 
 ### Mitigation
-For pass 1, keep this as future scope only and anchor current control flow in [What the contract does not cover](dispatch-contract.md#what-the-contract-does-not-cover) and [Future scope](dispatch-contract.md#future-scope).
+For pass 1, treat this as outside the one-stage contract and anchor current control flow in [What the contract does not cover](dispatch-contract.md#what-the-contract-does-not-cover) and [Pass-2 layer](dispatch-contract.md#pass-2-layer).
 
 ## Kimble production quirk 3: publish-guard exemption for autonomous commits
 

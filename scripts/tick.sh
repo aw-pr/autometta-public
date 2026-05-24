@@ -101,16 +101,48 @@ sort_subscribers() {
   done | sort -n | cut -f2-
 }
 
+manifest_patterns() {
+  local repo_root="$1"
+  local manifest_path="$2"
+  if [[ -n "$manifest_path" && -f "$manifest_path" ]]; then
+    yq -r '.stage_card_globs[]? // empty' "$manifest_path" 2>/dev/null || true
+  elif [[ -f "$repo_root/.autometta.local.yaml" ]]; then
+    yq -r '.stage_card_globs[]? // empty' "$repo_root/.autometta.local.yaml" 2>/dev/null || true
+  fi
+  printf '%s\n' 'docs/stages/*.md'
+  printf '%s\n' 'examples/self-host/*.md'
+}
+
 stage_card_for_id() {
   local repo_root="$1"
   local stage_id="$2"
+  local manifest_path="${3:-}"
   local card=""
-  for candidate in "$repo_root/examples/self-host/${stage_id}.md" "$repo_root/examples/self-host"/*"${stage_id}"*.md; do
-    if [[ -f "$candidate" ]]; then
-      card="$candidate"
-      break
+  local pattern search_path candidate
+  while IFS= read -r pattern; do
+    [[ -n "$pattern" ]] || continue
+    if [[ "$pattern" = /* ]]; then
+      search_path="$pattern"
+    else
+      search_path="$repo_root/$pattern"
     fi
-  done
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" ]] || continue
+      if [[ "$(basename "$candidate" .md)" == "$stage_id" ]]; then
+        card="$candidate"
+        break 2
+      fi
+    done < <(compgen -G "$search_path" || true)
+  done < <(manifest_patterns "$repo_root" "$manifest_path")
+
+  if [[ -z "$card" ]]; then
+    for candidate in "$repo_root/docs/stages/${stage_id}.md" "$repo_root/docs/stages"/*"${stage_id}"*.md "$repo_root/examples/self-host/${stage_id}.md" "$repo_root/examples/self-host"/*"${stage_id}"*.md; do
+      if [[ -f "$candidate" ]]; then
+        card="$candidate"
+        break
+      fi
+    done
+  fi
   printf '%s\n' "$card"
 }
 
@@ -212,18 +244,20 @@ commit_state_branch() {
 
 process_repo() {
   local repo_root="$1"
+  local manifest_path="${2:-}"
   if ! acquire_repo_lock "$repo_root"; then
     log "tick already in progress for ${repo_root}, skipping"
     return 0
   fi
   local rc=0
-  _process_repo_locked "$repo_root" || rc=$?
+  _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
   release_repo_lock "$repo_root"
   return $rc
 }
 
 _process_repo_locked() {
   local repo_root="$1"
+  local manifest_path="${2:-}"
   local state_yaml="$repo_root/state/state.yaml"
 
   if ! ensure_yq_or_halt "$repo_root"; then
@@ -252,7 +286,7 @@ _process_repo_locked() {
 
     if [[ -n "$started_at" ]]; then
       local card_path budget_seconds grace_seconds stall_threshold started_epoch now_epoch elapsed
-      card_path="$(stage_card_for_id "$repo_root" "$current_stage")"
+      card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
       if [[ -n "$card_path" ]]; then
         budget_seconds="$(worker_budget_seconds_from_card "$card_path")"
       else
@@ -305,7 +339,7 @@ _process_repo_locked() {
       fi
       # Bound verifier re-dispatch. A verifier that crashes without writing
       # its artefact would otherwise be re-spawned every tick until the
-      # consecutive-failure cap kicks in — wasteful and noisy. Cap per-stage
+      # consecutive-failure cap kicks in, which is wasteful and noisy. Cap per-stage
       # attempts and stall the stage when the cap is reached so a human can
       # look at it.
       local verifier_attempts verifier_attempt_cap=3
@@ -320,7 +354,7 @@ _process_repo_locked() {
         commit_state_branch "$repo_root"
         return 0
       fi
-      card_path="$(stage_card_for_id "$repo_root" "$current_stage")"
+      card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
       if [[ -n "$card_path" ]]; then
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).verifier_attempts = ((.stages[] | select(.id == $id) | .verifier_attempts // 0) + 1)' \
@@ -343,7 +377,7 @@ _process_repo_locked() {
         return 1
       fi
       local card_path now_iso
-      card_path="$(stage_card_for_id "$repo_root" "$next_stage")"
+      card_path="$(stage_card_for_id "$repo_root" "$next_stage" "$manifest_path")"
       if [[ -z "$card_path" ]]; then
         log "stage card missing for ${next_stage} in ${repo_root}"
       else
@@ -389,9 +423,10 @@ main() {
   local subscriber_file
   while IFS= read -r subscriber_file; do
     [[ -n "$subscriber_file" ]] || continue
-    local enabled repo_path
+    local enabled repo_path manifest_path
     enabled="$(read_subscriber_field "$subscriber_file" "enabled")"
     repo_path="$(read_subscriber_field "$subscriber_file" "repo_path")"
+    manifest_path="$(read_subscriber_field "$subscriber_file" "manifest_path")"
     if [[ "$enabled" != "true" ]]; then
       continue
     fi
@@ -399,7 +434,7 @@ main() {
       log "invalid repo_path in ${subscriber_file}"
       continue
     fi
-    process_repo "$repo_path"
+    process_repo "$repo_path" "$manifest_path"
   done < <(sort_subscribers)
 }
 

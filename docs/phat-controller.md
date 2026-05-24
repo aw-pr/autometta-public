@@ -16,7 +16,7 @@ Decisions that did not exist before this stage are listed at the bottom under "N
 
 ## (a) What a tick is, and what one tick does
 
-A tick is a single non-interactive invocation of the `scripts/tick.sh` script (stage 5 will implement it). The tick:
+A tick is a single non-interactive invocation of `autometta tick`, which delegates to `scripts/tick.sh`. The tick:
 
 1. Reads the current `state/state.yaml` of the repo it is operating on.
 2. Reads the current `state/budget.json` of the same repo.
@@ -34,9 +34,9 @@ A tick is one transition, not a loop within the tick. This is the "cron + tick >
 
 **Schema.** `schemas/state.yaml.json` (JSON Schema draft 2020-12). The schema is committed in this stage; the tick script (stage 5) will validate `state.yaml` against it on every read.
 
-**Lifecycle.** The file is created when a repo first subscribes to a `phat-controller` instance (see section (f)). It is mutated only by `tick.sh`; humans may read but should not edit, because human edits without a tick will silently desync `tick_count` from `last_tick_at`. If a human must edit, they must run a `tick.sh --repair` mode (stage-5 implementation; out of scope for this design doc beyond noting the entry point exists).
+**Lifecycle.** The file is created when a repo first subscribes to a `phat-controller` instance (see section (f)). It is mutated only by `autometta tick`; humans may read but should not edit, because human edits without a tick will silently desync `tick_count` from `last_tick_at`. If a human must edit, they must run `autometta tick --repair`.
 
-**Who writes it.** Only `tick.sh`. Worker subagents do not touch `state.yaml` directly; they write into `state/verifiers/<stage-id>.json` (see section (d)) and let the tick promote that into `state.yaml`.
+**Who writes it.** Only `autometta tick`. Worker subagents do not touch `state.yaml` directly; they write into `state/verifiers/<stage-id>.json` (see section (d)) and let the tick promote that into `state.yaml`.
 
 **Atomicity.** Write-to-temp-then-rename within the same directory. This is enough on every POSIX filesystem Autometta is likely to run on (APFS, ext4, btrfs, ZFS). No fsync; we accept that a crash mid-tick can leave `state.yaml` at the pre-tick state and the verifier file already written. The next tick re-reads and recovers; idempotency falls out of the transition rule above.
 
@@ -148,23 +148,52 @@ The next tick respects `consecutive_failure_cap` and halts the loop if exceeded;
 
 The dispatch contract's seven steps are the per-stage protocol; phat-controller is the across-stage queue scheduler. The seven-step contract continues to apply, unchanged, for every spawned stage.
 
-## Operational entry points (for stage 5)
+## (i) Observability surface
 
-This section is informational, not normative. Stage 5 will produce:
+The controller is observable through files it already owns:
+
+- `state/state.yaml` for current stage, statuses, identities, PIDs, halt state, and tick counters.
+- `state/budget.json` for budget caps, failure counters, and halt reason.
+- `state/logs/<stage-id>-worker.log` and `state/logs/<stage-id>-verifier.log` for process output.
+- `state/verifiers/<stage-id>.json` for structured verifier reports.
+- `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/log/tick-YYYY-MM-DD.log` for controller-level tick output.
+- `phat-controller/state` for committed state snapshots.
+
+`autometta status` is the read-only operator view over those files. `autometta attach` is an optional tmux viewer that tails the latest controller log and opens a status pane. It is deliberately downstream of the filesystem state; it does not dispatch, supervise, or retry work.
+
+This gives the operator an attachable cockpit without creating a resident controller daemon.
+
+## Operational entry points
+
+The `autometta` CLI is the preferred operator surface:
+
+- `autometta init-host`: initialise or refresh the controller home.
+- `autometta init <repo>`: initialise host state if needed and subscribe one repo.
+- `autometta add-stage <repo> <card>`: add a stage card to the repo queue.
+- `autometta tick`: run one cron-safe controller tick.
+- `autometta status`: print a read-only status table.
+- `autometta attach`: open the optional tmux viewer.
+
+The CLI delegates to these scripts:
 
 - `scripts/tick.sh`: the cron entry point.
 - `scripts/spawn-worker.sh`: helper invoked by `tick.sh` to dispatch one worker per the stage card.
 - `scripts/spawn-verifier.sh`: helper invoked by `tick.sh` to dispatch the cross-family verifier.
 - `scripts/budget.sh`: helper for reading and updating `state/budget.json` atomically.
+- `scripts/init-host.sh`: one-time host controller setup.
+- `scripts/subscribe-repo.sh`: per-repo subscription.
+- `scripts/add-stage.sh`: idempotent queue insertion.
+- `scripts/status.sh`: read-only operator status view.
+- `scripts/attach.sh`: optional tmux viewer for status and controller logs.
 
-The shape of these scripts is stage-5's responsibility; this design doc fixes only the contract surface (state file, budget file, verifier handoff format, subscriber registry, identity resolution).
+The contract surface remains the state file, budget file, verifier handoff format, subscriber registry, and identity resolution. The CLI is convenience, not a separate state owner.
 
 ## Future scope
 
 Items deferred beyond pass 2:
 
 - Multi-machine federation. The current design is single-machine; if a second machine wants to subscribe to the same backlog, that is out of scope.
-- Web UI or TUI for the controller. The current design is filesystem and `git log`; any visualisation is downstream.
+- Web UI or full TUI for the controller. The current design is filesystem, `git log`, and a read-only shell status view; richer visualisation is downstream.
 - Token estimation before dispatch. The current design enforces `token_cap_total` after the fact (per dispatched process). A pre-dispatch estimator is future scope.
 - Multi-language stage cards. Currently all cards and prompts are English; localisation is future scope.
 
@@ -174,4 +203,4 @@ Three genuinely new design decisions surfaced during this stage that were not pr
 
 1. `state/` directory per repo holds `state.yaml`, `budget.json`, and `verifiers/<stage-id>.json` (banked at `memory/decision-state-dir-per-repo.md`).
 2. `phat-controller` runs as one process per cron fire, no resident daemon, with a singleton subscriber registry at `~/.phat-controller/` (banked at `memory/decision-phat-controller-no-daemon-subscriber-registry.md`).
-3. Four implementation parameters fixed by this design and surfaced by the stage-4 verifier re-brief: working branch `phat-controller/state`, repair entry point `tick.sh --repair`, per-fire cap config at `~/.phat-controller/config.yaml`, default stall grace factor 1.5x (banked at `memory/decision-tick-implementation-parameters.md`).
+3. Four implementation parameters fixed by this design and surfaced by the stage-4 verifier re-brief: working branch `phat-controller/state`, repair entry point `autometta tick --repair`, per-fire cap config at `~/.phat-controller/config.yaml`, default stall grace factor 1.5x (banked at `memory/decision-tick-implementation-parameters.md`).

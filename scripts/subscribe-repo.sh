@@ -3,8 +3,10 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+default_autometta_root="$(cd "$script_dir/.." && pwd)"
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
+config_file="$controller_home/config.yaml"
 
 usage() {
   printf 'Usage: %s <repo-path>\n' "$(basename "$0")" >&2
@@ -48,6 +50,19 @@ logs_dir="$state_dir/logs"
 state_file="$state_dir/state.yaml"
 budget_file="$state_dir/budget.json"
 gitignore_file="$repo_path/.gitignore"
+manifest_file="$repo_path/.autometta.local.yaml"
+
+autometta_root="$default_autometta_root"
+if [[ -f "$config_file" ]]; then
+  configured_root="$(sed -n 's/^autometta_root:[[:space:]]*//p' "$config_file" | head -n1 || true)"
+  configured_root="${configured_root%\"}"
+  configured_root="${configured_root#\"}"
+  configured_root="${configured_root%\'}"
+  configured_root="${configured_root#\'}"
+  if [[ -n "$configured_root" ]]; then
+    autometta_root="$configured_root"
+  fi
+fi
 
 mkdir -p "$state_dir" "$verifiers_dir" "$logs_dir"
 printf 'PASS state dirs ready %s\n' "$state_dir"
@@ -97,18 +112,47 @@ if [[ -f "$gitignore_file" ]]; then
     printf '\nstate/logs/\n' >> "$gitignore_file"
     printf 'PASS gitignore entry added state/logs/\n'
   fi
+  if grep -Fxq '.autometta.local.yaml' "$gitignore_file"; then
+    printf 'PASS gitignore entry exists .autometta.local.yaml\n'
+  else
+    printf '.autometta.local.yaml\n' >> "$gitignore_file"
+    printf 'PASS gitignore entry added .autometta.local.yaml\n'
+  fi
 else
   cat > "$gitignore_file" <<'EOF_GITIGNORE'
 state/logs/
+.autometta.local.yaml
 EOF_GITIGNORE
-  printf 'PASS gitignore created with state/logs/\n'
+  printf 'PASS gitignore created with phat-controller local entries\n'
+fi
+
+if [[ -f "$manifest_file" ]]; then
+  printf 'PASS manifest exists %s\n' "$manifest_file"
+else
+  cat > "$manifest_file" <<YAML
+version: 1
+autometta_root: "$autometta_root"
+state_dir: state
+stage_card_globs:
+  - docs/stages/*.md
+  - examples/self-host/*.md
+templates_mode: upstream
+YAML
+  printf 'PASS manifest created %s\n' "$manifest_file"
 fi
 
 if [[ -f "$subscriber_file" ]]; then
   printf 'PASS subscriber exists %s\n' "$subscriber_file"
+  if grep -Eq '^manifest_path:' "$subscriber_file"; then
+    printf 'PASS subscriber manifest_path exists\n'
+  else
+    printf 'manifest_path: "%s"\n' "$manifest_file" >> "$subscriber_file"
+    printf 'PASS subscriber manifest_path added\n'
+  fi
 else
   cat > "$subscriber_file" <<YAML
 repo_path: "$repo_path"
+manifest_path: "$manifest_file"
 weight: 100
 enabled: true
 YAML

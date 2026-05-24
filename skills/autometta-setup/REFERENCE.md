@@ -18,7 +18,7 @@ ls docs/ 2>/dev/null
 
 If `templates/` already exists with non-autometta content, place the Autometta templates under `templates/autometta/` instead.
 
-### Vendoring (copy mode)
+### Pass-1 copy mode
 
 ```sh
 mkdir -p templates docs/autometta
@@ -72,9 +72,22 @@ git commit --author="Claude Opus 4.7 <claude-opus-4-7@local>" -m "plan: refactor
 
 If a verifier artefact is committed (depends on whether the repo tracks `state/`), use Sonnet's author string for that commit.
 
-### When to vendor pass 2
+### When to adopt pass 2
 
-After three to five clean pass-1 cycles in the target repo. Pass 2 adds a daemon-style cron tick that runs unattended; the operator needs confidence in pass 1 behaviour first. If the repo is single-developer and the operator is fine kicking off cards manually, pass 1 is the steady state; there is no requirement to adopt pass 2.
+After three to five clean pass-1 cycles in the target repo. Pass 2 adds a cron tick that runs unattended; the operator needs confidence in pass 1 behaviour first. If the repo is single-developer and the operator is fine kicking off cards manually, pass 1 is the steady state; there is no requirement to adopt pass 2.
+
+For pass 2, prefer the installed CLI rather than copied scripts:
+
+```sh
+scripts/install-homebrew-local.sh        # from the Autometta checkout
+autometta init /path/to/target-repo
+git -C /path/to/target-repo add .gitignore state/state.yaml state/budget.json
+git -C /path/to/target-repo commit -m "Initialise Autometta"
+autometta status
+autometta attach --dry-run
+```
+
+Use a Git submodule only when the adopter repo needs a pinned Autometta revision in its own history.
 
 ## Troubleshooting
 
@@ -93,13 +106,13 @@ Two failure modes:
 1. The acceptance criteria are not greppable. The verifier checked surface signatures and missed semantic violations. Rewrite the criteria to be checkable by deterministic tools (grep, `bash -n`, `make`).
 2. The verifier was same-family with the worker. Switch to cross-family.
 
-### `state/` files keep appearing in `git status`
+### `state/` logs keep appearing in `git status`
 
-The repo did not gitignore `state/`. Add `state/` and `state/logs/` to `.gitignore`. If anything is already committed, do a `git rm -r --cached state/` then commit.
+The repo should track `state/state.yaml` and `state/budget.json`, but not `state/logs/`. `autometta init` adds the expected `.gitignore` entry. If logs are already committed, do `git rm -r --cached state/logs/` then commit.
 
 ### `tick.sh` switches the operator's working branch mid-session
 
-Pre-5c behaviour. Stage 5c added save/restore via captured HEAD plus EXIT trap in `commit_state_branch`. Vendoring `scripts/tick.sh` from Autometta `dev` after commit `8a3e60c` includes the fix.
+Pre-5c behaviour. Stage 5c added save/restore via captured HEAD plus EXIT trap in `commit_state_branch`. Using `autometta tick` from the current install includes the fix.
 
 ## Banking adopter feedback in Autometta (analysis-friendly format)
 

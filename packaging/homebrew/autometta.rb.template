@@ -1,0 +1,21 @@
+class Autometta < Formula
+  desc "Single-machine headless agent orchestration patterns"
+  homepage "https://autometta.local"
+  version "__AUTOMETTA_VERSION__"
+  license "MIT"
+  url "file://__AUTOMETTA_ARCHIVE__"
+  sha256 "__AUTOMETTA_SHA256__"
+
+  depends_on "jq"
+  depends_on "yq"
+  depends_on "python"
+
+  def install
+    libexec.install Dir["*"]
+    bin.write_exec_script libexec/"bin/autometta"
+  end
+
+  test do
+    system "#{bin}/autometta", "--version"
+  end
+end
