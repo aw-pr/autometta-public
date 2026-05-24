@@ -1,5 +1,8 @@
 # Autometta handoff: 2026-05-22
 
+Historical handoff note. For current operator setup, prefer `README.md`,
+`docs/setup.md`, `docs/deployment.md`, and `examples/self-host/PLAN.md`.
+
 A fresh orchestrator session picking up where this one left off should read this file first, then `examples/self-host/PLAN.md`, then the relevant memory entries listed below.
 
 This session opened the repo with `aecfbe5` (Tony's initial scaffold), ran stages 0 through 5b end-to-end, did a stage 6 dry run that surfaced eight findings, fixed five of them in place, authored stage 5c to close the remaining three, and landed a working publish-guard.

@@ -57,4 +57,4 @@ For Codex headless dispatch, stdin redirection from `/dev/null` is mandatory at 
 
 ### Future scope boundary
 
-Pass-2 loop artefacts are future scope. References to `state.yaml`, `tick.sh`, `phat-controller`, `budget.sh`, and `schemas/` should remain explicitly labelled as not yet present in pass 1.
+Pass-2 loop artefacts are outside the pass-1 verifier contract. References to `state.yaml`, `autometta tick`, `phat-controller`, `budget.sh`, and `schemas/` should remain explicitly labelled as pass-2 concerns when a verifier is checking a pass-1-only stage.

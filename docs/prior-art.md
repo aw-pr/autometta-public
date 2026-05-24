@@ -55,13 +55,13 @@ What everyone landed on, regardless of framework:
 
 ## Recommendation for `Autometta`
 
-- **Roll your own runtime, but stop calling it novel.** Your pass-29 cron-tick + `state.yaml` + tmux Mayor + spawn-worker/spawn-verifier is the consensus pattern with a personal accent. Extract it as-is; don't rebase on LangGraph or CrewAI.
+- **Roll your own runtime, but stop calling it novel.** Your pass-29 cron-tick + `state.yaml` + passive tmux cockpit + spawn-worker/spawn-verifier is the consensus pattern with a personal accent. Extract it as-is; don't rebase on LangGraph or CrewAI.
 - **Adopt three things from Gas Town verbatim:** (i) git-backed ledger as the state store (Beads-style - you already have `state.yaml` + per-task JSON, formalise it), (ii) per-agent persistent identity with ephemeral sessions (already in `agent-whoami`), (iii) stall-detection as a first-class state ("mountain convoy" semantics). Don't pull in Gas Town the runtime - too heavy.
 - **Steal Aider's architect/coder split as the role taxonomy.** Map: architect -> Claude Opus/Sonnet, coder -> Codex GPT-5.3 worker, verifier -> cross-family Claude. You already do this implicitly; name it.
 - **Ignore LangGraph, CrewAI, AutoGen, OpenHands, the Kanban GUIs.** Wrong abstraction level (in-process LLM) or wrong audience (human-in-loop). Re-evaluate only if you grow past ~10 concurrent workers.
 - **Adopt MCP as the only integration boundary.** Workers expose tools via MCP; orchestrator consumes via MCP. No bespoke RPC. This is the bet Anthropic, OpenAI and Cline are all making.
 
-Net: Autometta should ship a thin, opinionated runtime - cron-tick + state.yaml FSM + stage-card dispatch + sandbox-as-role-boundary + cross-family verifier - that does one thing the existing tools don't: run *unattended overnight* on a solo developer's laptop with a budget file as the only safety. The lessons file from fractals already encodes the failure modes; the pass-29 scaffold already encodes the happy path. Package those, name the patterns, write the bugs into tests, and don't take a framework dependency.
+Net: Autometta should ship a thin, opinionated runtime - `autometta tick` + state.yaml FSM + stage-card dispatch + sandbox-as-role-boundary + cross-family verifier - that does one thing the existing tools don't: run *unattended overnight* on a solo developer's laptop with a budget file as the only safety. The lessons file from fractals already encodes the failure modes; the pass-29 scaffold already encodes the happy path. Package those, name the patterns, write the bugs into tests, and don't take a framework dependency.
 
 ## Sources
 

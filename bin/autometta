@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+autometta_root="${AUTOMETTA_ROOT:-$(cd "$script_dir/.." && pwd)}"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  autometta --version
+  autometta init-host
+  autometta init [repo-path]
+  autometta subscribe [repo-path]
+  autometta add-stage <repo-path> <stage-card-path>
+  autometta status
+  autometta attach [--dry-run]
+  autometta tick [--repair|--reset-halt]
+  autometta check-deps
+  autometta install-homebrew-local [--dry-run]
+USAGE
+}
+
+run_script() {
+  local script_name="$1"
+  shift
+  local script_path="$autometta_root/scripts/$script_name"
+  if [[ ! -x "$script_path" ]]; then
+    printf 'MISSING %s\n' "$script_path" >&2
+    exit 1
+  fi
+  "$script_path" "$@"
+}
+
+command_name="${1:-}"
+if [[ -z "$command_name" ]]; then
+  usage
+  exit 1
+fi
+shift
+
+case "$command_name" in
+  --help|-h|help)
+    usage
+    ;;
+  --version|version)
+    if git -C "$autometta_root" rev-parse --short HEAD >/dev/null 2>&1; then
+      printf 'autometta %s\n' "$(git -C "$autometta_root" rev-parse --short HEAD)"
+    else
+      printf 'autometta local\n'
+    fi
+    ;;
+  init-host)
+    run_script init-host.sh "$@"
+    ;;
+  init)
+    repo_path="${1:-.}"
+    if [[ $# -gt 1 ]]; then
+      printf 'usage: autometta init [repo-path]\n' >&2
+      exit 1
+    fi
+    run_script init-host.sh
+    run_script subscribe-repo.sh "$repo_path"
+    printf '\nNext: review and commit the generated repo setup before running autometta tick.\n'
+    printf 'Typical files: .gitignore, state/state.yaml, state/budget.json; .autometta.local.yaml stays gitignored.\n'
+    ;;
+  subscribe)
+    repo_path="${1:-.}"
+    if [[ $# -gt 1 ]]; then
+      printf 'usage: autometta subscribe [repo-path]\n' >&2
+      exit 1
+    fi
+    run_script subscribe-repo.sh "$repo_path"
+    ;;
+  add-stage)
+    if [[ $# -ne 2 ]]; then
+      printf 'usage: autometta add-stage <repo-path> <stage-card-path>\n' >&2
+      exit 1
+    fi
+    run_script add-stage.sh "$@"
+    ;;
+  status)
+    run_script status.sh "$@"
+    ;;
+  attach)
+    run_script attach.sh "$@"
+    ;;
+  tick)
+    run_script tick.sh "$@"
+    ;;
+  check-deps)
+    run_script check-deps.sh "$@"
+    ;;
+  install-homebrew-local)
+    run_script install-homebrew-local.sh "$@"
+    ;;
+  *)
+    printf 'unknown command: %s\n' "$command_name" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

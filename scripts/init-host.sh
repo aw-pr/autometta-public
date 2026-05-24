@@ -3,6 +3,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+autometta_root="$(cd "$script_dir/.." && pwd)"
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
 log_dir="$controller_home/log"
@@ -45,13 +46,35 @@ printf 'PASS log dir %s\n' "$log_dir"
 
 if [[ -f "$config_file" ]]; then
   printf 'PASS config exists %s\n' "$config_file"
+  if grep -Eq '^autometta_root:' "$config_file"; then
+    current_root="$(sed -n 's/^autometta_root:[[:space:]]*//p' "$config_file" | head -n1)"
+    current_root="${current_root%\"}"
+    current_root="${current_root#\"}"
+    current_root="${current_root%\'}"
+    current_root="${current_root#\'}"
+    if [[ "$current_root" == "$autometta_root" ]]; then
+      printf 'PASS config autometta_root exists\n'
+    else
+      tmp_file="$(mktemp)"
+      sed "s|^autometta_root:.*|autometta_root: \"$autometta_root\"|" "$config_file" > "$tmp_file"
+      mv "$tmp_file" "$config_file"
+      printf 'PASS config autometta_root refreshed %s\n' "$autometta_root"
+    fi
+  else
+    printf 'autometta_root: "%s"\n' "$autometta_root" >> "$config_file"
+    printf 'PASS config autometta_root added %s\n' "$autometta_root"
+  fi
 else
   cat > "$config_file" <<'YAML'
 version: 1
+autometta_root: __AUTOMETTA_ROOT__
 max_per_fire: 20
 default_weight: 100
 log_level: info
 YAML
+  tmp_file="$(mktemp)"
+  sed "s|__AUTOMETTA_ROOT__|\"$autometta_root\"|" "$config_file" > "$tmp_file"
+  mv "$tmp_file" "$config_file"
   printf 'PASS config created %s\n' "$config_file"
 fi
 
@@ -60,6 +83,7 @@ if [[ -f "$template_file" ]]; then
 else
   cat > "$template_file" <<'YAML'
 repo_path: /absolute/path/to/repo
+manifest_path: /absolute/path/to/repo/.autometta.local.yaml
 weight: 100
 enabled: true
 YAML

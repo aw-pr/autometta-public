@@ -58,4 +58,18 @@ else
   missing "agent-whoami" "install from mcp-hub/scripts/agent-whoami onto PATH"
 fi
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+autometta_root="$(cd "$script_dir/.." && pwd)"
+if [[ -d "$autometta_root/templates" && -d "$autometta_root/scripts" && -x "$autometta_root/bin/autometta" ]]; then
+  pass "autometta-root" "$autometta_root"
+else
+  missing "autometta-root" "run checks from a complete Autometta checkout or installed package"
+fi
+
+if command -v tmux >/dev/null 2>&1; then
+  pass "tmux" "optional attach viewer"
+else
+  warn "tmux" "optional attach viewer unavailable"
+fi
+
 exit "$status"

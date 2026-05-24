@@ -44,6 +44,10 @@ render_prompt() {
   local artefact_path="$5"
   local template_path="$repo_root/templates/verifier-prompt.md"
 
+  if [[ ! -f "$template_path" ]]; then
+    template_path="$script_dir/../templates/verifier-prompt.md"
+  fi
+
   sed \
     -e "s|<<stage-id>>|${stage_id}|g" \
     -e "s|<<stage-card-path>>|${card_path}|g" \
