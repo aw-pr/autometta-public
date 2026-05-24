@@ -1,0 +1,406 @@
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./budget.sh
+source "$script_dir/budget.sh"
+
+controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+subscribers_dir="$controller_home/subscribers"
+controller_log_dir="$controller_home/log"
+
+log() {
+  local msg="$1"
+  mkdir -p "$controller_log_dir"
+  printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$msg" | tee -a "$controller_log_dir/tick-$(date +%F).log" >&2
+}
+
+# Per-repo advisory lock. mkdir is atomic on POSIX and works on macOS
+# without a flock binary. The lock holder records its PID; a stale lock
+# from a crashed tick is detected by kill -0.
+acquire_repo_lock() {
+  local repo_root="$1"
+  local lock_dir="$repo_root/state/.tick.lock"
+  if mkdir "$lock_dir" 2>/dev/null; then
+    printf '%s\n' "$$" > "$lock_dir/pid"
+    return 0
+  fi
+  local lock_pid=""
+  if [[ -f "$lock_dir/pid" ]]; then
+    lock_pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+  fi
+  if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+    log "stale tick lock for ${repo_root} (pid ${lock_pid} not running), reclaiming"
+    rm -rf "$lock_dir"
+    if mkdir "$lock_dir" 2>/dev/null; then
+      printf '%s\n' "$$" > "$lock_dir/pid"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+release_repo_lock() {
+  local repo_root="$1"
+  rm -rf "$repo_root/state/.tick.lock"
+}
+
+repair_mode() {
+  log "repair not yet implemented, no-op"
+  exit 0
+}
+
+reset_halts_mode() {
+  local subscriber_file
+  while IFS= read -r subscriber_file; do
+    [[ -n "$subscriber_file" ]] || continue
+    local enabled repo_path budget_path
+    enabled="$(read_subscriber_field "$subscriber_file" "enabled")"
+    repo_path="$(read_subscriber_field "$subscriber_file" "repo_path")"
+    if [[ "$enabled" != "true" ]]; then
+      continue
+    fi
+    if [[ -z "$repo_path" || ! -d "$repo_path" ]]; then
+      log "invalid repo_path in ${subscriber_file}"
+      continue
+    fi
+    budget_path="$repo_path/state/budget.json"
+    if [[ ! -f "$budget_path" ]]; then
+      log "budget file missing for ${repo_path}, skipping reset"
+      continue
+    fi
+    budget_write_atomic "$repo_path" '.halted = false | .halt_reason = null | .halted_at = null'
+    log "reset halt state for ${repo_path}"
+  done < <(sort_subscribers)
+  exit 0
+}
+
+read_subscriber_field() {
+  local file_path="$1"
+  local key="$2"
+  local raw
+  raw="$(sed -n "s/^${key}:[[:space:]]*//p" "$file_path" | head -n1)"
+  # Strip surrounding double or single quotes if present. subscribe-repo.sh
+  # writes quoted strings; the template uses unquoted form. Accept both.
+  raw="${raw%\"}"
+  raw="${raw#\"}"
+  raw="${raw%\'}"
+  raw="${raw#\'}"
+  printf '%s' "$raw"
+}
+
+sort_subscribers() {
+  for file in "$subscribers_dir"/*.yaml; do
+    [[ -e "$file" ]] || continue
+    # Skip the example template; only real subscribers are processed.
+    [[ "$(basename "$file")" == "template.yaml" ]] && continue
+    local weight
+    weight="$(read_subscriber_field "$file" "weight")"
+    printf '%s\t%s\n' "${weight:-9999}" "$file"
+  done | sort -n | cut -f2-
+}
+
+stage_card_for_id() {
+  local repo_root="$1"
+  local stage_id="$2"
+  local card=""
+  for candidate in "$repo_root/examples/self-host/${stage_id}.md" "$repo_root/examples/self-host"/*"${stage_id}"*.md; do
+    if [[ -f "$candidate" ]]; then
+      card="$candidate"
+      break
+    fi
+  done
+  printf '%s\n' "$card"
+}
+
+state_json() {
+  local state_yaml="$1"
+  yq -o=json '.' "$state_yaml"
+}
+
+ensure_yq_or_halt() {
+  local repo_root="$1"
+  if command -v yq >/dev/null 2>&1; then
+    return 0
+  fi
+  log "yq is required but missing, halting tick for ${repo_root}"
+  budget_halt "$repo_root" "yq-missing"
+  return 1
+}
+
+worker_budget_seconds_from_card() {
+  local card_path="$1"
+  local budget_line value unit
+  budget_line="$(grep -A5 '^## Budget' "$card_path" | grep -E 'Worker wall-clock' | head -n1 || true)"
+  if [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(seconds?|secs?|s)\b ]]; then
+    value="${BASH_REMATCH[1]}"
+    printf '%s\n' "$value"
+    return 0
+  fi
+  if [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(minutes?|mins?|m)\b ]]; then
+    value="${BASH_REMATCH[1]}"
+    printf '%s\n' "$((value * 60))"
+    return 0
+  fi
+  log "warning: could not parse worker wall-clock budget from ${card_path}, defaulting to 600 seconds"
+  printf '600\n'
+}
+
+stage_started_epoch() {
+  local started_at="$1"
+  python3 - "$started_at" <<'PY'
+import datetime
+import sys
+
+value = sys.argv[1]
+if not value or value == "null":
+    raise SystemExit(1)
+dt = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+print(int(dt.timestamp()))
+PY
+}
+
+# Apply a jq filter to state.yaml. Pass values via --arg / --argjson rather
+# than string interpolation: a stage id with a quote or backslash would
+# otherwise break the filter (or worse). Trailing args are forwarded to jq.
+state_apply_json() {
+  local state_yaml="$1"
+  local jq_filter="$2"
+  shift 2
+  local tmp_json tmp_yaml
+  tmp_json="$(mktemp)"
+  tmp_yaml="$(mktemp)"
+  state_json "$state_yaml" | jq "$@" "$jq_filter" > "$tmp_json"
+  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$tmp_json"
+  yq -P '.' "$tmp_json" > "$tmp_yaml"
+  mv "$tmp_yaml" "$state_yaml"
+  rm -f "$tmp_json"
+}
+
+# Stage ids end up in jq filters, yq selectors, log paths, and on-disk
+# filenames. Reject anything that is not the documented kebab-slug shape so
+# the rest of the script can treat the value as a safe identifier. Matches
+# 00-bootstrap, 06-real-dispatch-test, 05a-phat-controller-hardening, etc.
+validate_stage_id() {
+  local stage_id="$1"
+  [[ "$stage_id" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]
+}
+
+commit_state_branch() {
+  local repo_root="$1"
+  (
+    cd "$repo_root"
+    local original_branch
+    original_branch="$(git rev-parse --abbrev-ref HEAD)"
+    # Keep operator branch unchanged when tick.sh is run interactively.
+    trap 'git checkout "$original_branch" >/dev/null 2>&1 || true' EXIT
+    local non_state_changes
+    non_state_changes="$(git status --porcelain -- . ':(exclude)state' || true)"
+    if [[ -n "$non_state_changes" ]]; then
+      budget_halt "$repo_root" "dirty-working-tree"
+      log "dirty working tree outside state/ for ${repo_root}, refusing state branch checkout"
+      return 1
+    fi
+    git checkout -B phat-controller/state >/dev/null 2>&1
+    git add state/state.yaml state/budget.json state/verifiers 2>/dev/null || true
+    if ! git diff --cached --quiet; then
+      git commit --author="$(agent-whoami)" -m "phat-controller: tick state update" >/dev/null 2>&1
+    fi
+  )
+}
+
+process_repo() {
+  local repo_root="$1"
+  if ! acquire_repo_lock "$repo_root"; then
+    log "tick already in progress for ${repo_root}, skipping"
+    return 0
+  fi
+  local rc=0
+  _process_repo_locked "$repo_root" || rc=$?
+  release_repo_lock "$repo_root"
+  return $rc
+}
+
+_process_repo_locked() {
+  local repo_root="$1"
+  local state_yaml="$repo_root/state/state.yaml"
+
+  if ! ensure_yq_or_halt "$repo_root"; then
+    return 1
+  fi
+
+  if ! budget_check_caps "$repo_root"; then
+    budget_halt "$repo_root" "budget cap exhausted"
+    log "halted ${repo_root} due to budget cap"
+    return 0
+  fi
+
+  local current_stage
+  current_stage="$(state_json "$state_yaml" | jq -r '.current_stage')"
+
+  if [[ "$current_stage" != "null" && -n "$current_stage" ]]; then
+    if ! validate_stage_id "$current_stage"; then
+      log "rejecting malformed current_stage id ${current_stage} in ${repo_root}"
+      budget_halt "$repo_root" "invalid-stage-id"
+      return 1
+    fi
+    local started_at worker_pid verifier_pid
+    started_at="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .started_at // empty')"
+    worker_pid="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .worker_pid // empty')"
+    verifier_pid="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_pid // empty')"
+
+    if [[ -n "$started_at" ]]; then
+      local card_path budget_seconds grace_seconds stall_threshold started_epoch now_epoch elapsed
+      card_path="$(stage_card_for_id "$repo_root" "$current_stage")"
+      if [[ -n "$card_path" ]]; then
+        budget_seconds="$(worker_budget_seconds_from_card "$card_path")"
+      else
+        log "warning: stage card missing for ${current_stage}, defaulting worker wall-clock budget to 600 seconds"
+        budget_seconds=600
+      fi
+      grace_seconds=$((budget_seconds / 2))
+      stall_threshold=$((budget_seconds + grace_seconds))
+      if started_epoch="$(stage_started_epoch "$started_at" 2>/dev/null)"; then
+        now_epoch="$(date -u +%s)"
+        elapsed=$((now_epoch - started_epoch))
+        if (( elapsed > stall_threshold )); then
+          if [[ -n "${worker_pid:-}" ]]; then
+            kill -TERM "$worker_pid" 2>/dev/null || true
+          fi
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
+            --arg id "$current_stage"
+          budget_record_failure "$repo_root"
+          log "stage ${current_stage} stalled after ${elapsed}s (budget ${budget_seconds}s + 50% grace), marked stalled"
+          budget_increment_tick "$repo_root"
+          commit_state_branch "$repo_root"
+          return 0
+        fi
+      else
+        log "warning: invalid started_at for ${current_stage}, skipping stall check"
+      fi
+    fi
+
+    local artefact
+    artefact="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_artefact // empty')"
+    if [[ -n "$artefact" && -f "$repo_root/$artefact" ]]; then
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).status = "completed" | .current_stage = null' \
+        --arg id "$current_stage"
+      budget_reset_failures "$repo_root"
+    else
+      local card_path
+      if [[ -n "${worker_pid:-}" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+        log "worker ${worker_pid} for ${current_stage} still running, skipping verifier dispatch"
+        budget_increment_tick "$repo_root"
+        commit_state_branch "$repo_root"
+        return 0
+      fi
+      if [[ -n "${verifier_pid:-}" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
+        log "verifier ${verifier_pid} for ${current_stage} still running, skipping verifier dispatch"
+        budget_increment_tick "$repo_root"
+        commit_state_branch "$repo_root"
+        return 0
+      fi
+      # Bound verifier re-dispatch. A verifier that crashes without writing
+      # its artefact would otherwise be re-spawned every tick until the
+      # consecutive-failure cap kicks in — wasteful and noisy. Cap per-stage
+      # attempts and stall the stage when the cap is reached so a human can
+      # look at it.
+      local verifier_attempts verifier_attempt_cap=3
+      verifier_attempts="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_attempts // 0')"
+      if (( verifier_attempts >= verifier_attempt_cap )); then
+        log "verifier attempt cap (${verifier_attempt_cap}) reached for ${current_stage} without artefact, marking stalled"
+        state_apply_json "$state_yaml" \
+          '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
+          --arg id "$current_stage"
+        budget_record_failure "$repo_root"
+        budget_increment_tick "$repo_root"
+        commit_state_branch "$repo_root"
+        return 0
+      fi
+      card_path="$(stage_card_for_id "$repo_root" "$current_stage")"
+      if [[ -n "$card_path" ]]; then
+        state_apply_json "$state_yaml" \
+          '(.stages[] | select(.id == $id)).verifier_attempts = ((.stages[] | select(.id == $id) | .verifier_attempts // 0) + 1)' \
+          --arg id "$current_stage"
+        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root"
+      else
+        state_apply_json "$state_yaml" \
+          '(.stages[] | select(.id == $id)).status = "stalled"' \
+          --arg id "$current_stage"
+        budget_record_failure "$repo_root"
+      fi
+    fi
+  else
+    local next_stage
+    next_stage="$(state_json "$state_yaml" | jq -r '.stages[] | select(.status == "pending") | .id' | head -n1)"
+    if [[ -n "$next_stage" ]]; then
+      if ! validate_stage_id "$next_stage"; then
+        log "rejecting malformed pending stage id ${next_stage} in ${repo_root}"
+        budget_halt "$repo_root" "invalid-stage-id"
+        return 1
+      fi
+      local card_path now_iso
+      card_path="$(stage_card_for_id "$repo_root" "$next_stage")"
+      if [[ -z "$card_path" ]]; then
+        log "stage card missing for ${next_stage} in ${repo_root}"
+      else
+        now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        state_apply_json "$state_yaml" \
+          '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | .current_stage = $id' \
+          --arg id "$next_stage" --arg now "$now_iso"
+        "$script_dir/spawn-worker.sh" "$card_path" "$repo_root"
+      fi
+    fi
+  fi
+
+  budget_increment_tick "$repo_root"
+  commit_state_branch "$repo_root"
+}
+
+main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repair)
+        repair_mode
+        ;;
+      --reset-halt)
+        reset_halts_mode
+        ;;
+      *)
+        log "unknown flag: $1"
+        exit 1
+        ;;
+    esac
+  done
+
+  mkdir -p "$controller_log_dir"
+
+  # Host-level dependency pre-flight. Cheap (a handful of command -v calls).
+  # Run on every tick fire so a missing dependency surfaces in the cron log
+  # immediately rather than as a partial halt across subscribers.
+  if ! "$script_dir/check-deps.sh" >/dev/null; then
+    log "dependency pre-flight failed; run scripts/check-deps.sh for details"
+    exit 1
+  fi
+
+  local subscriber_file
+  while IFS= read -r subscriber_file; do
+    [[ -n "$subscriber_file" ]] || continue
+    local enabled repo_path
+    enabled="$(read_subscriber_field "$subscriber_file" "enabled")"
+    repo_path="$(read_subscriber_field "$subscriber_file" "repo_path")"
+    if [[ "$enabled" != "true" ]]; then
+      continue
+    fi
+    if [[ -z "$repo_path" || ! -d "$repo_path" ]]; then
+      log "invalid repo_path in ${subscriber_file}"
+      continue
+    fi
+    process_repo "$repo_path"
+  done < <(sort_subscribers)
+}
+
+main "$@"

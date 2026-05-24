@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autometta.local/schemas/budget.json",
+  "title": "phat-controller per-repo budget file",
+  "description": "Per-repo failure budget for the autometta pass-2 autonomous loop. Stored at state/budget.json in the repo it governs. Read on every tick; any cap exhaustion halts the loop for this repo without retry. Per memory/decision-failure-budget-clock-tick.md, the clock-tick count is the primary safety; token and wall-clock caps are secondary belt-and-braces.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "token_cap_total",
+    "tokens_spent",
+    "wall_clock_cap_seconds",
+    "wall_clock_elapsed_seconds",
+    "clock_tick_cap",
+    "clock_ticks_used",
+    "consecutive_failure_cap",
+    "consecutive_failures"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema major version."
+    },
+    "token_cap_total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Hard cap on total tokens consumed by workers and verifiers dispatched against this repo. Tick halts when tokens_spent >= cap."
+    },
+    "tokens_spent": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Tokens consumed so far. Updated by tick.sh after each dispatched process returns and reports usage."
+    },
+    "wall_clock_cap_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Hard cap on cumulative wall-clock seconds spent inside dispatched processes. Tick halts when wall_clock_elapsed_seconds >= cap."
+    },
+    "wall_clock_elapsed_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Cumulative wall-clock seconds spent in dispatched processes so far."
+    },
+    "clock_tick_cap": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Primary safety. Maximum number of cron-tick fires the controller may consume on this repo. Halt when clock_ticks_used >= cap. Bounds wall-clock independent of how expensive individual workers were."
+    },
+    "clock_ticks_used": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of ticks that have done work on this repo. Incremented when a tick transitions the state."
+    },
+    "consecutive_failure_cap": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum back-to-back verifier-FAIL or stall results tolerated before the loop halts for the repo."
+    },
+    "consecutive_failures": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Current consecutive failure count. Resets to zero on any verifier PASS."
+    },
+    "halted": {
+      "type": "boolean",
+      "default": false,
+      "description": "Mirror of state.yaml.halted. Set when any cap is exhausted. tick.sh sets this before exiting; subsequent ticks read it and exit immediately."
+    },
+    "halt_reason": {
+      "type": ["string", "null"],
+      "description": "Which cap exhausted. One of: token_cap | wall_clock_cap | clock_tick_cap | consecutive_failure_cap | operator. Null until halted is true."
+    },
+    "halted_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the halt was triggered."
+    }
+  }
+}

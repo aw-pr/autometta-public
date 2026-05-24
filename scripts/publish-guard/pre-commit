@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# publish-guard pre-commit: refuse to stage personal/secret material.
+# Patterns come from a gitignored .publish-guard.local so this hook itself
+# ships no personal data. Override once with: git commit --no-verify
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+cfg="$root/.publish-guard.local"
+[ -f "$cfg" ] || { echo "publish-guard: no .publish-guard.local — run install-guards.sh" >&2; exit 0; }
+# shellcheck disable=SC1090
+source "$cfg"
+
+staged="$(git diff --cached --name-only --diff-filter=ACM)"
+[ -z "$staged" ] && exit 0
+fail=0
+
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    .env|.env.*|*/.env|*op-refs.local.sh|*settings.local.json|.publish-guard.local)
+      [ "$f" = ".env.example" ] && continue
+      echo "publish-guard: refusing to commit sensitive path: $f" >&2; fail=1 ;;
+  esac
+done <<< "$staged"
+
+if [ -n "${GUARD_PATTERNS:-}" ]; then
+  if git diff --cached -U0 | grep -E '^\+' | grep -vE '^\+\+\+' | grep -Eq "$GUARD_PATTERNS"; then
+    echo "publish-guard: staged change contains a blocked personal/secret pattern:" >&2
+    git diff --cached -U0 | grep -E '^\+' | grep -vE '^\+\+\+' | grep -nE "$GUARD_PATTERNS" | head >&2
+    fail=1
+  fi
+fi
+
+[ "$fail" -eq 0 ] || { echo "Override once with: git commit --no-verify" >&2; exit 1; }
+exit 0
