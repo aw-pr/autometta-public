@@ -402,11 +402,29 @@ _process_repo_locked() {
     return 1
   fi
 
-  if ! budget_check_caps "$repo_root"; then
-    budget_halt "$repo_root" "budget cap exhausted"
-    log "halted ${repo_root} due to budget cap"
-    return 0
-  fi
+  local budget_rc=0
+  budget_check_caps "$repo_root" || budget_rc=$?
+  case "$budget_rc" in
+    0)
+      ;;
+    2)
+      local existing_reason budget_path
+      budget_path="$(budget_file "$repo_root")"
+      existing_reason="$(jq -r '.halt_reason // "unknown"' "$budget_path")"
+      log "halted ${repo_root} (reason already recorded: ${existing_reason})"
+      return 0
+      ;;
+    1)
+      local cap_name="${BUDGET_CHECK_LAST_HIT:-unknown-cap}"
+      budget_halt "$repo_root" "$cap_name"
+      log "halted ${repo_root} due to ${cap_name}"
+      return 0
+      ;;
+    *)
+      log "budget_check_caps returned unexpected code ${budget_rc} for ${repo_root}"
+      return 1
+      ;;
+  esac
 
   local current_stage
   current_stage="$(state_json "$state_yaml" | jq -r '.current_stage')"
