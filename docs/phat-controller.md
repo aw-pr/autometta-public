@@ -159,7 +159,7 @@ The controller is observable through files it already owns:
 - `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/log/tick-YYYY-MM-DD.log` for controller-level tick output.
 - `phat-controller/state` for committed state snapshots.
 
-`autometta status` is the read-only operator view over those files. `autometta attach` is an optional tmux viewer that tails the latest controller log and opens a status pane. It is deliberately downstream of the filesystem state; it does not dispatch, supervise, or retry work.
+`autometta status` is the read-only operator view over those files. `autometta init <repo>` creates a detached tmux viewer named `autometta-<project-name>` when `tmux` is available. `autometta attach <repo>` opens or creates that same viewer, tails the latest controller log, and opens a status pane. It is deliberately downstream of the filesystem state; it does not dispatch, supervise, or retry work.
 
 This gives the operator an attachable cockpit without creating a resident controller daemon.
 
@@ -168,11 +168,11 @@ This gives the operator an attachable cockpit without creating a resident contro
 The `autometta` CLI is the preferred operator surface:
 
 - `autometta init-host`: initialise or refresh the controller home.
-- `autometta init <repo>`: initialise host state if needed and subscribe one repo.
+- `autometta init <repo>`: initialise host state if needed, subscribe one repo, and create its tmux viewer when `tmux` is available.
 - `autometta add-stage <repo> <card>`: add a stage card to the repo queue.
 - `autometta tick`: run one cron-safe controller tick.
 - `autometta status`: print a read-only status table.
-- `autometta attach`: open the optional tmux viewer.
+- `autometta attach <repo>`: open or create the repo-scoped tmux viewer.
 
 The CLI delegates to these scripts:
 

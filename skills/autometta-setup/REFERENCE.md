@@ -84,7 +84,7 @@ autometta init /path/to/target-repo
 git -C /path/to/target-repo add .gitignore state/state.yaml state/budget.json
 git -C /path/to/target-repo commit -m "Initialise Autometta"
 autometta status
-autometta attach --dry-run
+autometta attach /path/to/target-repo --dry-run
 ```
 
 Use a Git submodule only when the adopter repo needs a pinned Autometta revision in its own history.
