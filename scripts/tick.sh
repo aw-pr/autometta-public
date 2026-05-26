@@ -165,12 +165,14 @@ worker_budget_seconds_from_card() {
   local card_path="$1"
   local budget_line value unit
   budget_line="$(grep -A5 '^## Budget' "$card_path" | grep -E 'Worker wall-clock' | head -n1 || true)"
-  if [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(seconds?|secs?|s)\b ]]; then
+  # NB: bash 3.2 (macOS default) does not support \b in [[ =~ ]] regex.
+  # Anchor units with an explicit "followed by non-letter or end" group instead.
+  if [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(seconds?|secs?|s)([^[:alpha:]]|$) ]]; then
     value="${BASH_REMATCH[1]}"
     printf '%s\n' "$value"
     return 0
   fi
-  if [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(minutes?|mins?|m)\b ]]; then
+  if [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(minutes?|mins?|m)([^[:alpha:]]|$) ]]; then
     value="${BASH_REMATCH[1]}"
     printf '%s\n' "$((value * 60))"
     return 0
@@ -296,6 +298,23 @@ _process_repo_locked() {
     worker_pid="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .worker_pid // empty')"
     verifier_pid="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_pid // empty')"
 
+    # Artefact check must run BEFORE the stall check: a verifier that
+    # produced a passing artefact wins, even if the worker phase ran
+    # past its declared wall-clock budget. Stalling a completed stage
+    # corrupts the loop's accounting (false consecutive_failures bump)
+    # and forces operator repair.
+    local artefact
+    artefact="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_artefact // empty')"
+    if [[ -n "$artefact" && -f "$repo_root/$artefact" ]]; then
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).status = "completed" | .current_stage = null' \
+        --arg id "$current_stage"
+      budget_reset_failures "$repo_root"
+      budget_increment_tick "$repo_root"
+      commit_state_branch "$repo_root"
+      return 0
+    fi
+
     if [[ -n "$started_at" ]]; then
       local card_path budget_seconds grace_seconds stall_threshold started_epoch now_epoch elapsed
       card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
@@ -328,16 +347,8 @@ _process_repo_locked() {
       fi
     fi
 
-    local artefact
-    artefact="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_artefact // empty')"
-    if [[ -n "$artefact" && -f "$repo_root/$artefact" ]]; then
-      state_apply_json "$state_yaml" \
-        '(.stages[] | select(.id == $id)).status = "completed" | .current_stage = null' \
-        --arg id "$current_stage"
-      budget_reset_failures "$repo_root"
-    else
-      local card_path
-      if [[ -n "${worker_pid:-}" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+    local card_path
+    if [[ -n "${worker_pid:-}" ]] && kill -0 "$worker_pid" 2>/dev/null; then
         log "worker ${worker_pid} for ${current_stage} still running, skipping verifier dispatch"
         budget_increment_tick "$repo_root"
         commit_state_branch "$repo_root"
@@ -366,18 +377,17 @@ _process_repo_locked() {
         commit_state_branch "$repo_root"
         return 0
       fi
-      card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
-      if [[ -n "$card_path" ]]; then
-        state_apply_json "$state_yaml" \
-          '(.stages[] | select(.id == $id)).verifier_attempts = ((.stages[] | select(.id == $id) | .verifier_attempts // 0) + 1)' \
-          --arg id "$current_stage"
-        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root"
-      else
-        state_apply_json "$state_yaml" \
-          '(.stages[] | select(.id == $id)).status = "stalled"' \
-          --arg id "$current_stage"
-        budget_record_failure "$repo_root"
-      fi
+    card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
+    if [[ -n "$card_path" ]]; then
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).verifier_attempts = ((.stages[] | select(.id == $id) | .verifier_attempts // 0) + 1)' \
+        --arg id "$current_stage"
+      "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root"
+    else
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).status = "stalled"' \
+        --arg id "$current_stage"
+      budget_record_failure "$repo_root"
     fi
   else
     local next_stage
