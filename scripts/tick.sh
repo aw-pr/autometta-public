@@ -212,6 +212,42 @@ state_apply_json() {
   rm -f "$tmp_json"
 }
 
+# stage_snapshot_tokens: parse a worker/verifier log for its token count
+# and snapshot it onto the matching stage entry in state.yaml. Sets one of
+# worker_tokens / verifier_tokens (per $4) and recomputes .tokens as the
+# sum of the two (treating absent halves as 0). Non-fatal: missing log,
+# missing match, or non-numeric parse all silently no-op so the tick loop
+# never aborts on accounting noise.
+#
+# Args: repo_root, state_yaml, stage_id, log_path, role (worker|verifier)
+stage_snapshot_tokens() {
+  local repo_root="$1"
+  local state_yaml="$2"
+  local stage_id="$3"
+  local log_path="$4"
+  local role="$5"
+  if [[ ! -f "$log_path" ]]; then
+    return 0
+  fi
+  local tokens
+  tokens="$(budget_parse_tokens_from_log "$log_path")"
+  if [[ -z "$tokens" || ! "$tokens" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  local field
+  case "$role" in
+    worker) field="worker_tokens" ;;
+    verifier) field="verifier_tokens" ;;
+    *) return 0 ;;
+  esac
+  state_apply_json "$state_yaml" \
+    '(.stages[] | select(.id == $id))[$field] = ($tokens | tonumber)
+     | (.stages[] | select(.id == $id)).tokens
+       = (((.stages[] | select(.id == $id)).worker_tokens // 0)
+          + ((.stages[] | select(.id == $id)).verifier_tokens // 0))' \
+    --arg id "$stage_id" --arg field "$field" --arg tokens "$tokens"
+}
+
 # Stage ids end up in jq filters, yq selectors, log paths, and on-disk
 # filenames. Reject anything that is not the documented kebab-slug shape so
 # the rest of the script can treat the value as a safe identifier. Matches
@@ -454,6 +490,9 @@ _process_repo_locked() {
       # _process_verifier_artefact clears current_stage on exit.
       local verifier_log_path="$repo_root/state/logs/${current_stage}-verifier.log"
       budget_account_tokens_from_log "$repo_root" "$verifier_log_path" "verifier" || true
+      # Per-stage snapshot (stage 11): capture verifier tokens against the
+      # stage entry. Worker tokens may already be set from an earlier tick.
+      stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$verifier_log_path" "verifier"
       _process_verifier_artefact "$repo_root" "$state_yaml" "$current_stage" "$artefact" "$manifest_path"
       budget_increment_tick "$repo_root"
       commit_state_branch "$repo_root"
@@ -506,6 +545,8 @@ _process_repo_locked() {
       if [[ -n "${worker_pid:-}" ]]; then
         local worker_log_path="$repo_root/state/logs/${current_stage}-worker.log"
         budget_account_tokens_from_log "$repo_root" "$worker_log_path" "worker" || true
+        # Per-stage snapshot (stage 11).
+        stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$worker_log_path" "worker"
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).worker_pid = null' \
           --arg id "$current_stage"
@@ -523,6 +564,8 @@ _process_repo_locked() {
       if [[ -n "${verifier_pid:-}" ]]; then
         local stale_verifier_log_path="$repo_root/state/logs/${current_stage}-verifier.log"
         budget_account_tokens_from_log "$repo_root" "$stale_verifier_log_path" "verifier" || true
+        # Per-stage snapshot (stage 11).
+        stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$stale_verifier_log_path" "verifier"
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).verifier_pid = null' \
           --arg id "$current_stage"
