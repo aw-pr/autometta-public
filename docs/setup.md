@@ -130,17 +130,19 @@ bash -n bin/autometta scripts/check-deps.sh scripts/init-host.sh scripts/subscri
 
 ## 6. Publish guard
 
-Autometta ships with the publish-guard shim vendored at `scripts/publish-guard/`. The shim is committed so any fresh clone can re-arm in one command:
+Autometta ships the canonical `repo-publish-workflow` guard at `scripts/git-hooks/` and `scripts/install-guards.sh`. The shim is committed so any fresh clone can re-arm in one command:
 
 ```bash
-bash scripts/publish-guard/install-guards.sh
+bash scripts/install-guards.sh
 ```
 
-That installs `.git/hooks/pre-commit` and `.git/hooks/pre-push`, seeds a gitignored `.publish-guard.local` from the example, and adds publish-safe entries to `.gitignore`. Then edit `.publish-guard.local` with the machine-specific values (home path, username, email, public remote URL fragment, public branch). The hooks are inert until that file exists, so a fresh clone is safe by default but unguarded; never push from an unarmed clone.
+That installs `.git/hooks/pre-commit` and `.git/hooks/pre-push` and seeds a gitignored `.publish-guard.local` from `.publish-guard.local.example`. Set the per-repo gate config once (see `docs/PUBLISH-WORKFLOW.md` for the full list of `publishguard.*` keys), then re-run `install-guards.sh` and it writes the `git publish` alias.
 
-The hooks block (a) any commit that contains a personal-pattern string from `GUARD_PATTERNS`, and (b) any push of a non-public branch to the public remote named in `GUARD_PUBLIC_URL_MATCH`. Override either with `--no-verify` if you intend the action.
+Edit `.publish-guard.local` with the machine-specific values (home path, username, email). The pre-commit hook is toothless until that file carries real patterns, so a fresh clone is safe by default but unguarded against operator-specific leaks; never push from an unarmed clone.
 
-For a deeper introduction or to retrofit a repo that pre-dates this pattern, use the `repo-publish-guard-init` or `repo-publish-guard-retrofit` skills directly.
+The hooks block (a) any commit that contains a personal-pattern string from `.publish-guard.local`, (b) any push of a non-default branch to the public remote (matched by `publishguard.publicmatch`), and (c) any push of the default branch to the public remote unless the `PUBLISH_GUARD_OK=1` sentinel is set, which only the `git publish` alias does. Override any of these with `--no-verify` if you intend the action.
+
+For a deeper introduction or to retrofit a repo that pre-dates this pattern, use the `repo-publish-workflow` skill directly.
 
 ## 7. Uninstall
 
