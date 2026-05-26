@@ -114,10 +114,10 @@ main() {
 
   case "$family" in
     codex)
-      codex exec --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
+      codex exec -C "$repo_root" --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
       ;;
     claude)
-      claude -p "$prompt" </dev/null >"$log_path" 2>&1 &
+      (cd "$repo_root" && claude -p "$prompt" </dev/null >"$log_path" 2>&1) &
       ;;
     *)
       log_msg "unsupported worker family for identity: ${worker_identity}"
