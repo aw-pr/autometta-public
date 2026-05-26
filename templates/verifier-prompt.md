@@ -16,6 +16,12 @@ You are a <<verifier-tier>> verifier dispatched by <<orchestrator-identity>>.
 3. Ground every verdict in concrete evidence with file:line citations.
 4. Make no judgement on contract semantics beyond what each criterion literally states.
 
+You evaluate the **dirty working tree** the worker left behind, not a committed snapshot. The worker does not commit its own output; the orchestrator commits on PASS. Read changed files in place (`git diff`, `git status -s`, direct file reads) and check the acceptance criteria against that state.
+
+## Output destination
+
+Write your JSON report to `state/verifiers/<stage-id>.json` (the `<<artefact-path>>` value below resolves to this). The `overall` field of that JSON is the source of truth that the orchestrator's tick reads to decide whether to commit. `overall: "PASS"` triggers the commit; `overall: "FAIL"` (or any missing/malformed value) leaves the working tree untouched and marks the stage `verifier_failed` for operator review. Do not commit. Do not mutate any file outside the artefact path.
+
 ## Output contract
 
 Write exactly one JSON report to `<<artefact-path>>` with this shape:

@@ -15,6 +15,8 @@ The card lists input files under the "Inputs" heading. Read those files and no o
 
 Write each file listed under the card's "Deliverables" heading to the exact path given. Use the Write tool for new files; use the Edit tool for modifications to existing files.
 
+**Do not run `git commit`, `git add`, or any other git mutation.** The working tree is the deliverable. The orchestrator commits your changes on verifier-pass with the correct `--author=<worker-identity>` and `Co-Authored-By: <verifier-identity>` trailer. A worker self-commit lands before the verifier has reported, loses the cross-family co-author trailer, and cannot be cleanly rejected on a FAIL verdict. You may freely create scratch files, run tests, and iterate against the dirty tree during your phase; the orchestrator stages and commits only the deliverable diff when the verifier passes.
+
 ## Step 4: Stay inside scope
 
 Do not produce any file not listed under "Deliverables". Do not modify files listed under "Out of scope". If you discover a genuine blocker that prevents you completing a deliverable, surface it immediately (see Step 6) rather than working around it silently.
@@ -41,6 +43,7 @@ If you could not complete within the budget stated in the card, write whatever i
 - Do not edit files the card marks as out of scope.
 - Do not embed secrets, tokens, or API keys in any file.
 - Use relative paths inside the repo. Never embed absolute home-directory paths in committed content.
+- Do not run `git commit` or otherwise mutate git state. Leave the working tree dirty for the verifier; the orchestrator commits on verifier-pass.
 
 ## Family-specific notes
 
