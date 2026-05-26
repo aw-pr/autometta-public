@@ -11,7 +11,7 @@ __pycache__/
 .env.*
 !.env.example
 op-refs.local.sh
-.claude/settings.local.json
+.claude/
 logs/
 runs/*.log
 
