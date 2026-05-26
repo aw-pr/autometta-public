@@ -244,6 +244,130 @@ commit_state_branch() {
   )
 }
 
+# Pull the stage card's title-line summary as a commit-message fallback.
+# Cards open with: "# Stage card <stage-id>: <summary>" — return the
+# <summary> portion. Returns empty if no card / no match; the caller
+# substitutes a generic fallback.
+stage_card_summary() {
+  local card_path="$1"
+  [[ -n "$card_path" && -f "$card_path" ]] || { printf ''; return 0; }
+  local line
+  line="$(grep -m1 '^# ' "$card_path" || true)"
+  # Drop "# Stage card <id>: " or just "# " prefix, keep the rest.
+  if [[ "$line" =~ ^#\ Stage\ card\ [^:]+:\ (.+)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  if [[ "$line" =~ ^#\ (.+)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  printf ''
+}
+
+# Decide what to do with a verifier artefact: commit-on-PASS or
+# mark-verifier_failed-on-FAIL. Treats a missing / malformed 'overall'
+# field as FAIL (fail-safe). The working tree on the operator branch
+# is the source of truth for the worker's diff; we commit the non-state
+# changes with the worker as --author and the verifier as Co-Authored-By.
+#
+# Backward-compat: if a worker on the old prompt has already
+# self-committed (clean working tree on a PASS artefact), log a
+# deprecated-path warning and mark the stage completed without
+# erroring.
+_process_verifier_artefact() {
+  local repo_root="$1"
+  local state_yaml="$2"
+  local stage_id="$3"
+  local artefact_rel="$4"
+  local manifest_path="$5"
+  local artefact_abs="$repo_root/$artefact_rel"
+
+  local overall
+  overall="$(jq -r '.overall // empty' "$artefact_abs" 2>/dev/null || true)"
+  if [[ "$overall" != "PASS" && "$overall" != "FAIL" ]]; then
+    log "verifier artefact for ${stage_id} has missing or malformed 'overall' field (got '${overall}'); treating as FAIL"
+    overall="FAIL"
+  fi
+
+  if [[ "$overall" == "FAIL" ]]; then
+    state_apply_json "$state_yaml" \
+      '(.stages[] | select(.id == $id)).status = "verifier_failed" | .current_stage = null' \
+      --arg id "$stage_id"
+    budget_record_failure "$repo_root"
+    log "stage ${stage_id} verifier reported FAIL; working tree left intact for operator review (status=verifier_failed)"
+    return 0
+  fi
+
+  # PASS path. Stage non-state working-tree changes on the current
+  # branch and commit with the worker as author + verifier as
+  # Co-Authored-By. The state-branch commit that follows handles
+  # state/ files.
+  local worker_identity verifier_identity headline summary commit_subject
+  worker_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .worker // empty')"
+  verifier_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .verifier // empty')"
+  headline="$(jq -r '.headline // empty' "$artefact_abs" 2>/dev/null || true)"
+  if [[ -z "$headline" ]]; then
+    local card_path
+    card_path="$(stage_card_for_id "$repo_root" "$stage_id" "$manifest_path")"
+    headline="$(stage_card_summary "$card_path")"
+  fi
+  if [[ -z "$headline" ]]; then
+    headline="worker output accepted"
+  fi
+  commit_subject="${stage_id}: ${headline}"
+
+  local commit_rc=0
+  (
+    cd "$repo_root"
+    local non_state_changes
+    non_state_changes="$(git status --porcelain -- . ':(exclude)state' || true)"
+    if [[ -z "$non_state_changes" ]]; then
+      log "stage ${stage_id} PASS but no diff to commit, presumably worker self-committed (deprecated path)"
+      exit 0
+    fi
+    if [[ -z "$worker_identity" ]]; then
+      log "stage ${stage_id} PASS but worker identity missing from state.yaml; refusing to commit"
+      exit 2
+    fi
+    git add -- . ':(exclude)state' >/dev/null 2>&1 || true
+    if git diff --cached --quiet; then
+      log "stage ${stage_id} PASS: nothing staged after add (state-only diff); skipping worker commit"
+      exit 0
+    fi
+    local commit_args=( --author="$worker_identity" -m "$commit_subject" )
+    if [[ -n "$verifier_identity" ]]; then
+      commit_args+=( -m "Co-Authored-By: $verifier_identity" )
+    fi
+    if ! git commit "${commit_args[@]}" >/dev/null 2>&1; then
+      log "stage ${stage_id} PASS: git commit failed; leaving working tree intact"
+      exit 2
+    fi
+  ) || commit_rc=$?
+  if (( commit_rc != 0 )); then
+    state_apply_json "$state_yaml" \
+      '(.stages[] | select(.id == $id)).status = "verifier_failed" | .current_stage = null' \
+      --arg id "$stage_id"
+    budget_record_failure "$repo_root"
+    return 0
+  fi
+
+  # Record commit SHA back into state.yaml for the audit trail.
+  local commit_sha
+  commit_sha="$(cd "$repo_root" && git rev-parse HEAD 2>/dev/null || true)"
+  if [[ -n "$commit_sha" ]]; then
+    state_apply_json "$state_yaml" \
+      '(.stages[] | select(.id == $id)).commit = $sha | (.stages[] | select(.id == $id)).status = "completed" | (.stages[] | select(.id == $id)).completed_at = $now | .current_stage = null' \
+      --arg id "$stage_id" --arg sha "$commit_sha" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  else
+    state_apply_json "$state_yaml" \
+      '(.stages[] | select(.id == $id)).status = "completed" | (.stages[] | select(.id == $id)).completed_at = $now | .current_stage = null' \
+      --arg id "$stage_id" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  fi
+  budget_reset_failures "$repo_root"
+  log "stage ${stage_id} PASS: committed worker output as ${commit_sha:-unknown} with --author=${worker_identity}"
+}
+
 process_repo() {
   local repo_root="$1"
   local manifest_path="${2:-}"
@@ -306,10 +430,7 @@ _process_repo_locked() {
     local artefact
     artefact="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_artefact // empty')"
     if [[ -n "$artefact" && -f "$repo_root/$artefact" ]]; then
-      state_apply_json "$state_yaml" \
-        '(.stages[] | select(.id == $id)).status = "completed" | .current_stage = null' \
-        --arg id "$current_stage"
-      budget_reset_failures "$repo_root"
+      _process_verifier_artefact "$repo_root" "$state_yaml" "$current_stage" "$artefact" "$manifest_path"
       budget_increment_tick "$repo_root"
       commit_state_branch "$repo_root"
       return 0
