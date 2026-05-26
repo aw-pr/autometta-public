@@ -46,7 +46,7 @@ checkout:
 - `autometta init <repo>`
 - `autometta add-stage <repo> <card>`
 - `autometta status`
-- `autometta attach`
+- `autometta attach <repo>`
 - `autometta tick`
 
 The installer renders a local Homebrew formula outside this repo. The committed

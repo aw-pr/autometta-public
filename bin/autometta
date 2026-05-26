@@ -14,7 +14,7 @@ Usage:
   autometta subscribe [repo-path]
   autometta add-stage <repo-path> <stage-card-path>
   autometta status
-  autometta attach [--dry-run]
+  autometta attach [repo-path] [--dry-run]
   autometta tick [--repair|--reset-halt]
   autometta check-deps
   autometta install-homebrew-local [--dry-run]
@@ -61,6 +61,7 @@ case "$command_name" in
     fi
     run_script init-host.sh
     run_script subscribe-repo.sh "$repo_path"
+    run_script attach.sh --ensure "$repo_path"
     printf '\nNext: review and commit the generated repo setup before running autometta tick.\n'
     printf 'Typical files: .gitignore, state/state.yaml, state/budget.json; .autometta.local.yaml stays gitignored.\n'
     ;;

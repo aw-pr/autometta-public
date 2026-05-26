@@ -145,6 +145,7 @@ autometta init /path/to/target-repo
 git -C /path/to/target-repo add .gitignore state/state.yaml state/budget.json
 git -C /path/to/target-repo commit -m "Initialise Autometta"
 autometta status
+autometta attach /path/to/target-repo
 ```
 
 Then follow `docs/setup.md` to put `autometta tick` under cron. Read `docs/deployment.md` first if the repo needs pinned provenance rather than the default central install.

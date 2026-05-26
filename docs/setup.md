@@ -70,7 +70,8 @@ autometta init .
 
 This creates repo-local state under `state/` and a subscriber file under `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers/`.
 It also creates a gitignored `.autometta.local.yaml` manifest that points back
-to the installed Autometta root.
+to the installed Autometta root. If `tmux` is installed, it also starts a
+detached read-only viewer named `autometta-<project-name>`.
 
 Before running `autometta tick`, review and commit the repo setup files. The tick
 refuses to operate with dirty non-state files.
@@ -115,10 +116,10 @@ Check the controller at a glance:
 autometta status
 ```
 
-Open an optional tmux viewer:
+Open or create the tmux viewer:
 
 ```sh
-autometta attach
+autometta attach .
 ```
 
 Lint scripts without executing setup actions:

@@ -34,10 +34,20 @@ Print the current controller status:
 autometta status
 ```
 
-Open an optional tmux viewer:
+`autometta init <repo>` creates the tmux viewer automatically when `tmux` is
+available. The session is named from the repository basename:
+
+```text
+autometta-<project-name>
+```
+
+For example, a repo called `fractals-from-the-90s` gets
+`autometta-fractals-from-the-90s`.
+
+Open or create the viewer manually:
 
 ```sh
-autometta attach
+autometta attach <repo-path>
 ```
 
 The tmux viewer has one pane for a status snapshot and one pane tailing the
@@ -48,7 +58,7 @@ reconstructed from the filesystem.
 Preview the tmux commands without opening a session:
 
 ```sh
-autometta attach --dry-run
+autometta attach <repo-path> --dry-run
 ```
 
 ## Design constraints
