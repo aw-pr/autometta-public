@@ -62,6 +62,25 @@ Run through every item below before dispatching a worker. A stage card that fail
 - [ ] The commit attribution is clear: committer is the human user; author is the agent identity string of the primary agent.
 - [ ] If a co-author trailer is needed (two agents contributed), it is planned.
 
+## 8. Commit responsibility (orchestrator-commits-on-verifier-pass)
+
+The worker does not commit. The orchestrator commits the worker's working-tree changes only after the verifier artefact reports `overall: PASS`. On `overall: FAIL` (or a missing / malformed `overall` field, which is treated as FAIL) the orchestrator does NOT commit; the stage is marked `verifier_failed` and surfaced for operator review.
+
+- [ ] The worker prompt instructs the worker not to run `git commit`. The working tree is the deliverable.
+- [ ] On `overall: PASS`, the orchestrator stages non-state changes and commits with:
+
+  ```sh
+  git commit \
+    --author="<worker-identity>" \
+    -m "<stage-id>: <one-line summary>" \
+    -m "Co-Authored-By: <verifier-identity>"
+  ```
+
+  The `<worker-identity>` and `<verifier-identity>` strings come from the stage's `worker` and `verifier` fields in `state/state.yaml`. The summary line comes from the verifier artefact's `headline` field if present, otherwise from the stage card's `# Stage card ... :` title line.
+
+- [ ] On `overall: FAIL` (or missing / malformed), do NOT commit. Set `stage.status = "verifier_failed"`, clear `current_stage`, and leave the dirty working tree intact for operator inspection.
+- [ ] Backward-compat fallback: if the working tree is clean on a PASS artefact (a worker on an older prompt self-committed), log "no diff to commit, presumably worker self-committed (deprecated path)" and mark the stage `completed` without erroring.
+
 ## Family-specific notes
 
 <!--
