@@ -38,8 +38,8 @@
           },
           "status": {
             "type": "string",
-            "enum": ["pending", "in_progress", "completed", "failed", "stalled"],
-            "description": "Stage lifecycle status. Transitions: pending -> in_progress -> completed | failed | stalled. failed and stalled are terminal until a human re-briefs."
+            "enum": ["pending", "in_progress", "completed", "failed", "stalled", "verifier_failed"],
+            "description": "Stage lifecycle status. Transitions: pending -> in_progress -> completed | failed | stalled | verifier_failed. failed, stalled, and verifier_failed are terminal until a human re-briefs. verifier_failed means the verifier artefact reported overall=FAIL (or was malformed and treated as FAIL); the worker's working-tree changes have NOT been committed, and the operator decides whether to amend the stage card and re-run or revert."
           },
           "worker": {
             "type": "string",
