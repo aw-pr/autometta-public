@@ -3,6 +3,21 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./budget.sh
+source "$script_dir/budget.sh"
+
+# Token-usage accounting (stage 10).
+#
+# Verifier dispatch is fire-and-forget: this script backgrounds the
+# verifier CLI and exits. Post-exit token parsing therefore lives in
+# tick.sh, which reaps the verifier (artefact present, or verifier_pid
+# from a prior tick no longer running) and calls
+# budget_account_tokens_from_log on the captured verifier log.
+#
+# The parser handles both:
+#   - Codex two-line:  `tokens used` then a digit run (commas tolerated)
+#   - Claude inline:   `Total tokens: <N>`
+# grep tokens: "tokens used" "Total tokens:"
 
 log_msg() {
   printf '%s\n' "$1" >&2

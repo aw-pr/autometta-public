@@ -448,6 +448,12 @@ _process_repo_locked() {
     local artefact
     artefact="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_artefact // empty')"
     if [[ -n "$artefact" && -f "$repo_root/$artefact" ]]; then
+      # Token accounting (stage 10): the verifier has produced its
+      # artefact, so its log is final. Count its tokens before the stage
+      # closes out. This branch runs exactly once per stage because
+      # _process_verifier_artefact clears current_stage on exit.
+      local verifier_log_path="$repo_root/state/logs/${current_stage}-verifier.log"
+      budget_account_tokens_from_log "$repo_root" "$verifier_log_path" "verifier" || true
       _process_verifier_artefact "$repo_root" "$state_yaml" "$current_stage" "$artefact" "$manifest_path"
       budget_increment_tick "$repo_root"
       commit_state_branch "$repo_root"
@@ -493,11 +499,34 @@ _process_repo_locked() {
         commit_state_branch "$repo_root"
         return 0
       fi
+      # Token accounting (stage 10): worker_pid was set but is no longer
+      # alive — the worker has exited. Parse its log once, then clear
+      # worker_pid so subsequent ticks (still waiting on the verifier) do
+      # not double-count.
+      if [[ -n "${worker_pid:-}" ]]; then
+        local worker_log_path="$repo_root/state/logs/${current_stage}-worker.log"
+        budget_account_tokens_from_log "$repo_root" "$worker_log_path" "worker" || true
+        state_apply_json "$state_yaml" \
+          '(.stages[] | select(.id == $id)).worker_pid = null' \
+          --arg id "$current_stage"
+        worker_pid=""
+      fi
       if [[ -n "${verifier_pid:-}" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
         log "verifier ${verifier_pid} for ${current_stage} still running, skipping verifier dispatch"
         budget_increment_tick "$repo_root"
         commit_state_branch "$repo_root"
         return 0
+      fi
+      # Token accounting (stage 10): a previous verifier_pid is dead but
+      # left no artefact (the re-dispatch path). Capture its tokens before
+      # we spawn a fresh verifier, then clear verifier_pid for idempotency.
+      if [[ -n "${verifier_pid:-}" ]]; then
+        local stale_verifier_log_path="$repo_root/state/logs/${current_stage}-verifier.log"
+        budget_account_tokens_from_log "$repo_root" "$stale_verifier_log_path" "verifier" || true
+        state_apply_json "$state_yaml" \
+          '(.stages[] | select(.id == $id)).verifier_pid = null' \
+          --arg id "$current_stage"
+        verifier_pid=""
       fi
       # Bound verifier re-dispatch. A verifier that crashes without writing
       # its artefact would otherwise be re-spawned every tick until the
