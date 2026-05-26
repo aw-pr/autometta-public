@@ -17,6 +17,7 @@ Usage:
   autometta attach [repo-path] [--dry-run]
   autometta tick [--repair|--reset-halt]
   autometta check-deps
+  autometta dashboard [--open]
   autometta install-homebrew-local [--dry-run]
 USAGE
 }
@@ -94,6 +95,9 @@ case "$command_name" in
     ;;
   check-deps)
     run_script check-deps.sh "$@"
+    ;;
+  dashboard)
+    run_script dashboard.sh "$@"
     ;;
   install-homebrew-local)
     run_script install-homebrew-local.sh "$@"
