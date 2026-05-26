@@ -93,19 +93,24 @@ autometta/
 │   ├── setup.md              # pass 2 - operator setup guide
 │   ├── deployment.md         # central install, manifests, submodule escape hatch
 │   ├── observability.md      # status and attachable viewer model
-│   └── prior-art.md          # what was adopted and what was ignored
+│   ├── prior-art.md          # what was adopted and what was ignored
+│   └── PUBLISH-WORKFLOW.md   # private dev / public publish branch model and gate
 ├── templates/
 │   ├── stage-card.md         # one card per dispatch
 │   ├── worker-prompt.md      # the prompt the worker reads
+│   ├── verifier-prompt.md    # the prompt the verifier reads
 │   └── orchestrator-checklist.md
-├── scripts/                  # pass 2 runtime: tick, spawn, budget, init
+├── scripts/                  # pass 2 runtime: tick, spawn, budget, init, publish-guard hooks
 ├── packaging/                # local Homebrew formula template
 ├── schemas/                  # state.yaml + budget.json schemas
 ├── state/                    # per-repo runtime state (gitignored content)
 ├── memory/                   # cross-session agent memory (in-repo)
 ├── skills/                   # skills hosted by this repo
+│   ├── agent-orchestrator/   # canonical home (mcp-hub copy is a symlink back)
+│   └── autometta-setup/      # adopt the dispatch contract in another repo
 └── examples/
     ├── fractals-stage-cards/ # real cards as illustrations
+    ├── benchmarks/           # end-to-end benchmark runs (e.g. bench-005)
     └── self-host/            # the cards Autometta used to build itself
 ```
 
