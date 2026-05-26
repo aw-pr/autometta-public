@@ -40,6 +40,36 @@ if [[ ! -f "$template_file" ]]; then
   exit 1
 fi
 
+# Vendor Chart.js for the cost dashboard (stage 11). The dashboard renders
+# offline; we must not depend on a CDN at runtime. The hash is pinned and
+# mismatches abort the install.
+chartjs_version="4.4.0"
+chartjs_url="https://cdn.jsdelivr.net/npm/chart.js@${chartjs_version}/dist/chart.umd.js"
+chartjs_sha256="321e3a3fa98da4aaa957d10be57cbb514de0989eed8f9d726b5d05902cd01904"
+chartjs_dest="$autometta_root/dashboard/vendor/chart.min.js"
+mkdir -p "$autometta_root/dashboard/vendor"
+if [[ ! -f "$chartjs_dest" ]] \
+   || [[ "$(shasum -a 256 "$chartjs_dest" | awk '{print $1}')" != "$chartjs_sha256" ]]; then
+  printf 'Fetching Chart.js %s from %s\n' "$chartjs_version" "$chartjs_url"
+  tmp_chart="$(mktemp)"
+  if ! curl --fail-with-body -sSL --max-time 60 "$chartjs_url" -o "$tmp_chart"; then
+    printf 'ERROR: failed to download Chart.js from %s\n' "$chartjs_url" >&2
+    rm -f "$tmp_chart"
+    exit 1
+  fi
+  observed_sha="$(shasum -a 256 "$tmp_chart" | awk '{print $1}')"
+  if [[ "$observed_sha" != "$chartjs_sha256" ]]; then
+    printf 'ERROR: Chart.js SHA256 mismatch.\n  expected %s\n  got      %s\n' \
+      "$chartjs_sha256" "$observed_sha" >&2
+    rm -f "$tmp_chart"
+    exit 1
+  fi
+  mv "$tmp_chart" "$chartjs_dest"
+  printf 'Chart.js vendored at %s (sha256 %s)\n' "$chartjs_dest" "$chartjs_sha256"
+else
+  printf 'Chart.js already vendored at %s (sha256 verified)\n' "$chartjs_dest"
+fi
+
 if command -v git >/dev/null 2>&1 && git -C "$autometta_root" rev-parse --short HEAD >/dev/null 2>&1; then
   version="$(git -C "$autometta_root" rev-parse --short HEAD)"
 else
