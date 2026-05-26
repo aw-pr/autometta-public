@@ -127,6 +127,30 @@ The autonomous loop now exists as `phat-controller`. It is still layered on this
 - `schemas/`: JSON schemas for the state and budget files.
 - `autometta status` and `autometta attach`: read-only operator views.
 
+### Canonical `halt_reason` values
+
+When `state/budget.json` is marked `halted: true`, the `halt_reason`
+field carries one of the following canonical strings. The set is
+closed — every call to `budget_halt` in the loop writes one of these,
+and nothing else overwrites a pre-existing reason on subsequent ticks:
+
+- `token-cap` — `tokens_spent >= token_cap_total`.
+- `wall-clock-cap` — `wall_clock_elapsed_seconds >= wall_clock_cap_seconds`.
+- `tick-cap` — `clock_ticks_used >= clock_tick_cap`.
+- `failure-cap` — `consecutive_failures >= consecutive_failure_cap`.
+- `dirty-working-tree` — the repo working tree was not clean when the
+  tick attempted to advance state.
+- `yq-missing` — the `yq` binary required to read `state/state.yaml`
+  was not on PATH.
+- `invalid-stage-id` — `current_stage` (or a referenced stage id) failed
+  the id-format validator.
+
+`budget_check_caps` distinguishes "real cap hit this tick" (return code
+1; one of the first four strings is selected via the
+`BUDGET_CHECK_LAST_HIT` side channel) from "already halted on a previous
+tick" (return code 2; caller must preserve the recorded reason rather
+than overwrite it).
+
 ## Reading order for a new operator
 
 1. This document.
