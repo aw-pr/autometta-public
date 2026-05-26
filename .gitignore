@@ -19,3 +19,6 @@ state/logs/
 state/
 
 /VERSION
+
+# Dashboard: Chart.js is downloaded at install time, not committed.
+dashboard/vendor/

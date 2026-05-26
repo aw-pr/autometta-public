@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>autometta cost dashboard</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <header class="header">
+    <h1>autometta cost dashboard</h1>
+    <div class="meta">
+      <span id="generated-at">loading...</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel" id="panel-repos">
+      <h2>Per repo</h2>
+      <div id="repos-grid" class="grid"></div>
+      <div class="chart-wrap">
+        <canvas id="chart-repos"></canvas>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-stages">
+      <h2>Per stage</h2>
+      <div id="stages-table-wrap"></div>
+      <div class="chart-wrap">
+        <canvas id="chart-stages"></canvas>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-models">
+      <h2>Per model</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-models"></canvas>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-days">
+      <h2>Per day</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-days"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <script src="vendor/chart.min.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

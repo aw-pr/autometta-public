@@ -1,0 +1,102 @@
+:root {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --pass: #2ea043;
+  --fail: #f85149;
+  --stall: #d29922;
+  --pending: #6e7681;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.header {
+  padding: 1.5rem 2rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.header h1 { margin: 0 0 .25rem; font-size: 1.4rem; font-weight: 600; }
+.meta { color: var(--muted); font-size: .85rem; }
+
+main {
+  display: grid;
+  gap: 1.25rem;
+  padding: 1.25rem 2rem 2rem;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem 1.25rem;
+}
+.panel h2 {
+  margin: 0 0 .75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: .75rem;
+  margin-bottom: 1rem;
+}
+
+.repo-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: .75rem .9rem;
+  background: #0d1117;
+}
+.repo-card .name { font-weight: 600; }
+.repo-card .path { color: var(--muted); font-size: .78rem; word-break: break-all; }
+.repo-card .row { display: flex; justify-content: space-between; margin-top: .35rem; font-size: .85rem; }
+.repo-card.halted { border-color: var(--fail); }
+
+table.stages {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .85rem;
+}
+table.stages th, table.stages td {
+  text-align: left;
+  padding: .4rem .6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+table.stages th { color: var(--muted); font-weight: 500; }
+table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.status {
+  display: inline-block;
+  padding: .1rem .45rem;
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 600;
+}
+.status.completed       { background: rgba(46,160,67,.15); color: var(--pass); }
+.status.verifier_failed { background: rgba(248,81,73,.15); color: var(--fail); }
+.status.stalled         { background: rgba(210,153,34,.15); color: var(--stall); }
+.status.in_progress     { background: rgba(88,166,255,.15); color: var(--accent); }
+.status.pending         { background: rgba(110,118,129,.15); color: var(--pending); }
+
+.chart-wrap {
+  position: relative;
+  height: 260px;
+  margin-top: .5rem;
+}
