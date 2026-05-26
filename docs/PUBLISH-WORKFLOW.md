@@ -9,7 +9,7 @@ Autometta uses a one-remote, two-branch model:
 - **`dev`** - the private working branch. Atomic commits, per-agent author attribution, full feedback-banking memory chain. Never goes to the public remote. The pre-push hook enforces this.
 - **`publish`** - the public-facing line. Created as an orphan-squash from `dev` at the first publish. Subsequent updates either fast-forward atomic merges from a clean topic branch, or land as a single squash commit per merge.
 
-The public remote is `aw-pr/autometta` on GitHub. Branch protection keeps everything except `main` off the public side; `publish` is pushed as `publish:main` on the public remote.
+The public remote is `aw-pr/autometta-public` on GitHub. Branch protection keeps everything except `main` off the public side; `publish` is pushed as `publish:main` on the public remote.
 
 ## Why squash for the first cut
 
@@ -50,7 +50,7 @@ Already done in this repo. Documented here for adopters cloning the mechanism in
 Done once, the first time Autometta goes public.
 
 1. Confirm the working tree on `dev` is clean and the publish-readiness audit has run. Both reviewer reports must show no must-fix items outstanding.
-2. Confirm `.publish-guard.local` `GUARD_PUBLIC_URL_MATCH` matches the canonical public remote (`aw-pr/autometta`) and that `git remote -v` points at the same.
+2. Confirm `.publish-guard.local` `GUARD_PUBLIC_URL_MATCH` matches the canonical public remote (`aw-pr/autometta-public`) and that `git remote -v` points at the same.
 3. From `dev`, create the publish orphan:
    ```sh
    git checkout --orphan publish
