@@ -249,10 +249,22 @@ process_repo() {
     log "tick already in progress for ${repo_root}, skipping"
     return 0
   fi
+  ensure_tmux_viewer "$repo_root"
   local rc=0
   _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
   release_repo_lock "$repo_root"
   return $rc
+}
+
+# Best-effort: keep the autometta-<repo> tmux viewer alive whenever the
+# loop is actually doing work for a repo. Idempotent and non-fatal —
+# cron runs without a TTY, but `tmux new-session -d` does not need one.
+ensure_tmux_viewer() {
+  local repo_root="$1"
+  if ! command -v tmux >/dev/null 2>&1; then
+    return 0
+  fi
+  "$script_dir/attach.sh" --ensure "$repo_root" >/dev/null 2>&1 || true
 }
 
 _process_repo_locked() {
