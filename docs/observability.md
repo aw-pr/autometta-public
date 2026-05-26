@@ -35,7 +35,11 @@ autometta status
 ```
 
 `autometta init <repo>` creates the tmux viewer automatically when `tmux` is
-available. The session is named from the repository basename:
+available. Each `autometta tick` also re-ensures the viewer per repo it
+processes, so a killed session reappears on the next tick and a freshly
+subscribed repo gets one as soon as the loop touches it. The check is a
+no-op when `tmux` is not on `PATH`, and a no-op when the session already
+exists. The session is named from the repository basename:
 
 ```text
 autometta-<project-name>
