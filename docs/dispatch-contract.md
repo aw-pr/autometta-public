@@ -66,6 +66,14 @@ If the diff is correct and acceptance has passed, the stage is done. If either i
 
 The commit is atomic and follows the per-agent author attribution rule laid down in `~/.claude/rules/mcp-hub-dev-rules.md`: committer is the human user; author is the canonical agent identity of the primary worker. A co-author trailer is added when a second agent contributed non-trivially. The stage card is committed alongside the deliverables so the audit trail is in git, not in chat.
 
+**The orchestrator commits, not the worker.** The worker leaves a dirty working tree as its deliverable; the verifier evaluates that dirty tree and writes its artefact; the orchestrator reads the artefact's `overall` field and acts:
+
+- `overall: PASS` — orchestrator stages the non-state working-tree changes and commits with `--author=<worker-identity>` and a `Co-Authored-By: <verifier-identity>` trailer. The commit subject is `<stage-id>: <headline>`, where the headline comes from the verifier artefact's `headline` field if present, otherwise from the stage card's title line. The stage moves to `completed`; the commit SHA is recorded in `state/state.yaml`.
+- `overall: FAIL` (or a missing / malformed `overall` field, treated as FAIL by the orchestrator) — no commit. The stage moves to `verifier_failed`, `current_stage` is cleared, and the dirty working tree is left intact for the operator to inspect, amend the stage card, and re-run, or revert.
+- Backward-compat — if a worker on an older prompt self-committed before the verifier ran, the working tree on a PASS artefact will be clean. The tick logs a deprecated-path warning and marks the stage `completed` without erroring. New stages should rely on the orchestrator commit path so the `Co-Authored-By: <verifier>` trailer appears in `git log`.
+
+This concentrates the commit decision at the one point where the verifier verdict is known. A worker that self-committed before the verifier ran would land its diff with an unknown verifier identity (the cross-family co-author trailer would be missing on every commit) and would force a `git revert` whenever the verifier later said FAIL. See [[memory/decision-orchestrator-commits-on-verifier-pass]] for the full rationale and rejected alternatives.
+
 ## The five headless gotchas
 
 These are the failure modes documented in the source projects (fractals-from-the-90s, agentic-rag-kimble). Each one has bitten in production at least once. The contract mitigates each at a specific step; do not assume any one of them goes away on its own.
