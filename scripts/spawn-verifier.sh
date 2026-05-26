@@ -116,10 +116,10 @@ main() {
 
   case "$family" in
     codex)
-      codex exec --sandbox read-only "$prompt" </dev/null >"$log_path" 2>&1 &
+      codex exec -C "$repo_root" --sandbox read-only "$prompt" </dev/null >"$log_path" 2>&1 &
       ;;
     claude)
-      claude -p "$prompt" </dev/null >"$log_path" 2>&1 &
+      (cd "$repo_root" && claude -p "$prompt" </dev/null >"$log_path" 2>&1) &
       ;;
     *)
       log_msg "unsupported verifier family for identity: ${verifier_identity}"
