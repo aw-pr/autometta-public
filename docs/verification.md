@@ -44,10 +44,21 @@ The verifier judges criteria and reports evidence. The orchestrator owns integra
 
 This separation keeps responsibilities clear:
 
-- Verifier: run checks, produce evidence, return verdict.
-- Orchestrator: read full diff, reconcile intent versus output, choose re-brief or surface path, and complete integration.
+- Verifier: run checks against the dirty working tree, produce evidence, return verdict via the `overall` field of the artefact JSON.
+- Orchestrator: read full diff, reconcile intent versus output, branch on `overall`, and either commit (PASS) or surface for operator review (FAIL).
 
 For the full operational sequence, see [Step 6: Orchestrator integration](dispatch-contract.md#step-6-orchestrator-integration) and [Step 7: Commit](dispatch-contract.md#step-7-commit).
+
+## Commit-on-verifier-pass branching (pass-2)
+
+The pass-2 tick (`scripts/tick.sh`) operationalises Step 7's "orchestrator commits, not worker" rule by branching on the verifier artefact's `overall` field:
+
+- `overall: PASS` — orchestrator stages non-state working-tree changes and commits with `--author=<worker-identity>` and a `Co-Authored-By: <verifier-identity>` trailer derived from `state/state.yaml`. The commit subject is `<stage-id>: <headline>`. Stage moves to `completed`.
+- `overall: FAIL` — no commit. Stage moves to the `verifier_failed` status (new in the state schema). The dirty working tree is left intact for operator review.
+- Missing / malformed `overall` — treated as FAIL (fail-safe). Same handling as FAIL.
+- Clean working tree on PASS — logged as the deprecated worker-self-commit path; stage marked `completed` without erroring for adopters who have not yet updated their workers to the new prompt.
+
+The worker prompt explicitly forbids `git commit` so the dirty-tree contract holds. The verifier prompt explicitly states that the verifier reads the dirty tree (not a committed snapshot) and that the `overall` field drives the orchestrator's commit decision.
 
 ## Family-specific verification notes
 
