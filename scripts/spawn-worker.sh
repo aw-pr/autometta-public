@@ -3,6 +3,23 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./budget.sh
+source "$script_dir/budget.sh"
+
+# Token-usage accounting (stage 10).
+#
+# Worker dispatch is fire-and-forget: this script backgrounds the worker
+# CLI and exits immediately so the cron-driven tick loop is not blocked
+# by a 30-minute run. Post-exit token parsing therefore lives in tick.sh,
+# which reaps the worker via kill -0 on the recorded worker_pid and calls
+# budget_account_tokens_from_log on the captured log.
+#
+# The parser implementation (budget_parse_tokens_from_log in budget.sh,
+# sourced above) recognises both formats produced by the supported
+# families:
+#   - Codex two-line:  `tokens used` then a digit run (commas tolerated)
+#   - Claude inline:   `Total tokens: <N>`
+# grep tokens: "tokens used" "Total tokens:"
 
 log_msg() {
   printf '%s\n' "$1" >&2

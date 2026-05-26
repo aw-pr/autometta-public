@@ -151,6 +151,49 @@ and nothing else overwrites a pre-existing reason on subsequent ticks:
 tick" (return code 2; caller must preserve the recorded reason rather
 than overwrite it).
 
+### Token accounting
+
+`state/budget.json` carries `tokens_spent` and `token_cap_total`. The
+loop increments `tokens_spent` after each worker and verifier phase by
+parsing the captured CLI log; `token-cap` then becomes an enforceable
+halt reason rather than a decorative field.
+
+- **Who increments.** `tick.sh` is the sole writer. The spawn scripts
+  (`spawn-worker.sh`, `spawn-verifier.sh`) source `budget.sh` but cannot
+  account in-band because they background the worker / verifier process
+  and exit immediately so the cron tick is not blocked by a 30-minute
+  run.
+- **When.** Post-exit, on the same tick that reaps the phase:
+  - Worker phase — when `worker_pid` was recorded on a previous tick but
+    `kill -0` now fails. Accounting fires once, then `worker_pid` is
+    cleared in `state.yaml` so subsequent ticks (still waiting on the
+    verifier) do not double-count.
+  - Verifier phase — when the verifier artefact is present at
+    `state/verifiers/<stage-id>.json`. Accounting fires immediately
+    before `_process_verifier_artefact`, which clears `current_stage`
+    on exit. If a prior verifier crashed without writing an artefact and
+    is being re-dispatched, its log is accounted for and `verifier_pid`
+    is cleared before the fresh dispatch.
+- **From what.** `budget_parse_tokens_from_log` (in `scripts/budget.sh`)
+  scans the captured stdout/stderr log for either family format:
+  - Codex two-line: a line that is exactly `tokens used`, followed by a
+    line whose first token is a digit run (commas tolerated).
+  - Claude inline: any line containing `Total tokens:` followed by a
+    digit run (commas and spaces tolerated).
+  When both appear in one log — for example a worker that retried — the
+  **last match wins**. Earlier numbers are treated as cumulative
+  subtotals or aborted-attempt counts; only the final figure is the
+  authoritative usage. The parser is pure awk, bash 3.2-compatible, no
+  python / node dependency.
+- **Failure mode.** A missing log, a log with no token line, or a
+  non-numeric capture is **non-fatal**: the parser logs a warning to
+  stderr and returns without mutating `tokens_spent`. The phase is
+  treated as having spent zero, which is a known undercount; the
+  `wall-clock-cap` and `tick-cap` paths still provide a backstop.
+- **Cap enforcement is automatic.** The next `budget_check_caps` after
+  the increment will surface the `token-cap` halt reason if
+  `tokens_spent >= token_cap_total`. No new gate is added.
+
 ## Reading order for a new operator
 
 1. This document.
