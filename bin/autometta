@@ -44,7 +44,10 @@ case "$command_name" in
     usage
     ;;
   --version|version)
-    if git -C "$autometta_root" rev-parse --short HEAD >/dev/null 2>&1; then
+    version_file="$autometta_root/VERSION"
+    if [[ -s "$version_file" ]]; then
+      printf 'autometta %s\n' "$(head -n 1 "$version_file" | tr -d '[:space:]')"
+    elif git -C "$autometta_root" rev-parse --short HEAD >/dev/null 2>&1; then
       printf 'autometta %s\n' "$(git -C "$autometta_root" rev-parse --short HEAD)"
     else
       printf 'autometta local\n'
