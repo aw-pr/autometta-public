@@ -2,7 +2,7 @@
 
 This is the rolling plan for autometta building itself with itself. Each stage produces an artefact AND adopts it for the next stage. The plan lives in-repo so any agent picking up a fresh session sees the same state. Status is the ground truth; the task list at the harness level shadows this file, not the other way round.
 
-## Status, 2026-05-24
+## Status, 2026-05-26
 
 | # | Stage | Status | Commit | Card |
 |---|---|---|---|---|
@@ -19,7 +19,14 @@ This is the rolling plan for autometta building itself with itself. Each stage p
 | 5c | phat-controller hardening round 2: verifier prompt template, kill -0 guards, branch save/restore, add-stage helper, --reset-halt | done | `8a3e60c` | [`05c-phat-controller-hardening-2.md`](./05c-phat-controller-hardening-2.md) |
 | 5d | autometta-setup skill (sibling to agent-orchestrator) for adopting autometta in other repos | done | `8837a7d` | (no card; small skill authored directly by Opus orchestrator) |
 | 6 | Self-host real dispatch test (scripts/health-check.sh) | done | `19bf097` | [`06-real-dispatch-test.md`](./06-real-dispatch-test.md) |
-| 7 | CLI install, manifest adoption, and passive observability cockpit | in progress | pending | (operator-authored improvement pass) |
+|   | CLI install, manifest adoption, passive observability cockpit | done | `0431a4c`, `4bffcc0`, `31e865e` | (operator-authored improvement pass, no card) |
+| 7 | Orchestrator commits worker output on verifier PASS (worker no longer commits; `verifier_failed` status added) | done | `3df462c`, `93e0709`, `bc0650b` | [`07-orchestrator-commits-not-workers.md`](./07-orchestrator-commits-not-workers.md) |
+| 8 | `autometta --version` reads pinned VERSION file with `git rev-parse` fallback (no more stale upstream ref) | done | `a6063b5` | [`08-version-string-from-cellar.md`](./08-version-string-from-cellar.md) |
+| 9 | Preserve original `halt_reason` and name the cap that fired (stop overwriting on already-halted ticks) | done | `70e4b75` | [`09-budget-cap-halt-misattribution.md`](./09-budget-cap-halt-misattribution.md) |
+| 10 | Parse and accumulate worker/verifier token usage into `budget.json` | done | `2fac950` | [`10-token-usage-tracking.md`](./10-token-usage-tracking.md) |
+| 11 | Cost dashboard: per-stage token snapshotting in `tick.sh`, aggregator emits `data.json`, static HTML/CSS/JS renderer with four canvases, Chart.js 4.4.0 pinned vendor, `autometta dashboard` subcommand, `docs/dashboard.md` | done | `1096581`, `e63745d`, `60f1226`, `eecb02a`, `2d4747b`, `6f87171` | [`11-cost-dashboard.md`](./11-cost-dashboard.md) |
+|   | Follow-ups: artefact-check ordering + bash-3.2 regex; installer exec-bit restoration | done | `f6bf91d`, `a1ded4f`, `4d51e77` | (no card; small remediations) |
+|   | Auto-ensure `autometta-<repo>` tmux viewer each tick | done | `31e865e` | (no card; small operator improvement) |
 
 ## Stage 6 readiness
 
