@@ -78,6 +78,8 @@ mkdir -p "$formula_dir"
 
 chmod +x "$autometta_root"/scripts/*.sh
 
+printf '%s\n' "$version" > "$autometta_root/VERSION"
+
 tar \
   --exclude './.git' \
   --exclude './state' \
