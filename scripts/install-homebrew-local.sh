@@ -75,6 +75,9 @@ if ! command -v brew >/dev/null 2>&1; then
 fi
 
 mkdir -p "$formula_dir"
+
+chmod +x "$autometta_root"/scripts/*.sh
+
 tar \
   --exclude './.git' \
   --exclude './state' \
