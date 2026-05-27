@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# op-refs.local.sh — GITIGNORED override for the real 1Password references.
+#
+# Copy this file to op-refs.local.sh in the same directory and replace the
+# placeholders below with the real vault/item/field paths. Sourced by
+# op-refs.sh at the bottom; values exported here override the placeholders.
+#
+# Find a reference in 1Password desktop: right-click an item -> Copy Secret
+# Reference. Or via the CLI:
+#   op item get "<ItemName>" --vault "<VaultName>" --format=json | jq '.fields[].label'
+
+export OP_REF_OPENAI_API_KEY="op://Personal/OpenAI/credential"
+export OP_REF_ANTHROPIC_API_KEY="op://Personal/Anthropic/credential"
+
+# Leave commented unless you store the Claude OAuth token in 1Password as well.
+# This is the env-var route for Claude Pro / Max OAuth via op-fetch; for the
+# default file-based session at ~/.config/claude/ it is not needed.
+# export OP_REF_CLAUDE_CODE_OAUTH_TOKEN="op://Personal/Claude-OAuth/credential"

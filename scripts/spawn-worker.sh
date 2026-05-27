@@ -112,12 +112,34 @@ main() {
   prompt="$(render_prompt "$repo_root" "$card_path" "$worker_identity")"
   log_path="$logs_dir/${stage_id}-worker.log"
 
+  # Resolve auth route via the canonical op-fetch pattern (auth-route-security
+  # skill). Subscription mode emits no pairs; api mode emits NAME=$OP_REF_NAME
+  # for op-fetch to resolve via the service-account token. op-fetch sanitises
+  # the child env (env -i with an allowlist) so any inherited OPENAI_API_KEY /
+  # ANTHROPIC_API_KEY cannot redirect billing accidentally.
+  local autometta_root_local="$(cd "$script_dir/.." && pwd)"
+  if [[ -f "$autometta_root_local/op-refs.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$autometta_root_local/op-refs.sh"
+  fi
+  local auth_pairs
+  if ! auth_pairs="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" "$family")"; then
+    log_msg "auth-route resolver failed for family=$family"
+    exit 1
+  fi
+  if ! command -v op-fetch >/dev/null 2>&1; then
+    log_msg "op-fetch not on PATH; required for the auth-route wrapper"
+    exit 1
+  fi
+
   case "$family" in
     codex)
-      codex exec -C "$repo_root" --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
+      # shellcheck disable=SC2086
+      op-fetch $auth_pairs -- codex exec -C "$repo_root" --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
       ;;
     claude)
-      (cd "$repo_root" && claude -p "$prompt" </dev/null >"$log_path" 2>&1) &
+      # shellcheck disable=SC2086
+      ( cd "$repo_root" && op-fetch $auth_pairs -- claude -p "$prompt" </dev/null >"$log_path" 2>&1 ) &
       ;;
     *)
       log_msg "unsupported worker family for identity: ${worker_identity}"

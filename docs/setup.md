@@ -171,7 +171,68 @@ The hooks block (a) any commit that contains a personal-pattern string from `.pu
 
 For a deeper introduction or to retrofit a repo that pre-dates this pattern, use the `repo-publish-workflow` skill directly.
 
-## 7. Uninstall
+## 7. Auth routes (subscription vs API key)
+
+Every dispatched agent (worker or verifier) runs on either its OAuth subscription session (Claude Pro / ChatGPT plan) or its API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude). Default for both families is `subscription`. Aligned to the `auth-route-security` skill: every launch goes through `op-fetch`, which exec's the child with `env -i` + an allowlist + named refs only — so no stray API key from your parent shell can accidentally redirect billing.
+
+### One-time setup
+
+1. Install `op-fetch` (typically at `~/Scripts/op-fetch`) and a 1Password service-account token at `~/.config/op/service-account.env` (or wherever `$OP_SERVICE_ACCOUNT_ENV` points). See the auth-route-security skill for details. The service account must have read access to the vaults that hold your Codex / Claude API keys.
+2. Copy `op-refs.local.sh.example` to `op-refs.local.sh` in the autometta repo root and replace the placeholders with the real op:// references. `op-refs.local.sh` is gitignored.
+3. In the **subscribed repo** (the one whose dispatches you are routing), copy `.autometta.local.yaml.example` to `.autometta.local.yaml` and set the `auth.<family>.mode` per family.
+
+### Two committed files, one gitignored
+
+```sh
+op-refs.sh                  # COMMITTED — placeholder refs, sources op-refs.local.sh
+op-refs.local.sh.example    # COMMITTED — template showing the real-ref format
+op-refs.local.sh            # GITIGNORED — your actual op:// references
+```
+
+`op-refs.sh` declares `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` with `op://YOUR_VAULT/...` placeholders, then sources `op-refs.local.sh` to let your real values override.
+
+### Per-repo mode toggle
+
+`.autometta.local.yaml` (gitignored under `*.local`) carries only the mode:
+
+```yaml
+auth:
+  codex:
+    mode: api          # subscription | api
+  claude:
+    mode: subscription
+```
+
+Override at dispatch time without editing the manifest:
+
+```sh
+AUTOMETTA_CODEX_MODE=api  autometta tick
+AUTOMETTA_CLAUDE_MODE=api autometta tick
+```
+
+### Verify before any dispatch
+
+```sh
+autometta auth status            # mode + ref provenance per family
+autometta auth check codex       # PASS / FAIL / subscription with redacted credential
+autometta auth check claude
+```
+
+`auth check` calls `op-fetch --print` against the configured ref — if the service-account token resolves it, the dispatch path will too. The resolved key is redacted in the report and never written to disk.
+
+### How it dispatches
+
+`scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` source `op-refs.sh`, ask `scripts/auth-route.sh <family>` for the NAME=ref pair (empty when subscription), then invoke `op-fetch <pairs> -- codex exec ...` / `op-fetch <pairs> -- claude -p ...`. In subscription mode no key is fetched but the child still gets the sanitised env. In api mode a single key is fetched and injected with nothing else from the parent shell. Fails closed: missing `op-fetch`, an unset `OP_REF_*`, or a placeholder ref aborts the spawn before any token is spent.
+
+For manual orchestrator dispatches outside the loop, the pattern is:
+
+```sh
+source "$autometta_root/op-refs.sh"
+auth_pairs="$(REPO_ROOT=$repo scripts/auth-route.sh codex)"
+op-fetch $auth_pairs -- codex exec -C "$repo" --sandbox workspace-write "$prompt" </dev/null >log 2>&1 &
+```
+
+## 8. Uninstall
 
 Remove one subscriber:
 
