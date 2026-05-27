@@ -25,6 +25,7 @@ This is the rolling plan for autometta building itself with itself. Each stage p
 | 9 | Preserve original `halt_reason` and name the cap that fired (stop overwriting on already-halted ticks) | done | `70e4b75` | [`09-budget-cap-halt-misattribution.md`](./09-budget-cap-halt-misattribution.md) |
 | 10 | Parse and accumulate worker/verifier token usage into `budget.json` | done | `2fac950` | [`10-token-usage-tracking.md`](./10-token-usage-tracking.md) |
 | 11 | Cost dashboard: per-stage token snapshotting in `tick.sh`, aggregator emits `data.json`, static HTML/CSS/JS renderer with four canvases, Chart.js 4.4.0 pinned vendor, `autometta dashboard` subcommand, `docs/dashboard.md` | done | `1096581`, `e63745d`, `60f1226`, `eecb02a`, `2d4747b`, `6f87171` | [`11-cost-dashboard.md`](./11-cost-dashboard.md) |
+| 12 | Per-repo macOS LaunchAgent heartbeat replacing global cron while preserving non-macOS cron fallback | done | `pending` | [`12-launchagent-heartbeat.md`](./12-launchagent-heartbeat.md) |
 |   | Follow-ups: artefact-check ordering + bash-3.2 regex; installer exec-bit restoration | done | `f6bf91d`, `a1ded4f`, `4d51e77` | (no card; small remediations) |
 |   | Auto-ensure `autometta-<repo>` tmux viewer each tick | done | `31e865e` | (no card; small operator improvement) |
 

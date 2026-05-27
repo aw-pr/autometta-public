@@ -18,6 +18,8 @@ Usage:
   autometta tick [--repair|--reset-halt]
   autometta check-deps
   autometta dashboard [--open]
+  autometta install-launchagent <repo-path> [--interval N]
+  autometta uninstall-launchagent <repo-path>
   autometta install-homebrew-local [--dry-run]
 USAGE
 }
@@ -98,6 +100,20 @@ case "$command_name" in
     ;;
   dashboard)
     run_script dashboard.sh "$@"
+    ;;
+  install-launchagent)
+    if [[ $# -lt 1 ]]; then
+      printf 'usage: autometta install-launchagent <repo-path> [--interval N]\n' >&2
+      exit 1
+    fi
+    run_script install-launchagent.sh "$@"
+    ;;
+  uninstall-launchagent)
+    if [[ $# -ne 1 ]]; then
+      printf 'usage: autometta uninstall-launchagent <repo-path>\n' >&2
+      exit 1
+    fi
+    run_script uninstall-launchagent.sh "$@"
     ;;
   install-homebrew-local)
     run_script install-homebrew-local.sh "$@"
