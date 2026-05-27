@@ -45,13 +45,12 @@ Stand up a minimal Python Agent SDK script at `scripts/verify-sdk.py` that reads
 1. `python3 scripts/verify-sdk.py --help` prints usage and exits 0.
 2. With `ANTHROPIC_API_KEY` unset and the SDK installed, the script exits non-zero with a clear "missing ANTHROPIC_API_KEY" message and does not call any API.
 3. With the SDK not installed (simulated by removing the package), the script exits 2 with a message naming `scripts/requirements-sdk.txt`.
-4. Invoked via `op-fetch OP_REF_ANTHROPIC_API_KEY -- python3 scripts/verify-sdk.py --stage-id 14-auth-route-toggle --card examples/self-host/14-auth-route-toggle.md --artefact-glob 'scripts/auth-route.sh,scripts/auth.sh,bin/autometta' --out /tmp/v15a.json`, it writes a JSON file with the same top-level keys as the existing `state/verifiers/14-auth-route-toggle.json`.
-5. The output JSON contains an `overall` key with value `PASS` or `FAIL`, and a per-criterion `checks` array.
-6. The script's exit code is `0` for `overall=PASS`, `1` for `overall=FAIL`, `2` for environment errors. The current `claude -p` flow conflates 0 and PASS, which we are deliberately keeping.
-7. `docs/sdk-verifier.md` exists and is referenced from `README.md` section "Verification" (one-line addition, not a rewrite).
-8. `memory/decision-sdk-verifier-prototype.md` follows the decision-memo format (Decision / Why / How to apply, plus a `[[link]]` to `decision-auth-route-toggle`).
-9. No files outside the deliverables list are modified.
-10. The cd-fix at `9e282f3` is not reverted (regression guard).
+4. The script's CLI surface accepts `--stage-id`, `--card`, `--artefact-glob`, `--out`, all four are required, and missing any of them produces a clear argparse-style error.
+5. The intended output JSON shape (documented in `docs/sdk-verifier.md`) names the same top-level keys as an existing `state/verifiers/<stage-id>.json` artefact: `overall`, `checks`. The doc shows a literal example envelope.
+6. The script's exit-code mapping is documented in `docs/sdk-verifier.md`: `0` for `overall=PASS`, `1` for `overall=FAIL`, `2` for environment errors (missing key, missing SDK). The implementation matches the doc (verifier reads the source and confirms).
+7. `memory/decision-sdk-verifier-prototype.md` follows the decision-memo format (Decision / Why / How to apply, plus a `[[link]]` to `decision-auth-route-toggle`).
+8. No files outside the deliverables list are modified.
+9. The cd-fix at `9e282f3` is not reverted (regression guard).
 
 ## Out of scope
 
@@ -68,9 +67,18 @@ Stand up a minimal Python Agent SDK script at `scripts/verify-sdk.py` that reads
 
 ## Verifier handoff
 
-Worker writes the four deliverables, runs the smoke test from acceptance #4 against stage 14, attaches the resulting `/tmp/v15a.json` path in its completion message, and reports any deviation from the existing JSON shape. Verifier reads the card, the four deliverables, and `/tmp/v15a.json`, then writes `state/verifiers/15a-sdk-verifier-probe.json` per the rubric.
+Worker writes the four deliverables and confirms acceptance #1-#4 by running the `--help` and missing-arg invocations in its completion message. No live API call is part of this stage; live verification of the SDK call path is deferred to card 15c, which wires the SDK route into `spawn-verifier.sh` and requires the operator to add `OP_REF_ANTHROPIC_API_KEY` to `~/.config/autometta/op-refs.local.sh` as a prerequisite. Verifier reads the card and the four deliverables, runs `python3 scripts/verify-sdk.py --help` once to confirm #1, and writes `state/verifiers/15a-sdk-verifier-probe.json` per the rubric.
+
+## Prerequisite for downstream cards
+
+15a does not invoke the SDK; it produces the script and the documentation. Before card 15c can wire the SDK route into `spawn-verifier.sh`, the operator must:
+
+1. Set `OP_REF_ANTHROPIC_API_KEY="op://<vault>/<item>/credential"` in `~/.config/autometta/op-refs.local.sh` (or the dev-checkout fallback).
+2. Decide whether to keep `auth.claude.mode: subscription` (in which case the SDK route on `spawn-verifier.sh` is opt-in per dispatch via `AUTOMETTA_CLAUDE_MODE=api`) or flip to `api` in the manifest for the repos that will use the SDK verifier route.
+
+Neither of these is required for 15a itself. Surfaced here so the chain is honest.
 
 ## Family-specific notes
 
-- **Codex (worker):** redirect stdin from `/dev/null` when invoking pip or python in any wrapping script (lessons.md gotcha #1). Sandbox is `workspace-write`; this card needs no out-of-tree writes except the `/tmp/v15a.json` smoke test, which is permitted under the sandbox.
+- **Codex (worker):** redirect stdin from `/dev/null` when invoking pip or python in any wrapping script (lessons.md gotcha #1). Sandbox is `workspace-write`; no out-of-tree writes are needed.
 - **Claude (verifier):** runs outside the worker sandbox per the cross-family verification invariant. The verifier may run `python3 scripts/verify-sdk.py --help` to confirm acceptance #1.
