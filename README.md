@@ -26,6 +26,16 @@ Pass 1 (dispatch contract) and pass 2 (phat-controller autonomous loop) have bot
 
 The first end-to-end benchmark (BENCH-005) drove the dispatch contract against a multi-stage Swift refactor in two parallel orchestrator lanes. Both escalated at the 2-loop budget. Codex went 12/20 then 18/20 on the FLAP-rate acceptance command; Claude Opus stayed pinned at 20/20 across both loops. The pass condition (0 FLAP) was not met by either lane, but the cross-family asymmetry is the interesting finding: Codex got closer then regressed, Claude was stuck at maximum throughout. See `[examples/benchmarks/bench-005/](./examples/benchmarks/bench-005/)` for the lane summaries and escalation notes. A green benchmark on a non-trivial backlog remains the next milestone.
 
+## Supported platforms
+
+macOS and Linux only. The scaffolding is bash plus standard POSIX tools and assumes either `cron` or (on macOS) `launchd` as the heartbeat. Windows is not supported - there is no native bash, no `cron`/`launchd`, no native `tmux`, and the `codex` CLI itself has no native Windows binary as of mid-2026. WSL2 may work as an effective Linux host but is untested and undocumented; treat it as unsupported.
+
+| Platform | Pass 1 (dispatch contract) | Pass 2 (autonomous loop) | Notes |
+|---|---|---|---|
+| macOS | supported | supported | First-class. Homebrew-local install. Heartbeat via `launchd` LaunchAgent (per-repo) or `cron` fallback. |
+| Linux | supported | supported | Heartbeat via `cron`. Homebrew-local install is macOS-first; manual install or Linuxbrew elsewhere. |
+| Windows | not supported | not supported | No native bash, `cron`, `launchd`, `tmux`, or native `codex` binary. WSL2 is untested. |
+
 ## What this is for
 
 You're a solo developer. You have Claude Code and Codex CLI on one machine. You want to run multi-agent work - implementer + verifier, or N parallel workers on independent stages - sometimes interactively, sometimes overnight. You don't want to take a framework dependency to do it.
