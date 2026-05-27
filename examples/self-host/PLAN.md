@@ -28,7 +28,7 @@ This is the rolling plan for autometta building itself with itself. Each stage p
 | 12 | Per-repo macOS LaunchAgent heartbeat replacing global cron while preserving non-macOS cron fallback | done | `d5a13a1` | [`12-launchagent-heartbeat.md`](./12-launchagent-heartbeat.md) |
 | 13 | Per-agent liveness registry, heartbeat watchdog, tmux agent ticker (third pane) — catches silent agent deaths | done | `5a62d9c` | [`13-agent-observability.md`](./13-agent-observability.md) |
 |   | Polling primitive `scripts/watch-agent.sh` + heartbeat claude-family asymmetry fix + agent-doc sync | done | `b91aa20`, `6cc26e0`, `0dc571b` | (follow-ups to card 13) |
-| 14 | Per-family auth route toggle (subscription default, API opt-in) via the canonical `op-fetch` wrapper from the auth-route-security skill; `autometta auth status` / `check` | done | `pending` | [`14-auth-route-toggle.md`](./14-auth-route-toggle.md) |
+| 14 | Per-family auth route toggle (subscription default, API opt-in) via the canonical `op-fetch` wrapper from the auth-route-security skill; `autometta auth status` / `check` | done | `9cd4f6f` | [`14-auth-route-toggle.md`](./14-auth-route-toggle.md) |
 |   | Follow-ups: artefact-check ordering + bash-3.2 regex; installer exec-bit restoration | done | `f6bf91d`, `a1ded4f`, `4d51e77` | (no card; small remediations) |
 |   | Auto-ensure `autometta-<repo>` tmux viewer each tick | done | `31e865e` | (no card; small operator improvement) |
 
