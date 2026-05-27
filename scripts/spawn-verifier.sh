@@ -116,7 +116,7 @@ main() {
 
   case "$family" in
     codex)
-      codex exec -C "$repo_root" --sandbox read-only "$prompt" </dev/null >"$log_path" 2>&1 &
+      codex exec -C "$repo_root" --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
       ;;
     claude)
       (cd "$repo_root" && claude -p "$prompt" </dev/null >"$log_path" 2>&1) &
