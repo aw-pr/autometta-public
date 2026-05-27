@@ -89,7 +89,13 @@ explicitly.
 `scripts/heartbeat.sh` is invoked once per repo per tick. It walks the
 active-agents registry and writes `state/heartbeat.json` with one entry per
 agent, flagged for log-mtime staleness (default threshold 300 seconds;
-override with `PHAT_CONTROLLER_HEARTBEAT_STALL`) and budget overrun. Dead
+override with `PHAT_CONTROLLER_HEARTBEAT_STALL`) and budget overrun. The
+`silent` flag is only applied to agents whose family streams its log; for
+the `claude` family, `claude -p` emits its entire log at completion and is
+legitimately silent for the whole run, so only `over-budget` is a stuck
+signal in that direction. This makes the registry symmetric across the
+worker / verifier pairing: codex-worker / claude-verifier and the reverse
+both get accurate stuck-detection without false positives. Dead
 processes are moved to `state/recent-agents/` with `outcome: exited`. The
 watchdog never kills; it surfaces.
 
