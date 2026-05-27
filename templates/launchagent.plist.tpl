@@ -23,8 +23,6 @@
   <dict>
     <key>PATH</key>
     <string>{{PATH}}</string>
-    <key>OP_NO_DAEMON</key>
-    <string>1</string>
   </dict>
 </dict>
 </plist>
