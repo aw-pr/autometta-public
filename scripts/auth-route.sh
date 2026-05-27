@@ -13,7 +13,13 @@ IFS=$'\n\t'
 #   <family> := codex | claude
 #
 # Output:
-#   - subscription mode: empty (op-fetch with no pairs still sanitises env)
+#   - subscription mode (codex): empty (op-fetch sanitises env; codex
+#     reads ~/.codex/auth.json which is unaffected by env strip)
+#   - subscription mode (claude): CLAUDE_CODE_OAUTH_TOKEN=$OP_REF_... if
+#     the optional ref is set, else empty. op-fetch's env strip drops
+#     the session vars `claude -p` needs to reach the macOS Keychain;
+#     pinning a setup-token sidesteps keychain access entirely and works
+#     from any context (LaunchAgent, cron, stripped-env shells).
 #   - api mode: NAME=$OP_REF_NAME ready to splat into op-fetch
 #
 # Resolution order (most specific wins):
@@ -65,9 +71,17 @@ mode="${mode:-subscription}"
 
 case "$mode" in
   subscription)
-    # Nothing to fetch. op-fetch invoked with no pairs still sanitises env
-    # so an inherited OPENAI_API_KEY / ANTHROPIC_API_KEY cannot accidentally
-    # redirect billing.
+    # For claude, emit CLAUDE_CODE_OAUTH_TOKEN if the optional ref is
+    # set and resolved (not the YOUR_VAULT placeholder). This is what
+    # makes `claude -p` work from op-fetch's stripped env, which
+    # otherwise drops the session vars needed for macOS Keychain access.
+    # For codex, nothing to emit — codex reads ~/.codex/auth.json.
+    if [[ "$family" == "claude" ]]; then
+      sub_ref="${OP_REF_CLAUDE_CODE_OAUTH_TOKEN:-}"
+      if [[ -n "$sub_ref" && "$sub_ref" != op://YOUR_VAULT/* ]]; then
+        printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$sub_ref"
+      fi
+    fi
     exit 0
     ;;
   api)
