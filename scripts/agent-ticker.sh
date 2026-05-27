@@ -126,9 +126,10 @@ except Exception:
     pass
 
 if alerts:
+    RED, RESET = "\033[31m", "\033[0m"
     print("ALERTS (need attention)")
     for a in alerts:
-        print("  %s" % a)
+        print("  %s%s%s" % (RED, a, RESET))
     print()
 PY
 
@@ -194,20 +195,26 @@ files.sort(reverse=True)
 if not files:
     print("  (none)")
 else:
+    RED, RESET = "\033[31m", "\033[0m"
+    FAIL_OUTCOMES = {"fail", "failed", "verifier_failed", "stalled", "error", "stuck"}
     for _, p in files[:5]:
         try:
             with open(p) as fh:
                 e = json.load(fh)
             card = os.path.basename(e.get("card_path","") or "-")
             card = card[:34]
-            print("  %-10s %-7s %-9s %-34s %-7s ran %ss" % (
+            outcome = str(e.get("outcome","?"))
+            row = "  %-10s %-7s %-9s %-34s %-7s ran %ss" % (
                 age(e.get("exited_at")),
                 e.get("family","?"),
                 e.get("role","?"),
                 card,
-                e.get("outcome","?"),
+                outcome,
                 e.get("elapsed_seconds","?"),
-            ))
+            )
+            if outcome.lower() in FAIL_OUTCOMES:
+                row = RED + row + RESET
+            print(row)
         except Exception:
             pass
 PY

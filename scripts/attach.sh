@@ -68,7 +68,7 @@ autometta_root_q="$(shell_quote "$autometta_root")"
 controller_log_q="$(shell_quote "$controller_home/log")"
 
 repo_path_q="$(shell_quote "$repo_path")"
-status_cmd="printf 'Project: $repo_slug\nRepo: $repo_path\nSession: $session_name\n\n'; cd $autometta_root_q && scripts/status.sh; printf '\\nRefresh with: autometta status\\n'; cd $repo_path_q && exec \"\${SHELL:-/bin/sh}\""
+status_cmd="cd $autometta_root_q && scripts/status-ticker.sh"
 log_cmd="mkdir -p $controller_log_q; latest=''; for candidate in $controller_log_q/tick-*.log; do [ -e \"\$candidate\" ] || continue; latest=\"\$candidate\"; done; printf 'Project: $repo_slug\nRepo: $repo_path\n\n'; if [ -n \"\$latest\" ]; then tail -f \"\$latest\"; else printf 'No tick log yet in $controller_home/log\\n'; exec \"\${SHELL:-/bin/sh}\"; fi"
 ticker_cmd="cd $autometta_root_q && scripts/agent-ticker.sh $repo_path_q"
 
