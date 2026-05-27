@@ -4,9 +4,9 @@
 
 - **Authored:** 2026-05-27
 - **Orchestrator:** Claude Opus 4.7 <claude-opus-4-7@local>
-- **Worker:** Codex GPT-5.3 <codex-gpt-5-3@local>
-- **Verifier:** Claude Opus 4.7 <claude-opus-4-7@local>
-- **Pairing rationale:** Cross-family. Codex makes the SDK config change; Claude verifies cache_read_input_tokens grows on the second run by inspecting the SDK response usage block.
+- **Worker:** Claude Sonnet 4.6 <claude-sonnet-4-6@local>
+- **Verifier:** Codex GPT-5.3 <codex-gpt-5-3@local>
+- **Pairing rationale:** Cross-family. Sonnet makes the SDK config change via the Claude OAuth route; Codex verifies via the API route that cache_read_input_tokens grows on the second run by inspecting the SDK response usage block.
 - **Depends on:** stage 15c committed and merged. Acceptance criteria below assume `scripts/verify-sdk.py` and the manifest-driven SDK route exist.
 
 ## Surfacing concern

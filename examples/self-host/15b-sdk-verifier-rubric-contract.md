@@ -4,9 +4,9 @@
 
 - **Authored:** 2026-05-27
 - **Orchestrator:** Claude Opus 4.7 <claude-opus-4-7@local>
-- **Worker:** Codex GPT-5.3 <codex-gpt-5-3@local>
-- **Verifier:** Claude Opus 4.7 <claude-opus-4-7@local>
-- **Pairing rationale:** Cross-family. Codex is comfortable with JSON Schema authoring; Claude verifies that the SDK output validates against the schema and that the new shape is a superset of the old (no information lost).
+- **Worker:** Claude Sonnet 4.6 <claude-sonnet-4-6@local>
+- **Verifier:** Codex GPT-5.3 <codex-gpt-5-3@local>
+- **Pairing rationale:** Cross-family. Sonnet does the implementation work via the Claude OAuth route; Codex verifies via the API route that the SDK output validates against the schema and that the new shape is a superset of the old (no information lost).
 
 ## Surfacing concern
 

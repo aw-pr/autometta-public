@@ -51,6 +51,19 @@ verifier_family() {
   fi
 }
 
+claude_model_for_identity() {
+  local identity="$1"
+  if [[ "$identity" == *Sonnet* ]]; then
+    printf 'claude-sonnet-4-6\n'
+  elif [[ "$identity" == *Opus* ]]; then
+    printf 'claude-opus-4-7\n'
+  elif [[ "$identity" == *Haiku* ]]; then
+    printf 'claude-haiku-4-5\n'
+  else
+    printf 'sonnet\n'
+  fi
+}
+
 render_prompt() {
   local repo_root="$1"
   local card_path="$2"
@@ -156,7 +169,7 @@ main() {
       ;;
     claude)
       # shellcheck disable=SC2086
-      ( cd "$repo_root" && op-fetch $auth_pairs -- claude -p "$prompt" </dev/null >"$log_path" 2>&1 ) &
+      ( cd "$repo_root" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" --dangerously-skip-permissions -p "$prompt" </dev/null >"$log_path" 2>&1 ) &
       ;;
     *)
       log_msg "unsupported verifier family for identity: ${verifier_identity}"
