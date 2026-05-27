@@ -3,6 +3,7 @@
 *.local
 .autometta.local.yaml
 .autometta/
+symlinked-config/
 *.swp
 .idea/
 .vscode/
