@@ -107,3 +107,49 @@ A successful overnight run produces, by morning:
 - Possibly: additional `memory/` entries banking new lessons.
 
 If the run stalls or surfaces, this file is updated with the actual status, the stall reason, and a one-line next-action note. Read this file first in the morning.
+
+## Pass 3 — cloud + SDK roadmap (queued 2026-05-27)
+
+Pass 3 takes autometta from "local cron + filesystem + git" toward selective use of the Claude Agent SDK and hosted cloud surfaces, without breaking the load-bearing beliefs in `docs/philosophy.md`. Cards 15a-26 are queued but **not yet dispatched**. The operator triggers the loop manually after reviewing the cards.
+
+### Tier 0 — keeps every invariant, just better tooling
+
+| # | Stage | Status | Card |
+|---|---|---|---|
+| 15a | SDK verifier probe (minimal `verify.py` against one stage) | queued | [`15a-sdk-verifier-probe.md`](./15a-sdk-verifier-probe.md) |
+| 15b | Verifier rubric JSON Schema + validator script | queued, blocked by 15a | [`15b-sdk-verifier-rubric-contract.md`](./15b-sdk-verifier-rubric-contract.md) |
+| 15c | SDK route in `spawn-verifier.sh` with CLI fallback | queued, blocked by 15b | [`15c-sdk-verifier-integration.md`](./15c-sdk-verifier-integration.md) |
+| 16 | Anthropic prompt caching on SDK verifier route | queued, blocked by 15c | [`16-sdk-verifier-prompt-cache.md`](./16-sdk-verifier-prompt-cache.md) |
+| 17 | Structured worker handoff envelope as sole completion signal | queued | [`17-structured-worker-handoff-envelope.md`](./17-structured-worker-handoff-envelope.md) |
+
+### Tier 1 — extends the contract, doesn't break it
+
+| # | Stage | Status | Card |
+|---|---|---|---|
+| 18 | Optional N=3 panel verifier with quorum voting | queued, blocked by 15c + 17 | [`18-panel-verifier.md`](./18-panel-verifier.md) |
+| 19 | Weekly batch retro-grade via Anthropic Batch API | queued, blocked by 15b + 17 | [`19-batch-retro-grade.md`](./19-batch-retro-grade.md) |
+| 20 | Design: autometta-sweep skill (parallel design exploration) | queued — design-only | [`20-sweep-skill-design.md`](./20-sweep-skill-design.md) |
+
+### Tier 2 — bends an invariant deliberately
+
+| # | Stage | Status | Card |
+|---|---|---|---|
+| 21 | Hosted scheduled monitoring routines (PR-only output) | queued | [`21-remote-scheduled-monitoring.md`](./21-remote-scheduled-monitoring.md) |
+| 22 | Design: MCP-served stage cards | queued — design-only | [`22-mcp-served-cards-design.md`](./22-mcp-served-cards-design.md) |
+| 23 | Experiment: long-lived SDK session as alternative controller (with postmortem) | queued — bounded experiment | [`23-sdk-controller-experiment.md`](./23-sdk-controller-experiment.md) |
+
+### Tier 3 — research bets, only after Tier 1 lands
+
+| # | Stage | Status | Card |
+|---|---|---|---|
+| 24 | Design: cross-repo memory federation | queued — design-only | [`24-memory-federation-design.md`](./24-memory-federation-design.md) |
+| 25 | Cost-aware router (card-declared complexity tier) | queued, blocked by 17 + 18 | [`25-cost-aware-router.md`](./25-cost-aware-router.md) |
+| 26 | Design: recorded-replay verification | queued — design-only | [`26-replay-verification-design.md`](./26-replay-verification-design.md) |
+
+### Operator notes (pass 3)
+
+- Stages 15a + 16 are the immediate dispatch target ("up to and including step 2" per the brainstorming session). Trigger with `autometta tick` once you've reviewed the cards.
+- The autometta repo now has its own `.autometta.local.yaml` pinning `codex: api`, so worker dispatches in Pass 3 bill the OpenAI API key from 1Password rather than the ChatGPT subscription. The sibling `~/.codex-api-only` CODEX_HOME is already configured; `autometta auth check codex` reports PASS.
+- Budget is currently halted (`halt_reason: tick-cap`). Reset with `autometta --reset-halt` before the first tick of pass 3.
+- Each design card (20, 22, 24, 26) emits a prose decision rather than code. Verdicts feed future implementation cards.
+- Cards 18, 19, 25 each depend on earlier Tier 0 cards; the loop will honour the dependencies because the cards say so, but `state.yaml` ordering matters too — queue them in tier order.

@@ -1,6 +1,7 @@
 .DS_Store
 .publish-guard.local
 *.local
+.autometta.local.yaml
 *.swp
 .idea/
 .vscode/
