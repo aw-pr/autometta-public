@@ -44,7 +44,7 @@ Write a JSON Schema for the verifier artefact, update `scripts/verify-sdk.py` to
 
 1. `scripts/validate-verifier-artefacts.sh` exits 0 on the current `state/verifiers/` corpus.
 2. Adding a deliberately malformed test artefact (missing `overall` key) at `/tmp/bad.json` and pointing the validator at it yields `FAIL` with a clear message naming the missing key.
-3. `scripts/verify-sdk.py` against stage 14 (as in 15a acceptance #4) writes a schema-valid artefact.
+3. Invoking `scripts/verify-sdk.py` against stage 14 via `op-fetch OP_REF_ANTHROPIC_API_KEY -- python3 scripts/verify-sdk.py --stage-id 14-auth-route-toggle --card examples/self-host/14-auth-route-toggle.md --artefact-glob 'scripts/auth-route.sh,scripts/auth.sh,bin/autometta' --out /tmp/v15b.json` writes a schema-valid artefact. (This is a live API call; requires `OP_REF_ANTHROPIC_API_KEY` to resolve to a real `sk-ant-api03-...` key.)
 4. Forcing the SDK to emit an invalid artefact (test by patching the script's emit step in-test) writes `<out>.invalid.json` and exits 3.
 5. `schemas/verifier.json` carries `$id` and `$schema` keys matching the convention in `schemas/state.yaml.json`.
 6. Every required key in the schema has a `description` field.
