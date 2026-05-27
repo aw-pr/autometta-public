@@ -135,7 +135,7 @@ autometta/
 3. `docs/lessons.md` - five gotchas that will bite you on day one.
 4. `templates/stage-card.md` and `templates/worker-prompt.md` - copy these, fill them in.
 5. `docs/verification.md` - how to gate the worker's output.
-6. `docs/phat-controller.md` and `docs/setup.md` - when you want to put the dispatch contract under cron.
+6. `docs/phat-controller.md` and `docs/setup.md` - when you want to put the dispatch contract under cron. `docs/setup.md` section 7 covers auth-route configuration (subscription vs API key).
 7. `docs/deployment.md` and `docs/observability.md` - when you want to adopt it across repos and watch the loop.
 
 ## Your first dispatch (five minutes)
@@ -194,6 +194,64 @@ pinned to the old Cellar version. Re-source the shell or restart the
 session after `install-homebrew-local.sh` to pick up new scripts
 (`heartbeat`, `watch-agent`, `agent-ticker`, `install-launchagent`, etc.).
 
+## Billing routes (subscription vs API key)
+
+Every dispatched worker or verifier runs on either an OAuth subscription session (Claude Pro / ChatGPT plan) or an API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude). Default for both families is `subscription`; flip to `api` per repo or per dispatch.
+
+Aligned to the `auth-route-security` skill — every launch goes through `op-fetch`, which exec's the child via `env -i` plus an allowlist plus only the named refs. Subscription mode still goes through `op-fetch`, so any stray `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` in your parent shell is **stripped** rather than silently flipping you to API billing.
+
+### Three files
+
+```
+op-refs.sh                  # COMMITTED — placeholder op:// refs, sources the local override
+op-refs.local.sh.example    # COMMITTED — template for the real refs
+op-refs.local.sh            # GITIGNORED — your real op:// references
+```
+
+`op-refs.sh` carries placeholders like `op://YOUR_VAULT/openai-api-key/credential`. Copy `op-refs.local.sh.example` to `op-refs.local.sh` and replace `YOUR_VAULT` with your real vault. The local file overrides via `: "${VAR:=default}"` semantics.
+
+### Per-repo mode toggle
+
+`.autometta.local.yaml` in the **subscribed repo** (gitignored under `*.local`) carries only the mode:
+
+```yaml
+auth:
+  codex:
+    mode: api          # subscription | api
+  claude:
+    mode: subscription
+```
+
+Dispatch-time override beats the manifest:
+
+```sh
+AUTOMETTA_CODEX_MODE=api  autometta tick
+AUTOMETTA_CLAUDE_MODE=api autometta tick
+```
+
+### Verify before any dispatch
+
+```sh
+autometta auth status         # mode + ref provenance per family + op-fetch presence
+autometta auth check codex    # resolves the ref via op-fetch --print, no token spend
+autometta auth check claude
+```
+
+`auth check` returns `PASS` with a redacted credential, `subscription` (no key needed), or `FAIL` with the resolver error path. **Run this first** — the spawn fails closed on a missing `op-fetch`, unset `OP_REF_*`, or unresolved placeholder, but a fast probe is cheaper than discovering it mid-dispatch.
+
+### How it dispatches (for agents picking this up cold)
+
+- `scripts/auth-route.sh <family>` — emits the `NAME=$OP_REF_NAME` pair for op-fetch (or nothing for subscription).
+- `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` — source `op-refs.sh`, call `auth-route.sh`, then `op-fetch <pairs> -- codex exec ...` or `op-fetch <pairs> -- claude -p ...`.
+- `op-fetch` (typically at `~/Scripts/op-fetch`) — resolves refs via the 1Password service-account token from `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`), then exec's the child with `env -i` + allowlist + named keys only. No biometric prompt; works under cron and the macOS LaunchAgent.
+
+### What does NOT work
+
+- Putting raw keys in `.autometta.local.yaml`. Only the mode goes there; refs go in `op-refs.local.sh`.
+- Putting the SA token or any API key in a committed file. The publish-guard's pre-commit hook catches common patterns; `op-refs.local.sh`, `.env.local`, `*.local` are gitignored.
+- Auto-injecting keys into the macOS LaunchAgent plist. The LaunchAgent invokes `op-fetch` at tick time; the SA token comes from `~/.config/op/service-account.env`. Keys never land in the plist.
+
 ## Licence
+
 
 MIT. See `[LICENSE](./LICENSE)`.

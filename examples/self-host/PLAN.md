@@ -27,6 +27,8 @@ This is the rolling plan for autometta building itself with itself. Each stage p
 | 11 | Cost dashboard: per-stage token snapshotting in `tick.sh`, aggregator emits `data.json`, static HTML/CSS/JS renderer with four canvases, Chart.js 4.4.0 pinned vendor, `autometta dashboard` subcommand, `docs/dashboard.md` | done | `1096581`, `e63745d`, `60f1226`, `eecb02a`, `2d4747b`, `6f87171` | [`11-cost-dashboard.md`](./11-cost-dashboard.md) |
 | 12 | Per-repo macOS LaunchAgent heartbeat replacing global cron while preserving non-macOS cron fallback | done | `d5a13a1` | [`12-launchagent-heartbeat.md`](./12-launchagent-heartbeat.md) |
 | 13 | Per-agent liveness registry, heartbeat watchdog, tmux agent ticker (third pane) — catches silent agent deaths | done | `5a62d9c` | [`13-agent-observability.md`](./13-agent-observability.md) |
+|   | Polling primitive `scripts/watch-agent.sh` + heartbeat claude-family asymmetry fix + agent-doc sync | done | `b91aa20`, `6cc26e0`, `0dc571b` | (follow-ups to card 13) |
+| 14 | Per-family auth route toggle (subscription default, API opt-in) via the canonical `op-fetch` wrapper from the auth-route-security skill; `autometta auth status` / `check` | done | `pending` | [`14-auth-route-toggle.md`](./14-auth-route-toggle.md) |
 |   | Follow-ups: artefact-check ordering + bash-3.2 regex; installer exec-bit restoration | done | `f6bf91d`, `a1ded4f`, `4d51e77` | (no card; small remediations) |
 |   | Auto-ensure `autometta-<repo>` tmux viewer each tick | done | `31e865e` | (no card; small operator improvement) |
 

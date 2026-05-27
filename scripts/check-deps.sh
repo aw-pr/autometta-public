@@ -72,4 +72,21 @@ else
   warn "tmux" "optional attach viewer unavailable"
 fi
 
+# op-fetch wraps every dispatched agent (auth-route-security skill); required
+# by spawn-worker.sh / spawn-verifier.sh. Subscription dispatches use it as a
+# pure env sanitiser (env -i + allowlist); api dispatches use it to inject
+# only the named OPENAI_API_KEY / ANTHROPIC_API_KEY ref.
+if command -v op-fetch >/dev/null 2>&1; then
+  pass "op-fetch" "auth-route wrapper present"
+else
+  missing "op-fetch" "install from the auth-route-security skill (typically ~/Scripts/op-fetch)"
+fi
+
+# op (1Password CLI) is what op-fetch ultimately calls.
+if command -v op >/dev/null 2>&1; then
+  pass "op" "1Password CLI"
+else
+  missing "op" "install the 1Password CLI"
+fi
+
 exit "$status"

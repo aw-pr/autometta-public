@@ -21,6 +21,8 @@ Usage:
   autometta install-launchagent <repo-path> [--interval N]
   autometta uninstall-launchagent <repo-path>
   autometta install-homebrew-local [--dry-run]
+  autometta auth status
+  autometta auth check <codex|claude>
 USAGE
 }
 
@@ -117,6 +119,9 @@ case "$command_name" in
     ;;
   install-homebrew-local)
     run_script install-homebrew-local.sh "$@"
+    ;;
+  auth)
+    run_script auth.sh "$@"
     ;;
   *)
     printf 'unknown command: %s\n' "$command_name" >&2
