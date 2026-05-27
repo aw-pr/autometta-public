@@ -18,6 +18,12 @@ does not supervise workers, retry stages, or create another controller loop.
 - `state/logs/<stage-id>-worker.log`: worker process log.
 - `state/logs/<stage-id>-verifier.log`: verifier process log.
 - `state/verifiers/<stage-id>.json`: structured verifier result.
+- `state/active-agents/<pid>.json`: per-agent liveness registry, one file
+  per dispatched worker or verifier currently in flight.
+- `state/recent-agents/<pid>-<stage-id>.json`: completed agent runs,
+  moved here by the heartbeat watchdog when the process exits.
+- `state/heartbeat.json`: latest watchdog report (per-agent flags for
+  `silent` log mtime, `over-budget`, etc.).
 - `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/log/tick-YYYY-MM-DD.log`:
   controller-level tick log.
 - `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers/*.yaml`:
@@ -54,10 +60,42 @@ Open or create the viewer manually:
 autometta attach <repo-path>
 ```
 
-The tmux viewer has one pane for a status snapshot and one pane tailing the
-latest controller log. It is an operator cockpit only. It must not dispatch
-`autometta tick`, send commands to workers, or keep state that cannot be
-reconstructed from the filesystem.
+The tmux viewer has three panes: the left pane prints a status snapshot, the
+top-right pane tails the latest controller log, and the bottom-right pane
+runs the **agent ticker** (`scripts/agent-ticker.sh`). The ticker refreshes
+every five seconds (override with `PHAT_CONTROLLER_TICKER_INTERVAL`) and
+shows three sections:
+
+- `ACTIVE`: each agent currently in flight, with flags from the heartbeat
+  watchdog (`fresh` / `silent` / `over-budget`).
+- `RECENT`: the last five completed agents with their outcomes.
+- `SCHEDULED`: stage cards classified as `in_flight | pending`, derived
+  from `manifest_patterns` and the PLAN.md status table.
+
+It is an operator cockpit only. It must not dispatch `autometta tick`, send
+commands to workers, or keep state that cannot be reconstructed from the
+filesystem.
+
+## Per-agent liveness registry
+
+Every worker or verifier dispatched through `spawn-worker.sh` or
+`spawn-verifier.sh` registers itself into `state/active-agents/<pid>.json`
+at dispatch time. The registry entry records pid, role, family, identity,
+card path, log path, start time, and parsed budget. Manual orchestrator
+dispatches (`codex exec` / `claude -p` launched directly by an orchestrator
+session) can join the registry by calling `scripts/register-agent.sh`
+explicitly.
+
+`scripts/heartbeat.sh` is invoked once per repo per tick. It walks the
+active-agents registry and writes `state/heartbeat.json` with one entry per
+agent, flagged for log-mtime staleness (default threshold 300 seconds;
+override with `PHAT_CONTROLLER_HEARTBEAT_STALL`) and budget overrun. Dead
+processes are moved to `state/recent-agents/` with `outcome: exited`. The
+watchdog never kills; it surfaces.
+
+The heartbeat surface answers the "is this stuck?" question that
+`state.yaml` does not — `state.yaml` reflects the FSM, the heartbeat
+reflects the process.
 
 Preview the tmux commands without opening a session:
 

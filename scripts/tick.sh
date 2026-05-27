@@ -412,10 +412,21 @@ process_repo() {
     return 0
   fi
   ensure_tmux_viewer "$repo_root"
+  run_heartbeat "$repo_root"
   local rc=0
   _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
   release_repo_lock "$repo_root"
   return $rc
+}
+
+# Best-effort: walk the per-agent liveness registry and surface stalls /
+# overruns into state/heartbeat.json. Never fatal; the heartbeat itself
+# is a watchdog, not a gate.
+run_heartbeat() {
+  local repo_root="$1"
+  if [[ -x "$script_dir/heartbeat.sh" ]]; then
+    "$script_dir/heartbeat.sh" "$repo_root" >/dev/null 2>&1 || true
+  fi
 }
 
 # Best-effort: keep the autometta-<repo> tmux viewer alive whenever the
