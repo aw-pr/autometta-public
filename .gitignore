@@ -2,6 +2,7 @@
 .publish-guard.local
 *.local
 .autometta.local.yaml
+.autometta/
 *.swp
 .idea/
 .vscode/
