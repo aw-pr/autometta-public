@@ -208,7 +208,7 @@ op-refs.local.sh.example                    # COMMITTED — template
 ~/.config/autometta/op-refs.local.sh        # GITIGNORED — your real op:// references
 ```
 
-`op-refs.sh` carries placeholders like `op://YOUR_VAULT/openai-api-key/credential`. Plant your real values at `~/.config/autometta/op-refs.local.sh` — that location is visible to both the dev checkout and the brew-installed CLI:
+`op-refs.sh` carries placeholders like `op://YOUR_VAULT/openai-api-key/credential`. Plant your real values at `~/.config/autometta/op-refs.local.sh`:
 
 ```sh
 mkdir -p ~/.config/autometta
@@ -216,6 +216,8 @@ cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
 chmod 600 ~/.config/autometta/op-refs.local.sh
 # Then edit ~/.config/autometta/op-refs.local.sh with the real op:// refs.
 ```
+
+**Why XDG rather than in-repo?** Two reasons. (1) The brew-installed CLI runs from a Cellar snapshot at `/opt/homebrew/Cellar/autometta/<sha>/libexec/` — it cannot see files inside your dev checkout. XDG is the one location both can read. (2) A single set of credentials is shared across every subscribed repo on the machine; XDG avoids duplicating them per-repo. `autometta auth status` always prints which file it actually loaded so you can verify the path in effect.
 
 Resolution order: `$AUTOMETTA_LOCAL_REFS` env var, then `~/.config/autometta/op-refs.local.sh`, then `<repo>/op-refs.local.sh` (dev only — not visible to the brew install).
 
