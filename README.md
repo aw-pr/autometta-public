@@ -54,8 +54,9 @@ Autometta packages the contracts that make this work without surprise.
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------ |
 | **Dispatch contract** | The contract between an orchestrator and a worker for one unit of work. Stage card, worker prompt, acceptance command, sandbox boundary, verifier handoff. | Human (orchestrator session) | Pass 1 - this repo |
 | **Autonomous loop**   | A cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, and exits. Budget file is the only safety.       | `cron` + `tick.sh`           | Pass 2 - shipped   |
+| **Agent observability** | Per-agent liveness registry (`state/active-agents/`), heartbeat watchdog (`scripts/heartbeat.sh`), tmux agent ticker (`scripts/agent-ticker.sh`), polling primitive (`scripts/watch-agent.sh`). Catches silent agent deaths in both manual and loop dispatches. | `scripts/heartbeat.sh` + tmux | Shipped (on top of pass 2) |
 
-The loop layer is built on top of the dispatch layer. You can use dispatch without the loop. You cannot use the loop without dispatch.
+The loop layer is built on top of the dispatch layer. You can use dispatch without the loop. You cannot use the loop without dispatch. The agent observability layer plugs into both: any dispatcher registers via `scripts/register-agent.sh`, and the heartbeat + ticker surface that registry without further coupling.
 
 ## Decision tree - which layer do I want?
 
@@ -110,7 +111,10 @@ autometta/
 │   ├── worker-prompt.md      # the prompt the worker reads
 │   ├── verifier-prompt.md    # the prompt the verifier reads
 │   └── orchestrator-checklist.md
-├── scripts/                  # pass 2 runtime: tick, spawn, budget, init, publish-guard hooks
+├── scripts/                  # pass 2 runtime + observability: tick, spawn-worker, spawn-verifier,
+│                             #   register-agent, heartbeat, watch-agent, agent-ticker, list-cards,
+│                             #   install-launchagent, uninstall-launchagent, install-homebrew-local,
+│                             #   install-guards, publish-guard git-hooks, status, attach, add-stage
 ├── packaging/                # local Homebrew formula template
 ├── schemas/                  # state.yaml + budget.json schemas
 ├── state/                    # per-repo runtime state (gitignored content)
@@ -174,13 +178,21 @@ installed Autometta CLI from this checkout, then check the subscriber:
 cd /path/to/autometta
 git pull --ff-only
 scripts/install-homebrew-local.sh
+autometta --version        # should match `git rev-parse --short HEAD`
 autometta status
+autometta attach /path/to/target-repo   # picks up the third tmux pane (agent ticker)
 ```
 
 You do not normally rerun `autometta init` for the target repo unless its
 subscription or local manifest is missing. The current local Homebrew path is a
 rendered formula, so `brew update` alone is not enough; rerun
 `scripts/install-homebrew-local.sh` after updating this checkout.
+
+If the running orchestrator session was started before the upgrade, the
+session's `$PATH`-resolved `autometta` and its child scripts are still
+pinned to the old Cellar version. Re-source the shell or restart the
+session after `install-homebrew-local.sh` to pick up new scripts
+(`heartbeat`, `watch-agent`, `agent-ticker`, `install-launchagent`, etc.).
 
 ## Licence
 
