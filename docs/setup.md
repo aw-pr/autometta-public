@@ -84,13 +84,40 @@ git commit -m "Initialise Autometta"
 
 ## 4. Scheduling
 
-Sample cron entry to run every 5 minutes from this repo root:
+macOS uses one LaunchAgent per subscribed repo. `autometta subscribe <repo>`
+installs it automatically after writing the subscriber yaml. The committed
+template lives in the subscriber repo at `.autometta/launchagent.plist.tpl`; edit
+that template if you need a different interval or log layout, then re-run:
+
+```sh
+autometta install-launchagent <path-to-repo>
+```
+
+The installed plist is written to `~/Library/LaunchAgents/` and is not committed.
+It runs `autometta tick` in the user's Aqua session so CLI credentials stored in
+the login keychain are available to workers and verifiers.
+
+Non-macOS hosts keep the cron heartbeat model. Sample cron entry to run every 5
+minutes:
 
 ```sh
 */5 * * * * autometta tick >> "$HOME/.phat-controller/log/cron.log" 2>&1
 ```
 
-`launchd` is the macOS-native alternative if you prefer managed job lifecycle and logging.
+Migration from the old global cron sample:
+
+```sh
+crontab -l | grep autometta
+```
+
+`autometta install-launchagent <repo>` removes the exact autometta-managed cron
+sample above when it finds it, so a macOS repo is not double-scheduled. If you
+created a hand-written cron line with different paths or logging, remove that
+manual entry yourself after confirming the LaunchAgent is listed:
+
+```sh
+launchctl list | grep com.autometta.tick.<repo-name>
+```
 
 ## 5. Verify the install
 
@@ -125,7 +152,7 @@ autometta attach .
 Lint scripts without executing setup actions:
 
 ```sh
-bash -n bin/autometta scripts/check-deps.sh scripts/init-host.sh scripts/subscribe-repo.sh scripts/tick.sh
+bash -n bin/autometta scripts/check-deps.sh scripts/init-host.sh scripts/subscribe-repo.sh scripts/install-launchagent.sh scripts/uninstall-launchagent.sh scripts/tick.sh
 ```
 
 ## 6. Publish guard
@@ -149,6 +176,7 @@ For a deeper introduction or to retrofit a repo that pre-dates this pattern, use
 Remove one subscriber:
 
 ```sh
+autometta uninstall-launchagent <path-to-repo>
 rm "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers/<repo-slug>.yaml"
 ```
 

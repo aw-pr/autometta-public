@@ -90,4 +90,10 @@ YAML
   printf 'PASS template created %s\n' "$template_file"
 fi
 
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  printf 'PASS macOS host uses per-repo LaunchAgents; run autometta subscribe <repo> to install one\n'
+else
+  printf 'PASS non-macOS host keeps cron heartbeat fallback\n'
+fi
+
 printf 'PASS init complete %s\n' "$controller_home"

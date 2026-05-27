@@ -159,4 +159,10 @@ YAML
   printf 'PASS subscriber created %s\n' "$subscriber_file"
 fi
 
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  "$script_dir/install-launchagent.sh" "$repo_path"
+else
+  printf 'PASS non-macOS subscribe uses cron heartbeat fallback\n'
+fi
+
 printf 'PASS subscribe complete %s\n' "$repo_path"
