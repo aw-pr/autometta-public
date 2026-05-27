@@ -4,9 +4,9 @@
 
 - **Authored:** 2026-05-27
 - **Orchestrator:** Claude Opus 4.7 <claude-opus-4-7@local>
-- **Worker:** Codex GPT-5.3 <codex-gpt-5-3@local>
-- **Verifier:** Claude Opus 4.7 <claude-opus-4-7@local>
-- **Pairing rationale:** Cross-family. Codex modifies the shell dispatch; Claude verifies the fallback path by simulating SDK absence and confirming the original `claude -p` route still works.
+- **Worker:** Claude Sonnet 4.6 <claude-sonnet-4-6@local>
+- **Verifier:** Codex GPT-5.3 <codex-gpt-5-3@local>
+- **Pairing rationale:** Cross-family. Sonnet modifies the shell dispatch via the Claude OAuth route; Codex verifies via the API route by simulating SDK absence and confirming the original `claude -p` route still works.
 
 ## Surfacing concern
 
@@ -70,5 +70,5 @@ Worker writes the deliverables, runs the smoke test from acceptance #7 against s
 
 ## Family-specific notes
 
-- **Codex (worker):** stdin redirect when invoking any subprocess in the modified spawn script (lessons.md #1). Sandbox `workspace-write` is sufficient for editing the script and the manifest examples.
-- **Claude (verifier):** the SDK route under verification is the same SDK the verifier itself may eventually run on — verifier must run with the env stripped per usual (`op-fetch` boundary), so there is no transport-conflation risk for this stage.
+- **Claude (worker):** the SDK route under verification is the same SDK a future Claude verifier may use. Worker must keep the env stripped per usual (`op-fetch` boundary), so there is no transport-conflation risk for this stage.
+- **Codex (verifier):** stdin redirect remains mandatory when invoking any subprocess in the modified spawn script (lessons.md #1). Sandbox `workspace-write` is sufficient for writing the verifier artefact.
