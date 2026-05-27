@@ -132,10 +132,27 @@ main() {
     exit 1
   fi
 
+  # Sibling CODEX_HOME for api mode (see spawn-worker.sh + docs/lessons.md
+  # gotcha #8 — codex prefers its auth.json over OPENAI_API_KEY).
+  local codex_home_override=""
+  if [[ "$family" == "codex" && -n "$auth_pairs" ]]; then
+    codex_home_override="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}"
+    if [[ ! -f "$codex_home_override/auth.json" ]]; then
+      log_msg "codex api dispatch requires a sibling CODEX_HOME with auth_mode: apikey at $codex_home_override"
+      log_msg "  one-time setup: mkdir -p '$codex_home_override' && chmod 700 '$codex_home_override' && \\"
+      log_msg "  CODEX_HOME='$codex_home_override' codex login --with-api-key  (paste the key)"
+      exit 1
+    fi
+  fi
+
   case "$family" in
     codex)
       # shellcheck disable=SC2086
-      op-fetch $auth_pairs -- codex exec -C "$repo_root" --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
+      if [[ -n "$codex_home_override" ]]; then
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
+      else
+        op-fetch $auth_pairs -- codex exec -C "$repo_root" --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
+      fi
       ;;
     claude)
       # shellcheck disable=SC2086

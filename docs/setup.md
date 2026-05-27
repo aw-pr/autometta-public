@@ -184,7 +184,15 @@ Every dispatched agent (worker or verifier) runs on either its OAuth subscriptio
    cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
    chmod 600 ~/.config/autometta/op-refs.local.sh
    ```
-3. In the **subscribed repo** (the one whose dispatches you are routing), copy `.autometta.local.yaml.example` to `.autometta.local.yaml` and set the `auth.<family>.mode` per family.
+3. **For Codex API mode** — set up a sibling `CODEX_HOME` once. Codex prefers its `auth.json` over the `OPENAI_API_KEY` env var, so an api-mode dispatch needs an isolated codex dir whose `auth.json` says `auth_mode: "apikey"`:
+   ```sh
+   mkdir -p ~/.codex-api-only && chmod 700 ~/.codex-api-only
+   # Pipe the real key from 1Password into codex's login flow:
+   op-fetch --print "$OP_REF_OPENAI_API_KEY" | \
+     CODEX_HOME=~/.codex-api-only codex login --with-api-key
+   ```
+   Override the path globally with `AUTOMETTA_CODEX_HOME=/some/other/dir`. Verify with `cat ~/.codex-api-only/auth.json | python3 -m json.tool | head -3` — `auth_mode` must be `"apikey"`. Your main `~/.codex/auth.json` stays untouched.
+4. In the **subscribed repo** (the one whose dispatches you are routing), copy `.autometta.local.yaml.example` to `.autometta.local.yaml` and set the `auth.<family>.mode` per family.
 
 ### Two committed files, one user-config file
 
@@ -227,14 +235,26 @@ autometta auth check claude
 
 ### How it dispatches
 
-`scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` source `op-refs.sh`, ask `scripts/auth-route.sh <family>` for the NAME=ref pair (empty when subscription), then invoke `op-fetch <pairs> -- codex exec ...` / `op-fetch <pairs> -- claude -p ...`. In subscription mode no key is fetched but the child still gets the sanitised env. In api mode a single key is fetched and injected with nothing else from the parent shell. Fails closed: missing `op-fetch`, an unset `OP_REF_*`, or a placeholder ref aborts the spawn before any token is spent.
+`scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` source `op-refs.sh`, ask `scripts/auth-route.sh <family>` for the NAME=ref pair (empty when subscription), then invoke `op-fetch <pairs> -- codex exec ...` / `op-fetch <pairs> -- claude -p ...`. In subscription mode no key is fetched but the child still gets the sanitised env. In api mode a single key is fetched and injected with nothing else from the parent shell.
+
+For **codex in api mode**, the spawn script also exports `CODEX_HOME=$AUTOMETTA_CODEX_HOME` (default `~/.codex-api-only`) and passes it through op-fetch via `--pass CODEX_HOME`. Without that isolation, codex prefers `~/.codex/auth.json` (`auth_mode: "chatgpt"`) and silently bills the subscription regardless of the injected `OPENAI_API_KEY`. The spawn fails closed if the sibling CODEX_HOME is missing or has the wrong `auth_mode`.
+
+Fails closed across the surface: missing `op-fetch`, an unset `OP_REF_*`, a placeholder ref, or a missing sibling CODEX_HOME all abort the spawn before any token is spent.
 
 For manual orchestrator dispatches outside the loop, the pattern is:
 
 ```sh
 source "$autometta_root/op-refs.sh"
 auth_pairs="$(REPO_ROOT=$repo scripts/auth-route.sh codex)"
-op-fetch $auth_pairs -- codex exec -C "$repo" --sandbox workspace-write "$prompt" </dev/null >log 2>&1 &
+
+# For codex api mode: pass CODEX_HOME pointing at the sibling so codex reads
+# its auth_mode: apikey instead of the chatgpt-mode default at ~/.codex.
+CODEX_HOME="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}" \
+  op-fetch $auth_pairs --pass CODEX_HOME -- \
+  codex exec -C "$repo" --sandbox workspace-write "$prompt" </dev/null >log 2>&1 &
+
+# Claude has no equivalent: claude -p honours ANTHROPIC_API_KEY directly.
+op-fetch $auth_pairs -- claude -p "$prompt" </dev/null >log 2>&1 &
 ```
 
 ## 8. Uninstall

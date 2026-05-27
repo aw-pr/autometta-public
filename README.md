@@ -248,10 +248,22 @@ autometta auth check claude
 
 `auth check` returns `PASS` with a redacted credential, `subscription` (no key needed), or `FAIL` with the resolver error path. **Run this first** — the spawn fails closed on a missing `op-fetch`, unset `OP_REF_*`, or unresolved placeholder, but a fast probe is cheaper than discovering it mid-dispatch.
 
+### Sibling CODEX_HOME (required for codex api mode)
+
+Codex prefers `~/.codex/auth.json` over `OPENAI_API_KEY` from the env. Without isolation, the OpenAI key injected by op-fetch is silently overridden by your existing ChatGPT-mode auth and the dispatch still bills the subscription. One-time setup:
+
+```sh
+mkdir -p ~/.codex-api-only && chmod 700 ~/.codex-api-only
+op-fetch --print "$OP_REF_OPENAI_API_KEY" | \
+  CODEX_HOME=~/.codex-api-only codex login --with-api-key
+```
+
+The spawn scripts and the manual dispatch pattern both export `CODEX_HOME=$AUTOMETTA_CODEX_HOME` (default `~/.codex-api-only`) when codex is in api mode and pass it through op-fetch via `--pass CODEX_HOME`. They fail closed if the sibling is missing or has the wrong `auth_mode`. Claude has no equivalent — `claude -p` honours `ANTHROPIC_API_KEY` directly.
+
 ### How it dispatches (for agents picking this up cold)
 
 - `scripts/auth-route.sh <family>` — emits the `NAME=$OP_REF_NAME` pair for op-fetch (or nothing for subscription).
-- `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` — source `op-refs.sh`, call `auth-route.sh`, then `op-fetch <pairs> -- codex exec ...` or `op-fetch <pairs> -- claude -p ...`.
+- `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` — source `op-refs.sh`, call `auth-route.sh`, then `op-fetch <pairs> -- codex exec ...` or `op-fetch <pairs> -- claude -p ...`. For codex+api they prepend `CODEX_HOME=...` and `--pass CODEX_HOME`.
 - `op-fetch` (typically at `~/Scripts/op-fetch`) — resolves refs via the 1Password service-account token from `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`), then exec's the child with `env -i` + allowlist + named keys only. No biometric prompt; works under cron and the macOS LaunchAgent.
 
 ### What does NOT work

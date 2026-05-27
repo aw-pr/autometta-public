@@ -127,3 +127,27 @@ Result files become ambiguous, then the orchestrator cannot tell which artefact 
 
 ### Mitigation
 Keep output ownership explicit through [Step 5: Verifier handoff](dispatch-contract.md#step-5-verifier-handoff) and [Step 6: Orchestrator integration](dispatch-contract.md#step-6-orchestrator-integration), with stable naming agreed in the stage card.
+
+## Headless gotcha 8: codex prefers $CODEX_HOME/auth.json over OPENAI_API_KEY
+
+### One-sentence summary
+The Codex CLI uses `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`) ahead of the `OPENAI_API_KEY` env var; if that file is in `auth_mode: "chatgpt"`, an api-mode dispatch silently bills the subscription regardless of the injected key.
+
+### Incident origin
+Source project: autometta self-host on 2026-05-27. After card 14 shipped the per-family auth route toggle, `autometta auth check codex` returned PASS with a resolved API key, but the actual `codex exec` dispatch in fract-cl was still billing against the ChatGPT subscription. Root cause: `~/.codex/auth.json` was in `chatgpt` mode from earlier `codex login`. Codex consulted it ahead of the `OPENAI_API_KEY` that op-fetch had injected. The op-fetch + env-var path was a no-op for billing.
+
+### Failure mode if ignored
+The operator believes they are spending the OpenAI API budget; in reality they are spending the ChatGPT subscription tokens the toggle was meant to spare. There is no error and no log line because both auth modes succeed at the provider level. The mistake compounds across every dispatched stage.
+
+### Mitigation
+Stand up an isolated sibling `CODEX_HOME` whose `auth.json` carries `auth_mode: "apikey"`:
+
+```sh
+mkdir -p ~/.codex-api-only && chmod 700 ~/.codex-api-only
+op-fetch --print "$OP_REF_OPENAI_API_KEY" | \
+  CODEX_HOME=~/.codex-api-only codex login --with-api-key
+```
+
+In autometta, `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` resolve the sibling via `$AUTOMETTA_CODEX_HOME` (default `~/.codex-api-only`) and pass it through op-fetch with `--pass CODEX_HOME` whenever codex is in api mode. They fail closed if the sibling is missing or its `auth_mode` is not `apikey`. `autometta auth check codex` verifies both the ref resolution and the sibling state — run it before any dispatch.
+
+Claude has no equivalent: `claude -p` honours `ANTHROPIC_API_KEY` directly, so no sibling is needed for `claude` family api mode.

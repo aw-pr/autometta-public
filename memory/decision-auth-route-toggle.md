@@ -36,6 +36,16 @@ allowlist plus only the named refs the route requires.
    (default `~/.config/op/service-account.env`). op-fetch sources it,
    uses it per call, never exposes it to the child.
 
+4. **Sibling CODEX_HOME** at `${AUTOMETTA_CODEX_HOME:-~/.codex-api-only}`
+   carries an `auth.json` with `auth_mode: "apikey"`. Codex prefers its
+   own auth.json over the `OPENAI_API_KEY` env var; without isolation,
+   the default chatgpt-mode auth at `~/.codex/auth.json` overrides any
+   op-fetch'd key and the dispatch silently bills the subscription.
+   Spawn scripts export `CODEX_HOME` and pass it through op-fetch via
+   `--pass CODEX_HOME` whenever codex is in api mode. They fail closed
+   if the sibling is missing or has the wrong `auth_mode`. One-time
+   setup is in `docs/setup.md` section 7 and lessons.md gotcha #8.
+
 **Why subscription is the default:**
 
 - Existing dispatches were all on subscription. Flipping the default
