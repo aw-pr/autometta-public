@@ -66,7 +66,7 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 Aligned to the `auth-route-security` skill. Every dispatch goes through `op-fetch`, which exec's the child via `env -i` + allowlist + only the named refs.
 
 - **Mode lives in** `.autometta.local.yaml` (gitignored) in the **subscribed repo**, under `auth.<family>.mode`. Default for both `codex` and `claude` is `subscription`; `api` is opt-in.
-- **Refs live in** `op-refs.sh` (committed, placeholders) + `op-refs.local.sh` (gitignored, real op:// refs) at the autometta repo root. Variables: `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, optional `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`.
+- **Refs live in** `op-refs.sh` (committed, placeholders, in the autometta repo) + `~/.config/autometta/op-refs.local.sh` (gitignored, real op:// refs, mode 0600). Variables: `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, optional `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`. The XDG location is visible to both the dev checkout and the brew-installed CLI; `<repo>/op-refs.local.sh` works for dev only.
 - **Service-account token** for `op-fetch` is read from `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`); no biometric prompt.
 - **Dispatch-time override**: `AUTOMETTA_CODEX_MODE=api` / `AUTOMETTA_CLAUDE_MODE=api` (or the reverse). Beats the manifest.
 - **Verify before dispatching**: `autometta auth status` (per-family table + op-fetch presence) and `autometta auth check <family>` (PASS / FAIL / subscription, with redacted credential, no token spend).

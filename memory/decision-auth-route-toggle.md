@@ -21,11 +21,16 @@ allowlist plus only the named refs the route requires.
    ```
    Override per dispatch via `AUTOMETTA_<FAMILY>_MODE`.
 
-2. **References** live in the autometta repo root:
-   - `op-refs.sh` — committed, placeholder refs (`op://YOUR_VAULT/...`),
-     sources `op-refs.local.sh` if present.
-   - `op-refs.local.sh.example` — committed template.
-   - `op-refs.local.sh` — gitignored; real op:// references.
+2. **References**:
+   - `op-refs.sh` — committed at the autometta repo root; placeholder refs
+     (`op://YOUR_VAULT/...`); searches for a local override in
+     `$AUTOMETTA_LOCAL_REFS`, then `~/.config/autometta/op-refs.local.sh`
+     (XDG, recommended), then `<repo-root>/op-refs.local.sh` (dev only).
+   - `op-refs.local.sh.example` — committed template documenting the
+     XDG path as canonical.
+   - `~/.config/autometta/op-refs.local.sh` — gitignored, mode 0600;
+     real op:// references. The XDG location is the one place visible
+     to both the dev checkout and the brew-installed CLI.
 
 3. **Service-account token** for op-fetch comes from `$OP_SERVICE_ACCOUNT_ENV`
    (default `~/.config/op/service-account.env`). op-fetch sources it,

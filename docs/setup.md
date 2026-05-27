@@ -178,18 +178,23 @@ Every dispatched agent (worker or verifier) runs on either its OAuth subscriptio
 ### One-time setup
 
 1. Install `op-fetch` (typically at `~/Scripts/op-fetch`) and a 1Password service-account token at `~/.config/op/service-account.env` (or wherever `$OP_SERVICE_ACCOUNT_ENV` points). See the auth-route-security skill for details. The service account must have read access to the vaults that hold your Codex / Claude API keys.
-2. Copy `op-refs.local.sh.example` to `op-refs.local.sh` in the autometta repo root and replace the placeholders with the real op:// references. `op-refs.local.sh` is gitignored.
+2. Plant the real op:// references at `~/.config/autometta/op-refs.local.sh` (gitignored; machine-wide). Use the template:
+   ```sh
+   mkdir -p ~/.config/autometta
+   cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
+   chmod 600 ~/.config/autometta/op-refs.local.sh
+   ```
 3. In the **subscribed repo** (the one whose dispatches you are routing), copy `.autometta.local.yaml.example` to `.autometta.local.yaml` and set the `auth.<family>.mode` per family.
 
-### Two committed files, one gitignored
+### Two committed files, one user-config file
 
-```sh
-op-refs.sh                  # COMMITTED — placeholder refs, sources op-refs.local.sh
-op-refs.local.sh.example    # COMMITTED — template showing the real-ref format
-op-refs.local.sh            # GITIGNORED — your actual op:// references
+```
+op-refs.sh                                  # COMMITTED — placeholder refs, sources the override
+op-refs.local.sh.example                    # COMMITTED — template
+~/.config/autometta/op-refs.local.sh        # GITIGNORED — your actual op:// references
 ```
 
-`op-refs.sh` declares `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` with `op://YOUR_VAULT/...` placeholders, then sources `op-refs.local.sh` to let your real values override.
+`op-refs.sh` declares `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` with `op://YOUR_VAULT/...` placeholders, then searches for an override in this order: `$AUTOMETTA_LOCAL_REFS`, `~/.config/autometta/op-refs.local.sh` (XDG, recommended), then `<repo-root>/op-refs.local.sh` (dev checkout only). The XDG location is the one location both the brew-installed CLI and the dev checkout can both see.
 
 ### Per-repo mode toggle
 

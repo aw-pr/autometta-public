@@ -84,7 +84,22 @@ cmd_status() {
   source_op_refs
   printf 'Auth routes for repo: %s\n' "$repo_root"
   printf 'Manifest: %s\n' "$([[ -f $manifest ]] && printf '%s' "$manifest" || printf '(none)')"
-  printf 'op-refs:  %s\n' "$autometta_root/op-refs.sh ($([[ -f $autometta_root/op-refs.local.sh ]] && printf 'local override present' || printf 'placeholders only'))"
+  # Where the local override actually lives (mirror op-refs.sh resolution).
+  local local_refs=""
+  local xdg_candidate="${XDG_CONFIG_HOME:-$HOME/.config}/autometta/op-refs.local.sh"
+  if [[ -n "${AUTOMETTA_LOCAL_REFS:-}" && -f "${AUTOMETTA_LOCAL_REFS}" ]]; then
+    local_refs="$AUTOMETTA_LOCAL_REFS (AUTOMETTA_LOCAL_REFS)"
+  elif [[ -f "$xdg_candidate" ]]; then
+    local_refs="$xdg_candidate"
+  elif [[ -f "$autometta_root/op-refs.local.sh" ]]; then
+    local_refs="$autometta_root/op-refs.local.sh (script dir)"
+  fi
+  if [[ -n "$local_refs" ]]; then
+    printf 'op-refs:  %s\n' "$autometta_root/op-refs.sh"
+    printf '          + local override: %s\n' "$local_refs"
+  else
+    printf 'op-refs:  %s (placeholders only; no local override found)\n' "$autometta_root/op-refs.sh"
+  fi
   printf 'op-fetch: %s\n' "$(command -v op-fetch || printf 'MISSING (api mode will fail)')"
   printf '\n'
   printf '%-7s  %-13s  %-10s  %s\n' "Family" "Mode" "Provenance" "Ref / status"

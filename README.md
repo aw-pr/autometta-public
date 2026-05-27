@@ -203,12 +203,21 @@ Aligned to the `auth-route-security` skill — every launch goes through `op-fet
 ### Three files
 
 ```
-op-refs.sh                  # COMMITTED — placeholder op:// refs, sources the local override
-op-refs.local.sh.example    # COMMITTED — template for the real refs
-op-refs.local.sh            # GITIGNORED — your real op:// references
+op-refs.sh                                  # COMMITTED — placeholder op:// refs
+op-refs.local.sh.example                    # COMMITTED — template
+~/.config/autometta/op-refs.local.sh        # GITIGNORED — your real op:// references
 ```
 
-`op-refs.sh` carries placeholders like `op://YOUR_VAULT/openai-api-key/credential`. Copy `op-refs.local.sh.example` to `op-refs.local.sh` and replace `YOUR_VAULT` with your real vault. The local file overrides via `: "${VAR:=default}"` semantics.
+`op-refs.sh` carries placeholders like `op://YOUR_VAULT/openai-api-key/credential`. Plant your real values at `~/.config/autometta/op-refs.local.sh` — that location is visible to both the dev checkout and the brew-installed CLI:
+
+```sh
+mkdir -p ~/.config/autometta
+cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
+chmod 600 ~/.config/autometta/op-refs.local.sh
+# Then edit ~/.config/autometta/op-refs.local.sh with the real op:// refs.
+```
+
+Resolution order: `$AUTOMETTA_LOCAL_REFS` env var, then `~/.config/autometta/op-refs.local.sh`, then `<repo>/op-refs.local.sh` (dev only — not visible to the brew install).
 
 ### Per-repo mode toggle
 
