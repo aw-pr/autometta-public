@@ -101,7 +101,21 @@ PY
   if [[ -d "$recent_dir" ]]; then
     python3 - "$recent_dir" <<'PY' || true
 import json, os, sys
+from datetime import datetime, timezone
 d = sys.argv[1]
+now = datetime.now(timezone.utc)
+def age(ts):
+    if not ts:
+        return "?"
+    try:
+        dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except Exception:
+        return "?"
+    s = int((now - dt).total_seconds())
+    if s < 60:    return f"{s}s ago"
+    if s < 3600:  return f"{s//60}m ago"
+    if s < 86400: return f"{s//3600}h{(s%3600)//60}m ago"
+    return f"{s//86400}d ago"
 files = []
 try:
     for n in os.listdir(d):
@@ -118,10 +132,13 @@ else:
         try:
             with open(p) as fh:
                 e = json.load(fh)
-            print("  %-7s %-9s %-30s %-6s %ss" % (
+            card = os.path.basename(e.get("card_path","") or "-")
+            card = card[:34]
+            print("  %-10s %-7s %-9s %-34s %-7s ran %ss" % (
+                age(e.get("exited_at")),
                 e.get("family","?"),
                 e.get("role","?"),
-                (e.get("card_path","")[-30:] or "-").lstrip("/"),
+                card,
                 e.get("outcome","?"),
                 e.get("elapsed_seconds","?"),
             ))
@@ -134,11 +151,22 @@ PY
   printf '\n'
 
   printf 'SCHEDULED\n'
+  # Resolve list-cards.sh: prefer this script's own dir (dev checkout),
+  # then fall back to the brew-installed CLI's libexec/scripts (so a
+  # stale tmux pane launched from an older cellar still finds the
+  # current helper).
+  local lc=""
   if [[ -x "$script_dir/list-cards.sh" ]]; then
-    pending="$("$script_dir/list-cards.sh" "$repo_root" 2>/dev/null \
-      | awk -F'\t' '$2 == "pending" {print $1}' | head -5)"
-    in_flight="$("$script_dir/list-cards.sh" "$repo_root" 2>/dev/null \
-      | awk -F'\t' '$2 == "in_flight" {print $1}')"
+    lc="$script_dir/list-cards.sh"
+  elif command -v autometta >/dev/null 2>&1; then
+    local autometta_bin candidate
+    autometta_bin="$(command -v autometta)"
+    candidate="$(cd "$(dirname "$autometta_bin")/.." && pwd)/scripts/list-cards.sh"
+    [[ -x "$candidate" ]] && lc="$candidate"
+  fi
+  if [[ -n "$lc" ]]; then
+    pending="$("$lc" "$repo_root" 2>/dev/null | awk -F'\t' '$2 == "pending" {print $1}' | head -5)"
+    in_flight="$("$lc" "$repo_root" 2>/dev/null | awk -F'\t' '$2 == "in_flight" {print $1}')"
     if [[ -n "$in_flight" ]]; then
       printf '%s\n' "$in_flight" | sed 's/^/  in_flight  /'
     fi
@@ -149,7 +177,25 @@ PY
       printf '  (no pending cards)\n'
     fi
   else
-    printf '  (list-cards.sh missing)\n'
+    # Last-resort fallback: read state.yaml directly so the pane is
+    # never blank just because list-cards.sh is unreachable.
+    if [[ -f "$repo_root/state/state.yaml" ]] && command -v yq >/dev/null 2>&1; then
+      yq -o=json '.' "$repo_root/state/state.yaml" 2>/dev/null \
+        | python3 -c '
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+stages=d.get("stages") or []
+shown=0
+for s in stages:
+    if s.get("status") in ("pending","in_progress") and shown<6:
+        print("  %-11s %s" % (s.get("status","?"), s.get("id","?")))
+        shown+=1
+if shown==0: print("  (no pending or in-progress stages in state.yaml)")
+'
+    else
+      printf '  (list-cards.sh unreachable and state.yaml not parseable — restart this pane with `autometta attach %s`)\n' "$(basename "$repo_root")"
+    fi
   fi
 }
 
