@@ -101,6 +101,14 @@ cmd_status() {
     printf 'op-refs:  %s (placeholders only; no local override found)\n' "$autometta_root/op-refs.sh"
   fi
   printf 'op-fetch: %s\n' "$(command -v op-fetch || printf 'MISSING (api mode will fail)')"
+  local codex_home="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}"
+  if [[ -f "$codex_home/auth.json" ]]; then
+    local sibling_mode
+    sibling_mode="$(python3 -c "import json; print(json.load(open('$codex_home/auth.json')).get('auth_mode','?'))" 2>/dev/null || echo '?')"
+    printf 'codex-api home: %s (auth_mode: %s)\n' "$codex_home" "$sibling_mode"
+  else
+    printf 'codex-api home: %s (NOT initialised — codex api dispatches will fail until set up)\n' "$codex_home"
+  fi
   printf '\n'
   printf '%-7s  %-13s  %-10s  %s\n' "Family" "Mode" "Provenance" "Ref / status"
   printf '%-7s  %-13s  %-10s  %s\n' "------" "-------------" "----------" "-------------"
@@ -172,6 +180,27 @@ cmd_check() {
     printf 'FAIL          %s  op-fetch could not resolve %s (1P helper locked / wrong ref / SA token missing)\n' \
       "$family" "$ref_var" >&2
     exit 1
+  fi
+  # For codex+api, an OPENAI_API_KEY env var alone is not enough — codex
+  # prefers ~/.codex/auth.json over the env. Confirm a sibling CODEX_HOME
+  # with auth_mode: apikey exists.
+  if [[ "$family" == "codex" ]]; then
+    local codex_home="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}"
+    if [[ ! -f "$codex_home/auth.json" ]]; then
+      printf 'FAIL          %s  ref resolves but sibling CODEX_HOME is missing at %s\n' \
+        "$family" "$codex_home" >&2
+      printf '              one-time setup:\n' >&2
+      printf '                mkdir -p %s && chmod 700 %s\n' "$codex_home" "$codex_home" >&2
+      printf '                CODEX_HOME=%s codex login --with-api-key  (paste the key)\n' "$codex_home" >&2
+      exit 1
+    fi
+    local sibling_mode
+    sibling_mode="$(python3 -c "import json; print(json.load(open('$codex_home/auth.json')).get('auth_mode','?'))" 2>/dev/null || echo '?')"
+    if [[ "$sibling_mode" != "apikey" ]]; then
+      printf 'FAIL          %s  sibling CODEX_HOME at %s has auth_mode=%s (need apikey)\n' \
+        "$family" "$codex_home" "$sibling_mode" >&2
+      exit 1
+    fi
   fi
   printf 'PASS          %s  %s -> %s (env %s)\n' "$family" "$ref_var" "$(redact "$resolved")" "$env_var"
 }

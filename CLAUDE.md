@@ -47,6 +47,7 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 5. Prior-gate regressions: re-running acceptance after a later change can surface a regression in an earlier stage.
 6. `claude -p` does not stream its log - the file stays at 0 bytes until the run completes and is then written in a single burst. Log-mtime staleness is *not* a stuck signal for the claude family; only over-budget is. The heartbeat encodes this asymmetry (see `scripts/heartbeat.sh`).
 7. `claude -p` needs `--dangerously-skip-permissions` to act autonomously; `--permission-mode bypassPermissions` combined with `-p` exits silently with an empty log.
+8. Codex CLI prefers `$CODEX_HOME/auth.json` over the `OPENAI_API_KEY` env var. If `~/.codex/auth.json` has `auth_mode: "chatgpt"` (the default after `codex login`), an `op-fetch OPENAI_API_KEY=... -- codex exec` dispatch still bills the subscription. Fix: a sibling `CODEX_HOME` (default `~/.codex-api-only`) with `auth_mode: "apikey"`; spawn scripts export and `--pass CODEX_HOME` through op-fetch in api mode and fail closed if the sibling is missing.
 
 ## Conventions specific to this repo
 
@@ -67,6 +68,7 @@ Aligned to the `auth-route-security` skill. Every dispatch goes through `op-fetc
 
 - **Mode lives in** `.autometta.local.yaml` (gitignored) in the **subscribed repo**, under `auth.<family>.mode`. Default for both `codex` and `claude` is `subscription`; `api` is opt-in.
 - **Refs live in** `op-refs.sh` (committed, placeholders, in the autometta repo) + `~/.config/autometta/op-refs.local.sh` (gitignored, real op:// refs, mode 0600). Variables: `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, optional `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`. The XDG location is visible to both the dev checkout and the brew-installed CLI; `<repo>/op-refs.local.sh` works for dev only.
+- **Sibling CODEX_HOME** at `${AUTOMETTA_CODEX_HOME:-~/.codex-api-only}` is required for codex api mode (codex prefers `~/.codex/auth.json` over `OPENAI_API_KEY` — see lessons.md gotcha #8). One-time setup: `mkdir -p ~/.codex-api-only && chmod 700 ~/.codex-api-only && op-fetch --print "$OP_REF_OPENAI_API_KEY" | CODEX_HOME=~/.codex-api-only codex login --with-api-key`. Spawn scripts export and pass it through op-fetch via `--pass CODEX_HOME` whenever codex is in api mode. `autometta auth check codex` verifies both the ref and the sibling.
 - **Service-account token** for `op-fetch` is read from `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`); no biometric prompt.
 - **Dispatch-time override**: `AUTOMETTA_CODEX_MODE=api` / `AUTOMETTA_CLAUDE_MODE=api` (or the reverse). Beats the manifest.
 - **Verify before dispatching**: `autometta auth status` (per-family table + op-fetch presence) and `autometta auth check <family>` (PASS / FAIL / subscription, with redacted credential, no token spend).
@@ -101,8 +103,13 @@ source "$autometta_root/op-refs.sh"
 # Resolve the auth route for this family (emits NAME=ref pairs or empty)
 auth_pairs="$(REPO_ROOT="$repo" scripts/auth-route.sh codex)"
 
-# Launch via op-fetch (env -i + allowlist + named refs only)
-op-fetch $auth_pairs -- codex exec -C "$repo" --sandbox workspace-write "$(cat prompt.txt)" </dev/null >log.txt 2>&1 &
+# Launch via op-fetch (env -i + allowlist + named refs only). For codex+api
+# also export CODEX_HOME pointing at the sibling auth dir so codex reads
+# auth_mode: apikey instead of the chatgpt-mode ~/.codex/auth.json
+# (see gotcha #8). Pass it through via --pass CODEX_HOME.
+CODEX_HOME="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}" \
+  op-fetch $auth_pairs --pass CODEX_HOME -- \
+  codex exec -C "$repo" --sandbox workspace-write "$(cat prompt.txt)" </dev/null >log.txt 2>&1 &
 pid=$!
 disown
 

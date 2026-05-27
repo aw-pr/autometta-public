@@ -25,3 +25,18 @@ export OP_REF_ANTHROPIC_API_KEY="op://YOUR_VAULT/Anthropic/credential"
 # This is the env-var route for Claude Pro / Max OAuth via op-fetch; for the
 # default file-based session at ~/.config/claude/ it is not needed.
 # export OP_REF_CLAUDE_CODE_OAUTH_TOKEN="op://YOUR_VAULT/Claude-OAuth/credential"
+
+# ---------------------------------------------------------------------------
+# Codex api mode also needs a sibling CODEX_HOME with auth_mode: "apikey",
+# because codex prefers $CODEX_HOME/auth.json over the OPENAI_API_KEY env
+# var (lessons.md gotcha #8). One-time host setup, after this file has its
+# real OPENAI_API_KEY ref above:
+#
+#   mkdir -p ~/.codex-api-only && chmod 700 ~/.codex-api-only
+#   op-fetch --print "$OP_REF_OPENAI_API_KEY" | \
+#     CODEX_HOME=~/.codex-api-only codex login --with-api-key
+#
+# Override the path globally with $AUTOMETTA_CODEX_HOME. The autometta
+# spawn scripts and `autometta auth check codex` both verify the sibling
+# is initialised and fail closed otherwise.
+# ---------------------------------------------------------------------------
