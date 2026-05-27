@@ -116,7 +116,18 @@ if [[ ! -f "$repo_template" ]]; then
   printf 'PASS template copied %s\n' "$repo_template"
 fi
 
-autometta_bin="$autometta_root/bin/autometta"
+# Prefer the brew symlink (/opt/homebrew/bin/autometta or similar) over a
+# versioned Cellar path. The symlink follows brew upgrades; baking the
+# Cellar path into the plist makes every brew upgrade silently break the
+# LaunchAgent (the cleanup step removes the old keg and launchd loses
+# the binary, exiting 78 every tick until the operator notices).
+if [[ -n "${AUTOMETTA_LAUNCHAGENT_BIN:-}" ]]; then
+  autometta_bin="$AUTOMETTA_LAUNCHAGENT_BIN"
+elif command -v autometta >/dev/null 2>&1; then
+  autometta_bin="$(command -v autometta)"
+else
+  autometta_bin="$autometta_root/bin/autometta"
+fi
 log_dir="$repo_path/state/logs"
 mkdir -p "$HOME/Library/LaunchAgents" "$log_dir"
 
