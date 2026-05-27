@@ -97,6 +97,34 @@ The heartbeat surface answers the "is this stuck?" question that
 `state.yaml` does not — `state.yaml` reflects the FSM, the heartbeat
 reflects the process.
 
+## Polling primitive: `watch-agent.sh`
+
+The heartbeat writes findings to a file; somebody has to read it. For
+orchestrator-led manual dispatches (a `codex exec` or `claude -p`
+launched directly from an interactive session, outside the `phat-controller`
+loop), `scripts/watch-agent.sh` blocks until the dispatched agent terminates
+or stalls past a grace window. Use it after registering the agent:
+
+```sh
+codex exec -C "$repo" --sandbox workspace-write "$(cat prompt.txt)" \
+  </dev/null >log.txt 2>&1 &
+pid=$!
+disown
+scripts/register-agent.sh "$repo" "$pid" worker codex \
+  "Codex GPT-5.3 <codex-gpt-5-3@local>" "$card" log.txt 3600
+scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
+```
+
+Defaults: poll every 60s (`PHAT_CONTROLLER_WATCH_POLL`), escalate to STUCK
+120s after the heartbeat first flags `silent` (`PHAT_CONTROLLER_WATCH_STALL_GRACE`).
+Exit codes: `0` clean exit, `2` STUCK, `3` bad input. The watcher itself
+never kills the agent — it returns a non-zero exit so the caller can
+decide.
+
+For the autonomous loop, the heartbeat is invoked once per tick and the
+loop already polls process liveness via `kill -0`; the watcher is the
+manual-dispatch equivalent of "the loop saw your agent finish".
+
 Preview the tmux commands without opening a session:
 
 ```sh
