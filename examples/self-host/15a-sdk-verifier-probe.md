@@ -46,7 +46,7 @@ Stand up a minimal Python Agent SDK script at `scripts/verify-sdk.py` that reads
 2. With `ANTHROPIC_API_KEY` unset and the SDK installed, the script exits non-zero with a clear "missing ANTHROPIC_API_KEY" message and does not call any API.
 3. With the SDK not installed (simulated by removing the package), the script exits 2 with a message naming `scripts/requirements-sdk.txt`.
 4. The script's CLI surface accepts `--stage-id`, `--card`, `--artefact-glob`, `--out`, all four are required, and missing any of them produces a clear argparse-style error.
-5. The intended output JSON shape (documented in `docs/sdk-verifier.md`) names the same top-level keys as an existing `state/verifiers/<stage-id>.json` artefact: `overall`, `checks`. The doc shows a literal example envelope.
+5. The intended output JSON shape (documented in `docs/sdk-verifier.md`) names the same top-level keys as an existing `state/verifiers/<stage-id>.json` artefact: `stage_id`, `verifier_identity`, `verifier_invocation`, `ran_at`, `criteria` (array of `{id, name, verdict, evidence}` objects), `additional_findings`, `overall`. The doc shows a literal example envelope matching the existing shape exactly.
 6. The script's exit-code mapping is documented in `docs/sdk-verifier.md`: `0` for `overall=PASS`, `1` for `overall=FAIL`, `2` for environment errors (missing key, missing SDK). The implementation matches the doc (verifier reads the source and confirms).
 7. `memory/decision-sdk-verifier-prototype.md` follows the decision-memo format (Decision / Why / How to apply, plus a `[[link]]` to `decision-auth-route-toggle`).
 8. No files outside the deliverables list are modified.

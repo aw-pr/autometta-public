@@ -26,11 +26,10 @@ Add an SDK route to `scripts/spawn-verifier.sh` for the claude family, selected 
 ## Deliverables
 
 1. `scripts/spawn-verifier.sh` — adds the SDK route as described. The existing `claude -p` block stays untouched. The route choice is logged to stderr in a single line: `verifier-transport: sdk|cli (provenance: manifest|env|default)`.
-2. `.autometta.local.yaml.example` — adds the optional `verifier.claude.transport` block with a comment explaining the two values and the fallback.
-3. `.autometta.local.yaml` (this repo) — set `verifier.claude.transport: sdk` so this repo dogfoods the new path on the next dispatch.
-4. `docs/sdk-verifier.md` — extend with "Integration into spawn-verifier.sh" section.
-5. `memory/decision-sdk-verifier-integration.md` — decision memo. Why manifest flag rather than per-card, why cli is the default fallback, why no per-family flag (codex stays on `codex exec`).
-6. `CLAUDE.md` — one-line addition to the "Manual orchestrator dispatch pattern" section noting that claude-family dispatch may take the SDK route when the manifest selects it.
+2. `.autometta.local.yaml.example` — adds the optional `verifier.claude.transport` block with a comment explaining the two values, the fallback, and the operator-opt-in step (set `auth.claude.mode: api` AND `verifier.claude.transport: sdk` together; setting only the transport with subscription mode fails closed).
+3. `docs/sdk-verifier.md` — extend with "Integration into spawn-verifier.sh" section.
+4. `memory/decision-sdk-verifier-integration.md` — decision memo. Why manifest flag rather than per-card, why cli is the default fallback, why no per-family flag (codex stays on `codex exec`), why this card deliberately does NOT mutate the autometta repo's own manifest (avoids the circular dispatch where 15c's verifier runs with sdk+subscription and fails closed on its own stage).
+5. `CLAUDE.md` — one-line addition to the "Manual orchestrator dispatch pattern" section noting that claude-family dispatch may take the SDK route when the manifest selects it.
 
 ## Constraints
 
@@ -67,7 +66,7 @@ Add an SDK route to `scripts/spawn-verifier.sh` for the claude family, selected 
 
 ## Verifier handoff
 
-Worker writes the deliverables, runs the smoke test from acceptance #7 against stage 14 under both routes, attaches both artefact diffs in its completion message, and confirms acceptance #2 by attempting a dispatch under `subscription` + `sdk` and pasting the fail-closed message. Verifier reads the card and deliverables, runs `scripts/spawn-verifier.sh` for stage 14 once under each transport setting, and writes `state/verifiers/15c-sdk-verifier-integration.json`.
+Worker writes the deliverables, runs the smoke test from acceptance #7 against stage 14 under both routes by setting `AUTOMETTA_CLAUDE_TRANSPORT=sdk` + `AUTOMETTA_CLAUDE_MODE=api` for the SDK run (env override avoids mutating this repo's manifest). Worker attaches both artefact diffs in its completion message and confirms acceptance #2 by attempting a dispatch under `subscription` + `sdk` via env override and pasting the fail-closed message. Verifier reads the card and deliverables, runs `scripts/spawn-verifier.sh` for stage 14 once under each transport setting (via env override only — manifest stays at the operator's default), and writes `state/verifiers/15c-sdk-verifier-integration.json`. Verifier dispatch itself uses the default `claude -p` route per the operator's current manifest, sidestepping the circular dispatch hazard.
 
 ## Family-specific notes
 
