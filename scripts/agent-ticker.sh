@@ -66,6 +66,72 @@ PY
   fi
   printf '\n'
 
+  # ALERTS panel — surface any stage in a terminal-failure state plus
+  # budget halts and stale heartbeats. Shown only when something needs
+  # the operator's attention so the panel stays signal, not noise.
+  local state_path="$repo_root/state/state.yaml"
+  local budget_path="$repo_root/state/budget.json"
+  python3 - "$state_path" "$budget_path" "$repo_root" <<'PY' || true
+import json, os, sys
+state_path, budget_path, repo_root = sys.argv[1], sys.argv[2], sys.argv[3]
+alerts = []
+
+# Budget halts
+try:
+    with open(budget_path) as fh:
+        b = json.load(fh)
+    if b.get("halted"):
+        alerts.append("budget halted: %s" % (b.get("halt_reason") or "unknown"))
+    cf = b.get("consecutive_failures", 0)
+    cap = b.get("consecutive_failure_cap", 3)
+    if cf > 0:
+        alerts.append("consecutive failures: %d/%d" % (cf, cap))
+except Exception:
+    pass
+
+# Stages in terminal-failure states (read state.yaml as text — avoids yaml dep)
+try:
+    with open(state_path) as fh:
+        lines = fh.read().splitlines()
+    current_id = None
+    current_status = None
+    blocked = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("- id:"):
+            if current_id and current_status in ("failed", "verifier_failed", "stalled"):
+                blocked.append((current_id, current_status))
+            current_id = stripped.split(":", 1)[1].strip()
+            current_status = None
+        elif stripped.startswith("status:") and current_id:
+            current_status = stripped.split(":", 1)[1].strip()
+    if current_id and current_status in ("failed", "verifier_failed", "stalled"):
+        blocked.append((current_id, current_status))
+    for sid, st in blocked:
+        # If verifier artefact exists, surface the first FAIL criterion
+        artefact = os.path.join(repo_root, "state", "verifiers", "%s.json" % sid)
+        detail = ""
+        if os.path.exists(artefact):
+            try:
+                with open(artefact) as fh:
+                    a = json.load(fh)
+                for c in a.get("criteria", []):
+                    if c.get("verdict") == "FAIL":
+                        detail = " — FAIL crit %s: %s" % (c.get("id"), (c.get("name") or "")[:60])
+                        break
+            except Exception:
+                pass
+        alerts.append("%s: %s%s" % (sid, st, detail))
+except Exception:
+    pass
+
+if alerts:
+    print("ALERTS (need attention)")
+    for a in alerts:
+        print("  %s" % a)
+    print()
+PY
+
   printf 'ACTIVE\n'
   if [[ -f "$heartbeat_path" ]]; then
     python3 - "$heartbeat_path" <<'PY' || true
