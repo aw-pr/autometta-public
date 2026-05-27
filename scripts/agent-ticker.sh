@@ -34,6 +34,36 @@ render_once() {
 
   printf 'Autometta agent ticker — %s\n' "$now_iso"
   printf 'Repo: %s\n' "$repo_root"
+  if [[ -f "$heartbeat_path" ]]; then
+    python3 - "$heartbeat_path" <<'PY' || true
+import json, sys
+from datetime import datetime, timezone
+try:
+    with open(sys.argv[1]) as fh:
+        rep = json.load(fh)
+    ts = rep.get("checked_at")
+    dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    age = int((datetime.now(timezone.utc) - dt).total_seconds())
+except Exception:
+    print("Health: heartbeat.json unreadable")
+    sys.exit(0)
+if age < 60:
+    fmt = "%ds" % age
+elif age < 3600:
+    fmt = "%dm %ds" % (age // 60, age % 60)
+else:
+    fmt = "%dh %dm" % (age // 3600, (age % 3600) // 60)
+if age > 600:
+    tag = "STALE — controller may have halted or LaunchAgent stopped firing"
+elif age > 180:
+    tag = "WARN"
+else:
+    tag = "ok"
+print("Health: last heartbeat %s ago (%s)" % (fmt, tag))
+PY
+  else
+    printf 'Health: no heartbeat.json yet\n'
+  fi
   printf '\n'
 
   printf 'ACTIVE\n'
