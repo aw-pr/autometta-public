@@ -17,8 +17,11 @@ stage_card_globs:
 templates_mode: upstream
 
 # ---------------------------------------------------------------------------
-# Auth routes (per family). Default for both is `subscription` (OAuth /
-# ChatGPT or Claude Pro sessions); flip to `api` to bill via API key.
+# Auth routes (per family). Recommended defaults below: codex on `api`
+# (avoids ChatGPT-mode billing surprises and the sibling-CODEX_HOME setup
+# is a one-off), claude on `subscription` (Claude Pro session). Flip
+# either to suit the repo. The resolver fallback if this file is absent
+# is `subscription` for both.
 #
 # This file only controls WHICH route. The op:// references themselves live
 # in op-refs.sh (committed placeholders) + op-refs.local.sh (gitignored
@@ -37,8 +40,8 @@ templates_mode: upstream
 
 auth:
   codex:
-    mode: subscription
-    # mode: api    # requires OP_REF_OPENAI_API_KEY set in op-refs.local.sh
+    mode: api    # recommended default; requires OP_REF_OPENAI_API_KEY in op-refs.local.sh
+    # mode: subscription   # ChatGPT OAuth via ~/.codex/auth.json
   claude:
-    mode: subscription
-    # mode: api    # requires OP_REF_ANTHROPIC_API_KEY set in op-refs.local.sh
+    mode: subscription   # recommended default; uses Claude Pro session
+    # mode: api    # requires OP_REF_ANTHROPIC_API_KEY in op-refs.local.sh

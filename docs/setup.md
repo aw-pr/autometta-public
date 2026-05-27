@@ -173,7 +173,7 @@ For a deeper introduction or to retrofit a repo that pre-dates this pattern, use
 
 ## 7. Auth routes (subscription vs API key)
 
-Every dispatched agent (worker or verifier) runs on either its OAuth subscription session (Claude Pro / ChatGPT plan) or its API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude). Default for both families is `subscription`. Aligned to the `auth-route-security` skill: every launch goes through `op-fetch`, which exec's the child with `env -i` + an allowlist + named refs only — so no stray API key from your parent shell can accidentally redirect billing.
+Every dispatched agent (worker or verifier) runs on either its OAuth subscription session (Claude Pro / ChatGPT plan) or its API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude). Resolver fallback (no manifest) is `subscription` for both families; the shipped `.autometta.local.yaml.example` recommends `codex: api` + `claude: subscription`. Aligned to the `auth-route-security` skill: every launch goes through `op-fetch`, which exec's the child with `env -i` + an allowlist + named refs only — so no stray API key from your parent shell can accidentally redirect billing.
 
 ### One-time setup
 

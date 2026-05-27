@@ -196,7 +196,7 @@ session after `install-homebrew-local.sh` to pick up new scripts
 
 ## Billing routes (subscription vs API key)
 
-Every dispatched worker or verifier runs on either an OAuth subscription session (Claude Pro / ChatGPT plan) or an API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude). Default for both families is `subscription`; flip to `api` per repo or per dispatch.
+Every dispatched worker or verifier runs on either an OAuth subscription session (Claude Pro / ChatGPT plan) or an API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude). Resolver fallback (no manifest) is `subscription` for both; the shipped template recommends `codex: api` + `claude: subscription`. Flip per repo or per dispatch.
 
 Aligned to the `auth-route-security` skill — every launch goes through `op-fetch`, which exec's the child via `env -i` plus an allowlist plus only the named refs. Subscription mode still goes through `op-fetch`, so any stray `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` in your parent shell is **stripped** rather than silently flipping you to API billing.
 
