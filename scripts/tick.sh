@@ -265,12 +265,23 @@ commit_state_branch() {
     original_branch="$(git rev-parse --abbrev-ref HEAD)"
     # Keep operator branch unchanged when tick.sh is run interactively.
     trap 'git checkout "$original_branch" >/dev/null 2>&1 || true' EXIT
-    local non_state_changes
-    non_state_changes="$(git status --porcelain -- . ':(exclude)state' || true)"
-    if [[ -n "$non_state_changes" ]]; then
-      budget_halt "$repo_root" "dirty-working-tree"
-      log "dirty working tree outside state/ for ${repo_root}, refusing state branch checkout"
-      return 1
+    # A stage that is in_progress is *expected* to leave worker output in
+    # the tree for the verifier (the worker prompt explicitly says "do
+    # not commit; orchestrator commits on verifier-pass"). Halting on
+    # that legitimate dirt traps the loop: verifier never dispatches, the
+    # PASS-path commit never runs, and the only escape is operator
+    # intervention. Only enforce the clean-tree guard when no stage is
+    # currently in flight.
+    local current_stage_now
+    current_stage_now="$(state_json "$repo_root/state/state.yaml" | jq -r '.current_stage // empty')"
+    if [[ -z "$current_stage_now" ]]; then
+      local non_state_changes
+      non_state_changes="$(git status --porcelain -- . ':(exclude)state' || true)"
+      if [[ -n "$non_state_changes" ]]; then
+        budget_halt "$repo_root" "dirty-working-tree"
+        log "dirty working tree outside state/ for ${repo_root}, refusing state branch checkout"
+        return 1
+      fi
     fi
     git checkout -B phat-controller/state >/dev/null 2>&1
     git add state/state.yaml state/budget.json state/verifiers 2>/dev/null || true
