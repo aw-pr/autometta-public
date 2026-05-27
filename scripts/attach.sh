@@ -67,14 +67,17 @@ autometta_root="$(cd "$script_dir/.." && pwd)"
 autometta_root_q="$(shell_quote "$autometta_root")"
 controller_log_q="$(shell_quote "$controller_home/log")"
 
+repo_path_q="$(shell_quote "$repo_path")"
 status_cmd="printf 'Project: $repo_slug\nRepo: $repo_path\nSession: $session_name\n\n'; cd $autometta_root_q && scripts/status.sh; printf '\\nRefresh with: scripts/status.sh\\n'; exec \"\${SHELL:-/bin/sh}\""
 log_cmd="mkdir -p $controller_log_q; latest=''; for candidate in $controller_log_q/tick-*.log; do [ -e \"\$candidate\" ] || continue; latest=\"\$candidate\"; done; printf 'Project: $repo_slug\nRepo: $repo_path\n\n'; if [ -n \"\$latest\" ]; then tail -f \"\$latest\"; else printf 'No tick log yet in $controller_home/log\\n'; exec \"\${SHELL:-/bin/sh}\"; fi"
+ticker_cmd="cd $autometta_root_q && scripts/agent-ticker.sh $repo_path_q"
 
 if "$dry_run"; then
   printf 'tmux session: %s\n' "$session_name"
   printf 'repo: %s\n' "$repo_path"
   printf 'status pane: %s\n' "$status_cmd"
   printf 'log pane: %s\n' "$log_cmd"
+  printf 'ticker pane: %s\n' "$ticker_cmd"
   exit 0
 fi
 
@@ -91,10 +94,21 @@ fi
 if ! tmux has-session -t "$session_name" 2>/dev/null; then
   tmux new-session -d -s "$session_name" "$status_cmd"
   tmux split-window -h -t "$session_name" "$log_cmd"
+  tmux split-window -v -t "$session_name":0.1 "$ticker_cmd"
   tmux select-pane -t "$session_name":0.0
   printf 'PASS tmux viewer created %s\n' "$session_name"
-elif "$ensure_only"; then
-  printf 'PASS tmux viewer exists %s\n' "$session_name"
+else
+  # Idempotent backfill: if the ticker pane is missing on an existing session,
+  # add it. tmux pane indices are stable within a window; pane 0.2 only exists
+  # once we have created it.
+  pane_count="$(tmux list-panes -t "$session_name":0 2>/dev/null | wc -l | tr -d ' ')"
+  if [[ "$pane_count" = "2" ]]; then
+    tmux split-window -v -t "$session_name":0.1 "$ticker_cmd"
+    tmux select-pane -t "$session_name":0.0
+    printf 'PASS tmux ticker pane added to %s\n' "$session_name"
+  elif "$ensure_only"; then
+    printf 'PASS tmux viewer exists %s\n' "$session_name"
+  fi
 fi
 
 if "$ensure_only"; then

@@ -127,6 +127,20 @@ main() {
 
   pid="$!"
   update_stage_worker_pid "$state_path" "$stage_id" "$pid"
+
+  # Register into the per-agent liveness registry so the heartbeat watchdog
+  # and the agent ticker can see this worker. Best-effort; never fatal.
+  local budget_secs=0
+  local budget_line
+  budget_line="$(grep -E 'Worker wall-clock' "$card_path" 2>/dev/null | head -n1 || true)"
+  if [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(minutes?|mins?|m)([^[:alpha:]]|$) ]]; then
+    budget_secs=$((${BASH_REMATCH[1]} * 60))
+  elif [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(seconds?|secs?|s)([^[:alpha:]]|$) ]]; then
+    budget_secs="${BASH_REMATCH[1]}"
+  fi
+  "$script_dir/register-agent.sh" "$repo_root" "$pid" "worker" "$family" \
+    "$worker_identity" "$card_path" "$log_path" "$budget_secs" >/dev/null 2>&1 || true
+
   printf '%s\n' "$pid"
 }
 
