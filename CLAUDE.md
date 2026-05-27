@@ -23,6 +23,8 @@ The repo extracts patterns from two prior projects (`fractals-from-the-90s` disp
 1. **Dispatch contract (pass 1 - shipped):** the contract between an orchestrator and one worker for one unit of work. Stage card -> worker prompt -> sandbox boundary -> acceptance command -> verifier handoff. Human drives the orchestrator session. Deliverables live in `docs/` and `templates/`.
 2. **Autonomous loop / `phat-controller` (pass 2 - shipped):** cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, exits. Budget file is the only safety. The loop layer **sits on top of** the dispatch contract - never modify the loop in ways that bypass it. Runtime in `scripts/`, schemas in `schemas/`, per-repo state in `state/`. See `docs/phat-controller.md` for the design and `docs/setup.md` for the operator flow.
 
+Pass 2 also ships **agent observability**: a per-agent liveness registry at `state/active-agents/<pid>.json`, a heartbeat watchdog at `scripts/heartbeat.sh` that surfaces stalls / over-budget conditions to `state/heartbeat.json`, a tmux agent ticker in the third pane of the `autometta-<repo>` viewer (`scripts/agent-ticker.sh`), and a polling primitive (`scripts/watch-agent.sh`) that any orchestrator-led manual dispatch can block on to catch silent agent deaths. See `docs/observability.md`.
+
 ## Load-bearing beliefs (read before proposing changes)
 
 Decisions, not preferences. Diverging needs an explicit conversation, not a quiet refactor:
@@ -43,6 +45,8 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 3. Log paths must be predictable (e.g. `/tmp/codex-<stage>.log`), not harness-generated task IDs.
 4. Sandbox shadows: a worker that *appears* to pass acceptance inside its sandbox may be lying about side-effects it couldn't perform.
 5. Prior-gate regressions: re-running acceptance after a later change can surface a regression in an earlier stage.
+6. `claude -p` does not stream its log - the file stays at 0 bytes until the run completes and is then written in a single burst. Log-mtime staleness is *not* a stuck signal for the claude family; only over-budget is. The heartbeat encodes this asymmetry (see `scripts/heartbeat.sh`).
+7. `claude -p` needs `--dangerously-skip-permissions` to act autonomously; `--permission-mode bypassPermissions` combined with `-p` exits silently with an empty log.
 
 ## Conventions specific to this repo
 
@@ -56,3 +60,38 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 ## Skills hosted by this repo
 
 - `skills/agent-orchestrator/` - canonical home. Loaded into `~/.claude/skills/agent-orchestrator` via the `mcp-hub` symlink chain. Edits here are the source of truth for every consumer.
+
+## Upgrading the local install (agents: read this when picking up a session)
+
+The CLI ships as a local Homebrew tap rendered from this checkout. If the installed version (`autometta --version`) is older than the publish-branch HEAD (`git -C /Users/AnthonyWest/repos/autometta rev-parse --short HEAD`), the in-flight agent is on a stale toolchain and may not see recent scripts (heartbeat, watch-agent, agent-ticker, install-launchagent, etc.).
+
+Canonical upgrade from any session:
+
+```sh
+cd /Users/AnthonyWest/repos/autometta
+git pull --ff-only
+scripts/install-homebrew-local.sh
+autometta --version             # should match git HEAD short SHA
+autometta attach <repo>         # picks up the third tmux pane (ticker)
+```
+
+The brew tap is rendered at install time; `brew update` alone is not enough. Re-run `scripts/install-homebrew-local.sh` after every `git pull` of this repo.
+
+## Manual orchestrator dispatch pattern
+
+When an orchestrator session dispatches a worker or verifier directly (not via `phat-controller` cron), the canonical pattern is:
+
+```sh
+# Launch the agent
+codex exec -C "$repo" --sandbox workspace-write "$(cat prompt.txt)" </dev/null >log.txt 2>&1 &
+pid=$!
+disown
+
+# Register so the heartbeat / ticker can see it
+scripts/register-agent.sh "$repo" "$pid" worker codex "$identity" "$card" "$log" "$budget_secs"
+
+# Block until done or stuck — the harness notifies on return
+scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
+```
+
+`watch-agent.sh` exit code: `0` clean, `2` STUCK, `3` bad input. STUCK escalates when the heartbeat first flags `silent` and the grace window expires (defaults 60s poll, 120s grace, both env-overridable). For the `claude` family swap `codex exec ...` for `claude -p "$prompt" --dangerously-skip-permissions </dev/null >log 2>&1 &` and pass `claude` as the family arg to `register-agent.sh`. See `docs/observability.md` for the full surface.
