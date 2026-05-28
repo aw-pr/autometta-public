@@ -23,6 +23,7 @@ Usage:
   autometta install-homebrew-local [--dry-run]
   autometta auth status
   autometta auth check <codex|claude>
+  autometta panel <stage-id> [repo-path]
 USAGE
 }
 
@@ -122,6 +123,39 @@ case "$command_name" in
     ;;
   auth)
     run_script auth.sh "$@"
+    ;;
+  panel)
+    if [[ $# -lt 1 ]]; then
+      printf 'usage: autometta panel <stage-id> [repo-path]\n' >&2
+      exit 1
+    fi
+    stage_id_arg="$1"
+    repo_path_arg="${2:-.}"
+    shift $#
+    # Find the card for the given stage-id using the stage_card_globs from
+    # .autometta.local.yaml, falling back to examples/self-host/ convention.
+    card_file=""
+    for pattern in \
+      "${repo_path_arg}/examples/self-host/${stage_id_arg}.md" \
+      "${repo_path_arg}/examples/**/${stage_id_arg}.md" \
+      "${repo_path_arg}/${stage_id_arg}.md"; do
+      candidate="$(ls "${pattern}" 2>/dev/null | head -n1 || true)"
+      if [[ -f "${candidate:-}" ]]; then
+        card_file="$candidate"
+        break
+      fi
+    done
+    if [[ -z "$card_file" ]]; then
+      printf 'panel: stage card not found for stage-id: %s\n' "$stage_id_arg" >&2
+      printf '  searched under: %s\n' "$repo_path_arg" >&2
+      exit 1
+    fi
+    panel_script="$autometta_root/scripts/spawn-verifier-panel.sh"
+    if [[ ! -x "$panel_script" ]]; then
+      printf 'panel: spawn-verifier-panel.sh not found at %s\n' "$panel_script" >&2
+      exit 1
+    fi
+    exec "$panel_script" "$card_file" "$repo_path_arg" --read-only
     ;;
   *)
     printf 'unknown command: %s\n' "$command_name" >&2

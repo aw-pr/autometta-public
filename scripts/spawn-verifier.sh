@@ -158,6 +158,19 @@ update_verifier_state() {
     "$state_path"
 }
 
+is_panel_mode() {
+  local card_path="$1"
+  # Check env override first.
+  if [[ "${AUTOMETTA_VERIFIER_PANEL:-}" == "1" ]]; then
+    return 0
+  fi
+  # Check card metadata: "- **Verifier panel:** true"
+  if grep -qiE '^\s*-\s*\*\*Verifier panel:\*\*\s*true' "$card_path" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 main() {
   if [[ $# -ne 2 ]]; then
     log_msg "usage: $0 <stage-card-path> <repo-root>"
@@ -171,6 +184,18 @@ main() {
   local verifiers_dir="$repo_root/state/verifiers"
 
   mkdir -p "$logs_dir" "$verifiers_dir"
+
+  # Panel mode: delegate to spawn-verifier-panel.sh.
+  if is_panel_mode "$card_path"; then
+    local panel_script
+    panel_script="$(dirname "${BASH_SOURCE[0]}")/spawn-verifier-panel.sh"
+    if [[ ! -x "$panel_script" ]]; then
+      log_msg "spawn-verifier-panel.sh not found or not executable at $panel_script"
+      exit 1
+    fi
+    log_msg "verifier: panel mode enabled — delegating to spawn-verifier-panel.sh"
+    exec "$panel_script" "$card_path" "$repo_root"
+  fi
 
   local verifier_identity stage_id family log_path artefact_path pid prompt
   local claude_transport="cli" claude_transport_provenance="default"
