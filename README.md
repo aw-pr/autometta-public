@@ -20,9 +20,9 @@ Not a framework. Not a runtime. Not a hosted service. A set of contracts, templa
 
 ## Status
 
-Pre-alpha. Both passes are shipped.
+Pre-alpha. Pass 1 is shipped and proven; pass 2 is shipped but the unattended path has a known caveat (see "Feature status" below and "Known limitations").
 
-Pass 1 (dispatch contract) and pass 2 (phat-controller autonomous loop) have both been self-hosted end to end against this repo through stage 6.
+Pass 1 (dispatch contract) and pass 2 (phat-controller autonomous loop) have both been self-hosted end to end against this repo through stage 6. The macOS launchd path that lets the loop run unattended carries a known limitation pending a fresh smoke test: see "Known limitations".
 
 The first end-to-end benchmark (BENCH-005) drove the dispatch contract against a multi-stage Swift refactor in two parallel orchestrator lanes. Both escalated at the 2-loop budget. Codex went 12/20 then 18/20 on the FLAP-rate acceptance command; Claude Opus stayed pinned at 20/20 across both loops. The pass condition (0 FLAP) was not met by either lane, but the cross-family asymmetry is the interesting finding: Codex got closer then regressed, Claude was stuck at maximum throughout. See `[examples/benchmarks/bench-005/](./examples/benchmarks/bench-005/)` for the lane summaries and escalation notes. A green benchmark on a non-trivial backlog remains the next milestone.
 
@@ -273,6 +273,26 @@ The spawn scripts and the manual dispatch pattern both export `CODEX_HOME=$AUTOM
 - Putting raw keys in `.autometta.local.yaml`. Only the mode goes there; refs go in `op-refs.local.sh`.
 - Putting the SA token or any API key in a committed file. The publish-guard's pre-commit hook catches common patterns; `op-refs.local.sh`, `.env.local`, `*.local` are gitignored.
 - Auto-injecting keys into the macOS LaunchAgent plist. The LaunchAgent invokes `op-fetch` at tick time; the SA token comes from `~/.config/op/service-account.env`. Keys never land in the plist.
+
+## Known limitations
+
+- **Unattended launchd runs (macOS) are unverified.** The loop dispatches fine interactively and via cron, but the per-repo launchd LaunchAgent path needs a fresh smoke test after the `AbandonProcessGroup` fix. Earlier, claude workers spawned by the tick under launchd could exit silently (0-byte log) when the tick process returned, because launchd reaped the worker's process group. The plist template now sets `AbandonProcessGroup`; re-run `autometta install-launchagent <repo>` to re-render and re-bootstrap, then confirm a worker survives a full tick cycle before relying on overnight runs.
+- **No green end-to-end benchmark yet.** BENCH-005 drove the contract against a multi-stage Swift refactor; neither lane met the pass condition (see `examples/benchmarks/bench-005/`). A green benchmark on a non-trivial backlog is the next milestone.
+- **Pre-alpha, single operator.** No SLA, no retry semantics beyond the budget FSM, one OAuth session per agent family.
+
+## Feature status
+
+| Feature | Status | Notes |
+|---|---|---|
+| Dispatch contract (pass 1) | shipped | Self-hosted through stage 6. |
+| Agent observability | shipped | Registry, heartbeat, ticker, watch primitive. |
+| Auth routing (subscription / API) | shipped | `op-fetch`, fail-closed, per-family toggle. |
+| SDK verifier route + prompt caching | shipped | Claude family only (stages 15-16). |
+| Worker handoff envelope | shipped | Sole worker completion signal (stage 17). |
+| Autonomous loop (pass 2) | experimental | Unattended launchd path unverified; see Known limitations. |
+| OpenAI SDK verifier route | planned | Card 28; codex parallel to the Claude route. |
+| Per-role, per-family SDK transport matrix | design-only | Card 28; orchestrator portion gated on card 23. |
+| Cloud-hosted orchestration | planned | Card 27; future phase. |
 
 ## Licence
 
