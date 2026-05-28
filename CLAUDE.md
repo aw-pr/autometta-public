@@ -48,6 +48,7 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 6. `claude -p` does not stream its log - the file stays at 0 bytes until the run completes and is then written in a single burst. Log-mtime staleness is *not* a stuck signal for the claude family; only over-budget is. The heartbeat encodes this asymmetry (see `scripts/heartbeat.sh`).
 7. `claude -p` needs `--dangerously-skip-permissions` to act autonomously; `--permission-mode bypassPermissions` combined with `-p` exits silently with an empty log.
 8. Codex CLI prefers `$CODEX_HOME/auth.json` over the `OPENAI_API_KEY` env var. If `~/.codex/auth.json` has `auth_mode: "chatgpt"` (the default after `codex login`), an `op-fetch OPENAI_API_KEY=... -- codex exec` dispatch still bills the subscription. Fix: a sibling `CODEX_HOME` (default `~/.codex-api-only`) with `auth_mode: "apikey"`; spawn scripts export and `--pass CODEX_HOME` through op-fetch in api mode and fail closed if the sibling is missing.
+9. Claude worker subshell (`( ... ) &`) receives SIGHUP when the LaunchAgent tick exits, silently killing the worker at ~21s with a 0-byte log. Codex is unaffected (no wrapping subshell). Fix: `disown "$pid"` immediately after capturing `$!` in `spawn-worker.sh`, `spawn-verifier.sh`, and `spawn-verifier-panel.sh`. See `docs/lessons.md` gotcha 9.
 
 ## Conventions specific to this repo
 
