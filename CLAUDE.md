@@ -123,3 +123,5 @@ scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 `watch-agent.sh` exit code: `0` clean, `2` STUCK, `3` bad input. STUCK escalates when the heartbeat first flags `silent` and the grace window expires (defaults 60s poll, 120s grace, both env-overridable). For the `claude` family swap the launch line for `( cd "$repo" && op-fetch $auth_pairs -- claude -p "$prompt" </dev/null >log 2>&1 ) &` and pass `claude` as the family arg to `auth-route.sh` and `register-agent.sh`.
 
 `op-fetch` resolves any named refs via the 1Password service-account token at `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`) and exec's the child with a sanitised env. No biometric prompt, works under cron / LaunchAgent. See `docs/setup.md` section 7 and `docs/observability.md` for the full surface.
+
+When using the claude family as a verifier, `spawn-verifier.sh` may take the SDK route instead of `claude -p` if the repo's manifest sets `verifier.claude.transport: sdk` (requires `auth.claude.mode: api`; env override: `AUTOMETTA_CLAUDE_TRANSPORT`). See `docs/sdk-verifier.md`.

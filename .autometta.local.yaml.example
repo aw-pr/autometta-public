@@ -45,3 +45,30 @@ auth:
   claude:
     mode: subscription   # recommended default; uses Claude Pro session
     # mode: api    # requires OP_REF_ANTHROPIC_API_KEY in op-refs.local.sh
+
+# ---------------------------------------------------------------------------
+# Verifier transport overrides. Optional. Default for all families is the
+# existing CLI path. Setting `sdk` on the claude family routes verifier
+# dispatch through scripts/verify-sdk.py instead of `claude -p`.
+#
+# IMPORTANT: sdk transport requires auth.claude.mode: api (above). Setting
+# verifier.claude.transport: sdk while auth.claude.mode is subscription
+# fails closed at dispatch with a clear message: the SDK requires an API
+# key that the subscription route does not inject. Set both together.
+#
+# To opt in:
+#   1. Set auth.claude.mode: api and provide OP_REF_ANTHROPIC_API_KEY in op-refs.local.sh
+#   2. Set verifier.claude.transport: sdk here
+#   3. Install the SDK once: pip install -r scripts/requirements-sdk.txt
+#
+# To A/B compare routes without editing this file:
+#   AUTOMETTA_CLAUDE_TRANSPORT=cli  scripts/spawn-verifier.sh <card> <repo>
+#   AUTOMETTA_CLAUDE_TRANSPORT=sdk  AUTOMETTA_CLAUDE_MODE=api  scripts/spawn-verifier.sh <card> <repo>
+#
+# Codex workers are not affected; they always use `codex exec`.
+# ---------------------------------------------------------------------------
+
+# verifier:
+#   claude:
+#     transport: cli   # default; uses `claude -p` (subscription or api)
+#     # transport: sdk   # opt-in; requires auth.claude.mode: api (see above)

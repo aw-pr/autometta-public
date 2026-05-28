@@ -1,8 +1,8 @@
 # SDK verifier prototype
 
-`scripts/verify-sdk.py` is an opt-in prototype for running a verifier through the Claude Agent SDK. It reads a stage card, expands a worker artefact glob, renders `templates/verifier-prompt.md`, asks the SDK for structured JSON, and writes the verifier artefact to the path supplied by `--out`.
+`scripts/verify-sdk.py` is an opt-in entrypoint for running a verifier through the Claude Agent SDK. It reads a stage card, expands a worker artefact glob, renders `templates/verifier-prompt.md`, asks the SDK for structured JSON, validates it against `schemas/verifier.json`, and writes the verifier artefact to the path supplied by `--out`.
 
-It does not replace `scripts/spawn-verifier.sh`, change the phat-controller state machine, read 1Password, choose an auth route, or provide fallback behaviour to `claude -p`. The caller must install `scripts/requirements-sdk.txt` once and inject `ANTHROPIC_API_KEY` through `op-fetch`.
+Direct use of `scripts/verify-sdk.py` does not read 1Password, choose an auth route, register heartbeat state, or provide fallback behaviour to `claude -p`. The caller must install `scripts/requirements-sdk.txt` once and inject `ANTHROPIC_API_KEY` through `op-fetch`. Production dispatch goes through `scripts/spawn-verifier.sh`, which owns auth-route selection, fallback, and registration.
 
 Manual smoke test:
 
@@ -22,6 +22,7 @@ Exit codes:
 - `0`: SDK returned `overall: "PASS"` and the JSON artefact was written.
 - `1`: SDK returned `overall: "FAIL"` or the returned JSON was malformed.
 - `2`: environment error, including missing `ANTHROPIC_API_KEY`, missing `claude-agent-sdk`, missing card, or missing verifier prompt template.
+- `3`: SDK returned JSON that failed `schemas/verifier.json`; an invalid report is written to `<out>.invalid.json`.
 
 The output envelope intentionally matches the existing verifier artefact shape:
 
@@ -44,9 +45,77 @@ The output envelope intentionally matches the existing verifier artefact shape:
 }
 ```
 
-Known gaps before 15b:
+## Rubric schema
 
-- The rubric contract is only the existing top-level JSON envelope, not a stronger schema for criterion names or evidence format.
+Verifier artefacts are validated against `schemas/verifier.json`, a JSON Schema 2020-12 contract for the top-level verifier envelope and each criterion verdict. The SDK route loads that schema for structured output and validates the returned JSON before writing the final artefact.
+
+Use the offline corpus validator before changing the schema or verifier output shape:
+
+```sh
+scripts/validate-verifier-artefacts.sh
+scripts/validate-verifier-artefacts.sh /tmp/bad.json
+```
+
+The validator prints `PASS <path>` or `FAIL <path>: <jsonschema error>` for each artefact and exits non-zero if any file fails.
+
+Known gaps after 15b:
+
 - The prototype feeds the listed artefacts into the prompt rather than giving the SDK broad filesystem write access.
 - There is no production dispatch integration, no budget accounting, no heartbeat registration, and no `state.yaml` transition.
 - The SDK package version is pinned in `scripts/requirements-sdk.txt`; upgrades need an explicit smoke test.
+
+## Integration into spawn-verifier.sh
+
+`scripts/spawn-verifier.sh` selects between the SDK route and the existing `claude -p` route at dispatch time. The selection is controlled by a manifest flag and an env override; the default is `cli` (zero behavioural change for repos that do not opt in).
+
+### Transport resolution
+
+Resolution order (most specific wins):
+
+1. `AUTOMETTA_CLAUDE_TRANSPORT` env var (`sdk` or `cli`)
+2. `verifier.claude.transport` in the repo's `.autometta.local.yaml`
+3. Default: `cli`
+
+A single log line is emitted to stderr before dispatch:
+
+```
+verifier-transport: sdk (provenance: manifest)
+verifier-transport: cli (provenance: default)
+verifier-transport: cli (provenance: env)
+```
+
+### Opting in
+
+In the repo's `.autometta.local.yaml`:
+
+```yaml
+auth:
+  claude:
+    mode: api          # required; SDK route needs ANTHROPIC_API_KEY
+verifier:
+  claude:
+    transport: sdk
+```
+
+See `.autometta.local.yaml.example` for the full template and comments.
+
+### Fail-closed conditions
+
+| Condition | Outcome |
+|---|---|
+| `transport: sdk` + `auth.claude.mode: subscription` | Exits non-zero before spawning any process. Message names both flags. |
+| `transport` value other than `cli` or `sdk` | Exits non-zero before spawning any process. |
+| `transport: sdk` + `scripts/verify-sdk.py` missing | Logs a warning and falls back to `cli`. |
+| `transport: sdk` + SDK package missing | `verify-sdk.py` exits `2`; logged to the stage log. |
+
+### Artefact glob derivation
+
+The spawner parses the `## Deliverables` section of the stage card, extracts backtick-quoted paths, and derives a glob from their parent directories. If all deliverables share one parent directory (e.g., `scripts/`), the glob is `scripts/**`. When deliverables span multiple directories, the spawner falls back to `**` (broad recursive). This is a v1 heuristic; operators can override by invoking `verify-sdk.py` directly with a targeted glob.
+
+### Registration and heartbeat
+
+The SDK route registers the spawned process via `scripts/register-agent.sh` with the same `family`, `role`, and `identity` fields as the CLI route. The heartbeat and ticker work unchanged. Exit code semantics are preserved: `verify-sdk.py` emits `0` (PASS), `1` (FAIL or malformed JSON), `2` (env/config error); `tick.sh` sees these as it does for the CLI route.
+
+### Env injection contract
+
+The SDK route goes through `op-fetch` with the same `ANTHROPIC_API_KEY=$OP_REF_ANTHROPIC_API_KEY` pair as other api-mode dispatches. The sanitised env strips any inherited key from the parent shell; only the 1Password-resolved value is injected. Subscription mode cannot reach the SDK route; it fails closed before `op-fetch` is invoked.

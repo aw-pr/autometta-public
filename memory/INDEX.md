@@ -31,3 +31,5 @@ One line per memory file. Keep entries <=150 chars: `- [Title](file.md): one-lin
 Banked at `memory/adopters/<repo>/` with analysis-friendly `metadata.run` frontmatter. See `skills/autometta-setup/REFERENCE.md` for the field set.
 
 - [Working-tree precondition for criterion-10](adopters/fractals-from-the-90s/feedback-working-tree-precondition.md): fractals stage 01. Criterion "no files outside deliverables" fires on any dirty tracked file; clean working tree before dispatch.
+- [Verifier rubric schema](decision-verifier-rubric-schema.md): Why verifier artefacts have a backward-compatible JSON Schema and manual validator.
+- [SDK verifier integration decisions](decision-sdk-verifier-integration.md): Why manifest flag over per-card, why cli default, why not mutate autometta's own manifest for 15c.

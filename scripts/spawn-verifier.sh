@@ -86,6 +86,59 @@ render_prompt() {
     "$template_path"
 }
 
+# Resolve the claude verifier transport (sdk | cli).
+# Resolution order (most specific wins):
+#   1. AUTOMETTA_CLAUDE_TRANSPORT env var override
+#   2. verifier.claude.transport in <repo>/.autometta.local.yaml
+#   3. default: cli
+# Prints: "<transport> <provenance>"
+resolve_claude_transport() {
+  local repo_root="$1"
+  local manifest="$repo_root/.autometta.local.yaml"
+  local transport="" provenance="default"
+
+  if [[ -n "${AUTOMETTA_CLAUDE_TRANSPORT:-}" ]]; then
+    transport="${AUTOMETTA_CLAUDE_TRANSPORT}"
+    provenance="env"
+  elif [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+    local from_manifest
+    from_manifest="$(yq -r '.verifier.claude.transport // ""' "$manifest" 2>/dev/null || true)"
+    if [[ -n "$from_manifest" ]]; then
+      transport="$from_manifest"
+      provenance="manifest"
+    fi
+  fi
+
+  printf '%s %s\n' "${transport:-cli}" "$provenance"
+}
+
+# Derive a best-effort artefact glob from the ## Deliverables section of a card.
+# Extracts backtick-quoted file paths, takes unique parent directories, and
+# returns a single pattern for Python's glob.glob (no brace expansion).
+derive_artefact_glob() {
+  local card_path="$1"
+  local dirs
+  dirs="$(awk '/^## Deliverables/{f=1;next} /^## /{f=0} f' "$card_path" \
+    | grep -o '`[^` ]*`' | tr -d '`' \
+    | while IFS= read -r p; do
+        d="${p%/*}"
+        [[ "$d" == "$p" ]] && d="."
+        printf '%s\n' "$d"
+      done \
+    | sort -u)"
+
+  local ndirs
+  ndirs="$(printf '%s\n' "$dirs" | grep -c . 2>/dev/null || echo 0)"
+
+  if [[ "$ndirs" -eq 1 && "$dirs" != "." ]]; then
+    printf '%s/**\n' "$dirs"
+  else
+    # Multiple or root-level deliverables: broad recursive glob.
+    # Python's glob.glob does not support brace expansion prior to 3.13.
+    printf '**\n'
+  fi
+}
+
 update_verifier_state() {
   local state_path="$1"
   local stage_id="$2"
@@ -120,6 +173,7 @@ main() {
   mkdir -p "$logs_dir" "$verifiers_dir"
 
   local verifier_identity stage_id family log_path artefact_path pid prompt
+  local claude_transport="cli" claude_transport_provenance="default"
   verifier_identity="$(extract_verifier_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
   family="$(verifier_family "$verifier_identity")"
@@ -145,6 +199,21 @@ main() {
     exit 1
   fi
 
+  # Resolve claude verifier transport after auth route is known.
+  if [[ "$family" == "claude" ]]; then
+    local transport_result
+    transport_result="$(resolve_claude_transport "$repo_root")"
+    claude_transport="${transport_result%% *}"
+    claude_transport_provenance="${transport_result#* }"
+    case "$claude_transport" in
+      cli|sdk) ;;
+      *)
+        log_msg "verifier-transport: invalid value ${claude_transport} (expected cli | sdk)"
+        exit 1
+        ;;
+    esac
+  fi
+
   # Sibling CODEX_HOME for api mode (see spawn-worker.sh + docs/lessons.md
   # gotcha #8 — codex prefers its auth.json over OPENAI_API_KEY).
   local codex_home_override=""
@@ -168,8 +237,39 @@ main() {
       fi
       ;;
     claude)
-      # shellcheck disable=SC2086
-      ( cd "$repo_root" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" --dangerously-skip-permissions -p "$prompt" </dev/null >"$log_path" 2>&1 ) &
+      # Fail closed: sdk transport requires api mode (ANTHROPIC_API_KEY must be in auth_pairs).
+      if [[ "$claude_transport" == "sdk" && "$auth_pairs" != *ANTHROPIC_API_KEY* ]]; then
+        log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk requires auth.claude.mode=api"
+        log_msg "  set auth.claude.mode: api in .autometta.local.yaml or export AUTOMETTA_CLAUDE_MODE=api"
+        exit 1
+      fi
+
+      # Fall back to cli if verify-sdk.py is missing.
+      local sdk_script="$script_dir/verify-sdk.py"
+      if [[ "$claude_transport" == "sdk" && ! -f "$sdk_script" ]]; then
+        log_msg "verifier-transport: warning; $sdk_script not found; falling back to cli"
+        claude_transport="cli"
+        claude_transport_provenance="default"
+      fi
+
+      log_msg "verifier-transport: ${claude_transport} (provenance: ${claude_transport_provenance})"
+
+      if [[ "$claude_transport" == "sdk" ]]; then
+        local artefact_glob sdk_out
+        artefact_glob="$(derive_artefact_glob "$card_path")"
+        sdk_out="$repo_root/$artefact_path"
+        # shellcheck disable=SC2086
+        ( cd "$repo_root" && op-fetch $auth_pairs -- \
+            python3 "$sdk_script" \
+              --stage-id "$stage_id" \
+              --card "$card_path" \
+              --artefact-glob "$artefact_glob" \
+              --out "$sdk_out" \
+            </dev/null >"$log_path" 2>&1 ) &
+      else
+        # shellcheck disable=SC2086
+        ( cd "$repo_root" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" --dangerously-skip-permissions -p "$prompt" </dev/null >"$log_path" 2>&1 ) &
+      fi
       ;;
     *)
       log_msg "unsupported verifier family for identity: ${verifier_identity}"
