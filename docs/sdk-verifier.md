@@ -119,3 +119,62 @@ The SDK route registers the spawned process via `scripts/register-agent.sh` with
 ### Env injection contract
 
 The SDK route goes through `op-fetch` with the same `ANTHROPIC_API_KEY=$OP_REF_ANTHROPIC_API_KEY` pair as other api-mode dispatches. The sanitised env strips any inherited key from the parent shell; only the 1Password-resolved value is injected. Subscription mode cannot reach the SDK route; it fails closed before `op-fetch` is invoked.
+
+## Prompt caching
+
+`verify-sdk.py` marks the static portion of its input as cacheable using Anthropic's prompt caching (`cache_control: {type: "ephemeral"}`). The 5-minute TTL means consecutive verifier calls within an active tick window recover the cache, reducing billable input tokens on repeated runs.
+
+### What is cached
+
+The **static block** contains content that is identical across all stages dispatched in the same session:
+
+- The verifier rubric prose from `templates/verifier-prompt.md` (with constant placeholders filled; stage-specific placeholders left as descriptive labels).
+- The artefact JSON schema from `schemas/verifier.json`.
+- Dispatch contract reminders (evaluate dirty tree only, evidence requirements, output format).
+
+Combined, the static block is well above the ~1024-token Sonnet minimum for cache eligibility.
+
+### What is not cached
+
+The **variable block** contains per-stage content that changes every run:
+
+- Stage id, card path, and artefact path.
+- The full stage card content with line numbers.
+- The worker artefacts with line numbers.
+
+### Reading the log line
+
+After each API call, `verify-sdk.py` prints to stderr:
+
+```
+cache: write=<N> read=<M> input=<I> output=<O>
+```
+
+| Field | Anthropic usage key | Meaning |
+|---|---|---|
+| `write` | `cache_creation_input_tokens` | Tokens written to the prompt cache (first call in window) |
+| `read` | `cache_read_input_tokens` | Tokens served from the prompt cache (subsequent calls in window) |
+| `input` | `input_tokens` | Total input tokens charged |
+| `output` | `output_tokens` | Output tokens generated |
+
+On the **first call** in a session, `write > 0` and `read = 0`. On subsequent calls within the 5-minute TTL, `read > 0` and `write = 0`. After the TTL expires or the static block changes, `write > 0` again.
+
+### When the cache misses
+
+| Cause | Effect |
+|---|---|
+| Template changes (`templates/verifier-prompt.md`) | Static block changes; full `write` charged |
+| Schema changes (`schemas/verifier.json`) | Static block changes; full `write` charged |
+| Model change | Cache is model-scoped; full `write` charged |
+| More than 5 minutes between calls | TTL expired; full `write` charged |
+| First call in a session | Always a `write` |
+
+### Running the smoke test
+
+```sh
+source op-refs.sh
+op-fetch ANTHROPIC_API_KEY="$OP_REF_ANTHROPIC_API_KEY" -- \
+  scripts/sdk-cache-smoke.sh
+```
+
+The smoke test runs `verify-sdk.py` twice against stage 14, parses the `cache:` log lines, and asserts that the second run has `read > 0`. Exits 0 on cache hit, 1 on miss, 2 on environment error.
