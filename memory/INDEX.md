@@ -37,3 +37,4 @@ Banked at `memory/adopters/<repo>/` with analysis-friendly `metadata.run` frontm
 - [Handoff envelope contract](decision-handoff-envelope.md): Why JSON file is the sole worker completion signal, why mandatory for new stages, why legacy stages are grandfathered.
 - [Verifier panel design](decision-verifier-panel.md): N=3 majority vote, opt-in, fixed composition for v1 — stage 18 decisions.
 - [Sweep stage design](decision-sweep-stage.md): Opt-in parallel worker exploration; synthesis as worker; worktrees; output is docs/decisions/ — stage 20 design.
+- [Remote monitoring contract](decision-remote-monitoring.md): Hosted routines file PRs only; no dispatch authority; three surfaces — stage 21.
