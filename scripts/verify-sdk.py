@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Prototype Claude Agent SDK verifier entrypoint."""
+"""Claude Agent SDK verifier entrypoint with Anthropic prompt caching."""
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import glob
 import json
 import os
@@ -17,6 +16,25 @@ REQUIREMENTS = "scripts/requirements-sdk.txt"
 SCHEMA = Path("schemas/verifier.json")
 TEMPLATE = Path("templates/verifier-prompt.md")
 VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
+MODEL = "claude-sonnet-4-6"
+MAX_TOKENS = 4096
+
+# Stable guidance appended to the cacheable block so the block exceeds the
+# ~1024-token minimum for Sonnet prompt caching.
+_DISPATCH_CONTRACT_REMINDERS = """
+## Dispatch contract reminders
+
+These reminders are part of the cached rubric block.
+
+- Evaluate the **dirty working tree** only, not a committed snapshot.
+- Ground every verdict in concrete file:line evidence.
+- Do not commit. Do not mutate any file outside the artefact path.
+- The `overall` field must be "PASS" only when every criterion is "PASS".
+- Return exactly one JSON object matching the artefact schema above.
+  Do not wrap the JSON in prose or a markdown code block.
+- Per-criterion verdicts are independent; evaluate each in isolation.
+- Missing required files are evidence of FAIL, not evidence to skip.
+"""
 
 
 class InvalidEnvelope(ValueError):
@@ -27,7 +45,7 @@ class InvalidEnvelope(ValueError):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a prototype Claude Agent SDK verifier against a stage card and artefacts."
+        description="Run a Claude Agent SDK verifier against a stage card and artefacts."
     )
     parser.add_argument("--stage-id", required=True, help="Stage id for the verifier artefact.")
     parser.add_argument("--card", required=True, help="Path to the stage card to verify.")
@@ -45,16 +63,6 @@ def fail_env(message: str) -> int:
     return 2
 
 
-def load_sdk() -> tuple[Any, Any]:
-    try:
-        from claude_agent_sdk import ClaudeAgentOptions, query
-    except ImportError as exc:
-        raise RuntimeError(
-            f"missing claude-agent-sdk; install with: python3 -m pip install -r {REQUIREMENTS}"
-        ) from exc
-    return ClaudeAgentOptions, query
-
-
 def load_jsonschema() -> Any:
     try:
         from jsonschema import Draft202012Validator
@@ -63,6 +71,16 @@ def load_jsonschema() -> Any:
             f"missing jsonschema; install with: python3 -m pip install -r {REQUIREMENTS}"
         ) from exc
     return Draft202012Validator
+
+
+def load_anthropic() -> Any:
+    try:
+        from anthropic import Anthropic
+    except ImportError as exc:
+        raise RuntimeError(
+            f"missing anthropic; install with: python3 -m pip install -r {REQUIREMENTS}"
+        ) from exc
+    return Anthropic
 
 
 def read_text(path: Path) -> str:
@@ -86,48 +104,61 @@ def find_artefacts(pattern: str) -> list[Path]:
     return sorted({path for path in matches if path.is_file()})
 
 
-def render_template(stage_id: str, card: Path, out: Path) -> str:
-    template = read_text(TEMPLATE)
-    return (
-        template.replace("<<stage-id>>", stage_id)
-        .replace("<<stage-card-path>>", str(card))
-        .replace("<<artefact-path>>", str(out))
-        .replace("<<verifier-tier>>", VERIFIER_IDENTITY)
-        .replace("<<orchestrator-identity>>", "verify-sdk.py")
-        .replace("<<family-specific-notes-or-none>>", "None")
-    )
-
-
 def verifier_schema() -> dict[str, Any]:
     return json.loads(read_text(SCHEMA))
 
 
-def build_prompt(stage_id: str, card: Path, artefacts: list[Path], out: Path) -> str:
-    rendered = render_template(stage_id, card, out)
+def build_static_block() -> str:
+    """Return the cacheable portion of the prompt.
+
+    Contains the verifier rubric (template prose with constant placeholders
+    filled), the artefact JSON schema, and the dispatch contract reminders.
+    This block is identical across all stages dispatched in the same session,
+    so it benefits from Anthropic's prompt caching once the TTL window is warm.
+    """
+    template = read_text(TEMPLATE)
+    filled = (
+        template
+        .replace("<<verifier-tier>>", VERIFIER_IDENTITY)
+        .replace("<<orchestrator-identity>>", "verify-sdk.py")
+        .replace("<<family-specific-notes-or-none>>", "None")
+        # Replace stage-specific placeholders with descriptive labels so the
+        # block remains valid prose without per-stage content.
+        .replace("<<stage-id>>", "{stage_id}")
+        .replace("<<stage-card-path>>", "{stage_card_path}")
+        .replace("<<artefact-path>>", "{artefact_path}")
+    )
+    schema_text = read_text(SCHEMA)
+    return (
+        filled
+        + "\n## Artefact output schema\n\n"
+        + "The JSON report must validate against this schema:\n\n"
+        + "```json\n"
+        + schema_text
+        + "```\n"
+        + _DISPATCH_CONTRACT_REMINDERS
+    )
+
+
+def build_variable_block(stage_id: str, card: Path, artefacts: list[Path], out: Path) -> str:
+    """Return the per-stage, non-cached portion of the prompt."""
     artefact_sections = "\n".join(numbered(path, read_text(path)) for path in artefacts)
     if not artefact_sections:
         artefact_sections = "(no artefacts matched the supplied glob)\n"
 
-    return f"""{rendered}
-
-## SDK wrapper instruction
-
-This prototype wrapper, not the agent, writes `{out}`. Return exactly the JSON report matching the output contract. Do not ask to run tools. Evaluate only the stage card and artefact contents supplied below.
-
-Use:
-
-- `stage_id`: `{stage_id}`
-- `verifier_identity`: `{VERIFIER_IDENTITY}`
-- `verifier_invocation`: `scripts/verify-sdk.py --stage-id {stage_id} --card {card} --artefact-glob <redacted> --out {out}`
-
-## Stage card with line numbers
-
-{numbered(card, read_text(card))}
-
-## Worker artefacts with line numbers
-
-{artefact_sections}
-"""
+    return (
+        "## Stage-specific context\n\n"
+        f"- Stage id: `{stage_id}`\n"
+        f"- Stage card: `{card}`\n"
+        f"- Verifier artefact path: `{out}`\n"
+        f"- Verifier identity: `{VERIFIER_IDENTITY}`\n"
+        f"- Verifier invocation: `scripts/verify-sdk.py --stage-id {stage_id} "
+        f"--card {card} --artefact-glob <redacted> --out {out}`\n\n"
+        "## Stage card with line numbers\n\n"
+        f"{numbered(card, read_text(card))}\n"
+        "## Worker artefacts with line numbers\n\n"
+        f"{artefact_sections}"
+    )
 
 
 def validate_envelope(data: Any, validator: Any) -> dict[str, Any]:
@@ -141,35 +172,70 @@ def validate_envelope(data: Any, validator: Any) -> dict[str, Any]:
     return data
 
 
-async def run_sdk(prompt: str, sdk: tuple[Any, Any], validator: Any) -> dict[str, Any]:
-    ClaudeAgentOptions, query = sdk
-    options = ClaudeAgentOptions(
-        allowed_tools=[],
-        output_format={"type": "json_schema", "schema": verifier_schema()},
-        cwd=str(Path.cwd()),
-        setting_sources=[],
-    )
-    result_message = None
-    async for message in query(prompt=prompt, options=options):
-        if hasattr(message, "structured_output") or hasattr(message, "result"):
-            result_message = message
+def _extract_json(text: str) -> Any:
+    """Parse JSON from a response that may be wrapped in a markdown code block."""
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        # Strip opening fence (```json or ```)
+        first_newline = stripped.find("\n")
+        if first_newline == -1:
+            raise ValueError("malformed code block: no newline after fence")
+        stripped = stripped[first_newline + 1:]
+        # Strip closing fence
+        last_fence = stripped.rfind("```")
+        if last_fence != -1:
+            stripped = stripped[:last_fence].strip()
+    return json.loads(stripped)
 
-    if result_message is None:
-        raise ValueError("SDK returned no result message")
-    structured = getattr(result_message, "structured_output", None)
-    if structured is None:
-        result = getattr(result_message, "result", None)
-        if not result:
-            raise ValueError("SDK returned no structured output")
-        structured = json.loads(result)
-    return validate_envelope(structured, validator)
+
+def run_sdk(
+    static_block: str,
+    variable_block: str,
+    api_key: str,
+    Anthropic: Any,
+    validator: Any,
+) -> dict[str, Any]:
+    """Call the Anthropic API with a cached static block and return the validated envelope."""
+    client = Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": static_block,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {
+                        "type": "text",
+                        "text": variable_block,
+                    },
+                ],
+            }
+        ],
+    )
+    usage = response.usage
+    write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    read = getattr(usage, "cache_read_input_tokens", 0) or 0
+    inp = getattr(usage, "input_tokens", 0) or 0
+    out = getattr(usage, "output_tokens", 0) or 0
+    print(f"cache: write={write} read={read} input={inp} output={out}", file=sys.stderr)
+
+    if not response.content:
+        raise ValueError("API returned no content")
+    text = response.content[0].text
+    data = _extract_json(text)
+    return validate_envelope(data, validator)
 
 
 def main() -> int:
     args = parse_args()
 
     try:
-        sdk = load_sdk()
+        Anthropic = load_anthropic()
         Validator = load_jsonschema()
     except RuntimeError as exc:
         print(f"verify-sdk: {exc}", file=sys.stderr)
@@ -193,9 +259,10 @@ def main() -> int:
             return fail_env(f"verifier schema not found: {SCHEMA}")
 
         artefacts = find_artefacts(args.artefact_glob)
-        prompt = build_prompt(args.stage_id, card, artefacts, out)
+        static_block = build_static_block()
+        variable_block = build_variable_block(args.stage_id, card, artefacts, out)
         validator = Validator(verifier_schema())
-        envelope = asyncio.run(run_sdk(prompt, sdk, validator))
+        envelope = run_sdk(static_block, variable_block, anthropic_api_key, Anthropic, validator)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
         return 0 if envelope["overall"] == "PASS" else 1
