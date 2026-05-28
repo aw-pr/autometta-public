@@ -9,6 +9,7 @@ Stage card template, part of the dispatch-contract pattern library. Reusable in 
 - **Orchestrator:** <<orchestrator-identity>>
 - **Worker:** <<worker-identity>>
 - **Verifier:** <<verifier-identity>>
+- **Verifier panel:** false
 - **Pairing rationale:** <<why-this-worker-verifier-pair>>
 
 ## Objective

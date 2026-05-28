@@ -19,6 +19,20 @@ VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 4096
 
+
+def identity_for_model(model: str) -> str:
+    if "opus-4-7" in model:
+        return f"Claude Opus 4.7 (SDK) <{model}@local>"
+    if "opus-4" in model:
+        return f"Claude Opus 4 (SDK) <{model}@local>"
+    if "sonnet-4-6" in model:
+        return f"Claude Sonnet 4.6 (SDK) <{model}@local>"
+    if "sonnet-4" in model:
+        return f"Claude Sonnet 4 (SDK) <{model}@local>"
+    if "haiku" in model:
+        return f"Claude Haiku (SDK) <{model}@local>"
+    return f"Claude Agent SDK verifier ({model}) <{model}@local>"
+
 # Stable guidance appended to the cacheable block so the block exceeds the
 # ~1024-token minimum for Sonnet prompt caching.
 _DISPATCH_CONTRACT_REMINDERS = """
@@ -55,6 +69,11 @@ def parse_args() -> argparse.Namespace:
         help="Glob for worker artefacts to include in the verifier prompt.",
     )
     parser.add_argument("--out", required=True, help="Path to write the verifier JSON artefact.")
+    parser.add_argument(
+        "--model",
+        default=MODEL,
+        help=f"Anthropic model to use for verification (default: {MODEL}).",
+    )
     return parser.parse_args()
 
 
@@ -108,7 +127,7 @@ def verifier_schema() -> dict[str, Any]:
     return json.loads(read_text(SCHEMA))
 
 
-def build_static_block() -> str:
+def build_static_block(verifier_identity: str = VERIFIER_IDENTITY) -> str:
     """Return the cacheable portion of the prompt.
 
     Contains the verifier rubric (template prose with constant placeholders
@@ -119,7 +138,7 @@ def build_static_block() -> str:
     template = read_text(TEMPLATE)
     filled = (
         template
-        .replace("<<verifier-tier>>", VERIFIER_IDENTITY)
+        .replace("<<verifier-tier>>", verifier_identity)
         .replace("<<orchestrator-identity>>", "verify-sdk.py")
         .replace("<<family-specific-notes-or-none>>", "None")
         # Replace stage-specific placeholders with descriptive labels so the
@@ -140,7 +159,13 @@ def build_static_block() -> str:
     )
 
 
-def build_variable_block(stage_id: str, card: Path, artefacts: list[Path], out: Path) -> str:
+def build_variable_block(
+    stage_id: str,
+    card: Path,
+    artefacts: list[Path],
+    out: Path,
+    verifier_identity: str = VERIFIER_IDENTITY,
+) -> str:
     """Return the per-stage, non-cached portion of the prompt."""
     artefact_sections = "\n".join(numbered(path, read_text(path)) for path in artefacts)
     if not artefact_sections:
@@ -151,7 +176,7 @@ def build_variable_block(stage_id: str, card: Path, artefacts: list[Path], out: 
         f"- Stage id: `{stage_id}`\n"
         f"- Stage card: `{card}`\n"
         f"- Verifier artefact path: `{out}`\n"
-        f"- Verifier identity: `{VERIFIER_IDENTITY}`\n"
+        f"- Verifier identity: `{verifier_identity}`\n"
         f"- Verifier invocation: `scripts/verify-sdk.py --stage-id {stage_id} "
         f"--card {card} --artefact-glob <redacted> --out {out}`\n\n"
         "## Stage card with line numbers\n\n"
@@ -194,11 +219,12 @@ def run_sdk(
     api_key: str,
     Anthropic: Any,
     validator: Any,
+    model: str = MODEL,
 ) -> dict[str, Any]:
     """Call the Anthropic API with a cached static block and return the validated envelope."""
     client = Anthropic(api_key=api_key)
     response = client.messages.create(
-        model=MODEL,
+        model=model,
         max_tokens=MAX_TOKENS,
         messages=[
             {
@@ -223,6 +249,7 @@ def run_sdk(
     inp = getattr(usage, "input_tokens", 0) or 0
     out = getattr(usage, "output_tokens", 0) or 0
     print(f"cache: write={write} read={read} input={inp} output={out}", file=sys.stderr)
+    print(f"Total tokens: {inp + out}", file=sys.stderr)
 
     if not response.content:
         raise ValueError("API returned no content")
@@ -250,6 +277,9 @@ def main() -> int:
 
     card = Path(args.card)
     out = Path(args.out)
+    model = args.model
+    verifier_identity = identity_for_model(model)
+
     try:
         if not card.is_file():
             return fail_env(f"stage card not found: {card}")
@@ -259,10 +289,10 @@ def main() -> int:
             return fail_env(f"verifier schema not found: {SCHEMA}")
 
         artefacts = find_artefacts(args.artefact_glob)
-        static_block = build_static_block()
-        variable_block = build_variable_block(args.stage_id, card, artefacts, out)
+        static_block = build_static_block(verifier_identity=verifier_identity)
+        variable_block = build_variable_block(args.stage_id, card, artefacts, out, verifier_identity=verifier_identity)
         validator = Validator(verifier_schema())
-        envelope = run_sdk(static_block, variable_block, anthropic_api_key, Anthropic, validator)
+        envelope = run_sdk(static_block, variable_block, anthropic_api_key, Anthropic, validator, model=model)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
         return 0 if envelope["overall"] == "PASS" else 1

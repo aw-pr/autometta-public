@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autometta.local/schemas/verifier-panel.json",
+  "title": "verifier panel artefact",
+  "description": "Synthesised result written by spawn-verifier-panel.sh after aggregating N=3 panellist verifiers via majority vote. Extends the base verifier artefact schema with panellist detail and quorum metadata.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stage_id",
+    "verifier_identity",
+    "verifier_invocation",
+    "ran_at",
+    "criteria",
+    "additional_findings",
+    "overall",
+    "panellists",
+    "quorum"
+  ],
+  "properties": {
+    "stage_id": {
+      "type": "string",
+      "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+      "description": "Stage id matching the stage card basename."
+    },
+    "verifier_identity": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identity of the panel synthesiser (spawn-verifier-panel.sh <panel@local>)."
+    },
+    "verifier_invocation": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Command used to invoke the panel."
+    },
+    "ran_at": {
+      "type": "string",
+      "description": "ISO 8601 UTC timestamp of synthesis completion."
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 0,
+      "description": "Per-criterion verdicts sourced from the first available panellist artefact. May be empty if no panellist returned an artefact.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "verdict", "evidence"],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["PASS", "FAIL"]
+          },
+          "evidence": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "additional_findings": {
+      "type": "string",
+      "description": "Panel synthesis notes. Prefixed with [Panel synthesis — majority <OVERALL>]."
+    },
+    "overall": {
+      "type": "string",
+      "enum": ["PASS", "FAIL"],
+      "description": "Majority vote result. PASS when pass_count >= fail_count and quorum met."
+    },
+    "panellists": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "One entry per panellist in fixed order: 0=Opus (SDK), 1=Sonnet (SDK), 2=Codex (CLI).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "identity", "artefact_path", "overall"],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2,
+            "description": "Panellist index (0=Opus, 1=Sonnet, 2=Codex)."
+          },
+          "identity": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent identity string for this panellist."
+          },
+          "artefact_path": {
+            "type": ["string", "null"],
+            "description": "Path to the panellist's individual artefact file, or null if the panellist crashed."
+          },
+          "overall": {
+            "type": ["string", "null"],
+            "enum": ["PASS", "FAIL", null],
+            "description": "Panellist verdict, or null if the panellist crashed (counts as no-vote)."
+          }
+        }
+      }
+    },
+    "quorum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "achieved"],
+      "description": "Quorum tracking. required=2 for N=3. If achieved < required the stage stalls with verifier_panel_no_quorum.",
+      "properties": {
+        "required": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum votes needed to produce a valid synthesis."
+        },
+        "achieved": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of panellists that returned a valid artefact."
+        }
+      }
+    }
+  }
+}
