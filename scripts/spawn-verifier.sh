@@ -303,6 +303,8 @@ main() {
   esac
 
   pid="$!"
+  # LaunchAgent tick exits after dispatch; disown prevents that SIGHUP reaching the verifier subshell.
+  disown "$pid" 2>/dev/null || true
   update_verifier_state "$state_path" "$stage_id" "$pid" "$artefact_path"
 
   # Register into the per-agent liveness registry. Best-effort.
