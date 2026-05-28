@@ -223,6 +223,8 @@ main() {
       </dev/null >"$p2_log" 2>&1 &
   fi
   local p2_pid=$!
+  # LaunchAgent tick exits after dispatch; disown prevents SIGHUP reaching the claude subshells.
+  disown "$p0_pid" "$p1_pid" 2>/dev/null || true
 
   log_msg "panel: pids opus=${p0_pid} sonnet=${p1_pid} codex=${p2_pid}"
 

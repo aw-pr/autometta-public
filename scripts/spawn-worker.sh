@@ -182,6 +182,8 @@ main() {
   esac
 
   pid="$!"
+  # LaunchAgent tick exits after dispatch; disown prevents that SIGHUP reaching the worker subshell.
+  disown "$pid" 2>/dev/null || true
   update_stage_worker_pid "$state_path" "$stage_id" "$pid"
 
   # Register into the per-agent liveness registry so the heartbeat watchdog
