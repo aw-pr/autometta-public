@@ -110,17 +110,17 @@ If the run stalls or surfaces, this file is updated with the actual status, the 
 
 ## Pass 3 — cloud + SDK roadmap (queued 2026-05-27)
 
-Pass 3 takes autometta from "local cron + filesystem + git" toward selective use of the Claude Agent SDK and hosted cloud surfaces, without breaking the load-bearing beliefs in `docs/philosophy.md`. Cards 15a-26 are queued but **not yet dispatched**. The operator triggers the loop manually after reviewing the cards.
+Pass 3 takes autometta from "local cron + filesystem + git" toward selective use of the Claude Agent SDK and hosted cloud surfaces, without breaking the load-bearing beliefs in `docs/philosophy.md`. Tier 0 is complete. Tier 1 is next.
 
 ### Tier 0 — keeps every invariant, just better tooling
 
-| # | Stage | Status | Card |
-|---|---|---|---|
-| 15a | SDK verifier probe (minimal `verify.py` against one stage) | queued | [`15a-sdk-verifier-probe.md`](./15a-sdk-verifier-probe.md) |
-| 15b | Verifier rubric JSON Schema + validator script | queued, blocked by 15a | [`15b-sdk-verifier-rubric-contract.md`](./15b-sdk-verifier-rubric-contract.md) |
-| 15c | SDK route in `spawn-verifier.sh` with CLI fallback | queued, blocked by 15b | [`15c-sdk-verifier-integration.md`](./15c-sdk-verifier-integration.md) |
-| 16 | Anthropic prompt caching on SDK verifier route | queued, blocked by 15c | [`16-sdk-verifier-prompt-cache.md`](./16-sdk-verifier-prompt-cache.md) |
-| 17 | Structured worker handoff envelope as sole completion signal | queued | [`17-structured-worker-handoff-envelope.md`](./17-structured-worker-handoff-envelope.md) |
+| # | Stage | Status | Commit | Card |
+|---|---|---|---|---|
+| 15a | SDK verifier probe (minimal `verify.py` against one stage) | done | `b53d87a` | [`15a-sdk-verifier-probe.md`](./15a-sdk-verifier-probe.md) |
+| 15b | Verifier rubric JSON Schema + validator script | done | `d3e35e1` | [`15b-sdk-verifier-rubric-contract.md`](./15b-sdk-verifier-rubric-contract.md) |
+| 15c | SDK route in `spawn-verifier.sh` with CLI fallback | done | `7f10a70` | [`15c-sdk-verifier-integration.md`](./15c-sdk-verifier-integration.md) |
+| 16 | Anthropic prompt caching on SDK verifier route | done | `b4ab7b8` | [`16-sdk-verifier-prompt-cache.md`](./16-sdk-verifier-prompt-cache.md) |
+| 17 | Structured worker handoff envelope as sole completion signal | done | `fd0a6d1` | [`17-structured-worker-handoff-envelope.md`](./17-structured-worker-handoff-envelope.md) |
 
 ### Tier 1 — extends the contract, doesn't break it
 
@@ -146,10 +146,17 @@ Pass 3 takes autometta from "local cron + filesystem + git" toward selective use
 | 25 | Cost-aware router (card-declared complexity tier) | queued, blocked by 17 + 18 | [`25-cost-aware-router.md`](./25-cost-aware-router.md) |
 | 26 | Design: recorded-replay verification | queued — design-only | [`26-replay-verification-design.md`](./26-replay-verification-design.md) |
 
+### Tier 4 — SDK transport granularity + cloud (queued 2026-05-28)
+
+| # | Stage | Status | Card |
+|---|---|---|---|
+| 28 | Per-role, per-family SDK transport matrix: OpenAI verifier route + orchestrator-SDK design | queued, blocked by 15c + 16; orchestrator portion gated on 23 | [`28-per-role-family-sdk-transport.md`](./28-per-role-family-sdk-transport.md) |
+| 27 | Design: cloud-hosted orchestration as a future phase | queued — design-only, future phase, gated on 23 verdict | [`27-cloud-orchestration-phase.md`](./27-cloud-orchestration-phase.md) |
+
 ### Operator notes (pass 3)
 
-- Stages 15a + 16 are the immediate dispatch target ("up to and including step 2" per the brainstorming session). Trigger with `autometta tick` once you've reviewed the cards.
-- The autometta repo now has its own `.autometta.local.yaml` pinning `codex: api`, so worker dispatches in Pass 3 bill the OpenAI API key from 1Password rather than the ChatGPT subscription. The sibling `~/.codex-api-only` CODEX_HOME is already configured; `autometta auth check codex` reports PASS.
-- Budget is currently halted (`halt_reason: tick-cap`). Reset with `autometta --reset-halt` before the first tick of pass 3.
+- Tier 0 (15a–17) completed 2026-05-28. `state.yaml` updated; `current_stage` is now `18-panel-verifier`.
+- The autometta repo has `.autometta.local.yaml` pinning `codex: api`; sibling `~/.codex-api-only` CODEX_HOME is configured. `autometta auth check codex` reports PASS.
 - Each design card (20, 22, 24, 26) emits a prose decision rather than code. Verdicts feed future implementation cards.
-- Cards 18, 19, 25 each depend on earlier Tier 0 cards; the loop will honour the dependencies because the cards say so, but `state.yaml` ordering matters too — queue them in tier order.
+- Cards 18, 19, 25 each depend on Tier 0 (now done); queue them in tier order in `state.yaml` before dispatching.
+- Tier 4 (28 + 27) was added 2026-05-28 from a scoping conversation. Card 28 completes the `<role>.<family>.transport` matrix: the Claude verifier SDK route shipped in 15c/16, so the concrete new work is the OpenAI verifier route; the orchestrator-role transport is design-only here and its production path waits on the card-23 verdict. Card 27 parks cloud-hosted orchestration as an explicit future phase, not pass 3, since it pressure-tests the single-machine beliefs in `docs/philosophy.md`.
