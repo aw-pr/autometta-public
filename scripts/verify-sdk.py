@@ -14,8 +14,15 @@ from typing import Any
 
 
 REQUIREMENTS = "scripts/requirements-sdk.txt"
+SCHEMA = Path("schemas/verifier.json")
 TEMPLATE = Path("templates/verifier-prompt.md")
 VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
+
+
+class InvalidEnvelope(ValueError):
+    def __init__(self, message: str, data: Any):
+        super().__init__(message)
+        self.data = data
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,6 +55,16 @@ def load_sdk() -> tuple[Any, Any]:
     return ClaudeAgentOptions, query
 
 
+def load_jsonschema() -> Any:
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError as exc:
+        raise RuntimeError(
+            f"missing jsonschema; install with: python3 -m pip install -r {REQUIREMENTS}"
+        ) from exc
+    return Draft202012Validator
+
+
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -61,8 +78,12 @@ def numbered(path: Path, text: str) -> str:
 
 
 def find_artefacts(pattern: str) -> list[Path]:
-    matches = [Path(item) for item in glob.glob(pattern, recursive=True)]
-    return sorted(path for path in matches if path.is_file())
+    matches: list[Path] = []
+    for part in (item.strip() for item in pattern.split(",")):
+        if not part:
+            continue
+        matches.extend(Path(item) for item in glob.glob(part, recursive=True))
+    return sorted({path for path in matches if path.is_file()})
 
 
 def render_template(stage_id: str, card: Path, out: Path) -> str:
@@ -78,41 +99,7 @@ def render_template(stage_id: str, card: Path, out: Path) -> str:
 
 
 def verifier_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "stage_id": {"type": "string"},
-            "verifier_identity": {"type": "string"},
-            "verifier_invocation": {"type": "string"},
-            "ran_at": {"type": "string"},
-            "criteria": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "id": {"type": "integer"},
-                        "name": {"type": "string"},
-                        "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
-                        "evidence": {"type": "string"},
-                    },
-                    "required": ["id", "name", "verdict", "evidence"],
-                },
-            },
-            "additional_findings": {"type": "string"},
-            "overall": {"type": "string", "enum": ["PASS", "FAIL"]},
-        },
-        "required": [
-            "stage_id",
-            "verifier_identity",
-            "verifier_invocation",
-            "ran_at",
-            "criteria",
-            "additional_findings",
-            "overall",
-        ],
-    }
+    return json.loads(read_text(SCHEMA))
 
 
 def build_prompt(stage_id: str, card: Path, artefacts: list[Path], out: Path) -> str:
@@ -143,38 +130,18 @@ Use:
 """
 
 
-def validate_envelope(data: Any) -> dict[str, Any]:
+def validate_envelope(data: Any, validator: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
-        raise ValueError("structured output is not a JSON object")
-    expected = {
-        "stage_id",
-        "verifier_identity",
-        "verifier_invocation",
-        "ran_at",
-        "criteria",
-        "additional_findings",
-        "overall",
-    }
-    actual = set(data)
-    if actual != expected:
-        missing = ", ".join(sorted(expected - actual)) or "none"
-        extra = ", ".join(sorted(actual - expected)) or "none"
-        raise ValueError(f"unexpected verifier JSON keys; missing={missing}; extra={extra}")
-    if data["overall"] not in {"PASS", "FAIL"}:
-        raise ValueError("overall must be PASS or FAIL")
-    if not isinstance(data["criteria"], list):
-        raise ValueError("criteria must be an array")
-    for item in data["criteria"]:
-        if not isinstance(item, dict):
-            raise ValueError("criteria entries must be objects")
-        if set(item) != {"id", "name", "verdict", "evidence"}:
-            raise ValueError("criteria entries must contain id, name, verdict, evidence")
-        if item["verdict"] not in {"PASS", "FAIL"}:
-            raise ValueError("criteria verdict must be PASS or FAIL")
+        raise InvalidEnvelope("structured output is not a JSON object", data)
+    errors = sorted(validator.iter_errors(data), key=lambda err: list(err.path))
+    if errors:
+        err = errors[0]
+        where = ".".join(str(part) for part in err.path) or "<root>"
+        raise InvalidEnvelope(f"{where}: {err.message}", data)
     return data
 
 
-async def run_sdk(prompt: str, sdk: tuple[Any, Any]) -> dict[str, Any]:
+async def run_sdk(prompt: str, sdk: tuple[Any, Any], validator: Any) -> dict[str, Any]:
     ClaudeAgentOptions, query = sdk
     options = ClaudeAgentOptions(
         allowed_tools=[],
@@ -195,7 +162,7 @@ async def run_sdk(prompt: str, sdk: tuple[Any, Any]) -> dict[str, Any]:
         if not result:
             raise ValueError("SDK returned no structured output")
         structured = json.loads(result)
-    return validate_envelope(structured)
+    return validate_envelope(structured, validator)
 
 
 def main() -> int:
@@ -203,6 +170,7 @@ def main() -> int:
 
     try:
         sdk = load_sdk()
+        Validator = load_jsonschema()
     except RuntimeError as exc:
         print(f"verify-sdk: {exc}", file=sys.stderr)
         return 2
@@ -221,17 +189,29 @@ def main() -> int:
             return fail_env(f"stage card not found: {card}")
         if not TEMPLATE.is_file():
             return fail_env(f"verifier prompt template not found: {TEMPLATE}")
+        if not SCHEMA.is_file():
+            return fail_env(f"verifier schema not found: {SCHEMA}")
 
         artefacts = find_artefacts(args.artefact_glob)
         prompt = build_prompt(args.stage_id, card, artefacts, out)
-        envelope = asyncio.run(run_sdk(prompt, sdk))
+        validator = Validator(verifier_schema())
+        envelope = asyncio.run(run_sdk(prompt, sdk, validator))
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
         return 0 if envelope["overall"] == "PASS" else 1
     except RuntimeError as exc:
         print(f"verify-sdk: {exc}", file=sys.stderr)
         return 2
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except InvalidEnvelope as exc:
+        invalid_path = Path(str(out) + ".invalid.json")
+        invalid_path.parent.mkdir(parents=True, exist_ok=True)
+        invalid_path.write_text(json.dumps(exc.data, indent=2) + "\n", encoding="utf-8")
+        print(f"verify-sdk: {exc}; wrote {invalid_path}", file=sys.stderr)
+        return 3
+    except ValueError as exc:
+        print(f"verify-sdk: {exc}", file=sys.stderr)
+        return 1
+    except (OSError, json.JSONDecodeError) as exc:
         print(f"verify-sdk: {exc}", file=sys.stderr)
         return 1
 

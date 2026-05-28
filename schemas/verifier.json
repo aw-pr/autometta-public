@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autometta.local/schemas/verifier.json",
+  "title": "verifier artefact",
+  "description": "Result envelope written by a verifier after checking one stage card against its acceptance criteria. Stored under state/verifiers/<stage-id>.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stage_id",
+    "verifier_identity",
+    "verifier_invocation",
+    "ran_at",
+    "criteria",
+    "additional_findings",
+    "overall"
+  ],
+  "properties": {
+    "stage_id": {
+      "type": "string",
+      "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+      "description": "Stage id matching the stage card basename."
+    },
+    "verifier_identity": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identity string for the verifier that produced this artefact."
+    },
+    "verifier_invocation": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable command or harness route used to invoke the verifier."
+    },
+    "ran_at": {
+      "type": "string",
+      "description": "Timestamp recorded by the verifier. Prefer ISO 8601 UTC, but historical artefacts are accepted as plain strings."
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Per-criterion verdicts in stage-card order.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "verdict",
+          "evidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Acceptance criterion number from the stage card."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Short criterion name or summary."
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL"
+            ],
+            "description": "Criterion verdict."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete evidence supporting the verdict, typically file references or command results."
+          }
+        }
+      }
+    },
+    "additional_findings": {
+      "type": "string",
+      "description": "Extra verifier notes that are not tied to one criterion."
+    },
+    "overall": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ],
+      "description": "Overall verifier result for the stage."
+    }
+  }
+}
