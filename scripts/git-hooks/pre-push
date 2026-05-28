@@ -36,6 +36,18 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         echo "          Run 'git publish' — it backs up to the private remote" >&2
         echo "          first, then publishes. Deliberate override: --no-verify." >&2
         exit 1
+      fi
+      # Reject non-fast-forward pushes to the public default branch even with
+      # the sentinel set. A zero remote_sha is the first publish (orphan
+      # squash); otherwise the existing public tip must be an ancestor of what
+      # we are pushing. This protects already-published history from rewrites.
+      if [ -n "$remote_sha" ] && printf '%s' "$remote_sha" | grep -q '[^0]'; then
+        if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+          echo "pre-push: non-fast-forward push to PUBLIC default branch blocked." >&2
+          echo "          Published history is immutable; rewrite only above the" >&2
+          echo "          public tip. Deliberate override: --no-verify." >&2
+          exit 1
+        fi
       fi ;;
     *)
       echo "pre-push: '$remote_ref' blocked on PUBLIC remote '$remote_name'." >&2
