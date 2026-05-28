@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autometta.local/schemas/handoff-envelope.json",
+  "title": "Worker handoff envelope",
+  "description": "Written by the worker as its final action to state/handoffs/<stage-id>.json. tick.sh polls for this file and treats it as the sole completion signal. Process exit and log tail are fallback stuck-worker signals only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["stage_id", "status", "deliverables", "notes"],
+  "properties": {
+    "stage_id": {
+      "type": "string",
+      "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+      "description": "Stage id, matching the stage card filename slug and the state.yaml stages[].id value."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail", "partial"],
+      "description": "pass — all acceptance criteria satisfied, ready for verifier. fail — worker could not complete; verifier is not dispatched. partial — some deliverables written but constraints or criteria were not met."
+    },
+    "deliverables": {
+      "type": "array",
+      "description": "Relative paths (from repo root) of every file the worker created or modified. Must list at least the files in the stage card's Deliverables section.",
+      "items": {
+        "type": "string",
+        "pattern": "^[^/].*"
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-text summary: what was done, any acceptance criteria believed satisfied, any open issues. Used verbatim in the stall marker when status=fail."
+    },
+    "failed_acceptance": {
+      "type": "array",
+      "description": "Optional. Indices (1-based) of acceptance criteria from the stage card that the worker could not satisfy. Informational for the operator; does not change tick.sh behaviour.",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "worker_identity": {
+      "type": "string",
+      "description": "Optional. The canonical identity string of the worker agent, e.g. 'Codex GPT-5.3 <codex-gpt-5-3@local>'. Redundant with state.yaml but useful when reading the envelope in isolation."
+    }
+  }
+}

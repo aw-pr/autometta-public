@@ -29,7 +29,30 @@ Before returning, verify:
 - None of the style or format constraints in the card are violated.
 - No file listed under "Out of scope" has been modified.
 
-## Step 6: Return a summary
+## Step 6: Write the handoff envelope
+
+As your **final action**, write a JSON file to `state/handoffs/<<stage-id>>.json`. This file is the sole signal that tick.sh uses to decide your work is done. Do not exit without writing it.
+
+The file must match this shape exactly:
+
+```json
+{
+  "stage_id": "<<stage-id>>",
+  "status": "pass",
+  "deliverables": [
+    "path/to/first-file.ext",
+    "path/to/second-file.ext"
+  ],
+  "notes": "One paragraph: what you produced, which acceptance criteria you believe are satisfied, and any open issues.",
+  "worker_identity": "<<worker-tier>> <<agent-slug@local>>"
+}
+```
+
+- `status` must be `"pass"` if all acceptance criteria are met, `"fail"` if the work cannot be completed, or `"partial"` if some deliverables are missing or criteria unmet.
+- `deliverables` must list every file you created or modified (relative paths from repo root).
+- `notes` is used verbatim in the stall marker when `status=fail`, so be specific about what blocked you.
+
+## Step 7: Return a summary
 
 Return a single paragraph (under 200 words) naming each file you created and listing the acceptance criteria from the stage card you believe are satisfied. If any deliverable is missing or incomplete, say so explicitly and give the reason. Do not paste file contents back. The orchestrator will read the diffs directly.
 
@@ -44,6 +67,7 @@ If you could not complete within the budget stated in the card, write whatever i
 - Do not embed secrets, tokens, or API keys in any file.
 - Use relative paths inside the repo. Never embed absolute home-directory paths in committed content.
 - Do not run `git commit` or otherwise mutate git state. Leave the working tree dirty for the verifier; the orchestrator commits on verifier-pass.
+- Write `state/handoffs/<<stage-id>>.json` as your final action. tick.sh will not treat your work as done without it.
 
 ## Family-specific notes
 

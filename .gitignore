@@ -19,7 +19,10 @@ logs/
 runs/*.log
 
 state/logs/
-state/
+state/**
+!state/handoffs/
+!state/handoffs/.gitkeep
+!state/handoffs/README.md
 
 /VERSION
 

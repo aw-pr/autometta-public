@@ -34,3 +34,4 @@ Banked at `memory/adopters/<repo>/` with analysis-friendly `metadata.run` frontm
 - [Verifier rubric schema](decision-verifier-rubric-schema.md): Why verifier artefacts have a backward-compatible JSON Schema and manual validator.
 - [SDK verifier integration decisions](decision-sdk-verifier-integration.md): Why manifest flag over per-card, why cli default, why not mutate autometta's own manifest for 15c.
 - [SDK verifier prompt caching](decision-sdk-verifier-prompt-cache.md): Why ephemeral TTL, why anthropic library switch, what busts the cache, static/variable split.
+- [Handoff envelope contract](decision-handoff-envelope.md): Why JSON file is the sole worker completion signal, why mandatory for new stages, why legacy stages are grandfathered.

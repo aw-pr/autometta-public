@@ -284,7 +284,7 @@ commit_state_branch() {
       fi
     fi
     git checkout -B phat-controller/state >/dev/null 2>&1
-    git add state/state.yaml state/budget.json state/verifiers 2>/dev/null || true
+    git add state/state.yaml state/budget.json state/verifiers state/handoffs/.gitkeep state/handoffs/README.md 2>/dev/null || true
     if ! git diff --cached --quiet; then
       git commit --author="$(agent-whoami)" -m "phat-controller: tick state update" >/dev/null 2>&1
     fi
@@ -573,7 +573,80 @@ _process_repo_locked() {
           '(.stages[] | select(.id == $id)).worker_pid = null' \
           --arg id "$current_stage"
         worker_pid=""
+
+        # Envelope check (stage 17): the worker has exited. The handoff
+        # envelope at state/handoffs/<stage-id>.json is the sole completion
+        # signal. Process exit alone is no longer sufficient to advance.
+        local envelope_path="$repo_root/state/handoffs/${current_stage}.json"
+        local invalid_path="$repo_root/state/handoffs/${current_stage}.invalid.json"
+        if [[ ! -f "$envelope_path" ]]; then
+          # Worker exited but wrote no envelope. Mark stalled.
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).status = "stalled"
+             | (.stages[] | select(.id == $id)).stall_marker = "worker_envelope_missing_after_exit"
+             | .current_stage = null' \
+            --arg id "$current_stage"
+          budget_record_failure "$repo_root"
+          log "stage ${current_stage} stalled: worker exited but wrote no handoff envelope (worker_envelope_missing_after_exit)"
+          budget_increment_tick "$repo_root"
+          commit_state_branch "$repo_root"
+          return 0
+        fi
+
+        # Validate the envelope against the schema.
+        local envelope_valid=1
+        if ! jq empty "$envelope_path" 2>/dev/null; then
+          envelope_valid=0
+        else
+          local env_stage env_status env_deliverables env_notes
+          env_stage="$(jq -r '.stage_id // empty' "$envelope_path")"
+          env_status="$(jq -r '.status // empty' "$envelope_path")"
+          env_deliverables="$(jq -r 'if .deliverables | type == "array" then "ok" else "bad" end' "$envelope_path")"
+          env_notes="$(jq -r '.notes // empty' "$envelope_path")"
+          if [[ -z "$env_stage" || -z "$env_status" || "$env_deliverables" != "ok" || -z "$env_notes" ]]; then
+            envelope_valid=0
+          elif [[ "$env_status" != "pass" && "$env_status" != "fail" && "$env_status" != "partial" ]]; then
+            envelope_valid=0
+          fi
+        fi
+
+        if (( envelope_valid == 0 )); then
+          mv "$envelope_path" "$invalid_path" 2>/dev/null || true
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).status = "stalled"
+             | (.stages[] | select(.id == $id)).stall_marker = "worker_envelope_invalid"
+             | .current_stage = null' \
+            --arg id "$current_stage"
+          budget_record_failure "$repo_root"
+          log "stage ${current_stage} stalled: handoff envelope failed schema validation (worker_envelope_invalid); moved to ${invalid_path}"
+          budget_increment_tick "$repo_root"
+          commit_state_branch "$repo_root"
+          return 0
+        fi
+
+        local env_notes_val
+        env_notes_val="$(jq -r '.notes // ""' "$envelope_path")"
+        local env_status_val
+        env_status_val="$(jq -r '.status' "$envelope_path")"
+
+        # fail or partial: do not dispatch verifier.
+        if [[ "$env_status_val" == "fail" || "$env_status_val" == "partial" ]]; then
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).status = "failed"
+             | (.stages[] | select(.id == $id)).stall_marker = $notes
+             | .current_stage = null' \
+            --arg id "$current_stage" --arg notes "$env_notes_val"
+          budget_record_failure "$repo_root"
+          log "stage ${current_stage} failed: worker envelope status=${env_status_val}; notes: ${env_notes_val}"
+          budget_increment_tick "$repo_root"
+          commit_state_branch "$repo_root"
+          return 0
+        fi
+
+        # status=pass: fall through to verifier dispatch below.
+        log "stage ${current_stage} worker envelope status=pass, proceeding to verifier dispatch"
       fi
+
       if [[ -n "${verifier_pid:-}" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
         log "verifier ${verifier_pid} for ${current_stage} still running, skipping verifier dispatch"
         budget_increment_tick "$repo_root"
