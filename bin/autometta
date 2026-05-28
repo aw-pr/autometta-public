@@ -18,6 +18,7 @@ Usage:
   autometta tick [--repair|--reset-halt]
   autometta check-deps
   autometta dashboard [--open]
+  autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]
   autometta uninstall-launchagent <repo-path>
   autometta install-homebrew-local [--dry-run]
@@ -103,6 +104,9 @@ case "$command_name" in
     ;;
   dashboard)
     run_script dashboard.sh "$@"
+    ;;
+  retro-grade)
+    run_script retro-grade.sh "$@"
     ;;
   install-launchagent)
     if [[ $# -lt 1 ]]; then
