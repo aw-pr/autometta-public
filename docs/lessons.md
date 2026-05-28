@@ -151,3 +151,27 @@ op-fetch --print "$OP_REF_OPENAI_API_KEY" | \
 In autometta, `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` resolve the sibling via `$AUTOMETTA_CODEX_HOME` (default `~/.codex-api-only`) and pass it through op-fetch with `--pass CODEX_HOME` whenever codex is in api mode. They fail closed if the sibling is missing or its `auth_mode` is not `apikey`. `autometta auth check codex` verifies both the ref resolution and the sibling state — run it before any dispatch.
 
 Claude has no equivalent: `claude -p` honours `ANTHROPIC_API_KEY` directly, so no sibling is needed for `claude` family api mode.
+
+## Headless gotcha 9: claude worker subshell receives SIGHUP when LaunchAgent tick exits
+
+### One-sentence summary
+When `phat-controller` tick is driven by a LaunchAgent, bash sends SIGHUP to background subshells (`( ... ) &`) on exit, which silently kills any in-flight claude worker before it finishes.
+
+### Incident origin
+Source project: autometta self-host on 2026-05-27. Claude workers dispatched via the autonomous loop exited after ~21s with a 0-byte log. Direct invocation (`op-fetch + claude -p` from an interactive shell) worked correctly. Root cause: `spawn-worker.sh` wrapped the claude dispatch in a bash subshell `( cd "$repo_root" && ... ) &`. When the tick job returned, the LaunchAgent's bash sent SIGHUP to that subshell, which propagated to op-fetch and then to claude.
+
+Codex workers use a direct `&` without a wrapping subshell and manage their own process group, so they are unaffected.
+
+### Failure mode if ignored
+Claude workers silently exit with a 0-byte log. The heartbeat suppresses `silent` for the claude family (gotcha 6), so the agent ticker shows no alert. The stage either stalls at `worker_pid` polling or, if the heartbeat grace window expires first, transitions to `stuck`. The operator sees no error and no output.
+
+### Mitigation
+Call `disown "$pid"` immediately after capturing `$!` from the background job. This removes the job from bash's job table so it no longer receives SIGHUP when the shell exits:
+
+```sh
+( cd "$repo_root" && op-fetch ... -- claude -p ... ) &
+pid=$!
+disown "$pid" 2>/dev/null || true
+```
+
+Applied in `scripts/spawn-worker.sh`, `scripts/spawn-verifier.sh`, and `scripts/spawn-verifier-panel.sh` (commit `237c8a6`).
