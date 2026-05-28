@@ -11,6 +11,8 @@
   </array>
   <key>RunAtLoad</key>
   <true/>
+  <key>AbandonProcessGroup</key>
+  <true/>
   <key>StartInterval</key>
   <integer>{{INTERVAL_SECONDS}}</integer>
   <key>WorkingDirectory</key>
