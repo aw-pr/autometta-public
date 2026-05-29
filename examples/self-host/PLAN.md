@@ -124,18 +124,18 @@ Pass 3 takes autometta from "local cron + filesystem + git" toward selective use
 
 ### Tier 1 — extends the contract, doesn't break it
 
-| # | Stage | Status | Card |
-|---|---|---|---|
-| 18 | Optional N=3 panel verifier with quorum voting | queued, blocked by 15c + 17 | [`18-panel-verifier.md`](./18-panel-verifier.md) |
-| 19 | Weekly batch retro-grade via Anthropic Batch API | queued, blocked by 15b + 17 | [`19-batch-retro-grade.md`](./19-batch-retro-grade.md) |
-| 20 | Design: autometta-sweep skill (parallel design exploration) | queued — design-only | [`20-sweep-skill-design.md`](./20-sweep-skill-design.md) |
+| # | Stage | Status | Commit | Card |
+|---|---|---|---|---|
+| 18 | Optional N=3 panel verifier with quorum voting | done | `fa735aa` | [`18-panel-verifier.md`](./18-panel-verifier.md) |
+| 19 | Weekly batch retro-grade via Anthropic Batch API | done | `bcae155` | [`19-batch-retro-grade.md`](./19-batch-retro-grade.md) |
+| 20 | Design: autometta-sweep skill (parallel design exploration) | done | `af2eb96` | [`20-sweep-skill-design.md`](./20-sweep-skill-design.md) |
 
 ### Tier 2 — bends an invariant deliberately
 
-| # | Stage | Status | Card |
-|---|---|---|---|
-| 21 | Hosted scheduled monitoring routines (PR-only output) | queued | [`21-remote-scheduled-monitoring.md`](./21-remote-scheduled-monitoring.md) |
-| 22 | Design: MCP-served stage cards | queued — design-only | [`22-mcp-served-cards-design.md`](./22-mcp-served-cards-design.md) |
+| # | Stage | Status | Commit | Card |
+|---|---|---|---|---|
+| 21 | Hosted scheduled monitoring routines (PR-only output) | done | `aae7f9c` | [`21-remote-scheduled-monitoring.md`](./21-remote-scheduled-monitoring.md) |
+| 22 | Design: MCP-served stage cards | done | `690ec5a` | [`22-mcp-served-cards-design.md`](./22-mcp-served-cards-design.md) |
 | 23 | Experiment: long-lived SDK session as alternative controller (with postmortem) | queued — bounded experiment | [`23-sdk-controller-experiment.md`](./23-sdk-controller-experiment.md) |
 
 ### Tier 3 — research bets, only after Tier 1 lands
@@ -155,7 +155,7 @@ Pass 3 takes autometta from "local cron + filesystem + git" toward selective use
 
 ### Operator notes (pass 3)
 
-- Tier 0 (15a–17) completed 2026-05-28. `state.yaml` updated; `current_stage` is now `18-panel-verifier`.
+- Tier 0 (15a–17), Tier 1 (18–20), and Tier 2 cards 21–22 are all completed (through 2026-05-29). `state.yaml` `current_stage` is `null` — the queued backlog is drained. Remaining candidates are the Tier 2/3/4 design and experiment cards (23–28), none yet queued.
 - The autometta repo has `.autometta.local.yaml` pinning `codex: api`; sibling `~/.codex-api-only` CODEX_HOME is configured. `autometta auth check codex` reports PASS.
 - Each design card (20, 22, 24, 26) emits a prose decision rather than code. Verdicts feed future implementation cards.
 - Cards 18, 19, 25 each depend on Tier 0 (now done); queue them in tier order in `state.yaml` before dispatching.
