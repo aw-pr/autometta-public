@@ -176,6 +176,11 @@ disown "$pid" 2>/dev/null || true
 
 Applied in `scripts/spawn-worker.sh`, `scripts/spawn-verifier.sh`, and `scripts/spawn-verifier-panel.sh` (commit `237c8a6`).
 
+`disown` addresses shell job-control SIGHUP, but it is not the whole fix. launchd separately reaps the tick's entire process group when the `tick` job exits. The complementary mitigation is `AbandonProcessGroup` in the LaunchAgent plist (`templates/launchagent.plist.tpl`, commit `2cc42c2`), which tells launchd not to send the group that signal. Keep both: `disown` for the shell, `AbandonProcessGroup` for launchd.
+
+### Verified
+Confirmed on 2026-05-29 with a real LaunchAgent dispatch (not a manual tick): a claude/Haiku worker spawned by the `RunAtLoad` tick survived the tick process exiting, ran to completion, and wrote its handoff envelope; the log stayed 0 bytes until the single burst at completion (gotcha 6), and a cross-family codex verifier returned PASS. Both fixes hold together; the unattended launchd loop is no longer a known blocker.
+
 ## Headless gotcha 10: a tick can destroy the gitignored state.yaml, and the state branch cannot back it up
 
 ### One-sentence summary
