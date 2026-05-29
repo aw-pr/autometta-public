@@ -175,3 +175,22 @@ disown "$pid" 2>/dev/null || true
 ```
 
 Applied in `scripts/spawn-worker.sh`, `scripts/spawn-verifier.sh`, and `scripts/spawn-verifier-panel.sh` (commit `237c8a6`).
+
+## Headless gotcha 10: a tick can destroy the gitignored state.yaml, and the state branch cannot back it up
+
+### One-sentence summary
+`state/state.yaml` is gitignored, so `commit_state_branch`'s `git add state/state.yaml` is a silent no-op — the state branch never persists it — and a tick that derives a degenerate document from a transient read error can overwrite the only on-disk copy with an empty `stages: []` skeleton, with no recovery point.
+
+### Incident origin
+Source project: autometta self-host on 2026-05-29. A live `launchctl kickstart` tick (fired to verify the LaunchAgent loop) left `state/state.yaml` reduced to a two-line `stages: []` stub; the populated file (`current_stage: 22`, full stage list) was gone. The tick log showed a `json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)` — `state_apply_json` had a tmp file that was empty at validation time — followed by `refusing state branch checkout` because the working tree was dirty (a `models.sh` `644 -> 755` mode flip from re-running `install-homebrew-local.sh`). Recovery was only possible from an APFS Time Machine local snapshot, because `state.yaml` is gitignored and the `phat-controller/state` branch had never actually tracked it.
+
+### Failure mode if ignored
+The loop's entire stage-progress record vanishes on a single bad tick. Because the next pending stage is selected as the first `status: pending` entry, a re-init to `stages: []` (or a stale recovery) makes the loop either go idle or re-run already-committed stages. There is no remote copy: the gitignored file lives only on the operator's disk.
+
+### Mitigation
+Three layers, all in `scripts/tick.sh`:
+1. `state_apply_json` reads the current state with a guard (refuse to derive from an unreadable/empty document), validates the *result* is a non-empty JSON object still carrying a `.stages` array before writing, and never `mv`s a degenerate document over good state.
+2. `state_apply_json` writes a rolling `state/state.yaml.bak` before every replacement — the only recovery point for a gitignored file.
+3. A top-of-tick integrity guard (`_process_repo_locked`) refuses to dispatch against a corrupt/empty `state.yaml`: it auto-restores from `state.yaml.bak` when that is valid, otherwise halts with reason `state-corrupt` rather than proceeding or silently re-initialising.
+
+Open follow-up: `commit_state_branch` still cannot persist `state.yaml` while `state/` is gitignored; the durable backup is the local `.bak`. A real off-disk copy would need either a force-added state file on the state branch or an explicit export step.

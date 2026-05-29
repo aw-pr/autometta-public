@@ -202,14 +202,39 @@ state_apply_json() {
   local state_yaml="$1"
   local jq_filter="$2"
   shift 2
-  local tmp_json tmp_yaml
+  local cur_json tmp_json tmp_yaml
+  cur_json="$(mktemp)"
   tmp_json="$(mktemp)"
   tmp_yaml="$(mktemp)"
-  state_json "$state_yaml" | jq "$@" "$jq_filter" > "$tmp_json"
-  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$tmp_json"
+
+  # Read guard: refuse to derive a new state from an unreadable or empty
+  # current state. An empty read would otherwise cascade through jq into an
+  # empty write, destroying the (gitignored, un-backed-up) state file.
+  if ! state_json "$state_yaml" > "$cur_json" 2>/dev/null || [[ ! -s "$cur_json" ]]; then
+    log "state_apply_json: current state ${state_yaml} unreadable or empty; refusing to mutate"
+    rm -f "$cur_json" "$tmp_json" "$tmp_yaml"
+    return 1
+  fi
+
+  jq "$@" "$jq_filter" "$cur_json" > "$tmp_json"
+
+  # Write guard: the result must be non-empty, valid JSON, and still an
+  # object carrying a .stages array. Never let a degenerate document
+  # (e.g. {"stages":[]} or null) overwrite good state.
+  if [[ ! -s "$tmp_json" ]] || ! python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d, dict) and isinstance(d.get("stages"), list) else 1)' "$tmp_json" 2>/dev/null; then
+    log "state_apply_json: refusing to write degenerate state to ${state_yaml} (filter: ${jq_filter})"
+    rm -f "$cur_json" "$tmp_json" "$tmp_yaml"
+    return 1
+  fi
+
+  # state.yaml is gitignored and the state branch cannot persist it, so this
+  # rolling backup is its only recovery point. Snapshot the prior good copy
+  # before replacing it.
+  cp -p "$state_yaml" "${state_yaml}.bak" 2>/dev/null || true
+
   yq -P '.' "$tmp_json" > "$tmp_yaml"
   mv "$tmp_yaml" "$state_yaml"
-  rm -f "$tmp_json"
+  rm -f "$cur_json" "$tmp_json"
 }
 
 # stage_snapshot_tokens: parse a worker/verifier log for its token count
@@ -483,6 +508,24 @@ _process_repo_locked() {
       return 1
       ;;
   esac
+
+  # State-integrity guard: never dispatch against a corrupt/empty state.yaml.
+  # state.yaml is gitignored with no remote copy, so if it has been truncated
+  # we auto-restore the rolling .bak written by state_apply_json; failing
+  # that, halt loudly rather than proceed against (or re-initialise over)
+  # lost stage history.
+  if [[ ! -s "$state_yaml" ]] || ! state_json "$state_yaml" 2>/dev/null \
+       | jq -e 'type == "object" and (.stages | type == "array")' >/dev/null 2>&1; then
+    if [[ -s "${state_yaml}.bak" ]] && state_json "${state_yaml}.bak" 2>/dev/null \
+         | jq -e 'type == "object" and (.stages | type == "array")' >/dev/null 2>&1; then
+      cp -p "${state_yaml}.bak" "$state_yaml"
+      log "state-integrity: ${state_yaml} was corrupt/empty; restored from .bak"
+    else
+      budget_halt "$repo_root" "state-corrupt"
+      log "state-integrity: ${state_yaml} corrupt/empty and no valid .bak; halted (manual recovery required)"
+      return 0
+    fi
+  fi
 
   local current_stage
   current_stage="$(state_json "$state_yaml" | jq -r '.current_stage')"
