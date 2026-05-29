@@ -385,15 +385,16 @@ These are the failure modes that will bite you. Full write-up in
    dispatch still bills the subscription unless you use the sibling
    `CODEX_HOME` (see section 5).
 
-### Known open issues
+### Resolved
 
-- **LaunchAgent silent worker exit.** Claude workers spawned via the tick under
-  launchd can exit silently (0-byte log) when the tick job returns, because the
-  background subshell receives SIGHUP without a `setsid` or `disown`. The
-  workaround is to hand-build deliverables in the orchestrator session;
-  the fix (add `setsid`/`disown` before `&` in `scripts/spawn-worker.sh`)
-  remains the top blocker for unattended runs. Check `HANDOFF.md` for current
-  status.
+- **LaunchAgent silent worker exit (fixed, verified 2026-05-29).** Claude
+  workers spawned via the tick under launchd used to exit silently (0-byte log)
+  when the tick job returned: the background subshell received SIGHUP and
+  launchd reaped the worker's process group. Two complementary fixes close it -
+  `disown "$pid"` in the spawn scripts (shell job-control SIGHUP) and
+  `AbandonProcessGroup` in the LaunchAgent plist (launchd group reaping). A real
+  LaunchAgent smoke test confirmed a claude worker now survives the tick exit
+  and runs to completion. See `docs/lessons.md` gotcha 9.
 
 For the dated session log and the current backlog, see `HANDOFF.md` and
 `examples/self-host/PLAN.md`.

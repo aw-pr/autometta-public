@@ -20,9 +20,9 @@ Not a framework. Not a runtime. Not a hosted service. A set of contracts, templa
 
 ## Status
 
-Pre-alpha. Pass 1 is shipped and proven; pass 2 is shipped but the unattended path has a known caveat (see "Feature status" below and "Known limitations").
+Pre-alpha. Pass 1 is shipped and proven; pass 2 is shipped, including the unattended macOS launchd path (see "Feature status" below).
 
-Pass 1 (dispatch contract) and pass 2 (phat-controller autonomous loop) have both been self-hosted end to end against this repo through stage 6. The macOS launchd path that lets the loop run unattended carries a known limitation pending a fresh smoke test: see "Known limitations".
+Pass 1 (dispatch contract) and pass 2 (phat-controller autonomous loop) have both been self-hosted end to end against this repo through stage 6. The macOS launchd path that lets the loop run unattended was verified on 2026-05-29: a claude worker dispatched by a real LaunchAgent tick survives the tick process exiting and runs to completion (the `disown` + `AbandonProcessGroup` fix, see `docs/lessons.md` gotcha 9).
 
 The first end-to-end benchmark (BENCH-005) drove the dispatch contract against a multi-stage Swift refactor in two parallel orchestrator lanes. Both escalated at the 2-loop budget. Codex went 12/20 then 18/20 on the FLAP-rate acceptance command; Claude Opus stayed pinned at 20/20 across both loops. The pass condition (0 FLAP) was not met by either lane, but the cross-family asymmetry is the interesting finding: Codex got closer then regressed, Claude was stuck at maximum throughout. See `[examples/benchmarks/bench-005/](./examples/benchmarks/bench-005/)` for the lane summaries and escalation notes. A green benchmark on a non-trivial backlog remains the next milestone.
 
@@ -132,7 +132,7 @@ autometta/
 
 1. `docs/philosophy.md` - what we believe and why.
 2. `docs/dispatch-contract.md` - the load-bearing document.
-3. `docs/lessons.md` - five gotchas that will bite you on day one.
+3. `docs/lessons.md` - the headless gotchas that will bite you on day one.
 4. `templates/stage-card.md` and `templates/worker-prompt.md` - copy these, fill them in.
 5. `docs/verification.md` - how to gate the worker's output.
 6. `docs/phat-controller.md` and `docs/setup.md` - when you want to put the dispatch contract under cron. `docs/setup.md` section 7 covers auth-route configuration (subscription vs API key).
@@ -154,7 +154,7 @@ The fastest way to see what this is.
 4. Fill in `docs/stages/01-my-first-stage.md` - one objective, one deliverable, one acceptance command. Walk through the orchestrator checklist in `/tmp/checklist.md` as you go.
 5. Dispatch a worker from the orchestrator session. Read it the stage card path. The worker writes code; you run the acceptance command yourself; if it passes, fire a verifier (a different model family) to audit the change. Commit on green.
 
-That is pass 1. No `scripts/`, no `tick.sh`, no cron. Read `docs/dispatch-contract.md` for the full seven-step protocol; read `docs/lessons.md` for the five gotchas before your second dispatch.
+That is pass 1. No `scripts/`, no `tick.sh`, no cron. Read `docs/dispatch-contract.md` for the full seven-step protocol; read `docs/lessons.md` for the headless gotchas before your second dispatch.
 
 When the same loop is worth automating, install the local CLI and initialise the repo:
 
@@ -276,7 +276,6 @@ The spawn scripts and the manual dispatch pattern both export `CODEX_HOME=$AUTOM
 
 ## Known limitations
 
-- **Unattended launchd runs (macOS) are unverified.** The loop dispatches fine interactively and via cron, but the per-repo launchd LaunchAgent path needs a fresh smoke test after the `AbandonProcessGroup` fix. Earlier, claude workers spawned by the tick under launchd could exit silently (0-byte log) when the tick process returned, because launchd reaped the worker's process group. The plist template now sets `AbandonProcessGroup`; re-run `autometta install-launchagent <repo>` to re-render and re-bootstrap, then confirm a worker survives a full tick cycle before relying on overnight runs.
 - **No green end-to-end benchmark yet.** BENCH-005 drove the contract against a multi-stage Swift refactor; neither lane met the pass condition (see `examples/benchmarks/bench-005/`). A green benchmark on a non-trivial backlog is the next milestone.
 - **Pre-alpha, single operator.** No SLA, no retry semantics beyond the budget FSM, one OAuth session per agent family.
 
@@ -289,7 +288,7 @@ The spawn scripts and the manual dispatch pattern both export `CODEX_HOME=$AUTOM
 | Auth routing (subscription / API) | shipped | `op-fetch`, fail-closed, per-family toggle. |
 | SDK verifier route + prompt caching | shipped | Claude family only (stages 15-16). |
 | Worker handoff envelope | shipped | Sole worker completion signal (stage 17). |
-| Autonomous loop (pass 2) | experimental | Unattended launchd path unverified; see Known limitations. |
+| Autonomous loop (pass 2) | shipped | Unattended macOS launchd path verified 2026-05-29 (gotcha 9 fix). Linux via cron. |
 | OpenAI SDK verifier route | planned | Card 28; codex parallel to the Claude route. |
 | Per-role, per-family SDK transport matrix | design-only | Card 28; orchestrator portion gated on card 23. |
 | Cloud-hosted orchestration | planned | Card 27; future phase. |
