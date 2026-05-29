@@ -25,6 +25,7 @@ One line per memory file. Keep entries <=150 chars: `- [Title](file.md): one-lin
 - [Verifier dispatch impoverished](feedback-verifier-dispatch-impoverished.md): spawn-verifier.sh builds a one-sentence prompt with no criteria, inputs, or schema. Need templates/verifier-prompt.md.
 - [Tick respawns verifier while worker running](feedback-tick-respawns-verifier-while-worker-running.md): No kill -0 process-alive check; stacks verifier processes during long workers.
 - [Skills layout: agent-orchestrator + autometta-setup](decision-skills-layout-autometta-setup.md): Keep general orchestrator skill; add a sibling autometta-setup skill for repo adoption.
+- [Publish topology is linear, not orphan](project-publish-topology-linear-not-orphan.md): dev/publish are one history; ff publish, never rebase; verify via git merge-base.
 
 ## Adopter findings
 

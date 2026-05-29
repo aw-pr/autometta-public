@@ -1,53 +1,65 @@
 # Publish workflow
 
-How Autometta keeps a clean public-facing history separate from the messy private working line. Read this before pushing anything to the public remote, and before changing the publish-guard configuration.
+How autometta keeps a public mirror in step with private development. Read this before pushing to the public remote, or before changing the publish-guard configuration.
 
-Placeholders used below: `PRIV` = the private remote (`origin`, pointing at `tw-one/autometta`), `PUB` = the public remote (`public`, pointing at `aw-pr/autometta-public`), `PUB_MATCH` = a substring of the public remote URL (`aw-pr/autometta-public`), `PUBLISH_BRANCH` = the local line that becomes public (`publish`).
+Placeholders: `PRIV` = the private remote (`origin`, `tw-one/autometta`), `PUB` = the public remote (`public`, `aw-pr/autometta-public`), `PUBLISH_BRANCH` = the line that becomes public (`publish`).
 
-## Model
+## Model (read this first)
 
-- **`dev`** - the private working branch on `PRIV`. Atomic commits, per-agent author attribution, full feedback-banking memory chain. Never goes to the public remote. The pre-push hook enforces this.
-- **`publish`** - the public-facing line. Created as an orphan-squash from `dev` at the first publish. Subsequent updates either fast-forward atomic merges from a clean topic branch, or land as a single squash commit per merge.
-- **Ephemeral `wip/*` topic branches** for everything else. Merged into `publish` according to the history mode in use; topic branch deleted afterwards.
+The history is **linear and shared**. There is one line of development:
 
-The public remote is `aw-pr/autometta-public` on GitHub. Branch protection keeps everything except `main` off the public side; `publish` is pushed as `publish:main` on the public remote.
+- **`dev`** - the working branch on `PRIV`. Atomic commits, per-agent author attribution. This is the canonical line; all work lands here.
+- **`publish`** - not a separate history. It is a pointer that sits behind `dev` on the same line and is **fast-forwarded** up to a chosen `dev` commit when you publish. `publish` is pushed to `PUB` as `main`.
+- `PUB/main` is whatever `publish` last fast-forwarded to.
 
-## The one hard invariant
+`dev` and `publish` share one root commit, and `git merge-base dev publish` is publish's own tip. There is no orphan, no unrelated history, nothing to rebase or cherry-pick. To publish you fast-forward `publish` up to `dev` and push. That is the whole model.
 
-Whatever commit `PUB/main` points at is immutable. Rewrite or squash freely *above* it (commits not yet published); never *at or below* it. Rewriting a published commit forces a history-rewriting push to the public remote, which is the exact hazard the orphan-squash exists to avoid. Treat that as an incident, not routine. The pre-push hook rejects non-fast-forward pushes to the public default branch even when the sentinel is set.
+> This replaced an earlier orphan-squash model (see "History note" at the end). If any doc or memory still describes `publish` as an orphan you must cherry-pick onto, it is stale: verify with `git merge-base dev publish` and trust the topology, not the prose.
 
-## Why the orphan-squash for the first cut
+## Normal publish (the common case)
 
-The pre-arm history (commits before the publish-guard was installed) carried operator home-dir paths in stage-card blobs that were later cleaned in commit `2079b30`. The audit run before first publish confirmed:
+```sh
+# 1. work on dev as usual - atomic commits, per-agent --author=
+# 2. when a batch is ready for the public mirror:
+git switch publish
+git merge --ff-only dev          # publish catches up to dev's tip; always a clean ff
+git publish                      # backs up to origin, then ff-pushes PUB main behind the gate
+git switch dev                   # back to the working branch
+```
 
-- Zero secret material has ever entered git history.
-- Privacy leakage was bounded to home-dir paths in old stage-card diffs.
+`git publish` is the alias `git push origin publish && PUBLISH_GUARD_OK=1 git push public publish:main`. It backs up to the private remote first, then publishes. Never hand-type `git push public publish:main`: the gate blocks it and points you back here.
 
-Filter-repo-ing those leaks commit-by-commit would have touched every commit in the chain. An orphan-squash for the first public cut is the simpler equivalent: the cleaned tree lands as a single commit and the messy provenance stays private on `dev`. Subsequent merges from clean topic branches can fast-forward and preserve atomic commits plus per-agent attribution. The repo runs in `preserve` mode from the orphan onward.
+If `git merge --ff-only dev` refuses, `publish` has commits `dev` does not (someone committed directly on `publish`). That should not happen in this model; reconcile by hand rather than forcing.
 
-## History mode (`publishguard.historymode`)
+## Tagging a release
 
-| Mode | Seed | Ongoing merges | When to pick |
-|---|---|---|---|
-| `preserve` *(this repo)* | Orphan-squash to one commit | Fast-forward (or `git merge --no-ff wip/x`); atomic commits and per-agent `--author=` attribution land on the public mirror | Atomic commits plus per-agent authors are the honest output of this repo's commit discipline. |
-| `squash` *(opt-in per merge)* | n/a | `git merge --squash wip/x` collapses to one clean commit per merge | A genuinely hacky WIP topic branch not worth preserving. |
+Releases are **tags on the linear history plus GitHub release notes**, not squashed commits. Preserve the atomic, per-agent-authored commits: the cross-family commit trail is part of what this repo demonstrates, so there is no per-release squash.
 
-Mode is a per-merge choice, not a per-repo flag. `publishguard.historymode` only sets the default the alias and docs steer toward. Use `preserve` by default; use `squash` mid-stream when a topic branch is messy.
+```sh
+git tag -a vX.Y.Z -m "vX.Y.Z - <summary>" <commit>   # annotate the published commit
+git push origin vX.Y.Z                                # private backup
+# The gate blocks tag pushes to PUB (only main is allowed), so make the public
+# release via gh, which creates the tag server-side at main's tip:
+gh release create vX.Y.Z --repo aw-pr/autometta-public --target main \
+  --title "vX.Y.Z - <summary>" --notes "<release notes>"
+```
 
-## Guard infrastructure
+Versioning: pre-1.0 while pre-alpha (`v0.x.y`). The first tagged release is `v0.1.0`. A short CHANGELOG entry per release is optional but cheap.
 
-The guard ships at `scripts/git-hooks/` and `scripts/install-guards.sh`:
+## The gate (why it cannot be bypassed by accident)
 
-- `scripts/git-hooks/pre-commit` - refuses to stage files matching personal/secret patterns. Patterns live in the gitignored `.publish-guard.local`, not in the hook itself. Also rejects never-commit paths regardless of `.gitignore` state (`.env`, `*.local`, `op-refs.local.sh`, etc.).
-- `scripts/git-hooks/pre-push` - on the public remote (matched by `publishguard.publicmatch`), only the default branch (`main` or `master`) may be pushed, and only when the `PUBLISH_GUARD_OK=1` sentinel is set, which only the `git publish` alias does. Direct hand-pushes to the public default branch are rejected and the message points at `git publish`. Non-fast-forward pushes to the public default branch are rejected even with the sentinel set.
-- `scripts/install-guards.sh` - idempotent installer. Arms both hooks into `.git/hooks/`, seeds a toothless `.publish-guard.local` from the example, and reconciles the `git publish` alias from the `publishguard.*` git config keys. Safe to re-run on a fresh clone.
-- `.publish-guard.local.example` - checked-in template with placeholders. Real values go into `.publish-guard.local` which is gitignored.
+The guard ships at `scripts/git-hooks/` and installs via `scripts/install-guards.sh`:
 
-Override once for a deliberate exception: `git commit --no-verify` or `git push --no-verify`. Both are intentional escape hatches and should not appear in routine workflows.
+- `pre-commit` - refuses to stage files matching the personal or secret patterns in the gitignored `.publish-guard.local`, plus never-commit paths (`.env`, `*.local`, `op-refs.local.sh`, `.publish-guard.local`) regardless of `.gitignore` state.
+- `pre-push` - on `PUB` (matched by `publishguard.publicmatch`): only the default branch (`main`/`master`) may be pushed, only when `PUBLISH_GUARD_OK=1` is set (which only `git publish` does), and only as a **fast-forward**. Non-default refs (tags included) and non-fast-forward pushes are rejected.
+
+Why fail-closed rather than a warning: publishing is effectively irreversible. Objects stay fetchable by SHA and content gets cached and indexed. A guard for an irreversible outward action has to stop it and point at the right command.
+
+Deliberate one-off override: `git commit --no-verify` or `git push --no-verify`. These are intentional escape hatches and should not appear in routine workflows. Releases do not need one, because `gh release create` makes the tag server-side instead of pushing it.
 
 ## Config keys
 
-Set once per machine via `git config --local`. Never committed (keeps org/repo names out of the tracked tree). For this repo:
+Set once per machine via `git config --local`; never committed, which keeps org and repo names out of the tracked tree. Current values for this repo:
 
 ```sh
 git config publishguard.publicmatch   'aw-pr/autometta-public'
@@ -55,95 +67,38 @@ git config publishguard.publicremote  'public'
 git config publishguard.privateremote 'origin'
 git config publishguard.publishbranch 'publish'
 git config publishguard.sentinel      'PUBLISH_GUARD_OK'
-git config publishguard.historymode   'preserve'
 ```
 
-`scripts/install-guards.sh` reads these and writes the `git publish` alias:
+`scripts/install-guards.sh` reads these and writes the `git publish` alias. If `publicmatch` or `publicremote` are unset, the alias is left inert and the pre-push hook is a no-op on all remotes. That is the correct state on a fresh clone before the operator has set the public-remote details.
 
-```
-git push origin publish && PUBLISH_GUARD_OK=1 git push public publish:main
-```
+## What is private, and how
 
-If `publicmatch` or `publicremote` are unset, the alias is left inert and the pre-push hook is a no-op on all remotes. That is the right state on a fresh clone before the operator has set the public-remote details.
+In a linear model there is **no private-tier branch**. Whatever is tracked and committed on `dev` reaches `PUB` on the next fast-forward. Privacy is enforced by `.gitignore` and the pre-commit guard, not by branch separation:
 
-## One-time setup on a fresh clone
+- **Gitignored, never public:** `.env*`, `*.local`, `op-refs.local.sh`, `.publish-guard.local`, `.autometta.local.yaml`, `state/**` (runtime; only the `state/handoffs/` markers are tracked), and `HANDOFF.md` (the dated session log stays private).
+- **Tracked, intentionally public:** `memory/` is the in-repo shared agent memory and is part of the public mirror by design. Keep secrets and absolute home-dir paths out of it; the pre-commit guard patterns are the floor.
 
-1. `bash scripts/install-guards.sh` from inside the repo. Installs both hooks and seeds a toothless `.publish-guard.local` from the example. The publish gate stays INERT until the next step.
-2. Set the six `publishguard.*` config keys above. Re-run `bash scripts/install-guards.sh` and it will write the `git publish` alias.
-3. Edit `.publish-guard.local`: replace the example placeholders with your real home-dir patterns, username, email. Never commit this file.
-4. Prove the guard fires:
+If a file must never be public, it has to be gitignored. Keeping it only on `dev` is no longer protection.
+
+## Fresh-clone setup (one time)
+
+1. `bash scripts/install-guards.sh` - installs both hooks and seeds a toothless `.publish-guard.local` from the example. The gate stays inert until step 2.
+2. Set the `publishguard.*` keys above, then re-run `bash scripts/install-guards.sh` to write the `git publish` alias.
+3. Edit `.publish-guard.local` with your real home-dir patterns, username, and email. Never commit it.
+4. Add the remotes if they are missing:
    ```sh
-   echo "/Users/<yourname>/secret" > /tmp/test-leak.md
-   git add /tmp/test-leak.md
-   git commit -m "test"   # should fail with pre-commit message
+   git remote add origin <PRIV URL>
+   git remote add public <PUB URL>
    ```
-5. Add the remotes if not already set:
+5. Prove the guard fires:
    ```sh
-   git remote add origin <tw-one/autometta URL>
-   git remote add public <aw-pr/autometta-public URL>
+   printf '/Users/<you>/secret\n' > /tmp/leak.md && git add /tmp/leak.md && git commit -m test   # must fail
    ```
 
-## Day-to-day
+## When to re-audit
 
-```bash
-# Default (preserve mode): atomic commits land on publish as-is.
-git switch -c wip/<thing>        # atomic commits, per-agent --author=
-# ... work ...
-git switch publish
-git merge --ff-only wip/<thing>  # fast-forward when publish has not moved
-# or: git merge --no-ff wip/<thing> -m "merge wip/<thing>: <topic>"
-git publish                      # PRIV publish, then ff PUB main
-git branch -d wip/<thing>        # -d (not -D); commits live on publish now
-```
+Run the `repo-publish-audit` skill before publishing if more than ten-ish commits have landed on `dev` since the last publish, after any `.gitignore` change, after any change to `scripts/git-hooks/*`, or after editing `.publish-guard.local`. A fast-forward exposes the **history** of the commits it brings, not just the current tree, so the audit covers the range `PUB/main..dev`, not only the working tree.
 
-```bash
-# Opt-in squash: when wip/<thing> has messy WIP commits not worth preserving.
-git switch -c wip/<thing>        # branch from publish, not from dev
-# ... work ...
-git switch publish
-git merge --squash wip/<thing>
-git commit -m "One clean message"
-git publish
-git branch -D wip/<thing>        # -D; commits do not live on publish
-```
+## History note (the first publish, done once)
 
-`git publish` backs up to the private remote first, then publishes. Do not hand-type `git push public publish:main`; the gate blocks it. Route through `git publish`.
-
-When branching a `wip/*` for publish-track work, branch it **from `publish`**, not from `dev`. `dev` carries private-tier paths (`HANDOFF.md`, runtime state, full memory chain) that should not reach the public mirror. See "Gotchas" below.
-
-## The gate (why it cannot be bypassed by accident)
-
-`pre-push` fails closed on the public remote:
-
-- non-default branch to public is rejected;
-- default branch to public is rejected unless `PUBLISH_GUARD_OK=1` is set, which only `git publish` does;
-- non-fast-forward to public default is rejected even with the sentinel.
-
-So a hand-typed `git push public publish:main` is blocked and told to use `git publish` (which guarantees the private backup happened first). Deliberate one-off override: `git push --no-verify`.
-
-Why fail-closed, not a warning: publishing is effectively irreversible (objects stay fetchable by SHA, content gets cached and indexed). A guardrail for an irreversible outward action must stop it and point at the right command, not narrate the mistake as it completes.
-
-## What never goes public
-
-The pre-commit hook patterns are the floor. Additional things that must not appear on `publish`:
-
-- `state/` runtime contents (gitignored, but the directory itself is part of the contract; keep marker files only).
-- `HANDOFF.md`, `RUNBOOK.md`, anything `runs/`-style. Private-tier paths that live on `dev` only.
-- `.publish-guard.local`, `.env*`, `op-refs.local.sh`, anything under `*.local`.
-- Tony's working notes inside `<ALW>...</ALW>` tags. If you see one, resolve it before merging to `publish`.
-
-## When to re-run the audit
-
-- Before every push to public `main` if more than a week or ten-ish commits have landed on `dev`.
-- After any change to `.gitignore` (the floor moves).
-- After any change to `scripts/git-hooks/*` or `scripts/install-guards.sh` (the gate moves).
-- After any operator change to the `.publish-guard.local` patterns (the rules move).
-
-The audit itself is the `repo-publish-audit` skill in the shared mcp-hub. Output is a fix-in-place / history-rewrite / accept triage; act on the first two categories before pushing.
-
-## Gotchas
-
-- **`squash` mode plus branching `wip/*` from `dev`.** A `git merge --squash dev` into `publish` fails outright ("refusing to merge unrelated histories") because the orphan-squash means `publish` and `dev` share no ancestry. Even with `--allow-unrelated-histories` it would drag `dev`'s private-tier paths onto `publish`. For a small cross-tree change, file-level cherry-pick onto `publish` instead. For ongoing work that is born publish-safe, branch the `wip/*` topic **from `publish`**, then `git merge --squash wip/x` works as documented and the tree stays clean by construction.
-- **`install-guards.sh` reseeds `.publish-guard.local`** from the placeholder example if absent, so pre-commit is toothless until real personal patterns are restored. Always re-check after running it on a fresh clone.
-- **Default branch `master` vs `main`.** pre-push allows either; adjust the `git publish` alias target if the public default is `master`.
-- **`git publish` private push needs `--force-with-lease`** if you rebased `publish` (private only; never force public). Edit the alias by hand for the one-off; do not bake `--force-with-lease` into the default alias.
+The public mirror was seeded once by an orphan-squash from older repositories whose early commit blobs carried operator home-dir paths. That one-time cleanup is finished. The pre-arm histories are archived in the tags `archive/dev-final`, `archive/main-legacy`, and `pre-rewrite-2026-05-27` (private only). From that seed onward, `dev` and `publish` are one linear history and the normal flow above is all you need. The orphan-squash is not part of routine publishing and should not be repeated.
