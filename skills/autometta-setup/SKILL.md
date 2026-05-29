@@ -144,7 +144,7 @@ If the target repo will eventually be open-sourced, chain `repo-publish-guard-in
 The committer is always the human user. The *author* identifies the agent that primary-authored the diff:
 
 ```sh
-git commit --author="Claude Opus 4.7 <claude-opus-4-7@local>" -m "<message>"
+git commit --author="Claude Opus 4.8 <claude-opus-4-8@local>" -m "<message>"
 git commit --author="Codex GPT-5.3 <codex-gpt-5-3@local>" -m "<message>"
 ```
 
