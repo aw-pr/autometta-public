@@ -26,6 +26,8 @@ Autometta is that packaging.
 7. **Operational failures are normal.** Tests fail, code crashes, agents hang. The cron tick detects and recovers from operational failure without human intervention; the operator only gets pulled back in when the work itself stalls.
 8. **Observability is plain text plus tmux.** A lightweight observability plane: per-stage logs on disk, a live agent graph on top, and tmux panes for attaching to workers and orchestrators when an operator does want to look. No dashboards, no services.
 
+*Considered and deferred:* serving stage cards as MCP resources rather than file paths (multi-machine readiness). The server would read cards from git and the filesystem path stays the mandatory fallback. Design only, see [`docs/design/mcp-cards.md`](design/mcp-cards.md).
+
 ## Non-goals
 
 - **Teams.** Multi-developer state is not in scope. Beads / Gas Town scale to a team; Autometta intentionally does not.
