@@ -21,6 +21,8 @@ MAX_TOKENS = 4096
 
 
 def identity_for_model(model: str) -> str:
+    if "opus-4-8" in model:
+        return f"Claude Opus 4.8 (SDK) <{model}@local>"
     if "opus-4-7" in model:
         return f"Claude Opus 4.7 (SDK) <{model}@local>"
     if "opus-4" in model:

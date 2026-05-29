@@ -5,6 +5,8 @@ IFS=$'\n\t'
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
 source "$script_dir/budget.sh"
+# shellcheck source=./models.sh
+source "$script_dir/models.sh"
 
 # Token-usage accounting (stage 10).
 #
@@ -48,19 +50,6 @@ verifier_family() {
     printf 'claude\n'
   else
     printf 'unknown\n'
-  fi
-}
-
-claude_model_for_identity() {
-  local identity="$1"
-  if [[ "$identity" == *Sonnet* ]]; then
-    printf 'claude-sonnet-4-6\n'
-  elif [[ "$identity" == *Opus* ]]; then
-    printf 'claude-opus-4-7\n'
-  elif [[ "$identity" == *Haiku* ]]; then
-    printf 'claude-haiku-4-5\n'
-  else
-    printf 'sonnet\n'
   fi
 }
 

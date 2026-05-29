@@ -58,7 +58,7 @@ Concrete model names attached to the tiers above for paired or comparative work.
 
 | Tier | Anthropic | OpenAI | Google |
 |------|-----------|--------|--------|
-| **T0/T1 - Frontier** | Claude Opus 4.7 (`claude-opus-4-7`) | GPT-5.5 (`gpt-5.5`) | Gemini Pro (current) |
+| **T0/T1 - Frontier** | Claude Opus 4.8 (`claude-opus-4-8`) | GPT-5.5 (`gpt-5.5`) | Gemini Pro (current) |
 | **T2/T3 - Workhorse** | Claude Sonnet 4.6 (`claude-sonnet-4-6`) | Codex GPT-5.3 (`gpt-5.3-codex`) | Gemini Pro / Flash |
 | **T4 - Light** | Claude Haiku 4.5 (`claude-haiku-4-5`) | GPT-5 mini (`gpt-5-mini`) | Gemini Flash |
 

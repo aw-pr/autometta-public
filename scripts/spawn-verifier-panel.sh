@@ -8,7 +8,7 @@
 #              to stdout, do not mutate state.yaml. Used by autometta panel.
 #
 # Fixed panel composition for v1:
-#   panel-0: Claude Opus 4.7  via SDK (scripts/verify-sdk.py --model claude-opus-4-7)
+#   panel-0: Claude Opus 4.8  via SDK (scripts/verify-sdk.py --model claude-opus-4-8)
 #   panel-1: Claude Sonnet 4.6 via SDK (scripts/verify-sdk.py --model claude-sonnet-4-6)
 #   panel-2: Codex GPT-5.3    via codex exec
 #
@@ -21,8 +21,10 @@ IFS=$'\n\t'
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
 source "$script_dir/budget.sh"
+# shellcheck source=./models.sh
+source "$script_dir/models.sh"
 
-PANELLIST_OPUS="Claude Opus 4.7 <claude-opus-4-7@local>"
+PANELLIST_OPUS="Claude Opus 4.8 <claude-opus-4-8@local>"
 PANELLIST_SONNET="Claude Sonnet 4.6 <claude-sonnet-4-6@local>"
 PANELLIST_CODEX="Codex GPT-5.3 <codex-gpt-5-3@local>"
 
@@ -174,7 +176,7 @@ main() {
         --card "$card_path" \
         --artefact-glob "$artefact_glob" \
         --out "$p0_out" \
-        --model claude-opus-4-7 \
+        --model "$AUTOMETTA_MODEL_OPUS" \
       </dev/null >"$p0_log" 2>&1 ) &
   local p0_pid=$!
 
@@ -186,7 +188,7 @@ main() {
         --card "$card_path" \
         --artefact-glob "$artefact_glob" \
         --out "$p1_out" \
-        --model claude-sonnet-4-6 \
+        --model "$AUTOMETTA_MODEL_SONNET" \
       </dev/null >"$p1_log" 2>&1 ) &
   local p1_pid=$!
 

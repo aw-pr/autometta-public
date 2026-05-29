@@ -22,7 +22,7 @@ When panel mode is on, `spawn-verifier.sh` delegates immediately to `spawn-verif
 
 | Panellist | Route | Identity |
 |---|---|---|
-| 0 | Claude Opus 4.7 via SDK | `Claude Opus 4.7 <claude-opus-4-7@local>` |
+| 0 | Claude Opus 4.8 via SDK | `Claude Opus 4.8 <claude-opus-4-8@local>` |
 | 1 | Claude Sonnet 4.6 via SDK | `Claude Sonnet 4.6 <claude-sonnet-4-6@local>` |
 | 2 | Codex GPT-5.3 via `codex exec` | `Codex GPT-5.3 <codex-gpt-5-3@local>` |
 

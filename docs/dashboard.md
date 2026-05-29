@@ -55,7 +55,7 @@ worker / verifier token counts onto the matching stage entry in
    token counts, and completion timestamp. Mirrored as a bar chart of
    per-stage totals.
 3. **Per model.** Token spend grouped by canonical agent identity
-   (e.g. `Claude Opus 4.7 <claude-opus-4-7@local>`,
+   (e.g. `Claude Opus 4.8 <claude-opus-4-8@local>`,
    `Codex GPT-5.3 <codex-gpt-5-3@local>`,
    `Claude Sonnet 4.6 <claude-sonnet-4-6@local>`) per
    `~/.claude/rules/mcp-hub-dev-rules.md`. Orchestrator identity is
@@ -86,7 +86,7 @@ worker / verifier token counts onto the matching stage entry in
           "status": "completed",
           "worker": "Codex GPT-5.3 <codex-gpt-5-3@local>",
           "verifier": "Claude Sonnet 4.6 <claude-sonnet-4-6@local>",
-          "orchestrator": "Claude Opus 4.7 <claude-opus-4-7@local>",
+          "orchestrator": "Claude Opus 4.8 <claude-opus-4-8@local>",
           "started_at": "...",
           "completed_at": "...",
           "tokens": 142672,
