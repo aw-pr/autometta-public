@@ -279,6 +279,7 @@ main() {
               --card "$card_path" \
               --artefact-glob "$artefact_glob" \
               --out "$sdk_out" \
+              --model "$(claude_model_for_identity "$verifier_identity")" \
             </dev/null >"$log_path" 2>&1 ) &
       else
         # shellcheck disable=SC2086
