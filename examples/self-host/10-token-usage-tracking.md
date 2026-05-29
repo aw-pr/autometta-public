@@ -24,7 +24,7 @@ Adopters running the loop unattended cannot tell how much budget they have actua
 - `scripts/spawn-verifier.sh`
 - `scripts/budget.sh`
 - `scripts/tick.sh` (read-only — to confirm where worker/verifier exit is detected)
-- A real adopter worker log to confirm output format, e.g. `/Users/AnthonyWest/repos/emergence-lab/state/logs/02-fractal-defaults-and-cycling-worker.log` (read-only)
+- A real adopter worker log to confirm output format, e.g. `/path/to/adopter-repo/state/logs/02-fractal-defaults-and-cycling-worker.log` (read-only)
 
 Do not read anything else.
 

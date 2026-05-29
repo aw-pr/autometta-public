@@ -27,8 +27,8 @@ No daemon, no live updating. The user runs `autometta dashboard --open` and a br
 - `scripts/budget.sh` — `budget_add_tokens` (stage 10).
 - `scripts/spawn-worker.sh`, `scripts/spawn-verifier.sh` — confirm token-parser lives where stage 10 placed it.
 - `~/.phat-controller/subscribers/template.yaml` and any active subscriber yaml — confirm the subscriber data layout.
-- A real adopter `state/state.yaml` for shape reference (e.g. `/Users/AnthonyWest/repos/emergence-lab/state/state.yaml`).
-- A real verifier artefact JSON (e.g. `/Users/AnthonyWest/repos/emergence-lab/state/verifiers/01-iteration-counter-side-panel.json`).
+- A real adopter `state/state.yaml` for shape reference (e.g. `/path/to/adopter-repo/state/state.yaml`).
+- A real verifier artefact JSON (e.g. `/path/to/adopter-repo/state/verifiers/01-iteration-counter-side-panel.json`).
 - `~/.claude/rules/mcp-hub-dev-rules.md` — the canonical agent-identity table.
 
 Do not read anything else unless needed.
@@ -44,8 +44,8 @@ All files listed here must be created or modified. Paths are relative to repo ro
      "generated_at": "2026-05-26T...",
      "repos": [
        {
-         "name": "emergence-lab",
-         "repo_path": "/Users/AnthonyWest/repos/emergence-lab",
+         "name": "adopter-repo",
+         "repo_path": "/path/to/adopter-repo",
          "enabled": true,
          "tokens_spent": 0,
          "token_cap_total": 1000000,
@@ -104,7 +104,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 2. `autometta dashboard` (no args) regenerates `~/.phat-controller/dashboard/data.json` and `~/.phat-controller/dashboard/index.html`. Running it twice produces a `data.json` with a later `generated_at` but otherwise identical content for unchanged state.
 3. `autometta dashboard --open` opens the local dashboard file (worker confirms by manual invocation; verifier confirms the flag is parsed and the `open` / `xdg-open` invocation is correct).
 4. `data.json` schema matches the example in deliverable #2 (the verifier confirms by `jq` queries against a real run).
-5. Running against the live adopter state at `/Users/AnthonyWest/repos/emergence-lab`, the dashboard shows at least one stage per real status (`completed`, `verifier_failed`) and the per-model section lists at least `Claude Opus 4.7`, `Codex GPT-5.3`, and `Claude Sonnet 4.6` identities.
+5. Running against the live adopter state at `/path/to/adopter-repo`, the dashboard shows at least one stage per real status (`completed`, `verifier_failed`) and the per-model section lists at least `Claude Opus 4.7`, `Codex GPT-5.3`, and `Claude Sonnet 4.6` identities.
 6. Per-stage `tokens` field is populated for any stage that completes after this card lands (verifier checks one stage with the new path active).
 7. Chart.js is vendored under `dashboard/vendor/chart.min.js` and its SHA256 is pinned in `scripts/install-homebrew-local.sh`. The install script fails loudly if the hash mismatches.
 8. No external network access at dashboard runtime (verifier checks by reading the HTML / JS for `https?://` references; only same-directory paths should appear).

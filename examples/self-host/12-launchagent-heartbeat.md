@@ -104,7 +104,7 @@ Paths are relative to the autometta repo root.
 ## Acceptance criteria
 
 1. `scripts/install-launchagent.sh` exists, is executable, and exits 0 with a "not macOS" log line when run on a host where `uname` ≠ Darwin.
-2. On macOS: running `bin/autometta install-launchagent /Users/AnthonyWest/repos/emergence-lab` substitutes the template, writes `~/Library/LaunchAgents/com.autometta.tick.emergence-lab.plist`, bootstraps it under `gui/$(id -u)`, and `launchctl list | grep com.autometta.tick.emergence-lab` produces a line. Repeated runs are idempotent (no errors, plist is re-substituted, agent is re-bootstrapped).
+2. On macOS: running `bin/autometta install-launchagent /path/to/adopter-repo` substitutes the template, writes `~/Library/LaunchAgents/com.autometta.tick.adopter-repo.plist`, bootstraps it under `gui/$(id -u)`, and `launchctl list | grep com.autometta.tick.adopter-repo` produces a line. Repeated runs are idempotent (no errors, plist is re-substituted, agent is re-bootstrapped).
 3. `templates/launchagent.plist.tpl` contains no absolute paths and uses placeholders for every host-specific value.
 4. `scripts/subscribe-repo.sh` on macOS invokes the install helper after writing the subscriber yaml; on Linux it does not.
 5. `scripts/init-host.sh` on macOS does not write a cron line; on Linux it does (unchanged behaviour).

@@ -80,12 +80,12 @@ Aligned to the `auth-route-security` skill. Every dispatch goes through `op-fetc
 
 ## Upgrading the local install (agents: read this when picking up a session)
 
-The CLI ships as a local Homebrew tap rendered from this checkout. If the installed version (`autometta --version`) is older than the publish-branch HEAD (`git -C /Users/AnthonyWest/repos/autometta rev-parse --short HEAD`), the in-flight agent is on a stale toolchain and may not see recent scripts (heartbeat, watch-agent, agent-ticker, install-launchagent, etc.).
+The CLI ships as a local Homebrew tap rendered from this checkout. If the installed version (`autometta --version`) is older than the publish-branch HEAD (run `git rev-parse --short HEAD` in the autometta checkout), the in-flight agent is on a stale toolchain and may not see recent scripts (heartbeat, watch-agent, agent-ticker, install-launchagent, etc.).
 
 Canonical upgrade from any session:
 
 ```sh
-cd /Users/AnthonyWest/repos/autometta
+cd /path/to/autometta
 git pull --ff-only
 scripts/install-homebrew-local.sh
 autometta --version             # should match git HEAD short SHA
