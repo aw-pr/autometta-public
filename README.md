@@ -5,11 +5,21 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green) ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 
-<p align="center">
-  <img src="docs/flow.svg" width="900" alt="Autometta dispatch loop: git state + budget → tick → stage card (the worker prompt) → worker (family A, sandboxed) → acceptance command → verifier (family B, outside the sandbox) → commit on green, with the budget file gating each loop and a halt-and-escalate exit.">
-</p>
-
-<sub>Diagram source: <a href="./docs/flow.mmd"><code>docs/flow.mmd</code></a> — regenerate with <code>npx -y @mermaid-js/mermaid-cli -i docs/flow.mmd -o docs/flow.svg -b white</code>.</sub>
+```mermaid
+flowchart LR
+  S[("git: state.yaml + budget.json")]
+  S --> T["tick — cron / launchd (pass 2)<br/>or human orchestrator (pass 1)"]
+  T --> C["stage card = the worker prompt"]
+  C --> W["Worker · family A<br/>sandbox: workspace-write"]
+  W --> AC{"acceptance command"}
+  AC -- pass --> V["Verifier · family B<br/>runs outside the sandbox"]
+  AC -- fail --> BUD{"budget left?"}
+  V -- reject --> BUD
+  V -- accept --> G["commit on green → next stage"]
+  G --> S
+  BUD -- yes --> C
+  BUD -- no --> H["halt + escalate"]
+```
 
 Git is the state store, the sandbox is the role boundary, the worker and verifier are different model families, and the budget file is the only safety.
 
