@@ -1,23 +1,44 @@
 #!/usr/bin/env bash
 # Publish guard — pre-push. Fail-closed gate for a public mirror.
 #
+# CANONICAL SOURCE: mcp-hub/templates/git-hooks/pre-push.
+# Do NOT edit the per-repo copy under scripts/git-hooks/ — edit this template
+# and re-sync (mcp-hub/scripts/sync-all-platforms.sh), then re-arm each repo
+# with scripts/install-guards.sh.
+#
 # Per-repo config (git config, local, never committed — keeps org/repo names
 # out of the tracked tree):
-#   publishguard.publicmatch  Substring of the PUBLIC remote URL (e.g.
-#                             "myorg/myrepo"). Unset → this hook is inert.
-#   publishguard.sentinel     Env var the sanctioned publish path sets to 1.
-#                             Default: PUBLISH_GUARD_OK
+#   publishguard.publicmatch   Substring of the PUBLIC remote URL (e.g.
+#                              "myorg/myrepo"). Unset -> this hook is inert.
+#   publishguard.sentinel      Env var the sanctioned publish path sets to 1.
+#                              Default: PUBLISH_GUARD_OK
+#   publishguard.historymode   squash (default) | preserve. Informational here;
+#                              affects merge style upstream, surfaced in errors.
+#   publishguard.privatefile   (repeatable) path that must NEVER reach the
+#                              public tree. Default: HANDOFF.md
 #
 # On the public remote: only the default branch (main/master) may be pushed,
 # AND that push must arrive via the sanctioned path (sentinel env set) — i.e.
 # `git publish`, which backs up to the private remote first. A direct
 # `git push <public> dev:main` is blocked so it cannot skip that backup.
+# Non-fast-forward pushes to the public default branch are rejected even with
+# the sentinel set ("PUB/main is immutable"). A push whose tree still contains
+# a private file is rejected.
+# Optional chain point: scripts/publish-guard-strict-scan.sh (runs if present).
 # Deliberate one-off override: git push --no-verify
 remote_name="$1"
 remote_url="$2"
 
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+
+# Strict scanner — runs on every push, regardless of remote, if the repo ships
+# one. Catches personal positioning phrases before any push leaves the laptop.
+if [ -n "$repo_root" ] && [ -x "$repo_root/scripts/publish-guard-strict-scan.sh" ]; then
+  "$repo_root/scripts/publish-guard-strict-scan.sh"
+fi
+
 pub_match="$(git config --get publishguard.publicmatch || true)"
-[ -z "$pub_match" ] && exit 0                 # not configured → nothing to guard
+[ -z "$pub_match" ] && exit 0                 # not configured -> nothing to guard
 case "$remote_url" in
   *"$pub_match"*) : ;;                         # public — restricted below
   *) exit 0 ;;                                 # private/backup — allow everything
@@ -25,6 +46,15 @@ esac
 
 sentinel="$(git config --get publishguard.sentinel || true)"
 [ -z "$sentinel" ] && sentinel="PUBLISH_GUARD_OK"
+history_mode="$(git config --get publishguard.historymode || true)"
+[ -z "$history_mode" ] && history_mode="squash"
+
+# Private files that must never reach the public tree (repeatable git config).
+private_files="$(git config --get-all publishguard.privatefile || true)"
+[ -z "$private_files" ] && private_files="HANDOFF.md"
+
+# Zero SHA = ref deletion or initial push. Bash 3.2-compatible (no associative).
+zero="0000000000000000000000000000000000000000"
 
 while read -r local_ref local_sha remote_ref remote_sha; do
   case "$remote_ref" in
@@ -37,18 +67,33 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         echo "          first, then publishes. Deliberate override: --no-verify." >&2
         exit 1
       fi
-      # Reject non-fast-forward pushes to the public default branch even with
-      # the sentinel set. A zero remote_sha is the first publish (orphan
-      # squash); otherwise the existing public tip must be an ancestor of what
-      # we are pushing. This protects already-published history from rewrites.
-      if [ -n "$remote_sha" ] && printf '%s' "$remote_sha" | grep -q '[^0]'; then
+      # Block non-fast-forward to public default branch even with the sentinel.
+      # Enforces "PUB/main is immutable" (critical in historymode=preserve;
+      # always-true in squash where publish is append-only anyway).
+      if [ "$remote_sha" != "$zero" ] && [ "$local_sha" != "$zero" ]; then
         if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
-          echo "pre-push: non-fast-forward push to PUBLIC default branch blocked." >&2
-          echo "          Published history is immutable; rewrite only above the" >&2
-          echo "          public tip. Deliberate override: --no-verify." >&2
+          echo "pre-push: non-fast-forward push to PUBLIC '$remote_ref' blocked." >&2
+          echo "          history mode = ${history_mode}. PUB/main is immutable —" >&2
+          echo "          published commits must not be rewritten. If this is a" >&2
+          echo "          deliberate incident-grade history rewrite, override with" >&2
+          echo "          --no-verify and confirm with the user first." >&2
           exit 1
         fi
-      fi ;;
+      fi
+      # Private files must not exist in the tree being published.
+      if [ "$local_sha" != "$zero" ]; then
+        pub_tree="$(git ls-tree -r --name-only "$local_sha" 2>/dev/null || true)"
+        while IFS= read -r pf; do
+          [ -z "$pf" ] && continue
+          if printf '%s\n' "$pub_tree" | grep -qx "$pf"; then
+            echo "pre-push: private file '$pf' present in the tree pushed to" >&2
+            echo "          PUBLIC '$remote_ref' — blocked. It is dev-only; keep it" >&2
+            echo "          out of the publish tree. Deliberate override: --no-verify." >&2
+            exit 1
+          fi
+        done <<< "$private_files"
+      fi
+      ;;
     *)
       echo "pre-push: '$remote_ref' blocked on PUBLIC remote '$remote_name'." >&2
       echo "          Only the default branch is public. Override: --no-verify." >&2
