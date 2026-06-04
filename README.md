@@ -1,12 +1,31 @@
 # Autometta
 
-**A lightweight pattern library for headless agent orchestration on a single machine. It spins up worker agents with cross-family validation: Codex verifies Claude, and vice versa.**
+**Token-maxing is the gateway drug to AI psychosis. Autometta is a lightweight YOLO pattern library for headless agent orchestration on a single machine without constant human oversight. Worker agents code against requirement cards, verified by cross-family agents: Codex verifies Claude, and vice versa.**
+
 
 ![License](https://img.shields.io/badge/license-MIT-green) ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 
+```mermaid
+flowchart TD
+  S[("git: state.yaml + budget.json")]
+  S --> T["tick — cron / launchd (pass 2)<br/>or human orchestrator (pass 1)"]
+  T --> C["stage card = the worker prompt"]
+  C --> W["Worker · family A<br/>sandbox: workspace-write"]
+  W --> AC{"acceptance command"}
+  AC -- pass --> V["Verifier · family B<br/>runs outside the sandbox"]
+  AC -- fail --> BUD{"budget left?"}
+  V -- reject --> BUD
+  V -- accept --> G["commit on green → next stage"]
+  G --> S
+  BUD -- yes --> C
+  BUD -- no --> H["halt + escalate"]
+```
+
+Git is the state store, the sandbox is the role boundary, the worker and verifier are different model families, and the budget file is the only safety.
+
 ## Why this exists
 
-Token-maxing is the gateway drug to AI psychosis. Managing several agent threads across several projects is draining. Patterns like Steve Yegge's Gas Town show how multiple autonomous agents can run for long periods and produce good results, provided enough effort goes into specs, design, and verification artefacts.
+Managing several agent threads across several projects is draining. Patterns like Steve Yegge's Gas Town show how multiple autonomous agents can run for long periods and produce good results, provided enough effort goes into specs, design, and verification artefacts.
 
 The open source or commercial orchestrators are either token-heavy and API-biased, or cede control to higher-level interface surfaces. Some vendors are fussy about running their CLI inside another harness at all.
 
