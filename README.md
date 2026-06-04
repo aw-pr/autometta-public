@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green) ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 
 ```mermaid
-flowchart TD
+flowchart LR
   S[("git: state.yaml + budget.json")]
   S --> T["tick — cron / launchd (pass 2)<br/>or human orchestrator (pass 1)"]
   T --> C["stage card = the worker prompt"]
