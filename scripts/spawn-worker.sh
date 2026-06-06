@@ -59,6 +59,7 @@ render_prompt() {
   local repo_root="$1"
   local card_path="$2"
   local worker_identity="$3"
+  local stage_id="$4"
   local template_path="$repo_root/templates/worker-prompt.md"
   local project_name
 
@@ -72,6 +73,7 @@ render_prompt() {
     -e "s|<<project-name>>|${project_name}|g" \
     -e "s|<<orchestrator-identity>>|phat-controller|g" \
     -e "s|<<stage-card-path>>|${card_path}|g" \
+    -e "s|<<stage-id>>|${stage_id}|g" \
     -e "s|<<family-specific-notes-or-none>>|None|g" \
     "$template_path"
 }
@@ -111,7 +113,7 @@ main() {
   worker_identity="$(extract_worker_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
   family="$(worker_family "$worker_identity")"
-  prompt="$(render_prompt "$repo_root" "$card_path" "$worker_identity")"
+  prompt="$(render_prompt "$repo_root" "$card_path" "$worker_identity" "$stage_id")"
   log_path="$logs_dir/${stage_id}-worker.log"
 
   # Resolve auth route via the canonical op-fetch pattern (auth-route-security
