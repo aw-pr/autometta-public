@@ -26,6 +26,7 @@ One line per memory file. Keep entries <=150 chars: `- [Title](file.md): one-lin
 - [Tick respawns verifier while worker running](feedback-tick-respawns-verifier-while-worker-running.md): No kill -0 process-alive check; stacks verifier processes during long workers.
 - [Skills layout: agent-orchestrator + autometta-setup](decision-skills-layout-autometta-setup.md): Keep general orchestrator skill; add a sibling autometta-setup skill for repo adoption.
 - [Publish topology is linear, not orphan](project-publish-topology-linear-not-orphan.md): dev/publish are one history; ff publish, never rebase; verify via git merge-base.
+- [Cost-log and prompt caching](decision-cost-log-and-caching.md): JSONL ledger per role, per-tier rates, uneven route fidelity, OAuth-vs-API caching finding, template prefix reorder.
 
 ## Adopter findings
 
