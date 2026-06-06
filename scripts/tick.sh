@@ -5,6 +5,8 @@ IFS=$'\n\t'
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
 source "$script_dir/budget.sh"
+# shellcheck source=./cost-log.sh
+source "$script_dir/cost-log.sh"
 
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
@@ -271,6 +273,60 @@ stage_snapshot_tokens() {
        = (((.stages[] | select(.id == $id)).worker_tokens // 0)
           + ((.stages[] | select(.id == $id)).verifier_tokens // 0))' \
     --arg id "$stage_id" --arg field "$field" --arg tokens "$tokens"
+}
+
+# Emit one worker cost-log line (docs/cost-log.md). Reads the worker
+# identity and start time from state.yaml, derives the role's result from the
+# handoff envelope (pass|fail|partial, else stalled), and estimates
+# wall-clock as now - started_at at reap time. Non-fatal; the cost-log is
+# observability, never a gate.
+costlog_emit_worker() {
+  local repo_root="$1"
+  local state_yaml="$2"
+  local stage_id="$3"
+  local started_at="$4"
+  local worker_identity worker_log envelope result env_status start_epoch now_epoch wall
+  worker_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+    '.stages[] | select(.id == $id) | .worker // empty')"
+  [[ -n "$worker_identity" ]] || return 0
+  worker_log="$repo_root/state/logs/${stage_id}-worker.log"
+  envelope="$repo_root/state/handoffs/${stage_id}.json"
+  result="stalled"
+  if [[ -f "$envelope" ]] && jq empty "$envelope" 2>/dev/null; then
+    env_status="$(jq -r '.status // empty' "$envelope")"
+    case "$env_status" in pass|fail|partial) result="$env_status" ;; esac
+  fi
+  wall=0
+  if start_epoch="$(stage_started_epoch "$started_at" 2>/dev/null)"; then
+    now_epoch="$(date -u +%s)"
+    wall=$((now_epoch - start_epoch))
+    (( wall < 0 )) && wall=0
+  fi
+  costlog_append "$repo_root" "$stage_id" worker "$worker_identity" "$worker_log" "$wall" "$result" || true
+}
+
+# Emit one verifier cost-log line. Reads the verifier identity and
+# verifier_started_at from state.yaml; the caller supplies the result
+# (pass|fail from the artefact, or aborted when a verifier died without one).
+costlog_emit_verifier() {
+  local repo_root="$1"
+  local state_yaml="$2"
+  local stage_id="$3"
+  local result="$4"
+  local verifier_identity verifier_log started start_epoch now_epoch wall
+  verifier_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+    '.stages[] | select(.id == $id) | .verifier // empty')"
+  [[ -n "$verifier_identity" ]] || return 0
+  verifier_log="$repo_root/state/logs/${stage_id}-verifier.log"
+  started="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+    '.stages[] | select(.id == $id) | .verifier_started_at // empty')"
+  wall=0
+  if [[ -n "$started" ]] && start_epoch="$(stage_started_epoch "$started" 2>/dev/null)"; then
+    now_epoch="$(date -u +%s)"
+    wall=$((now_epoch - start_epoch))
+    (( wall < 0 )) && wall=0
+  fi
+  costlog_append "$repo_root" "$stage_id" verifier "$verifier_identity" "$verifier_log" "$wall" "$result" || true
 }
 
 # Stage ids end up in jq filters, yq selectors, log paths, and on-disk
@@ -558,6 +614,15 @@ _process_repo_locked() {
       # Per-stage snapshot (stage 11): capture verifier tokens against the
       # stage entry. Worker tokens may already be set from an earlier tick.
       stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$verifier_log_path" "verifier"
+      # Cost-log: the verifier produced an artefact, so its log is final.
+      # Emit before _process_verifier_artefact clears current_stage.
+      local verifier_overall verifier_result
+      verifier_overall="$(jq -r '.overall // empty' "$repo_root/$artefact" 2>/dev/null || true)"
+      case "$verifier_overall" in
+        PASS) verifier_result="pass" ;;
+        *)    verifier_result="fail" ;;
+      esac
+      costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "$verifier_result"
       _process_verifier_artefact "$repo_root" "$state_yaml" "$current_stage" "$artefact" "$manifest_path"
       budget_increment_tick "$repo_root"
       commit_state_branch "$repo_root"
@@ -612,6 +677,9 @@ _process_repo_locked() {
         budget_account_tokens_from_log "$repo_root" "$worker_log_path" "worker" || true
         # Per-stage snapshot (stage 11).
         stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$worker_log_path" "worker"
+        # Cost-log: the worker has exited and its log is final. Result is
+        # read from the handoff envelope inside the helper.
+        costlog_emit_worker "$repo_root" "$state_yaml" "$current_stage" "$started_at"
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).worker_pid = null' \
           --arg id "$current_stage"
@@ -704,6 +772,9 @@ _process_repo_locked() {
         budget_account_tokens_from_log "$repo_root" "$stale_verifier_log_path" "verifier" || true
         # Per-stage snapshot (stage 11).
         stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$stale_verifier_log_path" "verifier"
+        # Cost-log: a verifier died without an artefact. Record its spend
+        # against this stage with result=aborted before we re-dispatch.
+        costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "aborted"
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).verifier_pid = null' \
           --arg id "$current_stage"
@@ -728,9 +799,12 @@ _process_repo_locked() {
       fi
     card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
     if [[ -n "$card_path" ]]; then
+      # Stamp verifier_started_at alongside the attempt bump so the cost-log
+      # can estimate verifier wall-clock when the artefact lands next tick.
       state_apply_json "$state_yaml" \
-        '(.stages[] | select(.id == $id)).verifier_attempts = ((.stages[] | select(.id == $id) | .verifier_attempts // 0) + 1)' \
-        --arg id "$current_stage"
+        '(.stages[] | select(.id == $id)).verifier_attempts = ((.stages[] | select(.id == $id) | .verifier_attempts // 0) + 1)
+         | (.stages[] | select(.id == $id)).verifier_started_at = $now' \
+        --arg id "$current_stage" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root"
     else
       state_apply_json "$state_yaml" \
@@ -809,4 +883,8 @@ main() {
   done < <(sort_subscribers)
 }
 
-main "$@"
+# Only auto-run when executed directly; sourcing (e.g. for tests) loads the
+# functions without firing the tick loop.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
