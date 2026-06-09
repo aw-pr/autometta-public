@@ -21,12 +21,28 @@ If `templates/` already exists with non-autometta content, place the Autometta t
 ### Pass-1 copy mode
 
 ```sh
-mkdir -p templates docs/autometta
-cp ~/repos/autometta/templates/{worker-prompt,verifier-prompt,orchestrator-checklist,stage-card}.md templates/
-cp ~/repos/autometta/docs/{dispatch-contract,lessons,verification}.md docs/autometta/
+src=~/repos/autometta
+mkdir -p templates scripts docs/autometta
+cp "$src"/templates/{worker-prompt,verifier-prompt,orchestrator-checklist,stage-card}.md templates/
+cp "$src"/scripts/{check-contract-test-gate,autometta-vendor-check}.sh scripts/
+cp "$src"/docs/{dispatch-contract,lessons,verification}.md docs/autometta/
+chmod +x scripts/check-contract-test-gate.sh scripts/autometta-vendor-check.sh
+{
+  echo "# Autometta vendor stamp. Refresh by re-running the vendor step."
+  echo "source_repo: autometta"
+  echo "vendored_from: $(git -C "$src" rev-parse --short HEAD)"
+  echo "vendored_at: $(date +%Y-%m-%d)"
+  for f in templates/worker-prompt.md templates/verifier-prompt.md \
+           templates/orchestrator-checklist.md templates/stage-card.md \
+           scripts/check-contract-test-gate.sh scripts/autometta-vendor-check.sh; do
+    echo "file: $f"
+  done
+} > .autometta-vendor
 ```
 
-Commit as a single atomic change with the orchestrator's author identity, message body: "adopt Autometta dispatch contract (pass 1)". No code paths affected yet; this is a pure docs+templates landing.
+The contract-test gate (`scripts/check-contract-test-gate.sh`) must travel with the templates: the verifier prompt and the stage-card template both reference it, so vendoring the templates without it leaves the verifier pointing at a missing script. `scripts/autometta-vendor-check.sh` plus the `.autometta-vendor` stamp let the adopter confirm later that its copies have not drifted from upstream (`AUTOMETTA_ROOT=~/repos/autometta scripts/autometta-vendor-check.sh`).
+
+Commit as a single atomic change with the orchestrator's author identity, message body: "adopt Autometta dispatch contract (pass 1)". The only executable code is the two vendored gate scripts; everything else is docs+templates+stamp.
 
 ### First stage card
 

@@ -40,24 +40,52 @@ For a first adoption: **pass 1 only, copy the stage card and prompt templates.**
 
 ## Pass 1 adoption
 
-### Step 1. Vendor the templates
+### Step 1. Vendor the templates and the gate
 
-Three template files travel together: the worker prompt, the verifier prompt, and the orchestrator checklist. From the Autometta repo root, copy:
+The dispatch-contract files travel together: the worker prompt, the verifier prompt, the orchestrator checklist, the stage card template, the contract-test gate, and the vendor freshness check. From the Autometta repo root, copy:
 
 - `templates/worker-prompt.md`
 - `templates/verifier-prompt.md`
 - `templates/orchestrator-checklist.md`
 - `templates/stage-card.md`
+- `scripts/check-contract-test-gate.sh` — enforces the frozen contract-test assertions that the verifier prompt and the stage-card template refer to. Vendor it whenever you vendor the templates, or those references dangle (the verifier is told to run a script that is not there).
+- `scripts/autometta-vendor-check.sh` — reports when any vendored file has drifted from upstream.
 
-into `templates/` inside the target repo.
+into the target repo, then write a provenance stamp so freshness can be checked later:
 
 ```sh
 # from the target repo root
-mkdir -p templates
-cp ~/repos/autometta/templates/{worker-prompt,verifier-prompt,orchestrator-checklist,stage-card}.md templates/
+src=~/repos/autometta          # adjust if Autometta lives elsewhere
+mkdir -p templates scripts
+cp "$src"/templates/{worker-prompt,verifier-prompt,orchestrator-checklist,stage-card}.md templates/
+cp "$src"/scripts/{check-contract-test-gate,autometta-vendor-check}.sh scripts/
+chmod +x scripts/check-contract-test-gate.sh scripts/autometta-vendor-check.sh
+
+# provenance stamp: records the source SHA and the vendored file set
+{
+  echo "# Autometta vendor stamp. Refresh by re-running this vendor step."
+  echo "source_repo: autometta"
+  echo "vendored_from: $(git -C "$src" rev-parse --short HEAD)"
+  echo "vendored_at: $(date +%Y-%m-%d)"
+  for f in templates/worker-prompt.md templates/verifier-prompt.md \
+           templates/orchestrator-checklist.md templates/stage-card.md \
+           scripts/check-contract-test-gate.sh scripts/autometta-vendor-check.sh; do
+    echo "file: $f"
+  done
+} > .autometta-vendor
 ```
 
-Adjust the source path if Autometta lives somewhere else on the machine.
+Commit `.autometta-vendor` alongside the vendored files; it is provenance, not runtime state, so it belongs in version control.
+
+### Step 1b. Check vendored freshness later
+
+After any `git pull` of the Autometta source, or as a pre-flight before an orchestrator session, confirm the vendored copies are still current:
+
+```sh
+AUTOMETTA_ROOT=~/repos/autometta scripts/autometta-vendor-check.sh
+```
+
+It content-hashes every file listed in `.autometta-vendor` against the canonical checkout and exits non-zero if any have drifted, naming them. To refresh, re-run the Step 1 vendor block, which also rewrites the stamp to the new source SHA. (If you adopted by git submodule instead of copy, `git submodule status` already reports the pinned SHA and `git submodule update --remote` updates it; the stamp and this check are for copy adoption.)
 
 ### Step 2. Vendor the dispatch docs (optional but recommended)
 
