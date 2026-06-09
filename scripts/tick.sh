@@ -393,6 +393,18 @@ stage_card_summary() {
   printf ''
 }
 
+# Orchestrator identity from the card metadata. The orchestrator is fixed at
+# card-authoring time, so the card is its source of truth (worker and verifier
+# are resolved at dispatch and live in state.yaml). Mirrors the parse in
+# scripts/aggregate-dashboard.sh.
+stage_card_orchestrator() {
+  local card_path="$1"
+  [[ -n "$card_path" && -f "$card_path" ]] || { printf ''; return 0; }
+  grep -E '^- \*\*Orchestrator:\*\*' "$card_path" 2>/dev/null \
+    | head -n1 \
+    | sed -E 's/^- \*\*Orchestrator:\*\*[[:space:]]*//'
+}
+
 # Decide what to do with a verifier artefact: commit-on-PASS or
 # mark-verifier_failed-on-FAIL. Treats a missing / malformed 'overall'
 # field as FAIL (fail-safe). The working tree on the operator branch
@@ -428,16 +440,17 @@ _process_verifier_artefact() {
   fi
 
   # PASS path. Stage non-state working-tree changes on the current
-  # branch and commit with the worker as author + verifier as
-  # Co-Authored-By. The state-branch commit that follows handles
+  # branch and commit with the worker as author, the verifier as
+  # Co-Authored-By, and Autometta-Orchestrator / -Worker / -Verifier
+  # role trailers. The state-branch commit that follows handles
   # state/ files.
-  local worker_identity verifier_identity headline summary commit_subject
+  local worker_identity verifier_identity orchestrator_identity headline summary commit_subject card_path
   worker_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .worker // empty')"
   verifier_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .verifier // empty')"
+  card_path="$(stage_card_for_id "$repo_root" "$stage_id" "$manifest_path")"
+  orchestrator_identity="$(stage_card_orchestrator "$card_path")"
   headline="$(jq -r '.headline // empty' "$artefact_abs" 2>/dev/null || true)"
   if [[ -z "$headline" ]]; then
-    local card_path
-    card_path="$(stage_card_for_id "$repo_root" "$stage_id" "$manifest_path")"
     headline="$(stage_card_summary "$card_path")"
   fi
   if [[ -z "$headline" ]]; then
@@ -463,9 +476,19 @@ _process_verifier_artefact() {
       log "stage ${stage_id} PASS: nothing staged after add (state-only diff); skipping worker commit"
       exit 0
     fi
+    # Author is the worker (the coder). Trailers carry the full role record:
+    # Co-Authored-By for the verifier (git-native convention), plus role-keyed
+    # Autometta-* trailers so later analysis can slice commits by the model in
+    # each role. All trailer lines go in one -m so git parses them as a single
+    # trailer block.
     local commit_args=( --author="$worker_identity" -m "$commit_subject" )
-    if [[ -n "$verifier_identity" ]]; then
-      commit_args+=( -m "Co-Authored-By: $verifier_identity" )
+    local -a trailer_lines=()
+    [[ -n "$verifier_identity" ]]     && trailer_lines+=( "Co-Authored-By: $verifier_identity" )
+    [[ -n "$orchestrator_identity" ]] && trailer_lines+=( "Autometta-Orchestrator: $orchestrator_identity" )
+    [[ -n "$worker_identity" ]]       && trailer_lines+=( "Autometta-Worker: $worker_identity" )
+    [[ -n "$verifier_identity" ]]     && trailer_lines+=( "Autometta-Verifier: $verifier_identity" )
+    if (( ${#trailer_lines[@]} > 0 )); then
+      commit_args+=( -m "$(printf '%s\n' "${trailer_lines[@]}")" )
     fi
     if ! git commit "${commit_args[@]}" >/dev/null 2>&1; then
       log "stage ${stage_id} PASS: git commit failed; leaving working tree intact"

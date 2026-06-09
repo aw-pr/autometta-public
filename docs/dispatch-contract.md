@@ -66,9 +66,20 @@ If the diff is correct and acceptance has passed, the stage is done. If either i
 
 The commit is atomic and follows the per-agent author attribution rule laid down in `~/.claude/rules/mcp-hub-dev-rules.md`: committer is the human user; author is the canonical agent identity of the primary worker. A co-author trailer is added when a second agent contributed non-trivially. The stage card is committed alongside the deliverables so the audit trail is in git, not in chat.
 
+A dispatch involves three roles in at least two model families, so the commit records all three. The author is the worker, the coder, which keeps `git shortlog` and `git blame` attributing the code to the model that wrote it, at model-version granularity. The verifier is also kept as a `Co-Authored-By` trailer for git-native tooling. On top of that, all three roles are recorded as role-keyed trailers, so later analysis can ask which model performs best in each role:
+
+```
+Co-Authored-By: <verifier-identity>
+Autometta-Orchestrator: <orchestrator-identity>
+Autometta-Worker: <worker-identity>
+Autometta-Verifier: <verifier-identity>
+```
+
+The orchestrator identity is read from the stage card's `Orchestrator` metadata line (it is fixed at card-authoring time); the worker and verifier come from `state.yaml`. Query one role with `git log --format='%(trailers:key=Autometta-Worker,valueonly)'`, and join against `state/cost-log.jsonl` for cost and token context per role. The autonomous loop emits these automatically (`scripts/tick.sh`); a manual orchestrator commit should pass the same trailer block.
+
 **The orchestrator commits, not the worker.** The worker leaves a dirty working tree as its deliverable; the verifier evaluates that dirty tree and writes its artefact; the orchestrator reads the artefact's `overall` field and acts:
 
-- `overall: PASS` — orchestrator stages the non-state working-tree changes and commits with `--author=<worker-identity>` and a `Co-Authored-By: <verifier-identity>` trailer. The commit subject is `<stage-id>: <headline>`, where the headline comes from the verifier artefact's `headline` field if present, otherwise from the stage card's title line. The stage moves to `completed`; the commit SHA is recorded in `state/state.yaml`.
+- `overall: PASS` — orchestrator stages the non-state working-tree changes and commits with `--author=<worker-identity>`, a `Co-Authored-By: <verifier-identity>` trailer, and the `Autometta-Orchestrator` / `Autometta-Worker` / `Autometta-Verifier` role trailers (see the attribution note above). The commit subject is `<stage-id>: <headline>`, where the headline comes from the verifier artefact's `headline` field if present, otherwise from the stage card's title line. The stage moves to `completed`; the commit SHA is recorded in `state/state.yaml`.
 - `overall: FAIL` (or a missing / malformed `overall` field, treated as FAIL by the orchestrator) — no commit. The stage moves to `verifier_failed`, `current_stage` is cleared, and the dirty working tree is left intact for the operator to inspect, amend the stage card, and re-run, or revert.
 - Backward-compat — if a worker on an older prompt self-committed before the verifier ran, the working tree on a PASS artefact will be clean. The tick logs a deprecated-path warning and marks the stage `completed` without erroring. New stages should rely on the orchestrator commit path so the `Co-Authored-By: <verifier>` trailer appears in `git log`.
 

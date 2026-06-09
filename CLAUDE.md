@@ -127,3 +127,17 @@ scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 `op-fetch` resolves any named refs via the 1Password service-account token at `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`) and exec's the child with a sanitised env. No biometric prompt, works under cron / LaunchAgent. See `docs/setup.md` section 7 and `docs/observability.md` for the full surface.
 
 When using the claude family as a verifier, `spawn-verifier.sh` may take the SDK route instead of `claude -p` if the repo's manifest sets `verifier.claude.transport: sdk` (requires `auth.claude.mode: api`; env override: `AUTOMETTA_CLAUDE_TRANSPORT`). See `docs/sdk-verifier.md`.
+
+On verifier PASS, a manual orchestrator commit carries the same role attribution the autonomous loop emits (`scripts/tick.sh`): author is the worker, and the trailer block records every role so later analysis can ask which model is best in each seat. The orchestrator identity is the card's `Orchestrator` metadata line.
+
+```sh
+git -C "$repo" commit \
+  --author="$worker_identity" \
+  -m "$stage_id: $headline" \
+  -m "Co-Authored-By: $verifier_identity
+Autometta-Orchestrator: $orchestrator_identity
+Autometta-Worker: $worker_identity
+Autometta-Verifier: $verifier_identity"
+```
+
+All trailer lines go in one `-m` so git parses them as a single trailer block; query a role with `git log --format='%(trailers:key=Autometta-Worker,valueonly)'`. See `docs/dispatch-contract.md` step 7.
