@@ -128,13 +128,14 @@ scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 
 When using the claude family as a verifier, `spawn-verifier.sh` may take the SDK route instead of `claude -p` if the repo's manifest sets `verifier.claude.transport: sdk` (requires `auth.claude.mode: api`; env override: `AUTOMETTA_CLAUDE_TRANSPORT`). See `docs/sdk-verifier.md`.
 
-On verifier PASS, a manual orchestrator commit carries the same role attribution the autonomous loop emits (`scripts/tick.sh`): author is the worker, and the trailer block records every role so later analysis can ask which model is best in each seat. The orchestrator identity is the card's `Orchestrator` metadata line.
+On verifier PASS, a manual orchestrator commit carries the same role attribution the autonomous loop emits (`scripts/tick.sh`): author is the worker, the orchestrator and verifier are role-named `Co-Authored-By` lines, and the `Autometta-*` trailers hold the clean canonical identity for analysis. The orchestrator identity is the card's `Orchestrator` metadata line. The `${id/ </ (role) <}` substitution inserts the role into the display name (the email still keys co-authorship).
 
 ```sh
 git -C "$repo" commit \
   --author="$worker_identity" \
   -m "$stage_id: $headline" \
-  -m "Co-Authored-By: $verifier_identity
+  -m "Co-Authored-By: ${orchestrator_identity/ </ (orchestrator) <}
+Co-Authored-By: ${verifier_identity/ </ (verifier) <}
 Autometta-Orchestrator: $orchestrator_identity
 Autometta-Worker: $worker_identity
 Autometta-Verifier: $verifier_identity"
