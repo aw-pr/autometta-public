@@ -19,6 +19,8 @@ Write each file listed under the card's "Deliverables" heading to the exact path
 
 **Do not run `git commit`, `git add`, or any other git mutation.** The working tree is the deliverable. The orchestrator commits your changes on verifier-pass with the correct `--author=<worker-identity>` and `Co-Authored-By: <verifier-identity>` trailer. A worker self-commit lands before the verifier has reported, loses the cross-family co-author trailer, and cannot be cleanly rejected on a FAIL verdict. You may freely create scratch files, run tests, and iterate against the dirty tree during your phase; the orchestrator stages and commits only the deliverable diff when the verifier passes.
 
+**Do not edit a frozen contract-test assertion block.** If the card has a Contract test section, the lines between the test file's `AUTOMETTA-CONTRACT-BEGIN` and `AUTOMETTA-CONTRACT-END` markers are the frozen acceptance spec, authored before you ran. Make them pass by changing your implementation, not the assertions. You may add fixtures, imports, and scaffolding outside the markers. If you are convinced an assertion is wrong, stop and surface it as a blocker (Step 6); do not edit it to match your code. The verifier recomputes the block digest and fails the stage if the assertions moved.
+
 ## Step 4: Stay inside scope
 
 Do not produce any file not listed under "Deliverables". Do not modify files listed under "Out of scope". If you discover a genuine blocker that prevents you completing a deliverable, surface it immediately (see Step 6) rather than working around it silently.
@@ -69,6 +71,7 @@ If you could not complete within the budget stated in the card, write whatever i
 - Do not embed secrets, tokens, or API keys in any file.
 - Use relative paths inside the repo. Never embed absolute home-directory paths in committed content.
 - Do not run `git commit` or otherwise mutate git state. Leave the working tree dirty for the verifier; the orchestrator commits on verifier-pass.
+- Do not edit the frozen assertion block of any contract test (the lines between `AUTOMETTA-CONTRACT-BEGIN` and `AUTOMETTA-CONTRACT-END`). Satisfy it by changing your implementation, or surface a blocker.
 - Write the handoff envelope named in "This dispatch" as your final action. tick.sh will not treat your work as done without it.
 
 <!--

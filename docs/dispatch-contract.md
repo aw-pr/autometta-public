@@ -74,6 +74,57 @@ The commit is atomic and follows the per-agent author attribution rule laid down
 
 This concentrates the commit decision at the one point where the verifier verdict is known. A worker that self-committed before the verifier ran would land its diff with an unknown verifier identity (the cross-family co-author trailer would be missing on every commit) and would force a `git revert` whenever the verifier later said FAIL. See [[memory/decision-orchestrator-commits-on-verifier-pass]] for the full rationale and rejected alternatives.
 
+## Contract tests: freezing acceptance as executable assertions
+
+A prose acceptance criterion describes intent; a contract test executes it. Where a stage's acceptance can be expressed as code (most code stages, and docs stages with structural checks), the card carries a contract test whose assertions are frozen at card-authoring time. The test is the committed spec: it lands green in the same commit as the deliverable, and it cannot quietly drift from what the card asked for.
+
+This closes the gap a requirements document leaves open. A prose doc and the code diverge over time and nothing catches it; a frozen assertion fails the moment they diverge. The contract test is the executable form of the acceptance criteria, not a second source of truth alongside them.
+
+### Separation of powers
+
+Three roles touch the contract test, and no role both writes the assertions and satisfies them:
+
+- **Orchestrator authors the assertions (step 1).** They are written from the card's intent, before any implementation exists, by the session that already owns the acceptance criteria. The worker does not author its own oracle, so the test cannot be tautological: it asserts what the card intended, not what the code happens to do.
+- **Worker satisfies the assertions (step 3), without editing them.** The worker may add fixtures, imports, and scaffolding around the frozen block, but the assertion lines between the markers are read-only to it. A worker that believes an assertion is wrong surfaces a blocker (worker prompt step 6) rather than editing the assertion to suit its implementation.
+- **Verifier runs the assertions and guards the freeze (steps 4-5).** The acceptance command is the contract test. The verifier also checks that the frozen block was not weakened: it recomputes the block digest and compares it to the digest the card declares. A changed assertion whose new digest is not recorded in the card is an automatic FAIL, independent of whether the other criteria pass.
+
+This three-way split is stronger than worker-writes-and-verifier-checks, because the party that authors the spec (orchestrator), the party that satisfies it (worker), and the party that polices it (verifier) are three different sessions, in at least two different model families.
+
+### The frozen block
+
+The assertions live between two markers in the test file. The BEGIN marker names the card it belongs to:
+
+```
+# AUTOMETTA-CONTRACT-BEGIN card=examples/self-host/NN-foo.md
+assert double(2) == 4
+# AUTOMETTA-CONTRACT-END
+```
+
+The card records the path of the test and the digest of that block, under a dedicated heading:
+
+```
+## Contract test
+- Test file: `tests/test_foo.py`
+- Assertions digest: `sha256:...`
+```
+
+The digest is a fingerprint of the exact assertion lines between the markers. Because the card carries the fingerprint, the test and the card cannot move independently: changing an assertion changes the digest, and a changed digest must be re-recorded in the card or the gate rejects the commit. This is what turns "consciously change the card and the test together" from an honoured convention into a mechanical property.
+
+### The gate
+
+`scripts/check-contract-test-gate.sh` is the mechanical enforcement. It runs in two places:
+
+- **At verification (primary).** The verifier runs `check-contract-test-gate.sh` against the working tree as part of acceptance. For every staged contract test it recomputes the assertion-block digest and compares it to the digest declared in the matching card. A mismatch that was not re-recorded in the card in the same change is a FAIL.
+- **At commit (backstop).** The orchestrator can chain the same script into pre-commit alongside the publish-guard scan. Because the orchestrator is the only party that commits (step 7), a single mechanical check at commit time covers every stage that lands.
+
+The gate fires only on assertion changes, never on scaffolding. A worker that reshapes a fixture, renames a helper, or moves an import leaves the frozen block untouched, the digest unchanged, and the gate silent. Only a change to the assertions themselves trips it. That precision is the point: a gate that fired on every test edit would be disarmed by habit within a week.
+
+To regenerate the digest after a deliberate assertion change, run `scripts/check-contract-test-gate.sh print <test-file>` and paste the result into the card's `Assertions digest` line, in the same commit as the assertion change. The gate then sees a matching digest and a card that moved with the test, and passes.
+
+### When a contract test is not warranted
+
+Not every stage earns one. A pure-prose stage with no structural acceptance, a throwaway spike, or an exploratory card can state its acceptance in prose alone and leave the card's Contract test section as "None". The cost is real: authoring frozen assertions up front slows card creation, so spend it on durable behaviour, not on stages you expect to discard.
+
 ## The five headless gotchas
 
 These are the failure modes documented in the source projects (fractals-from-the-90s, agentic-rag-kimble). Each one has bitten in production at least once. The contract mitigates each at a specific step; do not assume any one of them goes away on its own.
