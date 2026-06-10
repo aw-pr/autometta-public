@@ -28,6 +28,8 @@ Autometta is that packaging.
 
 *Considered and deferred:* serving stage cards as MCP resources rather than file paths (multi-machine readiness). The server would read cards from git and the filesystem path stays the mandatory fallback. Design only, see [`docs/design/mcp-cards.md`](design/mcp-cards.md).
 
+*Considered and deferred:* a Fable-as-advisor verifier, where a cheap request model consults Claude Fable 5 only at the decision point instead of running a frontier model for the whole verification. SDK-only, opt-in, an addition to a verifier and not a replacement for cross-family pairing. Design only, see [`docs/design/advisor-verifier.md`](design/advisor-verifier.md).
+
 ## Non-goals
 
 - **Teams.** Multi-developer state is not in scope. Beads / Gas Town scale to a team; Autometta intentionally does not.
