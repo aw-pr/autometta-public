@@ -8,6 +8,9 @@
 AUTOMETTA_MODEL_OPUS="claude-opus-4-8"
 AUTOMETTA_MODEL_SONNET="claude-sonnet-4-6"
 AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5"
+# Frontier tier a step above Opus. Opt-in per card only: no existing identity
+# resolves here, so a stage uses it only when its card names a *Fable* role.
+AUTOMETTA_MODEL_FABLE="claude-fable-5"
 
 # Map a worker/verifier identity string (e.g. "Claude Opus 4.8 <...>") to the
 # model ID it should run on. Falls back to the sonnet alias when no tier matches.
@@ -15,6 +18,8 @@ claude_model_for_identity() {
   local identity="$1"
   if [[ "$identity" == *Sonnet* ]]; then
     printf '%s\n' "$AUTOMETTA_MODEL_SONNET"
+  elif [[ "$identity" == *Fable* ]]; then
+    printf '%s\n' "$AUTOMETTA_MODEL_FABLE"
   elif [[ "$identity" == *Opus* ]]; then
     printf '%s\n' "$AUTOMETTA_MODEL_OPUS"
   elif [[ "$identity" == *Haiku* ]]; then

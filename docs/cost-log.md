@@ -119,9 +119,16 @@ prices move. Rates are USD per one million tokens.
 
 | Tier | Models (Anthropic / OpenAI) | Input | Cached read | Output |
 |---|---|---|---|---|
+| T0 | Fable 5 | 10.00 | 1.00 | 50.00 |
 | T1 | Opus, GPT-5.5 | 15.00 | 1.50 | 75.00 |
 | T2 | Sonnet, Codex GPT-5.x | 3.00 | 0.30 | 15.00 |
 | T4 | Haiku, GPT-5 mini | 1.00 | 0.10 | 5.00 |
+
+T0 is the opt-in Claude Fable 5 tier, a step above Opus and the only tier above
+T1. It is dispatched per card only: no existing identity resolves to it, so a
+stage runs Fable solely when its card names a `*Fable*` worker or verifier. The
+label was previously a placeholder for the orchestrator's own main session,
+which is not a dispatched role and is not costed here.
 
 `cost_usd_est = (input_tokens * input_rate + cached_input_tokens * cached_rate
 + output_tokens * output_rate) / 1e6`.

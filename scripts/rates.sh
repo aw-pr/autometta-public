@@ -24,15 +24,19 @@
 # Map a worker/verifier identity string to a capability tier.
 #
 # Tiers follow skills/agent-orchestrator/SKILL.md:
+#   T0 - frontier-above-Opus (Claude Fable 5) - opt-in per card only
 #   T1 - frontier reasoning (Opus, GPT-5.5, Gemini Pro)
 #   T2 - workhorse         (Sonnet, Codex GPT-5.x)
 #   T4 - light             (Haiku, GPT-5 mini)
-# Dispatched roles are never T0 (that is the orchestrator's own main session).
+# T0 was previously reserved for the orchestrator's own main session, which is
+# not a dispatched role and is not costed here. It now labels the opt-in Fable
+# tier, the sole dispatched role above Opus; no existing identity resolves to it.
 # Falls back to T2 when no tier marker matches, so an unknown identity is
 # costed at the workhorse rate rather than silently free.
 tier_for_identity() {
   local identity="$1"
   case "$identity" in
+    *Fable*)           printf 'T0\n' ;;
     *Opus*)            printf 'T1\n' ;;
     *GPT-5.5*|*gpt-5.5*) printf 'T1\n' ;;
     *Gemini\ Pro*)     printf 'T1\n' ;;
@@ -50,6 +54,7 @@ tier_for_identity() {
 rate_for_tier() {
   local tier="$1"
   case "$tier" in
+    T0) printf '10.0 1.0 50.0\n' ;;
     T1) printf '15.0 1.5 75.0\n' ;;
     T2) printf '3.0 0.3 15.0\n' ;;
     T4) printf '1.0 0.1 5.0\n' ;;
