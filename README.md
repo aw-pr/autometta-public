@@ -31,6 +31,17 @@ The open source or commercial orchestrators are either token-heavy and API-biase
 
 Autometta is a small implementation of agent orchestration. Cron is the heartbeat that survives laptop lid close with power, as long as the machine is configured appropriately. The contract dispatches worker and verifier roles as needed and runs against whichever auth the operator already has. Cross-family verification (Sonnet checking Codex, or the reverse) catches a class of failure that same-family self-verification silently misses.
 
+## History: built before the platform caught up
+
+Anthropic's Managed Agents (June 2026) now ships the two pieces of infrastructure this repo hand-rolls: scheduled (cron) deployments, which replace the launchd/cron `tick` heartbeat, and environment-variable credentials in vaults, which replace `op-fetch` secret injection into the dispatched process. The pattern autometta encodes was right; the hosted platform converged on it.
+
+We keep autometta's version for now because:
+
+- **Cross-family verification.** Codex checking Claude, and the reverse, is the core safety property. Managed Agents is Anthropic-only and cannot place a Codex or GPT verifier opposite a Claude worker.
+- **Git as state, no hosted dependency.** The loop, the audit trail, and the budget live in your own repo, not on someone else's orchestration layer.
+- **Single-machine and family-agnostic.** Codex, Claude, and Gemini run under one dispatch contract on one laptop.
+- **History.** Autometta predates the hosted equivalent. This note records that the bet paid off and the platform caught up.
+
 ## Two families, one tree
 
 This repo is designed for Claude Code and Codex CLI to work in the same tree without prejudice. State and memory that agents need across sessions lives in the repo (`memory/`, `state/`, stage cards under `examples/`), not in any one harness's private directory. Every agent picks up the same context.
