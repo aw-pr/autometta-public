@@ -38,7 +38,8 @@ Tiers are defined by *capability and cost*, not by a specific model name.
 
 | Tier | Capability | Thinking | Use when |
 |------|-----------|----------|----------|
-| T0 - Orchestrator | Top reasoning model, in main session | High | Integration, architecture decisions, final review. Stay in main session; never spawn a T0 sub-agent. |
+| T0 - Orchestrator (main session) | Top reasoning model, in main session | High | Integration, architecture decisions, final review. Stay in main session; never spawn a T0 *orchestrator* sub-agent. |
+| T0 - Fable (dispatched advisor/worker) | Frontier-above-Opus model (Claude Fable 5), dispatched | High | Opt-in per card only: a whole-Fable worker/verifier, or the advisor decision point of a Fable-as-advisor verifier. Distinct from the orchestrator's own T0 session above; this is the dispatched, cost-logged T0 that `scripts/rates.sh` and `docs/cost-log.md` price. |
 | T1 - Hard Reasoning | Top reasoning model, focused sub-agent | High | Novel algorithm; security/correctness review; sparse or contradictory docs; high failure cost. |
 | T2 - Specified Implementation | Mid-tier model | Medium | Well-scoped features with clear acceptance criteria; refactors with existing test coverage. |
 | T3 - Mechanical / Glue | Mid- or low-tier model | Low | Boilerplate, generated types, repetitive test scaffolding, spec-driven config, migrations with a known transformation. |
@@ -58,6 +59,7 @@ Concrete model names attached to the tiers above for paired or comparative work.
 
 | Tier | Anthropic | OpenAI | Google |
 |------|-----------|--------|--------|
+| **T0 - Frontier-above-Opus (dispatched, opt-in)** | Claude Fable 5 (`claude-fable-5`) | — | — |
 | **T0/T1 - Frontier** | Claude Opus 4.8 (`claude-opus-4-8`) | GPT-5.5 (`gpt-5.5`) | Gemini Pro (current) |
 | **T2/T3 - Workhorse** | Claude Sonnet 4.6 (`claude-sonnet-4-6`) | Codex GPT-5.3 (`gpt-5.3-codex`) | Gemini Pro / Flash |
 | **T4 - Light** | Claude Haiku 4.5 (`claude-haiku-4-5`) | GPT-5 mini (`gpt-5-mini`) | Gemini Flash |
