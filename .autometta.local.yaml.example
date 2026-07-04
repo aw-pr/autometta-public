@@ -72,3 +72,14 @@ auth:
 #   claude:
 #     transport: cli   # default; uses `claude -p` (subscription or api)
 #     # transport: sdk   # opt-in; requires auth.claude.mode: api (see above)
+#
+#     # Optional Fable-as-advisor verifier. The request model (transport: sdk,
+#     # e.g. claude-sonnet-4-6) does the bulk reading; the advisor is consulted
+#     # only at the decision point. The advisor must NOT be weaker than the
+#     # request model — verify-sdk.py rejects an inverted pair locally (#66714).
+#     # sdk + auth.claude.mode: api only; default off. DATA RETENTION: the
+#     # advisor receives the stage card and artefacts (org-wide 30-day
+#     # retention); do NOT point it at a repo whose artefacts carry personal data.
+#     # advisor: claude-fable-5
+#     # Override without editing this file:
+#     #   AUTOMETTA_CLAUDE_ADVISOR=claude-fable-5 scripts/spawn-verifier.sh <card> <repo>

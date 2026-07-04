@@ -101,6 +101,28 @@ resolve_claude_transport() {
   printf '%s %s\n' "${transport:-cli}" "$provenance"
 }
 
+# Resolve the optional claude verifier advisor model (Fable-as-advisor).
+# Resolution order (most specific wins):
+#   1. AUTOMETTA_CLAUDE_ADVISOR env var override
+#   2. verifier.claude.advisor in <repo>/.autometta.local.yaml
+#   3. default: empty (advisor off; behaviour byte-identical to today)
+# The advisor sits under the sdk branch only and inherits its auth.claude.mode:
+# api gate; verify-sdk.py enforces the #66714 ordering precondition locally.
+# Prints: "<advisor-model-or-empty>"
+resolve_claude_advisor() {
+  local repo_root="$1"
+  local manifest="$repo_root/.autometta.local.yaml"
+  local advisor=""
+
+  if [[ -n "${AUTOMETTA_CLAUDE_ADVISOR:-}" ]]; then
+    advisor="${AUTOMETTA_CLAUDE_ADVISOR}"
+  elif [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+    advisor="$(yq -r '.verifier.claude.advisor // ""' "$manifest" 2>/dev/null || true)"
+  fi
+
+  printf '%s\n' "$advisor"
+}
+
 # Derive a best-effort artefact glob from the ## Deliverables section of a card.
 # Extracts backtick-quoted file paths, takes unique parent directories, and
 # returns a single pattern for Python's glob.glob (no brace expansion).
@@ -269,9 +291,15 @@ main() {
       log_msg "verifier-transport: ${claude_transport} (provenance: ${claude_transport_provenance})"
 
       if [[ "$claude_transport" == "sdk" ]]; then
-        local artefact_glob sdk_out
+        local artefact_glob sdk_out claude_advisor advisor_arg
         artefact_glob="$(derive_artefact_glob "$card_path")"
         sdk_out="$repo_root/$artefact_path"
+        claude_advisor="$(resolve_claude_advisor "$repo_root")"
+        advisor_arg=()
+        if [[ -n "$claude_advisor" ]]; then
+          advisor_arg=(--advisor "$claude_advisor")
+          log_msg "verifier-advisor: ${claude_advisor} (Fable-as-advisor; request model does the reading)"
+        fi
         # shellcheck disable=SC2086
         ( cd "$repo_root" && op-fetch $auth_pairs -- \
             python3 "$sdk_script" \
@@ -280,6 +308,7 @@ main() {
               --artefact-glob "$artefact_glob" \
               --out "$sdk_out" \
               --model "$(claude_model_for_identity "$verifier_identity")" \
+              ${advisor_arg[@]+"${advisor_arg[@]}"} \
             </dev/null >"$log_path" 2>&1 ) &
       else
         # shellcheck disable=SC2086
