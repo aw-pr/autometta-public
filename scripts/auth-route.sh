@@ -60,14 +60,19 @@ manifest="$repo_root/.autometta.local.yaml"
 # 1. env override
 override_var="AUTOMETTA_$(printf '%s' "$family" | tr '[:lower:]' '[:upper:]')_MODE"
 mode="${!override_var:-}"
+mode_source="env:$override_var"
 
 # 2. manifest
 if [[ -z "$mode" && -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
   mode="$(yq -r ".auth.${family}.mode // \"\"" "$manifest" 2>/dev/null || true)"
+  [[ -n "$mode" ]] && mode_source="manifest:$manifest"
 fi
 
 # 3. default
-mode="${mode:-subscription}"
+if [[ -z "$mode" ]]; then
+  mode="subscription"
+  mode_source="default"
+fi
 
 case "$mode" in
   subscription)
@@ -85,7 +90,18 @@ case "$mode" in
     exit 0
     ;;
   api)
-    : # fall through to ref emission below
+    # Metered billing spends real API credit, not subscription quota. An
+    # explicit env override is a deliberate choice; a manifest-sourced api
+    # mode is the silent-flip vector (the manifest is gitignored and
+    # agent-writable), so warn loudly and name the source at dispatch time.
+    if [[ "$mode_source" == manifest:* ]]; then
+      printf 'auth-route: WARNING family=%s resolved to METERED api billing from %s — this spends metered API credit, NOT subscription quota. If unintended, set %s=subscription or remove auth.%s.mode from the manifest.\n' \
+        "$family" "$mode_source" "$override_var" "$family" >&2
+    else
+      printf 'auth-route: note family=%s using metered api billing (source=%s)\n' \
+        "$family" "$mode_source" >&2
+    fi
+    # fall through to ref emission below
     ;;
   *)
     printf 'auth-route: invalid mode %q for family %s (expected subscription | api)\n' \
