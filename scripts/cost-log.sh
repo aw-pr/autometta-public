@@ -131,6 +131,34 @@ PY
   fi
 }
 
+# Parse the advisor line verify-sdk.py emits when --advisor is used:
+#   "advisor: model=<m> input=<I> output=<O>"
+# Prints "MODEL INPUT OUTPUT" when present, nothing otherwise. The advisor is
+# a distinct (stronger) tier from the request model — historically its tokens
+# were dropped on the floor because costlog_parse_breakdown returns on the
+# request model's `cache:` line and never reads this one, so the most
+# expensive tier's spend was invisible to FinOps. costlog_append costs it
+# separately at its own tier rate.
+costlog_parse_advisor() {
+  local log_path="$1"
+  [[ -f "$log_path" ]] || return 0
+  python3 - "$log_path" <<'PY'
+import re
+import sys
+
+try:
+    text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+except OSError:
+    sys.exit(0)
+
+# Last occurrence wins, mirroring costlog_parse_breakdown's "last cache: line".
+matches = re.findall(r"advisor:\s*model=(\S+)\s+input=(\d+)\s+output=(\d+)", text)
+if matches:
+    model, inp, out = matches[-1]
+    print(f"{model} {inp} {out}")
+PY
+}
+
 # Append one cost-log line for a dispatched role.
 #
 # Args:
@@ -179,16 +207,37 @@ costlog_append() {
   rates="$(rate_for_tier "$tier")"
   IFS=' ' read -r rin rcached rout <<<"$rates"
 
+  # Advisor (Fable et al.) is a separate, stronger tier consulted at the
+  # decision point. Cost it at its own tier rate so the priciest tokens in
+  # the run are not invisible. No cache breakdown is emitted for the advisor,
+  # so its input is billed at the plain input rate (cached rate unused).
+  local advisor_raw adv_model adv_in adv_out adv_tier adv_rates arin arout
+  advisor_raw="$(costlog_parse_advisor "$log_path")"
+  if [[ -n "$advisor_raw" ]]; then
+    IFS=' ' read -r adv_model adv_in adv_out <<<"$advisor_raw"
+    adv_tier="$(tier_for_identity "$adv_model")"
+    adv_rates="$(rate_for_tier "$adv_tier")"
+    IFS=' ' read -r arin _ arout <<<"$adv_rates"
+  fi
+  adv_model="${adv_model:-}"
+  adv_in="${adv_in:-0}"
+  adv_out="${adv_out:-0}"
+  adv_tier="${adv_tier:-}"
+  arin="${arin:-0}"
+  arout="${arout:-0}"
+
   mkdir -p "$repo_root/state"
   if ! python3 - "$out_file" "$ts" "$repo_name" "$stage_id" "$role" "$identity" \
       "$tier" "$auth_route" "$input_tokens" "$cached_tokens" "$output_tokens" \
-      "$wall_clock_s" "$result" "$rin" "$rcached" "$rout" <<'PY'
+      "$wall_clock_s" "$result" "$rin" "$rcached" "$rout" \
+      "$adv_model" "$adv_tier" "$adv_in" "$adv_out" "$arin" "$arout" <<'PY'
 import json
 import sys
 
 (out_file, ts, repo, stage_id, role, identity, tier, auth_route,
  input_tokens, cached_tokens, output_tokens, wall_clock_s, result,
- rin, rcached, rout) = sys.argv[1:]
+ rin, rcached, rout,
+ adv_model, adv_tier, adv_in, adv_out, arin, arout) = sys.argv[1:]
 
 input_tokens = int(input_tokens)
 cached_tokens = int(cached_tokens)
@@ -201,6 +250,11 @@ cost = (
     + cached_tokens * rcached
     + output_tokens * rout
 ) / 1_000_000.0
+
+adv_in = int(adv_in)
+adv_out = int(adv_out)
+arin, arout = float(arin), float(arout)
+advisor_cost = (adv_in * arin + adv_out * arout) / 1_000_000.0
 
 total_input = input_tokens + cached_tokens
 cache_hit_rate = (cached_tokens / total_input) if total_input > 0 else 0.0
@@ -218,6 +272,12 @@ line = {
     "output_tokens": output_tokens,
     "wall_clock_s": wall_clock_s,
     "cost_usd_est": round(cost, 6),
+    "advisor_model": adv_model or None,
+    "advisor_tier": adv_tier or None,
+    "advisor_input_tokens": adv_in,
+    "advisor_output_tokens": adv_out,
+    "advisor_cost_usd_est": round(advisor_cost, 6),
+    "total_cost_usd_est": round(cost + advisor_cost, 6),
     "cache_hit_rate": round(cache_hit_rate, 4),
     "result": result,
 }
@@ -233,4 +293,8 @@ PY
   printf 'costlog_append: %s %s tier=%s route=%s in=%s cached=%s out=%s result=%s\n' \
     "$stage_id" "$role" "$tier" "$auth_route" "$input_tokens" "$cached_tokens" \
     "$output_tokens" "$result" >&2
+  if [[ -n "$adv_model" ]]; then
+    printf 'costlog_append:   advisor=%s tier=%s in=%s out=%s\n' \
+      "$adv_model" "$adv_tier" "$adv_in" "$adv_out" >&2
+  fi
 }

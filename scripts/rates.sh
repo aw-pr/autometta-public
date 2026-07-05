@@ -35,15 +35,18 @@
 # costed at the workhorse rate rather than silently free.
 tier_for_identity() {
   local identity="$1"
+  # Both forms are matched: the human identity string ("Claude Fable 5")
+  # and the raw model id ("claude-fable-5"), because the advisor tier is
+  # resolved from the model id emitted on verify-sdk's `advisor:` line.
   case "$identity" in
-    *Fable*)           printf 'T0\n' ;;
-    *Opus*)            printf 'T1\n' ;;
+    *Fable*|*fable*)   printf 'T0\n' ;;
+    *Opus*|*opus*)     printf 'T1\n' ;;
     *GPT-5.5*|*gpt-5.5*) printf 'T1\n' ;;
     *Gemini\ Pro*)     printf 'T1\n' ;;
-    *Haiku*)           printf 'T4\n' ;;
+    *Haiku*|*haiku*)   printf 'T4\n' ;;
     *mini*)            printf 'T4\n' ;;
-    *Flash*)           printf 'T4\n' ;;
-    *Sonnet*)          printf 'T2\n' ;;
+    *Flash*|*flash*)   printf 'T4\n' ;;
+    *Sonnet*|*sonnet*) printf 'T2\n' ;;
     *GPT-5*|*gpt-5*|*Codex*|*codex*) printf 'T2\n' ;;
     *)                 printf 'T2\n' ;;
   esac
