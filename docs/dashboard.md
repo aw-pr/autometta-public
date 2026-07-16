@@ -56,7 +56,7 @@ worker / verifier token counts onto the matching stage entry in
    per-stage totals.
 3. **Per model.** Token spend grouped by canonical agent identity
    (e.g. `Claude Opus 4.8 <claude-opus-4-8@local>`,
-   `Codex GPT-5.3 <codex-gpt-5-3@local>`,
+   `GPT-5.6 Sol <gpt-5-6-sol@local>`,
    `Claude Sonnet 4.6 <claude-sonnet-4-6@local>`) per
    `~/.claude/rules/mcp-hub-dev-rules.md`. Orchestrator identity is
    read from each stage card's metadata; worker / verifier identity is
@@ -84,7 +84,7 @@ worker / verifier token counts onto the matching stage entry in
         {
           "id": "01-...",
           "status": "completed",
-          "worker": "Codex GPT-5.3 <codex-gpt-5-3@local>",
+          "worker": "GPT-5.6 Sol <gpt-5-6-sol@local>",
           "verifier": "Claude Sonnet 4.6 <claude-sonnet-4-6@local>",
           "orchestrator": "Claude Opus 4.8 <claude-opus-4-8@local>",
           "started_at": "...",

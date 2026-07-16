@@ -47,14 +47,14 @@ row() { jq -r --arg id "$1" --arg f "$2" 'select(.stage_id==$id) | .[$f]' "$cost
 
 # --- 1. codex total-only worker log ------------------------------------------
 printf 'codex\nWork done.\ntokens used\n28,164\n' > "$log_dir/00-codex-worker.log"
-costlog_append "$tmp" "00-codex" worker "Codex GPT-5.3 <codex-gpt-5-3@local>" \
+costlog_append "$tmp" "00-codex" worker "GPT-5.6 Sol <gpt-5-6-sol@local>" \
   "$log_dir/00-codex-worker.log" 312 pass
 
 note "== codex total-only =="
 check "input_tokens carries the total (28164)" "$([[ "$(row 00-codex input_tokens)" == "28164" ]] && echo 1 || echo 0)"
 check "cached_input_tokens is 0"               "$([[ "$(row 00-codex cached_input_tokens)" == "0" ]] && echo 1 || echo 0)"
 check "cache_hit_rate is 0"                     "$(python3 -c "import sys; sys.exit(0 if float('$(row 00-codex cache_hit_rate)')==0 else 1)" && echo 1 || echo 0)"
-check "tier resolved to T2"                     "$([[ "$(row 00-codex tier)" == "T2" ]] && echo 1 || echo 0)"
+check "tier resolved to T1"                     "$([[ "$(row 00-codex tier)" == "T1" ]] && echo 1 || echo 0)"
 
 # --- 2. claude --output-format json verifier log -----------------------------
 printf '{"type":"result","usage":{"input_tokens":1200,"output_tokens":800,"cache_creation_input_tokens":0,"cache_read_input_tokens":3400}}\n' \

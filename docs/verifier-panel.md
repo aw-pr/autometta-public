@@ -24,7 +24,7 @@ When panel mode is on, `spawn-verifier.sh` delegates immediately to `spawn-verif
 |---|---|---|
 | 0 | Claude Opus 4.8 via SDK | `Claude Opus 4.8 <claude-opus-4-8@local>` |
 | 1 | Claude Sonnet 4.6 via SDK | `Claude Sonnet 4.6 <claude-sonnet-4-6@local>` |
-| 2 | Codex GPT-5.3 via `codex exec` | `Codex GPT-5.3 <codex-gpt-5-3@local>` |
+| 2 | GPT-5.6 Sol via `codex exec --model gpt-5.6-sol` | `GPT-5.6 Sol <gpt-5-6-sol@local>` |
 
 The two Claude panellists require `auth.claude.mode: api` in `.autometta.local.yaml`. If the API key is not available, the panel fails closed with an explicit error — it does not fall back to subscription or to a single verifier.
 

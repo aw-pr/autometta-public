@@ -10,7 +10,7 @@
 # Fixed panel composition for v1:
 #   panel-0: Claude Opus 4.8  via SDK (scripts/verify-sdk.py --model claude-opus-4-8)
 #   panel-1: Claude Sonnet 4.6 via SDK (scripts/verify-sdk.py --model claude-sonnet-4-6)
-#   panel-2: Codex GPT-5.3    via codex exec
+#   panel-2: GPT-5.6 Sol      via codex exec
 #
 # Requires: auth.claude.mode: api (ANTHROPIC_API_KEY must be in claude auth_pairs).
 # A panellist crash (no artefact returned) counts as no-vote.
@@ -26,7 +26,7 @@ source "$script_dir/models.sh"
 
 PANELLIST_OPUS="Claude Opus 4.8 <claude-opus-4-8@local>"
 PANELLIST_SONNET="Claude Sonnet 4.6 <claude-sonnet-4-6@local>"
-PANELLIST_CODEX="Codex GPT-5.3 <codex-gpt-5-3@local>"
+PANELLIST_CODEX="GPT-5.6 Sol <gpt-5-6-sol@local>"
 
 QUORUM_REQUIRED=2
 POLL_INTERVAL=10
@@ -216,12 +216,12 @@ main() {
     fi
     # shellcheck disable=SC2086
     CODEX_HOME="$codex_home_override" op-fetch $codex_auth_pairs --pass CODEX_HOME -- \
-      codex exec -C "$repo_root" --sandbox workspace-write "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox workspace-write "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   else
     # shellcheck disable=SC2086
     op-fetch $codex_auth_pairs -- \
-      codex exec -C "$repo_root" --sandbox workspace-write "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox workspace-write "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   fi
   local p2_pid=$!

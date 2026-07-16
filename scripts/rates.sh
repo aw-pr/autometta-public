@@ -25,9 +25,9 @@
 #
 # Tiers follow skills/agent-orchestrator/SKILL.md:
 #   T0 - frontier-above-Opus (Claude Fable 5) - opt-in per card only
-#   T1 - frontier reasoning (Opus, GPT-5.5, Gemini Pro)
-#   T2 - workhorse         (Sonnet, Codex GPT-5.x)
-#   T4 - light             (Haiku, GPT-5 mini)
+#   T1 - frontier reasoning (Opus, GPT-5.6 Sol, Gemini Pro)
+#   T2 - workhorse         (Sonnet, GPT-5.6 Terra)
+#   T4 - light             (Haiku, GPT-5.6 Luna)
 # T0 was previously reserved for the orchestrator's own main session, which is
 # not a dispatched role and is not costed here. It now labels the opt-in Fable
 # tier, the sole dispatched role above Opus; no existing identity resolves to it.
@@ -41,12 +41,14 @@ tier_for_identity() {
   case "$identity" in
     *Fable*|*fable*)   printf 'T0\n' ;;
     *Opus*|*opus*)     printf 'T1\n' ;;
-    *GPT-5.5*|*gpt-5.5*) printf 'T1\n' ;;
+    *GPT-5.6\ Sol*|*gpt-5.6-sol*) printf 'T1\n' ;;
     *Gemini\ Pro*)     printf 'T1\n' ;;
     *Haiku*|*haiku*)   printf 'T4\n' ;;
+    *GPT-5.6\ Luna*|*gpt-5.6-luna*) printf 'T4\n' ;;
     *mini*)            printf 'T4\n' ;;
     *Flash*|*flash*)   printf 'T4\n' ;;
     *Sonnet*|*sonnet*) printf 'T2\n' ;;
+    *GPT-5.6\ Terra*|*gpt-5.6-terra*) printf 'T2\n' ;;
     *GPT-5*|*gpt-5*|*Codex*|*codex*) printf 'T2\n' ;;
     *)                 printf 'T2\n' ;;
   esac

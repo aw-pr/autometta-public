@@ -64,7 +64,7 @@ Per [`decision-verifier-handoff-naming`](../memory/decision-verifier-handoff-nam
 ```
 {
   "stage_id": "04-phat-controller-design",
-  "verifier_identity": "Codex GPT-5.3 <codex-gpt-5-3@local>",
+  "verifier_identity": "GPT-5.6 Sol <gpt-5-6-sol@local>",
   "verifier_invocation": "codex exec --sandbox read-only ...",
   "ran_at": "2026-05-21T20:00:00Z",
   "criteria": [

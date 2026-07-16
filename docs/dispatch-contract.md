@@ -69,12 +69,12 @@ The commit is atomic and follows the per-agent author attribution rule laid down
 A dispatch involves three roles in at least two model families, so the commit records all three. The author is the worker, the coder, which keeps `git shortlog` and `git blame` attributing the code to the model that wrote it, at model-version granularity. The orchestrator and verifier are kept as `Co-Authored-By` trailers for git-native tooling, with each role shown in the display name (git and GitHub key co-authorship off the email, so the parenthetical is display-only). On top of that, all three roles are recorded as role-keyed trailers carrying the clean canonical identity, so later analysis can ask which model performs best in each role:
 
 ```
-Author: Codex GPT-5.3 <codex-gpt-5-3@local>
+Author: GPT-5.6 Sol <gpt-5-6-sol@local>
 
 Co-Authored-By: Claude Opus 4.8 (orchestrator) <claude-opus-4-8@local>
 Co-Authored-By: Claude Sonnet 4.6 (verifier) <claude-sonnet-4-6@local>
 Autometta-Orchestrator: Claude Opus 4.8 <claude-opus-4-8@local>
-Autometta-Worker: Codex GPT-5.3 <codex-gpt-5-3@local>
+Autometta-Worker: GPT-5.6 Sol <gpt-5-6-sol@local>
 Autometta-Verifier: Claude Sonnet 4.6 <claude-sonnet-4-6@local>
 ```
 

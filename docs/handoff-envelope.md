@@ -13,7 +13,7 @@ A worker writes a JSON file to `state/handoffs/<stage-id>.json` as its final act
     "templates/worker-prompt.md"
   ],
   "notes": "All seven deliverables written. Acceptance criteria 1-9 believed satisfied.",
-  "worker_identity": "Codex GPT-5.3 <codex-gpt-5-3@local>"
+  "worker_identity": "GPT-5.6 Sol <gpt-5-6-sol@local>"
 }
 ```
 

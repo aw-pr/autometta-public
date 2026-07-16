@@ -28,7 +28,7 @@ One JSON object per line. All fields are always present.
   "repo": "fractals-from-the-90s",
   "stage_id": "U-USA-6",
   "role": "worker",
-  "identity": "Codex GPT-5.3 <codex-gpt-5-3@local>",
+  "identity": "GPT-5.6 Sol <gpt-5-6-sol@local>",
   "tier": "T2",
   "auth_route": "subscription",
   "input_tokens": 0,
@@ -120,9 +120,9 @@ prices move. Rates are USD per one million tokens.
 | Tier | Models (Anthropic / OpenAI) | Input | Cached read | Output |
 |---|---|---|---|---|
 | T0 | Fable 5 | 10.00 | 1.00 | 50.00 |
-| T1 | Opus, GPT-5.5 | 15.00 | 1.50 | 75.00 |
-| T2 | Sonnet, Codex GPT-5.x | 3.00 | 0.30 | 15.00 |
-| T4 | Haiku, GPT-5 mini | 1.00 | 0.10 | 5.00 |
+| T1 | Opus, GPT-5.6 Sol | 15.00 | 1.50 | 75.00 |
+| T2 | Sonnet, GPT-5.6 Terra | 3.00 | 0.30 | 15.00 |
+| T4 | Haiku, GPT-5.6 Luna | 1.00 | 0.10 | 5.00 |
 
 T0 is the opt-in Claude Fable 5 tier, a step above Opus and the only tier above
 T1. It is dispatched per card only: no existing identity resolves to it, so a

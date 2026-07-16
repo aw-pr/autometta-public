@@ -117,7 +117,7 @@ codex exec -C "$repo" --sandbox workspace-write "$(cat prompt.txt)" \
 pid=$!
 disown
 scripts/register-agent.sh "$repo" "$pid" worker codex \
-  "Codex GPT-5.3 <codex-gpt-5-3@local>" "$card" log.txt 3600
+  "GPT-5.6 Sol <gpt-5-6-sol@local>" "$card" log.txt 3600
 scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 ```
 

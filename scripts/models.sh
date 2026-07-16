@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# models.sh — single source of truth for the Claude model IDs autometta
-# dispatches to. This is the ONE place to bump on a model release; every spawn
-# script sources this file rather than hard-coding model strings of its own.
+# models.sh — single source of truth for the model IDs autometta dispatches to.
+# This is the ONE place to bump on a model release; every spawn script sources
+# this file rather than hard-coding model strings of its own.
 #
 # Sourced by spawn-worker.sh, spawn-verifier.sh, and spawn-verifier-panel.sh.
 
@@ -11,6 +11,7 @@ AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5"
 # Frontier tier a step above Opus. Opt-in per card only: no existing identity
 # resolves here, so a stage uses it only when its card names a *Fable* role.
 AUTOMETTA_MODEL_FABLE="claude-fable-5"
+AUTOMETTA_MODEL_CODEX="gpt-5.6-sol"
 
 # Map a worker/verifier identity string (e.g. "Claude Opus 4.8 <...>") to the
 # model ID it should run on. Falls back to the sonnet alias when no tier matches.

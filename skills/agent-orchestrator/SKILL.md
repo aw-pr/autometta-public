@@ -60,9 +60,9 @@ Concrete model names attached to the tiers above for paired or comparative work.
 | Tier | Anthropic | OpenAI | Google |
 |------|-----------|--------|--------|
 | **T0 - Frontier-above-Opus (dispatched, opt-in)** | Claude Fable 5 (`claude-fable-5`) | — | — |
-| **T0/T1 - Frontier** | Claude Opus 4.8 (`claude-opus-4-8`) | GPT-5.5 (`gpt-5.5`) | Gemini Pro (current) |
-| **T2/T3 - Workhorse** | Claude Sonnet 4.6 (`claude-sonnet-4-6`) | Codex GPT-5.3 (`gpt-5.3-codex`) | Gemini Pro / Flash |
-| **T4 - Light** | Claude Haiku 4.5 (`claude-haiku-4-5`) | GPT-5 mini (`gpt-5-mini`) | Gemini Flash |
+| **T0/T1 - Frontier** | Claude Opus 4.8 (`claude-opus-4-8`) | GPT-5.6 Sol (`gpt-5.6-sol`) | Gemini Pro (current) |
+| **T2/T3 - Workhorse** | Claude Sonnet 4.6 (`claude-sonnet-4-6`) | GPT-5.6 Terra (`gpt-5.6-terra`) | Gemini Pro / Flash |
+| **T4 - Light** | Claude Haiku 4.5 (`claude-haiku-4-5`) | GPT-5.6 Luna (`gpt-5.6-luna`) | Gemini Flash |
 
 When dispatching paired multi-family work (comparative reviews, A/B benchmarks, independence-checking lanes), the tier governs which row of the table you pull from on each side. Solo execution can pick a tier-appropriate model from any single family - only paired or comparative work has to lock the row.
 

@@ -60,7 +60,7 @@ The orchestrator (Claude Code session opened in `fractals-from-the-90s`) reads `
 
 ```sh
 prompt="$(sed \
-  -e "s|<<worker-tier>>|Codex GPT-5.3|g" \
+  -e "s|<<worker-tier>>|GPT-5.6 Sol|g" \
   -e "s|<<project-name>>|fractals-from-the-90s|g" \
   -e "s|<<orchestrator-identity>>|claude-code-session|g" \
   -e "s|<<stage-card-path>>|docs/cards/refactor-fft-precompute.md|g" \
@@ -80,7 +80,7 @@ Two commits, atomic:
 
 ```sh
 git add <worker deliverables>
-git commit --author="Codex GPT-5.3 <codex-gpt-5-3@local>" -m "refactor: extract precompute_fft_window from render loop"
+git commit --author="$(agent-whoami)" -m "refactor: extract precompute_fft_window from render loop"
 
 git add <orchestrator metadata like a PLAN file>
 git commit --author="Claude Opus 4.8 <claude-opus-4-8@local>" -m "plan: refactor-fft-precompute landed at <sha>"
