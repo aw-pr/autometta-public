@@ -5,6 +5,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
 dashboard_dir="$controller_home/dashboard"
@@ -140,6 +141,17 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     rm -f "$artefact_paths_file" "$merged_file"
   fi
 
+  # Provider limit alerts (usage/rate limit, overload, exhausted credit)
+  # from recent agent logs. Report-only; a scan failure never breaks the
+  # dashboard build.
+  alerts_json='[]'
+  if [[ -x "$script_dir/scan-usage-limits.sh" ]]; then
+    alerts_json="$("$script_dir/scan-usage-limits.sh" "$repo_path" 2>/dev/null \
+      | jq -R -s -c 'split("\n") | map(select(length > 0))
+          | map(split("\t") | {log: .[0], line: (.[1] // "")})' \
+      || printf '[]')"
+  fi
+
   # Append this repo to the repos array.
   jq \
     --arg name "$name" \
@@ -150,6 +162,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson halted "$([[ "$halted" == "true" ]] && printf 'true' || printf 'false')" \
     --argjson halt_reason "$halt_reason" \
     --argjson stages "$stages_json" \
+    --argjson alerts "$alerts_json" \
     '. + [{
        name: $name,
        repo_path: $repo_path,
@@ -158,6 +171,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
        token_cap_total: $token_cap_total,
        halted: $halted,
        halt_reason: $halt_reason,
+       alerts: $alerts,
        stages: $stages
      }]' "$repos_array_file" > "${repos_array_file}.tmp"
   mv "${repos_array_file}.tmp" "$repos_array_file"
