@@ -18,7 +18,7 @@ logs_dir="$repo_root/state/logs"
 
 [[ -d "$logs_dir" ]] || exit 0
 
-pattern='usage[ _-]limit|rate[ _-]limit|limit reached|too many requests|overloaded_error|quota exceeded|credit balance|insufficient credit|HTTP 429|status 429|"code": *429'
+pattern='usage[ _-]limit|rate[ _-]limit|limit reached|too many requests|overloaded_error|quota exceeded|credit balance|insufficient credit|at capacity|HTTP 429|status 429|"code": *429'
 
 while IFS= read -r log_path; do
   [[ -n "$log_path" ]] || continue
