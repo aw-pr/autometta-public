@@ -56,6 +56,13 @@ Pass 1 (dispatch contract) and pass 2 (phat-controller autonomous loop) have bot
 
 The first end-to-end benchmark (BENCH-005) drove the dispatch contract against a multi-stage Swift refactor in two parallel orchestrator lanes. Both escalated at the 2-loop budget. Codex went 12/20 then 18/20 on the FLAP-rate acceptance command; Claude Opus stayed pinned at 20/20 across both loops. The pass condition (0 FLAP) was not met by either lane, but the cross-family asymmetry is the interesting finding: Codex got closer then regressed, Claude was stuck at maximum throughout. See `[examples/benchmarks/bench-005/](./examples/benchmarks/bench-005/)` for the lane summaries and escalation notes. A green benchmark on a non-trivial backlog remains the next milestone.
 
+The first live one-shot product run turned a single creative brief into the
+five-stage Logistic Mandelbrot simulation for Emergence Lab in about 4.5 hours,
+including a 50-minute model-availability pause. See the
+[Logistic Mandelbrot case study](./docs/case-study-logistic-mandelbrot.md) for
+the worker-verifier chain, timing, rejected criterion, follow-up stages and
+release pass.
+
 ## Supported platforms
 
 macOS and Linux only. The scaffolding is bash plus standard POSIX tools and assumes either `cron` or (on macOS) `launchd` as the heartbeat. Windows is not supported - there is no native bash, no `cron`/`launchd`, no native `tmux`, and the `codex` CLI itself has no native Windows binary as of mid-2026. WSL2 may work as an effective Linux host but is untested and undocumented; treat it as unsupported.
