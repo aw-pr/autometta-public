@@ -19,6 +19,7 @@ Run through every item below before dispatching a worker. A stage card that fail
 - [ ] All input paths are relative to repo root. No absolute paths, no `/Users/...`, no `~`. Cards must remain portable across clones and machines.
 - [ ] The "Deliverables" section lists specific file paths, not vague descriptions.
 - [ ] Each deliverable has enough description that the worker could produce it without asking a follow-up question.
+- [ ] Every file the implementation must plausibly touch is in the Deliverables list, not just Inputs. Walk the data path end to end (e.g. a new shader uniform needs the CPU-side struct and the per-frame population, not just the shader). A correct worker will refuse the stage rather than edit an input-only file, burning a dispatch on a card fix.
 - [ ] The "Constraints" section lists hard rules the worker must not violate (language, naming, placeholder syntax, etc.).
 
 ## 2. Acceptance criteria
@@ -55,6 +56,8 @@ Run through every item below before dispatching a worker. A stage card that fail
 - [ ] **Log path:** the worker's log path is predictable and stated in the card or the worker prompt. Do not rely on harness-generated task IDs that change between runs.
 - [ ] **Sandbox boundary:** verify that the verifier's environment is genuinely outside the worker's sandbox. A verifier that runs inside the same sandbox cannot observe side-effects the worker was prevented from making.
 - [ ] **Prior-gate regression:** if acceptance criteria overlap with those of an earlier stage, running the verifier for this stage may surface a regression in that earlier stage. Note any such overlap and decide in advance whether a regression here is a blocker.
+- [ ] **No artefacts outside the repo:** every file a headless run must read exists inside the repo (or the run home) before dispatch. Copy external inputs in at scheduling time, while an interactive session still holds the macOS privacy (TCC) grants — a launchd-spawned agent reading Desktop/Documents/Downloads or CloudStorage paths raises a consent dialog nobody can click and blocks silently until the next interactive wake. If copying in is genuinely inappropriate, flag the external dependency on the card/brief at creation and pre-test read access from a non-interactive context.
+- [ ] **Headless orchestrators block on child dispatches:** a `claude -p` orchestrator exits the moment its final turn ends, and its exit kills any background children it spawned. Inside a headless orchestrator, worker and verifier dispatches must run as foreground (blocking) commands; "dispatch in background, reap next turn" is only valid in interactive sessions that outlive the child.
 
 ## 7. Integration plan
 
