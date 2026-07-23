@@ -29,3 +29,6 @@ state/**
 # Dashboard: Chart.js is downloaded at install time, not committed.
 dashboard/vendor/
 HANDOFF.md
+.codegraph/
+.publish-guard-strict.local
+.claude/settings.local.json
