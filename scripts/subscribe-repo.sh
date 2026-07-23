@@ -32,7 +32,8 @@ fi
 
 repo_path="$(resolve_path "$1")"
 
-if [[ ! -d "$repo_path/.git" ]]; then
+# -e, not -d: a linked git worktree has a .git *file* pointing at the parent.
+if [[ ! -e "$repo_path/.git" ]]; then
   printf 'MISSING git repo %s\n' "$repo_path" >&2
   exit 1
 fi
