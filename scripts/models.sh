@@ -29,3 +29,37 @@ claude_model_for_identity() {
     printf 'sonnet\n'
   fi
 }
+
+# Resolve the codex CLI sandbox mode for dispatches into a repo. The default
+# (workspace-write) exposes no Metal/GPU device on macOS, so repos whose
+# acceptance criteria require GPU work (Metal renderers, CUDA, etc.) can widen
+# it. Resolution order (most specific wins):
+#   1. AUTOMETTA_CODEX_SANDBOX env var override
+#   2. codex.sandbox in <repo>/.autometta.local.yaml
+#   3. default: workspace-write
+# Prints the mode; invalid values fall back to workspace-write with a warning
+# on stderr (fail-closed to the narrower sandbox, never the wider one).
+resolve_codex_sandbox() {
+  local repo_root="$1"
+  local manifest="$repo_root/.autometta.local.yaml"
+  local mode=""
+
+  if [[ -n "${AUTOMETTA_CODEX_SANDBOX:-}" ]]; then
+    mode="${AUTOMETTA_CODEX_SANDBOX}"
+  elif [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+    mode="$(yq -r '.codex.sandbox // ""' "$manifest" 2>/dev/null || true)"
+  fi
+
+  case "$mode" in
+    read-only|workspace-write|danger-full-access)
+      printf '%s\n' "$mode"
+      ;;
+    "")
+      printf 'workspace-write\n'
+      ;;
+    *)
+      printf 'codex-sandbox: invalid mode %s; using workspace-write\n' "$mode" >&2
+      printf 'workspace-write\n'
+      ;;
+  esac
+}

@@ -267,9 +267,9 @@ main() {
     codex)
       # shellcheck disable=SC2086
       if [[ -n "$codex_home_override" ]]; then
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
       else
-        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox workspace-write "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)

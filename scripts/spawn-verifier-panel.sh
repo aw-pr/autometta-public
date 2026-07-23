@@ -216,12 +216,12 @@ main() {
     fi
     # shellcheck disable=SC2086
     CODEX_HOME="$codex_home_override" op-fetch $codex_auth_pairs --pass CODEX_HOME -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox workspace-write "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   else
     # shellcheck disable=SC2086
     op-fetch $codex_auth_pairs -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox workspace-write "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   fi
   local p2_pid=$!
