@@ -199,3 +199,17 @@ Three layers, all in `scripts/tick.sh`:
 3. A top-of-tick integrity guard (`_process_repo_locked`) refuses to dispatch against a corrupt/empty `state.yaml`: it auto-restores from `state.yaml.bak` when that is valid, otherwise halts with reason `state-corrupt` rather than proceeding or silently re-initialising.
 
 Open follow-up: `commit_state_branch` still cannot persist `state.yaml` while `state/` is gitignored; the durable backup is the local `.bak`. A real off-disk copy would need either a force-added state file on the state branch or an explicit export step.
+
+## Headless gotcha 11: `op read` blocks forever on a TCC prompt no one can approve
+
+### One-sentence summary
+On macOS Sequoia, `op` can trip the "access data from other apps" TCC prompt even in service-account mode, and from a launchd/cron context on a locked machine that prompt is unanswerable — `op read` blocks indefinitely and the dispatched worker hangs with an empty log.
+
+### Incident origin
+2026-07-24, emergence-viewer-deep-zoom stage 30: the loop's claude worker sat 9 hours at `op-fetch → op read` with the lid shut; the tick only caught it via the wall-clock stall detector (8114 s). The pending TCC dialog surfaced at next login.
+
+### Failure mode if ignored
+Every overnight claude-family dispatch gambles on 1Password's TCC state; a single pending prompt silently converts a 90-minute stage into a stalled run and burns the tick budget.
+
+### Mitigation
+`op-fetch` now wraps every `op read` in a watchdog (`OP_FETCH_TIMEOUT`, default 60 s) and exits 124 with a "TCC prompt or locked 1Password?" diagnostic, so the spawn chain fails in seconds and the tick reaps a dead worker instead of a zombie. Approve the TCC prompt once per context at the machine (or grant `op` Full Disk Access) to prevent the prompt recurring; the service-account token in `~/.config/op/service-account.env` already avoids desktop-app unlock dependencies. Verified end-to-end from launchd: `op-fetch → claude -p` round-trip in 10 s.
