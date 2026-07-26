@@ -5,8 +5,8 @@
 #
 # Sourced by spawn-worker.sh, spawn-verifier.sh, and spawn-verifier-panel.sh.
 
-AUTOMETTA_MODEL_OPUS="claude-opus-4-8"
-AUTOMETTA_MODEL_SONNET="claude-sonnet-4-6"
+AUTOMETTA_MODEL_OPUS="claude-opus-5"
+AUTOMETTA_MODEL_SONNET="claude-sonnet-5"
 AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5"
 # Frontier tier a step above Opus. Opt-in per card only: no existing identity
 # resolves here, so a stage uses it only when its card names a *Fable* role.
