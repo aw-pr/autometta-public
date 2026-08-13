@@ -23,11 +23,15 @@ The history is **linear and shared**. There is one line of development:
 # 2. when a batch is ready for the public mirror:
 git switch publish
 git merge --ff-only dev          # publish catches up to dev's tip; always a clean ff
-git publish                      # backs up to origin, then ff-pushes PUB main behind the gate
+git push public publish          # PR source; gh pr create --base main --head publish
+# review the PR diff, then:
+PUBLISH_PR_REVIEWED=1 git publish  # backs up to origin, then ff-pushes PUB main behind the gate
 git switch dev                   # back to the working branch
 ```
 
 `git publish` is the alias `git push origin publish && PUBLISH_GUARD_OK=1 git push public publish:main`. It backs up to the private remote first, then publishes. Never hand-type `git push public publish:main`: the gate blocks it and points you back here.
+
+The publish boundary is PR-by-default and the gate enforces it: the push to `PUB/main` is rejected unless `PUBLISH_PR_REVIEWED=1` is set, which attests that a `publish` to `main` PR was opened and its diff reviewed. The fast-forward push then completes the PR, since GitHub marks a PR merged once the base holds the head commits. A repo where the PR is genuinely surplus opts out with `git config publishguard.boundary direct`.
 
 If `git merge --ff-only dev` refuses, `publish` has commits `dev` does not (someone committed directly on `publish`). That should not happen in this model; reconcile by hand rather than forcing.
 
@@ -51,7 +55,7 @@ Versioning: pre-1.0 while pre-alpha (`v0.x.y`). The first tagged release is `v0.
 The guard ships at `scripts/git-hooks/` and installs via `scripts/install-guards.sh`:
 
 - `pre-commit` - refuses to stage files matching the personal or secret patterns in the gitignored `.publish-guard.local`, plus never-commit paths (`.env`, `*.local`, `op-refs.local.sh`, `.publish-guard.local`) regardless of `.gitignore` state.
-- `pre-push` - on `PUB` (matched by `publishguard.publicmatch`): only the default branch (`main`/`master`) may be pushed, only when `PUBLISH_GUARD_OK=1` is set (which only `git publish` does), and only as a **fast-forward**. Non-default refs (tags included) and non-fast-forward pushes are rejected.
+- `pre-push` - on `PUB` (matched by `publishguard.publicmatch`): only the default branch (`main`/`master`) may be pushed, only when `PUBLISH_GUARD_OK=1` is set (which only `git publish` does), only with the `PUBLISH_PR_REVIEWED=1` attestation (unless `publishguard.boundary` is `direct`), and only as a **fast-forward**. The configured PR-source branch (`publishguard.prsource`, default `publish`) may also be pushed, private-file-scanned, so the PR can exist. Other non-default refs (tags included) and non-fast-forward pushes are rejected.
 
 Why fail-closed rather than a warning: publishing is effectively irreversible. Objects stay fetchable by SHA and content gets cached and indexed. A guard for an irreversible outward action has to stop it and point at the right command.
 
