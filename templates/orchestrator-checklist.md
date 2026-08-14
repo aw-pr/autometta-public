@@ -5,10 +5,35 @@ Orchestrator pre-dispatch checklist, part of the dispatch-contract pattern libra
 
 Run through every item below before dispatching a worker. A stage card that fails this checklist will likely produce a failed or incomplete stage, which costs more to recover than to prevent.
 
-## 0. Working-tree pre-flight
+## 0. Worktree dispatch pre-flight
 
-- [ ] `git status -s` shows no unrelated modifications. Acceptance criteria of the form "no files outside the deliverables set are modified" treat the operator's full working tree as the worker's; any pre-existing dirty file will surface as a false-positive FAIL. Stash, revert, or commit on a different branch before dispatch.
-- [ ] If a gitignored file is still tracked (the classic `.DS_Store` case), either revert it or untrack it permanently with `git rm --cached <file>` and commit.
+The shared checkout is never dispatched into and its dirtiness is never a
+precondition. Every stage runs in its own ephemeral worktree, cut from the
+card's declared base branch, so an unrelated dirty file (an uncommitted
+HANDOFF.md, a stray `.DS_Store`) can no longer false-positive a stage or
+block dispatch. See `memory/adopters/emergence-viewer/feedback-worktree-dispatch-thinned-preflight.md`
+for the pilot this backports.
+
+- [ ] The stage card declares `Base branch` and `Run branch` (`autometta/<stage-id>`) in its Metadata section. Pin both to branch names, never a commit SHA (no `expected_head`) — the run branch is cut from the base branch fresh at dispatch time, so a SHA pin is stale the moment the base moves.
+- [ ] Remove any worktree or branch left standing by a prior attempt at this stage before cutting a new one:
+
+  ```sh
+  git worktree remove --force ../<repo>-run-<stage-id> 2>/dev/null || true
+  git branch -D autometta/<stage-id> 2>/dev/null || true
+  ```
+
+- [ ] Cut the run worktree as a sibling of the repo, not a subdirectory, so `../sibling-repo`-style card inputs still resolve the same way they do from the main checkout:
+
+  ```sh
+  git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>
+  ```
+
+- [ ] Dispatch the worker and verifier into that worktree. All work — reads, writes, the dirty tree the verifier evaluates — happens there. The main checkout is never modified by dispatch and its working-tree state is irrelevant to this stage.
+- [ ] **Budget window auto-reset.** At the start of a run window, if `state/budget.json` is `halted` or any counter sits at its cap, reset the counters to zero (caps unchanged) and log the reset, rather than treating a stale halt from a prior window as terminal for this one. See `docs/plans/2026-08-01-control-plane-review.md` and the pilot note for the incident this fixes (a three-week-old tick-cap halt blocking every later window).
+- [ ] **Codex seat probe.** Before a Codex dispatch, run one trivial `codex exec` ping. On failure, skip the Codex seat for this stage and substitute another worker/verifier family — never attempt an interactive login unattended.
+- [ ] **On PASS:** fast-forward-merge the run branch into the base branch if the base hasn't moved since the worktree was cut. If the base has moved, push the run branch instead and note the unmerged branch in HANDOFF for manual integration.
+- [ ] **On FAIL:** leave the run branch and worktree standing for operator inspection. Do not delete either; re-running the stage removes and recuts them (first checklist item above).
+- [ ] If a gitignored file is still tracked in the shared checkout (the classic `.DS_Store` case), either revert it or untrack it permanently with `git rm --cached <file>` and commit — this is now a hygiene item, not a dispatch blocker.
 
 ## 1. Stage card completeness
 
