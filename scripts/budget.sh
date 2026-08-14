@@ -98,6 +98,61 @@ budget_reset_failures() {
   budget_write_atomic "$repo_root" '.consecutive_failures = 0'
 }
 
+# budget_ensure_window: auto-reset a halted-or-at-cap budget at the start
+# of a new run window (a UTC calendar day). If state/budget.json's
+# window_started_at is not today, all counters (including
+# consecutive_failures) are zeroed, halted/halt_reason/halted_at are
+# cleared, caps are left untouched, and window_started_at is stamped to
+# today. A log line is emitted only when a reset actually recovers a
+# halted-or-at-cap budget, so a routine no-op day is silent.
+#
+# Within the same window this is a no-op: a halt or cap hit still holds for
+# the rest of the window, and consecutive_failures keeps accumulating and
+# can still halt the loop mid-window via budget_check_caps.
+budget_ensure_window() {
+  local repo_root="$1"
+  local budget_path today stored
+  budget_path="$(budget_file "$repo_root")"
+  today="$(date -u +%F)"
+  stored="$(jq -r '.window_started_at // empty' "$budget_path")"
+  if [[ "$stored" == "$today" ]]; then
+    return 0
+  fi
+  local recovered
+  recovered="$(jq -r '
+    (.halted == true)
+    or (.tokens_spent >= .token_cap_total)
+    or (.wall_clock_elapsed_seconds >= .wall_clock_cap_seconds)
+    or (.clock_ticks_used >= .clock_tick_cap)
+    or (.consecutive_failures >= .consecutive_failure_cap)
+  ' "$budget_path")"
+  local tmp_path jq_filter
+  tmp_path="${budget_path}.tmp.$$"
+  if [[ "$recovered" == "true" ]]; then
+    # Halted or at cap: this is the window boundary the reset exists for.
+    jq_filter='
+      .tokens_spent = 0
+      | .wall_clock_elapsed_seconds = 0
+      | .clock_ticks_used = 0
+      | .consecutive_failures = 0
+      | .halted = false
+      | .halt_reason = null
+      | .halted_at = null
+      | .window_started_at = $today
+    '
+  else
+    # Healthy budget crossing a window boundary mid-run: just stamp the
+    # window, do not zero live counters out from under an in-progress run.
+    jq_filter='.window_started_at = $today'
+  fi
+  jq --arg today "$today" "$jq_filter" "$budget_path" > "$tmp_path"
+  json_check "$tmp_path"
+  mv "$tmp_path" "$budget_path"
+  if [[ "$recovered" == "true" ]]; then
+    printf 'budget_ensure_window: new window (%s) for %s, auto-resetting halted/at-cap budget (caps unchanged)\n' "$today" "$repo_root" >&2
+  fi
+}
+
 budget_halt() {
   local repo_root="$1"
   local reason="$2"

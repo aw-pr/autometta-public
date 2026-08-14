@@ -578,6 +578,11 @@ _process_repo_locked() {
     return 1
   fi
 
+  # Budget window auto-reset: a halted-or-at-cap budget from a prior run
+  # window (UTC calendar day) is not terminal for this window. See
+  # budget_ensure_window in budget.sh.
+  budget_ensure_window "$repo_root"
+
   local budget_rc=0
   budget_check_caps "$repo_root" || budget_rc=$?
   case "$budget_rc" in

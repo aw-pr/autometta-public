@@ -75,6 +75,11 @@
       "type": ["string", "null"],
       "format": "date-time",
       "description": "ISO 8601 timestamp when the halt was triggered."
+    },
+    "window_started_at": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "UTC calendar date (YYYY-MM-DD) of the current run window. tick.sh compares this to today's date at the start of every tick; a mismatch means a new window has begun, so a halted-or-at-cap budget is auto-reset (all counters zeroed, caps unchanged, halted cleared) instead of staying terminal across windows. consecutive_failures resets only at this boundary -- the failure cap still halts mid-window. Null on a budget file predating this field; treated as always-a-new-window until first written."
     }
   }
 }
