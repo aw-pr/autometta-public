@@ -32,6 +32,11 @@ extract_worker_identity() {
   sed -n 's/^- \*\*Worker:\*\* //p' "$card_path" | head -n1
 }
 
+extract_worker_effort() {
+  local card_path="$1"
+  sed -n 's/^- \*\*Worker effort:\*\* //p' "$card_path" | head -n1
+}
+
 extract_stage_id() {
   local card_path="$1"
   local base
@@ -109,10 +114,15 @@ main() {
 
   mkdir -p "$logs_dir"
 
-  local worker_identity stage_id family prompt log_path pid
+  local worker_identity stage_id family prompt log_path pid effort effort_flags
   worker_identity="$(extract_worker_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
   family="$(worker_family "$worker_identity")"
+  effort="$(extract_worker_effort "$card_path")"
+  effort_flags="$(effort_flags_for_family "$family" "$effort")"
+  if [[ -n "$effort_flags" ]]; then
+    log_msg "worker effort: ${effort} (${stage_id})"
+  fi
   prompt="$(render_prompt "$repo_root" "$card_path" "$worker_identity" "$stage_id")"
   log_path="$logs_dir/${stage_id}-worker.log"
 
@@ -157,9 +167,9 @@ main() {
     codex)
       # shellcheck disable=SC2086
       if [[ -n "$codex_home_override" ]]; then
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
       else
-        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)
@@ -167,7 +177,7 @@ main() {
       # budget_parse_tokens_from_log needs; text-mode `claude -p` prints no
       # usage. stderr goes straight to the log so errors are never filtered.
       # shellcheck disable=SC2086
-      ( cd "$repo_root" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$worker_identity")" --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+      ( cd "$repo_root" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$worker_identity")" $effort_flags --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       ;;
     *)
       log_msg "unsupported worker family for identity: ${worker_identity}"

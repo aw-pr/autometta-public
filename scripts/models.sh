@@ -11,7 +11,42 @@ AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5"
 # Frontier tier a step above Opus. Opt-in per card only: no existing identity
 # resolves here, so a stage uses it only when its card names a *Fable* role.
 AUTOMETTA_MODEL_FABLE="claude-fable-5"
+# One codex model serves every codex identity. A card naming Terra, Luna or Sol
+# all dispatch here, so the identity string drives git attribution and the cost
+# tier, not the model that actually runs. Name the role Sol on new cards or the
+# cost-log bills a T1 run at the T2 rate.
 AUTOMETTA_MODEL_CODEX="gpt-5.6-sol"
+
+# Both CLIs take the same effort vocabulary, so one card field serves both.
+AUTOMETTA_EFFORT_LEVELS="low medium high xhigh max"
+
+# Map a card's declared effort level to the CLI flags for a vendor family.
+#
+# Prints nothing when the card declares no effort, which leaves each CLI on its
+# own default: `claude` on its built-in level, `codex` on model_reasoning_effort
+# from ~/.codex/config.toml. That keeps every card written before this field
+# existed dispatching exactly as it did.
+#
+# An unrecognised value also prints nothing rather than failing the dispatch: a
+# typo should cost a stage its effort override, not its run, and defaulting down
+# never silently promotes a cheap stage to max.
+effort_flags_for_family() {
+  local family="$1"
+  local effort="$2"
+  [[ -n "$effort" ]] || return 0
+  case " $AUTOMETTA_EFFORT_LEVELS " in
+    *" $effort "*) ;;
+    *)
+      printf 'models.sh: ignoring unknown effort level %s (valid: %s)\n' \
+        "$effort" "$AUTOMETTA_EFFORT_LEVELS" >&2
+      return 0
+      ;;
+  esac
+  case "$family" in
+    claude) printf -- '--effort %s\n' "$effort" ;;
+    codex)  printf -- '-c model_reasoning_effort=%s\n' "$effort" ;;
+  esac
+}
 
 # Map a worker/verifier identity string (e.g. "Claude Opus 4.8 <...>") to the
 # model ID it should run on. Falls back to the sonnet alias when no tier matches.

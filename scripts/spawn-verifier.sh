@@ -30,6 +30,11 @@ extract_verifier_identity() {
   sed -n 's/^- \*\*Verifier:\*\* //p' "$card_path" | head -n1
 }
 
+extract_verifier_effort() {
+  local card_path="$1"
+  sed -n 's/^- \*\*Verifier effort:\*\* //p' "$card_path" | head -n1
+}
+
 extract_stage_id() {
   local card_path="$1"
   local base
@@ -210,9 +215,15 @@ main() {
 
   local verifier_identity stage_id family log_path artefact_path pid prompt
   local claude_transport="cli" claude_transport_provenance="default"
+  local effort effort_flags
   verifier_identity="$(extract_verifier_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
   family="$(verifier_family "$verifier_identity")"
+  effort="$(extract_verifier_effort "$card_path")"
+  effort_flags="$(effort_flags_for_family "$family" "$effort")"
+  if [[ -n "$effort_flags" ]]; then
+    log_msg "verifier effort: ${effort} (${stage_id})"
+  fi
   log_path="$logs_dir/${stage_id}-verifier.log"
   artefact_path="state/verifiers/${stage_id}.json"
   prompt="$(render_prompt "$repo_root" "$card_path" "$stage_id" "$verifier_identity" "$artefact_path")"
@@ -267,9 +278,9 @@ main() {
     codex)
       # shellcheck disable=SC2086
       if [[ -n "$codex_home_override" ]]; then
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
       else
-        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)
@@ -300,6 +311,10 @@ main() {
           advisor_arg=(--advisor "$claude_advisor")
           log_msg "verifier-advisor: ${claude_advisor} (Fable-as-advisor; request model does the reading)"
         fi
+        # No effort override here: the sdk verifier takes --model but has no
+        # effort argument, so a card's "Verifier effort" is silently inert on
+        # this transport. Cards that need a declared effort must run the cli
+        # transport until verify-sdk grows the argument.
         # shellcheck disable=SC2086
         ( cd "$repo_root" && op-fetch $auth_pairs -- \
             python3 "$sdk_script" \
@@ -314,7 +329,7 @@ main() {
         # JSON output + claude-token-log.sh restore the "Total tokens:"
         # line the budget parser needs; see spawn-worker.sh claude branch.
         # shellcheck disable=SC2086
-        ( cd "$repo_root" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+        ( cd "$repo_root" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" $effort_flags --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       fi
       ;;
     *)
