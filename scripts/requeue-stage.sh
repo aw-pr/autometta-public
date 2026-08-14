@@ -3,16 +3,18 @@
 # a killed agent, or a card re-brief.
 #
 # The tick trusts per-stage state on disk. Two traps make a hand re-queue
-# go wrong (both hit on 2026-08-13):
+# go wrong:
 #   1. A stale worker envelope in state/handoffs/<stage>.json still says
 #      status=pass, so the next tick skips the worker and dispatches the
 #      verifier straight at the old code, driving the stage toward the
 #      terminal verifier_failed state.
-#   2. Worker WIP left uncommitted "for the next round to continue from"
-#      keeps the tree dirty, which halts the very dispatch that would
-#      continue it.
-# This script removes trap 1 mechanically and refuses to run while trap 2
-# is present.
+#   2. A run worktree (../<repo>-run-<stage>) and branch (autometta/<stage>)
+#      left standing by a prior FAIL or stall would collide with the fresh
+#      one the next dispatch tries to cut.
+# This script removes both mechanically. (Before the 2026-08-14
+# worktree-per-run backport, trap 2 was dirty worker WIP in repo_root's own
+# tree, which this script refused to touch rather than discard; that no
+# longer applies since dispatch never touches repo_root.)
 #
 # Usage: requeue-stage.sh <repo-root> <stage-id>
 # Example: requeue-stage.sh ~/repos/aegis-guardrails 01-per-call-approval-broker
@@ -35,16 +37,18 @@ yq -o=json '.' "$state_yaml" | jq -e --arg id "$stage_id" \
   '.stages[] | select(.id == $id)' >/dev/null \
   || { echo "requeue: stage '$stage_id' not found in $state_yaml" >&2; exit 1; }
 
-# Trap 2 first: refuse while the tree is dirty (state/ excluded, same filter
-# the tick uses). Uncommitted worker WIP must become a commit the re-briefed
-# card can point at - author it as the worker model, not yourself.
-if [ -n "$(git -C "$repo_root" status --porcelain -- . ':(exclude)state')" ]; then
-  echo "requeue: $repo_root has a dirty tree (outside state/) - the tick would" >&2
-  echo "         halt on it anyway. Commit the worker WIP first, e.g.:" >&2
-  echo "           git commit --author=\"<worker model identity>\" -m 'wip(${stage_id}): round-N output, pre re-queue'" >&2
-  echo "         then point the card re-brief at that SHA and re-run this." >&2
-  exit 1
-fi
+# Trap 2 (retired 2026-08-14 by worktree-per-run dispatch): a prior attempt
+# leaves worker WIP in its own ephemeral worktree/run branch, not in
+# repo_root, so repo_root's tree is never a re-queue blocker. Remove that
+# worktree and run branch so the next tick cuts a fresh one; the WIP inside
+# is simply discarded (the verifier already FAILed it, or it stalled).
+run_branch="autometta/${stage_id}"
+work_dir="$(dirname "$repo_root")/$(basename "$repo_root")-run-${stage_id}"
+git -C "$repo_root" worktree remove --force "$work_dir" >/dev/null 2>&1 || true
+rm -rf "$work_dir"
+git -C "$repo_root" worktree prune >/dev/null 2>&1 || true
+git -C "$repo_root" branch -D "$run_branch" >/dev/null 2>&1 || true
+echo "requeue: removed run worktree ${work_dir} and branch ${run_branch} (if present)"
 
 # Kill any live agent working this stage, then drop its registration.
 for agent_file in "$repo_root"/state/active-agents/*.json; do

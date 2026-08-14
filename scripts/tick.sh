@@ -346,28 +346,113 @@ commit_state_branch() {
     original_branch="$(git rev-parse --abbrev-ref HEAD)"
     # Keep operator branch unchanged when tick.sh is run interactively.
     trap 'git checkout "$original_branch" >/dev/null 2>&1 || true' EXIT
-    # A stage that is in_progress is *expected* to leave worker output in
-    # the tree for the verifier (the worker prompt explicitly says "do
-    # not commit; orchestrator commits on verifier-pass"). Halting on
-    # that legitimate dirt traps the loop: verifier never dispatches, the
-    # PASS-path commit never runs, and the only escape is operator
-    # intervention. Only enforce the clean-tree guard when no stage is
-    # currently in flight.
-    local current_stage_now
-    current_stage_now="$(state_json "$repo_root/state/state.yaml" | jq -r '.current_stage // empty')"
-    if [[ -z "$current_stage_now" ]]; then
-      local non_state_changes
-      non_state_changes="$(git status --porcelain -- . ':(exclude)state' || true)"
-      if [[ -n "$non_state_changes" ]]; then
-        budget_halt "$repo_root" "dirty-working-tree"
-        log "dirty working tree outside state/ for ${repo_root}, refusing state branch checkout"
-        return 1
-      fi
-    fi
+    # No clean-tree guard here: dispatch happens in an ephemeral sibling
+    # worktree (see ensure_run_worktree below), never in repo_root, so
+    # repo_root's non-state tree is never dirtied by a stage in flight.
+    # Any dirt here is pre-existing operator content, out of scope for the
+    # loop -- see templates/orchestrator-checklist.md ("Worktree dispatch
+    # pre-flight") and memory/adopters/emergence-viewer/
+    # feedback-worktree-dispatch-thinned-preflight.md.
     git checkout -B phat-controller/state >/dev/null 2>&1
     git add state/state.yaml state/budget.json state/verifiers state/handoffs/.gitkeep state/handoffs/README.md 2>/dev/null || true
     if ! git diff --cached --quiet; then
       git commit --author="$(agent-whoami)" -m "phat-controller: tick state update" >/dev/null 2>&1
+    fi
+  )
+}
+
+# --- Worktree-per-run dispatch --------------------------------------------
+#
+# Backport of the emergence-viewer stage-44 pilot (memory/adopters/
+# emergence-viewer/feedback-worktree-dispatch-thinned-preflight.md). Each
+# stage dispatches into an ephemeral sibling worktree cut from the base
+# branch; the shared checkout at repo_root is never touched by a worker or
+# verifier.
+
+# resolve_base_branch: the manifest's 'base_branch' field if present, else
+# the repo's current branch at tick time. Manifest lookup mirrors
+# manifest_patterns' fallback-to-repo-local-file behaviour.
+resolve_base_branch() {
+  local repo_root="$1"
+  local manifest_path="${2:-}"
+  local base=""
+  if [[ -n "$manifest_path" && -f "$manifest_path" ]] && command -v yq >/dev/null 2>&1; then
+    base="$(yq -r '.base_branch // ""' "$manifest_path" 2>/dev/null || true)"
+  fi
+  if [[ -z "$base" && -f "$repo_root/.autometta.local.yaml" ]] && command -v yq >/dev/null 2>&1; then
+    base="$(yq -r '.base_branch // ""' "$repo_root/.autometta.local.yaml" 2>/dev/null || true)"
+  fi
+  if [[ -z "$base" ]]; then
+    base="$(cd "$repo_root" && git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  fi
+  printf '%s\n' "$base"
+}
+
+run_branch_for_stage() {
+  printf 'autometta/%s\n' "$1"
+}
+
+# Sibling path, not a subdirectory, so '../sibling-repo'-style card inputs
+# still resolve exactly as they do from the main checkout.
+worktree_path_for_stage() {
+  local repo_root="$1" stage_id="$2"
+  printf '%s/%s-run-%s\n' "$(dirname "$repo_root")" "$(basename "$repo_root")" "$stage_id"
+}
+
+# ensure_run_worktree: remove any worktree/branch left standing by a prior
+# attempt at this stage, cut a fresh one from base_branch, and link its
+# state/ to the shared repo_root/state/ (state.yaml, budget.json, logs,
+# handoffs, verifier artefacts all stay centralised; only code deliverables
+# live in the worktree). Prints the worktree path on success, prints
+# nothing and returns non-zero on failure.
+ensure_run_worktree() {
+  local repo_root="$1" stage_id="$2" base_branch="$3"
+  local run_branch work_dir
+  run_branch="$(run_branch_for_stage "$stage_id")"
+  work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  (
+    cd "$repo_root"
+    git worktree remove --force "$work_dir" >/dev/null 2>&1 || true
+    rm -rf "$work_dir"
+    git worktree prune >/dev/null 2>&1 || true
+    git branch -D "$run_branch" >/dev/null 2>&1 || true
+    git worktree add "$work_dir" -b "$run_branch" "$base_branch" >/dev/null 2>&1
+  ) || { log "ensure_run_worktree: failed to cut ${work_dir} from ${base_branch} for ${stage_id}"; return 1; }
+  rm -rf "${work_dir:?}/state"
+  ln -s "../$(basename "$repo_root")/state" "$work_dir/state"
+  printf '%s\n' "$work_dir"
+}
+
+# teardown_run_worktree: remove the worktree and run branch after a
+# successful ff-merge. Never called on FAIL -- that path leaves both
+# standing for operator inspection (autometta-requeue tears them down on
+# re-dispatch).
+teardown_run_worktree() {
+  local repo_root="$1" stage_id="$2"
+  local run_branch work_dir
+  run_branch="$(run_branch_for_stage "$stage_id")"
+  work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  (
+    cd "$repo_root"
+    git worktree remove --force "$work_dir" >/dev/null 2>&1 || true
+    git branch -d "$run_branch" >/dev/null 2>&1 || true
+  )
+}
+
+# finalize_run_worktree: on PASS, fast-forward the base branch to the run
+# branch if base hasn't moved since the worktree was cut. If base has
+# moved (the ff fails), push the run branch instead and leave it and the
+# worktree standing for manual integration. Prints 'merged' or 'diverged'.
+finalize_run_worktree() {
+  local repo_root="$1" stage_id="$2" base_branch="$3"
+  local run_branch
+  run_branch="$(run_branch_for_stage "$stage_id")"
+  (
+    cd "$repo_root"
+    if git checkout "$base_branch" >/dev/null 2>&1 && git merge --ff-only "$run_branch" >/dev/null 2>&1; then
+      printf 'merged\n'
+    else
+      printf 'diverged\n'
     fi
   )
 }
@@ -448,15 +533,18 @@ _process_verifier_artefact() {
       '(.stages[] | select(.id == $id)).status = "verifier_failed" | .current_stage = null' \
       --arg id "$stage_id"
     budget_record_failure "$repo_root"
-    log "stage ${stage_id} verifier reported FAIL; working tree left intact for operator review (status=verifier_failed)"
+    log "stage ${stage_id} verifier reported FAIL; run branch and worktree (if any) left standing for operator review (status=verifier_failed)"
     return 0
   fi
 
-  # PASS path. Stage non-state working-tree changes on the current
-  # branch and commit with the worker as author, the orchestrator and
-  # verifier as role-named Co-Authored-By lines, and Autometta-Orchestrator
-  # / -Worker / -Verifier role trailers. The state-branch commit that
-  # follows handles state/ files.
+  # PASS path. Stage non-state changes and commit them on the stage's run
+  # branch, inside its worktree if one is standing (worktree-per-run
+  # dispatch), falling back to repo_root's checked-out branch for a stage
+  # dispatched before this feature landed (deprecated path). Commit author
+  # is the worker, with the orchestrator and verifier as role-named
+  # Co-Authored-By lines and Autometta-Orchestrator / -Worker / -Verifier
+  # role trailers. The state-branch commit that follows handles state/ files
+  # in repo_root, which are shared with the worktree via a symlink.
   local worker_identity verifier_identity orchestrator_identity headline summary commit_subject card_path
   worker_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .worker // empty')"
   verifier_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .verifier // empty')"
@@ -471,9 +559,17 @@ _process_verifier_artefact() {
   fi
   commit_subject="${stage_id}: ${headline}"
 
+  local base_branch work_dir
+  base_branch="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .base_branch // empty')"
+  work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  local commit_dir="$repo_root"
+  if [[ -n "$base_branch" && -d "$work_dir" ]]; then
+    commit_dir="$work_dir"
+  fi
+
   local commit_rc=0
   (
-    cd "$repo_root"
+    cd "$commit_dir"
     local non_state_changes
     non_state_changes="$(git status --porcelain -- . ':(exclude)state' || true)"
     if [[ -z "$non_state_changes" ]]; then
@@ -519,7 +615,34 @@ _process_verifier_artefact() {
 
   # Record commit SHA back into state.yaml for the audit trail.
   local commit_sha
-  commit_sha="$(cd "$repo_root" && git rev-parse HEAD 2>/dev/null || true)"
+  commit_sha="$(cd "$commit_dir" && git rev-parse HEAD 2>/dev/null || true)"
+
+  # Integrate the run branch: ff-merge into base if base hasn't moved,
+  # otherwise push the run branch and leave it (and the worktree) standing
+  # for manual integration. No-op on the deprecated repo_root-commit path
+  # (base_branch empty / no worktree).
+  if [[ -n "$base_branch" && -d "$work_dir" ]]; then
+    local merge_result
+    merge_result="$(finalize_run_worktree "$repo_root" "$stage_id" "$base_branch")"
+    if [[ "$merge_result" == "merged" ]]; then
+      teardown_run_worktree "$repo_root" "$stage_id"
+      log "stage ${stage_id} PASS: fast-forwarded ${base_branch} to $(run_branch_for_stage "$stage_id") and removed the run worktree"
+    else
+      local run_branch push_note
+      run_branch="$(run_branch_for_stage "$stage_id")"
+      push_note="stage ${stage_id}: ${base_branch} moved since dispatch; ${run_branch} left standing"
+      if (cd "$repo_root" && git push origin "$run_branch" >/dev/null 2>&1); then
+        push_note="${push_note}, pushed to origin/${run_branch} for manual integration"
+      else
+        push_note="${push_note}; push to origin also failed, integrate locally"
+      fi
+      log "stage ${stage_id} PASS: ${push_note}"
+      if [[ -f "$repo_root/HANDOFF.md" ]]; then
+        printf '\n- %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$push_note" >> "$repo_root/HANDOFF.md"
+      fi
+    fi
+  fi
+
   if [[ -n "$commit_sha" ]]; then
     state_apply_json "$state_yaml" \
       '(.stages[] | select(.id == $id)).commit = $sha | (.stages[] | select(.id == $id)).status = "completed" | (.stages[] | select(.id == $id)).completed_at = $now | .current_stage = null' \
@@ -847,7 +970,14 @@ _process_repo_locked() {
         '(.stages[] | select(.id == $id)).verifier_attempts = ((.stages[] | select(.id == $id) | .verifier_attempts // 0) + 1)
          | (.stages[] | select(.id == $id)).verifier_started_at = $now' \
         --arg id "$current_stage" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-      "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root"
+      local verifier_work_dir
+      verifier_work_dir="$(worktree_path_for_stage "$repo_root" "$current_stage")"
+      if [[ -d "$verifier_work_dir" ]]; then
+        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root" "$verifier_work_dir"
+      else
+        log "run worktree missing for ${current_stage} at ${verifier_work_dir}, verifying against ${repo_root} (deprecated fallback)"
+        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root"
+      fi
     else
       state_apply_json "$state_yaml" \
         '(.stages[] | select(.id == $id)).status = "stalled"' \
@@ -868,11 +998,27 @@ _process_repo_locked() {
       if [[ -z "$card_path" ]]; then
         log "stage card missing for ${next_stage} in ${repo_root}"
       else
-        now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        state_apply_json "$state_yaml" \
-          '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | .current_stage = $id' \
-          --arg id "$next_stage" --arg now "$now_iso"
-        "$script_dir/spawn-worker.sh" "$card_path" "$repo_root"
+        local base_branch work_dir
+        base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
+        if [[ -z "$base_branch" ]]; then
+          log "could not resolve a base branch for ${next_stage} in ${repo_root}, stalling stage"
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "base_branch_unresolved"' \
+            --arg id "$next_stage"
+          budget_record_failure "$repo_root"
+        elif ! work_dir="$(ensure_run_worktree "$repo_root" "$next_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
+          log "could not cut a run worktree for ${next_stage} in ${repo_root} from ${base_branch}, stalling stage"
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "run_worktree_failed"' \
+            --arg id "$next_stage"
+          budget_record_failure "$repo_root"
+        else
+          now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | (.stages[] | select(.id == $id)).base_branch = $base | .current_stage = $id' \
+            --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch"
+          "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
+        fi
       fi
     fi
   fi

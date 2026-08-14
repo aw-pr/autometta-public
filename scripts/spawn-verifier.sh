@@ -193,13 +193,18 @@ is_panel_mode() {
 }
 
 main() {
-  if [[ $# -ne 2 ]]; then
-    log_msg "usage: $0 <stage-card-path> <repo-root>"
+  if [[ $# -lt 2 || $# -gt 3 ]]; then
+    log_msg "usage: $0 <stage-card-path> <repo-root> [work-dir]"
     exit 1
   fi
 
   local card_path="$1"
   local repo_root="$2"
+  # work_dir is where the verifier reads the dirty tree it evaluates -- the
+  # stage's run worktree under worktree-per-run dispatch, or repo_root for a
+  # caller that has not adopted it yet. state/logs/verifiers always stay
+  # anchored to repo_root; only the agent's CWD moves.
+  local work_dir="${3:-$repo_root}"
   local state_path="$repo_root/state/state.yaml"
   local logs_dir="$repo_root/state/logs"
   local verifiers_dir="$repo_root/state/verifiers"
@@ -237,7 +242,7 @@ main() {
   fi
   log_path="$logs_dir/${stage_id}-verifier.log"
   artefact_path="state/verifiers/${stage_id}.json"
-  prompt="$(render_prompt "$repo_root" "$card_path" "$stage_id" "$verifier_identity" "$artefact_path")"
+  prompt="$(render_prompt "$work_dir" "$card_path" "$stage_id" "$verifier_identity" "$artefact_path")"
 
   # Resolve auth route via op-fetch (auth-route-security skill). Same model
   # as spawn-worker.sh: subscription emits no pairs (op-fetch still sanitises
@@ -289,9 +294,9 @@ main() {
     codex)
       # shellcheck disable=SC2086
       if [[ -n "$codex_home_override" ]]; then
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
       else
-        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)
@@ -327,7 +332,7 @@ main() {
         # this transport. Cards that need a declared effort must run the cli
         # transport until verify-sdk grows the argument.
         # shellcheck disable=SC2086
-        ( cd "$repo_root" && op-fetch $auth_pairs -- \
+        ( cd "$work_dir" && op-fetch $auth_pairs -- \
             python3 "$sdk_script" \
               --stage-id "$stage_id" \
               --card "$card_path" \
@@ -340,7 +345,7 @@ main() {
         # JSON output + claude-token-log.sh restore the "Total tokens:"
         # line the budget parser needs; see spawn-worker.sh claude branch.
         # shellcheck disable=SC2086
-        ( cd "$repo_root" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" $effort_flags --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+        ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" $effort_flags --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       fi
       ;;
     *)

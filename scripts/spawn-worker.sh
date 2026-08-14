@@ -66,17 +66,16 @@ worker_family() {
 }
 
 render_prompt() {
-  local repo_root="$1"
+  local work_dir="$1"
   local card_path="$2"
   local worker_identity="$3"
   local stage_id="$4"
-  local template_path="$repo_root/templates/worker-prompt.md"
-  local project_name
+  local project_name="$5"
+  local template_path="$work_dir/templates/worker-prompt.md"
 
   if [[ ! -f "$template_path" ]]; then
     template_path="$script_dir/../templates/worker-prompt.md"
   fi
-  project_name="$(basename "$repo_root")"
 
   sed \
     -e "s|<<worker-tier>>|${worker_identity}|g" \
@@ -107,13 +106,18 @@ update_stage_worker_pid() {
 }
 
 main() {
-  if [[ $# -ne 2 ]]; then
-    log_msg "usage: $0 <stage-card-path> <repo-root>"
+  if [[ $# -lt 2 || $# -gt 3 ]]; then
+    log_msg "usage: $0 <stage-card-path> <repo-root> [work-dir]"
     exit 1
   fi
 
   local card_path="$1"
   local repo_root="$2"
+  # work_dir is where the worker actually reads/writes code -- an ephemeral
+  # run worktree under worktree-per-run dispatch, or repo_root itself for a
+  # caller that has not adopted it yet. state/logs always stay anchored to
+  # repo_root; only the agent's CWD moves.
+  local work_dir="${3:-$repo_root}"
   local state_path="$repo_root/state/state.yaml"
   local logs_dir="$repo_root/state/logs"
 
@@ -134,7 +138,7 @@ main() {
   if [[ "$codex_sandbox" == "danger-full-access" ]]; then
     log_msg "worker runs codex unsandboxed: card declares Requires GUI (${stage_id})"
   fi
-  prompt="$(render_prompt "$repo_root" "$card_path" "$worker_identity" "$stage_id")"
+  prompt="$(render_prompt "$work_dir" "$card_path" "$worker_identity" "$stage_id" "$(basename "$repo_root")")"
   log_path="$logs_dir/${stage_id}-worker.log"
 
   # Resolve auth route via the canonical op-fetch pattern (auth-route-security
@@ -178,9 +182,9 @@ main() {
     codex)
       # shellcheck disable=SC2086
       if [[ -n "$codex_home_override" ]]; then
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
       else
-        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)
@@ -188,7 +192,7 @@ main() {
       # budget_parse_tokens_from_log needs; text-mode `claude -p` prints no
       # usage. stderr goes straight to the log so errors are never filtered.
       # shellcheck disable=SC2086
-      ( cd "$repo_root" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$worker_identity")" $effort_flags --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+      ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$worker_identity")" $effort_flags --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       ;;
     *)
       log_msg "unsupported worker family for identity: ${worker_identity}"
