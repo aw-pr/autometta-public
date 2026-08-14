@@ -65,6 +65,35 @@ claude_model_for_identity() {
   fi
 }
 
+# Resolve the codex sandbox for one dispatch, honouring a card's GUI need.
+#
+# A browser cannot start under seatbelt: Playwright's chromium, firefox and
+# WebKit all abort in NSApplication init / _RegisterApplication because the
+# sandbox denies WindowServer access. `headless: true` does not avoid it — the
+# abort happens before any page loads. Verified 2026-08-14 on stage
+# 33-markus-lyapunov-interaction, where all three browsers died in 38 seconds
+# under --sandbox workspace-write.
+#
+# The launchd tick already runs in the gui/<uid> domain, so the GUI session is
+# present and the sandbox is the only thing in the way. Claude roles are
+# unsandboxed and need nothing; only codex roles have to opt out.
+#
+# So a card that drives a browser, screenshots, or otherwise needs the window
+# server declares `- **Requires GUI:** true` and its codex roles run
+# unsandboxed. Declare it only when the acceptance criteria genuinely need a
+# browser: it hands that agent full machine access.
+resolve_codex_sandbox_for_card() {
+  local repo_root="$1"
+  local requires_gui="$2"
+  case "$requires_gui" in
+    true|True|TRUE|yes|1)
+      printf 'danger-full-access\n'
+      return 0
+      ;;
+  esac
+  resolve_codex_sandbox "$repo_root"
+}
+
 # Resolve the codex CLI sandbox mode for dispatches into a repo. The default
 # (workspace-write) exposes no Metal/GPU device on macOS, so repos whose
 # acceptance criteria require GPU work (Metal renderers, CUDA, etc.) can widen

@@ -77,6 +77,14 @@ budget_secs_from_card() {
   printf '%s\n' "$budget_secs"
 }
 
+resolve_panel_codex_sandbox() {
+  local repo_root="$1"
+  local card_path="$2"
+  local requires_gui
+  requires_gui="$(sed -n 's/^- \*\*Requires GUI:\*\* //p' "$card_path" | head -n1)"
+  resolve_codex_sandbox_for_card "$repo_root" "$requires_gui"
+}
+
 main() {
   local read_only=0
   local card_path="" repo_root=""
@@ -216,12 +224,12 @@ main() {
     fi
     # shellcheck disable=SC2086
     CODEX_HOME="$codex_home_override" op-fetch $codex_auth_pairs --pass CODEX_HOME -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   else
     # shellcheck disable=SC2086
     op-fetch $codex_auth_pairs -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_codex_sandbox "$repo_root")" "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   fi
   local p2_pid=$!

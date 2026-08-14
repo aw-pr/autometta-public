@@ -35,6 +35,11 @@ extract_verifier_effort() {
   sed -n 's/^- \*\*Verifier effort:\*\* //p' "$card_path" | head -n1
 }
 
+extract_requires_gui() {
+  local card_path="$1"
+  sed -n 's/^- \*\*Requires GUI:\*\* //p' "$card_path" | head -n1
+}
+
 extract_stage_id() {
   local card_path="$1"
   local base
@@ -224,6 +229,12 @@ main() {
   if [[ -n "$effort_flags" ]]; then
     log_msg "verifier effort: ${effort} (${stage_id})"
   fi
+  local requires_gui codex_sandbox
+  requires_gui="$(extract_requires_gui "$card_path")"
+  codex_sandbox="$(resolve_codex_sandbox_for_card "$repo_root" "$requires_gui")"
+  if [[ "$codex_sandbox" == "danger-full-access" ]]; then
+    log_msg "verifier runs codex unsandboxed: card declares Requires GUI (${stage_id})"
+  fi
   log_path="$logs_dir/${stage_id}-verifier.log"
   artefact_path="state/verifiers/${stage_id}.json"
   prompt="$(render_prompt "$repo_root" "$card_path" "$stage_id" "$verifier_identity" "$artefact_path")"
@@ -278,9 +289,9 @@ main() {
     codex)
       # shellcheck disable=SC2086
       if [[ -n "$codex_home_override" ]]; then
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
       else
-        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$(resolve_codex_sandbox "$repo_root")" "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)

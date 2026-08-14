@@ -11,6 +11,7 @@ Stage card template, part of the dispatch-contract pattern library. Reusable in 
 - **Verifier:** <<verifier-identity>>
 - **Worker effort:** <<low|medium|high|xhigh|max — optional, omit to leave the CLI on its default>>
 - **Verifier effort:** <<low|medium|high|xhigh|max — optional, omit to leave the CLI on its default>>
+- **Requires GUI:** <<true if any role must drive a browser, screenshot, or otherwise reach the window server; omit otherwise. Codex roles are sandboxed and every browser aborts at NSApplication init without this, headless included. It grants that agent full machine access, so declare it only when the acceptance criteria genuinely need it.>>
 - **Verifier panel:** false
 - **Pairing rationale:** <<why-this-worker-verifier-pair>>
 
