@@ -2,7 +2,7 @@
 
 How autometta keeps a public mirror in step with private development. Read this before pushing to the public remote, or before changing the publish-guard configuration.
 
-Placeholders: `PRIV` = the private remote (`origin`, `tw-one/autometta`), `PUB` = the public remote (`public`, `aw-pr/autometta-public`), `PUBLISH_BRANCH` = the line that becomes public (`publish`).
+Placeholders: `PRIV` = the private remote (`origin`), `PUB` = the public remote (`public`), `PUB_MATCH` = a substring of the public remote URL (e.g. `myorg/myrepo`), `PUBLISH_BRANCH` = the line that becomes public (`publish`).
 
 ## Model (read this first)
 
@@ -44,7 +44,7 @@ git tag -a vX.Y.Z -m "vX.Y.Z - <summary>" <commit>   # annotate the published co
 git push origin vX.Y.Z                                # private backup
 # The gate blocks tag pushes to PUB (only main is allowed), so make the public
 # release via gh, which creates the tag server-side at main's tip:
-gh release create vX.Y.Z --repo aw-pr/autometta-public --target main \
+gh release create vX.Y.Z --repo PUB_MATCH --target main \
   --title "vX.Y.Z - <summary>" --notes "<release notes>"
 ```
 
@@ -66,7 +66,7 @@ Deliberate one-off override: `git commit --no-verify` or `git push --no-verify`.
 Set once per machine via `git config --local`; never committed, which keeps org and repo names out of the tracked tree. Current values for this repo:
 
 ```sh
-git config publishguard.publicmatch   'aw-pr/autometta-public'
+git config publishguard.publicmatch   'PUB_MATCH'
 git config publishguard.publicremote  'public'
 git config publishguard.privateremote 'origin'
 git config publishguard.publishbranch 'publish'
