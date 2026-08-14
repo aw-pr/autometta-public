@@ -123,13 +123,13 @@ main() {
 
   mkdir -p "$logs_dir"
 
-  local worker_identity stage_id family prompt log_path pid effort effort_flags
+  local worker_identity stage_id family prompt log_path pid effort
   worker_identity="$(extract_worker_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
   family="$(worker_family "$worker_identity")"
   effort="$(extract_worker_effort "$card_path")"
-  effort_flags="$(effort_flags_for_family "$family" "$effort")"
-  if [[ -n "$effort_flags" ]]; then
+  effort_argv_for_family "$family" "$effort"
+  if [[ ${#AUTOMETTA_EFFORT_ARGV[@]} -gt 0 ]]; then
     log_msg "worker effort: ${effort} (${stage_id})"
   fi
   local requires_gui codex_sandbox
@@ -182,9 +182,9 @@ main() {
     codex)
       # shellcheck disable=SC2086
       if [[ -n "$codex_home_override" ]]; then
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
       else
-        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" $effort_flags --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)
@@ -192,7 +192,7 @@ main() {
       # budget_parse_tokens_from_log needs; text-mode `claude -p` prints no
       # usage. stderr goes straight to the log so errors are never filtered.
       # shellcheck disable=SC2086
-      ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$worker_identity")" $effort_flags --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+      ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$worker_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       ;;
     *)
       log_msg "unsupported worker family for identity: ${worker_identity}"

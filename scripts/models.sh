@@ -22,6 +22,12 @@ AUTOMETTA_EFFORT_LEVELS="low medium high xhigh max"
 
 # Map a card's declared effort level to the CLI flags for a vendor family.
 #
+# Prints ONE argv element per line. A caller must never rely on word splitting
+# to turn "--effort high" into two arguments: these scripts set IFS=$'\n\t',
+# which has no space in it, so an unquoted expansion of a space-joined string
+# stays a single argument and the CLI sees an option whose name contains a
+# space. Use effort_argv_for_family below rather than reading this directly.
+#
 # Prints nothing when the card declares no effort, which leaves each CLI on its
 # own default: `claude` on its built-in level, `codex` on model_reasoning_effort
 # from ~/.codex/config.toml. That keeps every card written before this field
@@ -43,9 +49,29 @@ effort_flags_for_family() {
       ;;
   esac
   case "$family" in
-    claude) printf -- '--effort %s\n' "$effort" ;;
-    codex)  printf -- '-c model_reasoning_effort=%s\n' "$effort" ;;
+    claude) printf -- '--effort\n%s\n' "$effort" ;;
+    codex)  printf -- '-c\nmodel_reasoning_effort=%s\n' "$effort" ;;
   esac
+}
+
+# Build the effort argv for one dispatch into the global array
+# AUTOMETTA_EFFORT_ARGV, empty when the card declares no usable effort.
+#
+# A global array is the return channel because a bash function cannot return
+# one, and an array is the point: it survives any IFS and cannot silently
+# re-collapse into a single argument the way an unquoted string can. Callers
+# expand it as ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} — the
+# +alternate guard is needed because bash 3.2 (the system bash on macOS)
+# treats "${arr[@]}" on an empty array as unbound under set -u.
+effort_argv_for_family() {
+  local family="$1"
+  local effort="$2"
+  local line
+  AUTOMETTA_EFFORT_ARGV=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    AUTOMETTA_EFFORT_ARGV+=("$line")
+  done < <(effort_flags_for_family "$family" "$effort")
 }
 
 # Map a worker/verifier identity string (e.g. "Claude Opus 4.8 <...>") to the
