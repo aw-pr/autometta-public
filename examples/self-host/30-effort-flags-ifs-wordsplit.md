@@ -130,8 +130,16 @@ The verifier will check each of these. Failure of any one is a failure of the st
 
 ## Contract test
 
-- **Test file:** <<fill at dispatch>>
-- **Assertions digest:** <<fill at dispatch>>
+- **Test file:** `scripts/effort-flags-smoke.sh`
+- **Assertions digest:** 17 assertions. Six on `effort_argv_for_family`
+  directly: claude and codex each build exactly two argv elements with the
+  expected values; a card with no effort and a card with an unknown level each
+  build none. Eleven on argv captured from a real dispatch through
+  `spawn-worker.sh` and `spawn-verifier.sh`, with a stub `op-fetch` on `PATH`
+  recording what it was handed: `--effort` and `high` arrive as consecutive
+  arguments and no argument named `--effort high` exists; likewise `-c` and
+  `model_reasoning_effort=high` for codex; and a card declaring no effort still
+  reaches the CLI for both families with no effort argument at all.
 
 ## Out of scope
 
@@ -157,3 +165,115 @@ instant CLI usage error should consume a verifier retry.
 
 The verifier must run at least one real dispatch of each family, so it needs
 working codex and claude auth.
+
+## Worker report
+
+Fixed in the orchestrator session rather than dispatched, on 2026-08-14.
+Commits `8a77b08` (fix plus regression test) and `0cf4231` (docs).
+
+**How the argv is now constructed, and why an array.**
+`effort_flags_for_family` prints one argv element per line — `--effort` then
+`high`, `-c` then `model_reasoning_effort=high`. `effort_argv_for_family` reads
+those into the global array `AUTOMETTA_EFFORT_ARGV`, and both spawn scripts
+expand it as `${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"}`. A
+global array is the return channel because a bash function cannot return one.
+
+The card asked for an array over a fixed word split, and the reasoning holds up
+under a detail worth stating: emitting newline-separated flags would *also*
+have worked on its own, because `IFS=$'\n\t'` does contain a newline. That fix
+would have been correct and invisible — it would leave the dispatch depending
+on the value of a variable set 180 lines away in another file, with the
+`shellcheck disable=SC2086` still there silencing the one tool that would ask
+about it. The array survives any `IFS`. `IFS=$'\n\t'` is untouched, per the
+constraint.
+
+The `+alternate` guard is not decoration: `/usr/bin/env bash` resolves to bash
+3.2.57 on this machine (the system bash), where `"${arr[@]}"` on an empty array
+is an unbound variable under `set -u`. `spawn-verifier.sh` already used the
+same idiom for `advisor_arg`, so this matches existing practice in the file.
+
+**Whether codex has been honouring its effort flag: yes, throughout.**
+This was the card's larger worry and it is a false alarm. `-c` is a short
+option, clap accepts an attached value on a short option, so codex received
+`-c` with the value `" model_reasoning_effort=high"` — leading space included —
+and its override parser trims the key. Evidence, on codex-cli 0.147.0, with no
+tokens spent:
+
+```
+$ codex debug -c model_provider=doesnotexist prompt-input
+Error: Model provider `doesnotexist` not found
+$ codex debug "-c model_provider=doesnotexist" prompt-input
+Error: Model provider `doesnotexist` not found
+$ codex debug -c " model_provider=doesnotexist" prompt-input
+Error: Model provider `doesnotexist` not found
+```
+
+All three forms apply the override identically, which is the same argv shape
+the pre-fix codex dispatch produced. `model_reasoning_effort` is not validated
+locally, so the probe uses `model_provider`, which resolves at startup and
+fails loudly — the same override mechanism, made observable. No past codex
+stage needs its effort setting re-read.
+
+A long option has no equivalent forgiveness, which is why only the claude
+family crashed. That asymmetry is the whole reason one half of this bug was
+loud and the other silent.
+
+**Regression test against the pre-fix commit.** The pre-fix tree was
+reconstructed with `git archive HEAD | tar -x -C <tmp>` and the new smoke
+copied in:
+
+```
+== effort argv construction (card 30) ==
+  FAIL: models.sh has no effort_argv_for_family — pre-fix tree, effort
+        flags are emitted space-joined and collapse to one argument
+effort-flags-smoke: FAIL
+prefix exit=1
+fixed exit=0
+```
+
+The collapse itself, reproduced against the pre-fix `models.sh` under the spawn
+scripts' own `IFS`:
+
+```
+$ IFS=$'\n\t'; f="$(effort_flags_for_family claude high)"
+$ set -- claude --model x $f -p prompt; printf '[%s]\n' "$@"
+[claude]
+[--model]
+[x]
+[--effort high]     <- one argument
+[-p]
+[prompt]
+```
+
+**Whether an instant CLI usage error should consume a verifier retry: no.**
+Agreeing with the card. A sub-second exit with a 38-byte log and a usage error
+on stderr is a configuration fault; the second and third attempts cannot
+succeed where the first failed, and they consume the stage's only defence
+against a genuinely flaky verifier. Left unchanged as out of scope — it wants
+its own card, and the shape it needs is a fast-usage-error class that halts the
+stage with a distinct reason rather than exhausting `verifier_attempt_cap`.
+
+**Verification notes for the downstream agent.**
+
+- `bash scripts/effort-flags-smoke.sh` needs no auth, no network and no spend.
+  Nothing in it reaches a real CLI: `op-fetch` is stubbed on `PATH` and records
+  the argv it was handed. Expect 17 PASS lines.
+- Acceptance criteria 2 and 3 ask for real dispatches. The argv capture is the
+  stronger evidence for *delivery* and is what the test asserts on; a live run
+  additionally proves the CLI accepts the flag. For claude that was confirmed
+  directly: `claude --effort bogus -p hi` returns `Warning: Unknown --effort
+  value 'bogus' — ignoring it and using the default effort. Valid values: low,
+  medium, high, xhigh, max.` That is the option parsing and validating, and the
+  list matches `AUTOMETTA_EFFORT_LEVELS` exactly. Contrast the pre-fix
+  `error: unknown option '--effort high'`.
+- Existing suites re-run green: `cost-log-smoke.sh`, `advisor-order-smoke.sh`,
+  `health-check.sh`. `shellcheck -x` on the three changed scripts and the new
+  one reports nothing beyond the pre-existing findings.
+- **The fix is not live for subscriber repos yet.** The CLI is a rendered brew
+  tap; `scripts/install-homebrew-local.sh` has deliberately not been re-run, so
+  an installed `autometta` still carries the collapsing expansion. Verify
+  against this checkout, or re-render first.
+- Known gap, not introduced here: `spawn-verifier-panel.sh` reads no effort
+  field at all, so a panel card's `Verifier effort` has never had any effect.
+  The sdk transport in `spawn-verifier.sh` is likewise inert on effort, which
+  is already documented at the call site. Neither is in this card's scope.
