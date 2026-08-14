@@ -25,4 +25,4 @@ The bench briefs are deliberately multi-stage so the orchestrator has to use the
 
 The bench runs are the fastest signal on whether changes to the contract (or the phat-controller loop on top) have made it harder or easier to drive. Lessons banked in `memory/` cross-reference specific bench entries.
 
-Source of truth for the raw bench tasks themselves is the [`bench-marks`](https://github.com/tw-one/bench-marks) repo; the copies in this directory are sanitised snapshots taken at the point of the run.
+Source of truth for the raw bench tasks themselves is a separate `bench-marks` repo; the copies in this directory are sanitised snapshots taken at the point of the run.

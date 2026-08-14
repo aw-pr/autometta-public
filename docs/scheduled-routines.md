@@ -4,7 +4,7 @@ Operator runbook for the three repo-health monitoring routines. Register each vi
 
 ## Prerequisites
 
-- `gh` authenticated to `origin` (the private remote at `tw-one/autometta`).
+- `gh` authenticated to `origin` (the private remote, `PRIV`).
 - The repo is visible to the hosted routine via `gh` / git HTTPS.
 - For the brew check: Homebrew installed in the hosted environment, or accepted as a local-only smoke test.
 
