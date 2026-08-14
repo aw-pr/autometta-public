@@ -203,18 +203,64 @@ and nothing else overwrites a pre-existing reason on subsequent ticks:
 - `wall-clock-cap` — `wall_clock_elapsed_seconds >= wall_clock_cap_seconds`.
 - `tick-cap` — `clock_ticks_used >= clock_tick_cap`.
 - `failure-cap` — `consecutive_failures >= consecutive_failure_cap`.
-- `dirty-working-tree` — the repo working tree was not clean when the
-  tick attempted to advance state.
 - `yq-missing` — the `yq` binary required to read `state/state.yaml`
   was not on PATH.
 - `invalid-stage-id` — `current_stage` (or a referenced stage id) failed
   the id-format validator.
+
+`dirty-working-tree` is retired as of the worktree-per-run backport (see
+below): dispatch happens in an ephemeral sibling worktree, never
+`repo_root`, so `commit_state_branch` no longer guards on a clean tree
+before committing state files. Any budget file with this reason recorded
+from before the backport is historical only; `budget_ensure_window`
+clears it at the start of the next run window regardless of reason (see
+"Budget window auto-reset" below), so it is not sticky.
 
 `budget_check_caps` distinguishes "real cap hit this tick" (return code
 1; one of the first four strings is selected via the
 `BUDGET_CHECK_LAST_HIT` side channel) from "already halted on a previous
 tick" (return code 2; caller must preserve the recorded reason rather
 than overwrite it).
+
+### Worktree-per-run dispatch
+
+Backported from the emergence-viewer stage-44 pilot (`memory/adopters/
+emergence-viewer/feedback-worktree-dispatch-thinned-preflight.md`). Each
+stage dispatches into an ephemeral sibling worktree (`../<repo>-run-<stage-id>`,
+branch `autometta/<stage-id>`) cut from a base branch resolved by
+`resolve_base_branch` in `tick.sh` (the subscriber/manifest `base_branch`
+field if set, else the repo's current branch at dispatch time). The stage's
+`base_branch` is persisted to `state/state.yaml` at dispatch so a later PASS
+can detect whether the base moved in the meantime.
+
+`repo_root`'s `state/` directory stays the single source of truth for
+`state.yaml`, `budget.json`, logs, handoff envelopes, and verifier
+artefacts — the worktree gets a symlink (`state -> ../<repo>/state`) rather
+than its own copy, so a worker or verifier writing to a `state/...`-relative
+path (as the worker/verifier prompt templates already instruct) lands in
+the shared location without any template change.
+
+On PASS, `tick.sh` commits the worker's non-state changes on the run branch
+inside the worktree, then fast-forwards the base branch to it if the base
+hasn't moved; if the base has moved, it pushes the run branch to `origin`
+instead and appends a note to `HANDOFF.md`, leaving branch and worktree
+standing for manual integration. On FAIL, both are always left standing for
+operator review — `scripts/requeue-stage.sh` / the `autometta-requeue`
+skill remove them before a re-dispatch.
+
+### Budget window auto-reset
+
+`budget_ensure_window` (in `scripts/budget.sh`) runs at the start of
+`_process_repo_locked`, before `budget_check_caps`. It compares
+`state/budget.json`'s `window_started_at` (a UTC calendar date) to today;
+on a mismatch, a *halted or at-cap* budget has every counter — including
+`consecutive_failures` — zeroed, `halted`/`halt_reason`/`halted_at`
+cleared, and caps left untouched, with a log line recording the reset. A
+healthy budget crossing the same boundary is only re-stamped, not zeroed,
+so an in-progress run spanning midnight UTC is unaffected. Within a
+window this is a no-op: a halt or cap hit (including `failure-cap`) still
+holds, and `consecutive_failures` keeps accumulating and can still halt
+the loop mid-window.
 
 ### Token accounting
 

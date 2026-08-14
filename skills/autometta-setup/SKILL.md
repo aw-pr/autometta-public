@@ -110,7 +110,7 @@ Copy `templates/stage-card.md` to a per-repo location and fill it in. Convention
 
 A human orchestrator (Claude Code session opened in the target repo) reads the orchestrator-checklist and:
 
-1. **Pre-flight: confirm a clean working tree.** `git status -s` should show no unrelated modifications. Acceptance criteria of the form "no files outside the deliverables set are modified" treat the operator's full working tree as the worker's; any pre-existing dirty file lands as a false-positive FAIL. Stash, revert, or commit on a different branch before dispatch. If a gitignored file is still tracked (the classic `.DS_Store` case), `git rm --cached <file>` and commit.
+1. **Pre-flight: cut a run worktree.** Dispatch never happens in the shared checkout. Declare `Base branch` and `Run branch` (`autometta/<stage-id>`) on the card, then `git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>` (removing any worktree/branch left by a prior attempt first). The worker and verifier work only there, so the operator's working tree — dirty or clean — is never a dispatch precondition. See `templates/orchestrator-checklist.md` ("Worktree dispatch pre-flight").
 2. Picks a worker tier and family. For shell-script or template work, cross-family is the default (Codex worker if orchestrator is Claude). For prose-heavy content, same-family is fine but cross-family verification still applies.
 3. Renders the worker prompt by filling placeholders in `templates/worker-prompt.md`.
 4. Dispatches the worker. With Autometta's `spawn-worker.sh` available (pass 2 vendored), this is one command. Without it, the orchestrator constructs the dispatch directly:
