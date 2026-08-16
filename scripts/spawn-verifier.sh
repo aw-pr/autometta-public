@@ -240,6 +240,7 @@ main() {
   if [[ "$codex_sandbox" == "danger-full-access" ]]; then
     log_msg "verifier runs codex unsandboxed: card declares Requires GUI (${stage_id})"
   fi
+  codex_state_argv_for_repo "$repo_root"
   log_path="$logs_dir/${stage_id}-verifier.log"
   artefact_path="state/verifiers/${stage_id}.json"
   prompt="$(render_prompt "$work_dir" "$card_path" "$stage_id" "$verifier_identity" "$artefact_path")"
@@ -294,9 +295,9 @@ main() {
     codex)
       # shellcheck disable=SC2086
       if [[ -n "$codex_home_override" ]]; then
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       else
-        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)
