@@ -92,6 +92,8 @@ else
   "version": 1,
   "token_cap_total": 1000000,
   "tokens_spent": 0,
+  "lifetime_tokens_spent": 0,
+  "breaches": [],
   "wall_clock_cap_seconds": 3600,
   "wall_clock_elapsed_seconds": 0,
   "clock_tick_cap": 100,
