@@ -6,12 +6,30 @@ IFS=$'\n\t'
 # COMPLETED panel (last N stages across all subscribed repos that ended with
 # status: passed), in a refresh loop suitable for the left tmux pane.
 #
-# Args: [--once]
+# Args: [--once] [--repo <path>]
+#
+# --repo scopes the status.sh table to a single subscriber (passed through
+# verbatim); the COMPLETED panel stays global — it is cheap and useful
+# context even when the pane is otherwise scoped to one repo.
 
 once=false
-if [[ "${1:-}" == "--once" ]]; then
-  once=true
-fi
+repo_filter=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --once)
+      once=true
+      shift
+      ;;
+    --repo)
+      [[ $# -ge 2 ]] || { printf 'usage: %s [--once] [--repo <path>]\n' "$(basename "$0")" >&2; exit 1; }
+      repo_filter=(--repo "$2")
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
@@ -23,7 +41,7 @@ render_once() {
   printf 'Autometta status ticker — %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   if [[ -x "$script_dir/status.sh" ]]; then
-    "$script_dir/status.sh" || true
+    "$script_dir/status.sh" "${repo_filter[@]}" || true
   else
     printf 'status.sh unreachable at %s\n' "$script_dir/status.sh"
   fi

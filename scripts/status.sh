@@ -105,7 +105,42 @@ print_repo() {
   printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "on" "$current_stage" "$status" "ticks:${tick_count}/fail:${failures}" "$pid_summary $log_path"
 }
 
+usage() {
+  printf 'Usage: %s [--repo <path>]\n' "$(basename "$0")" >&2
+  exit 1
+}
+
+resolve_path() {
+  local input_path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$input_path" 2>/dev/null || printf '%s' "$input_path"
+  else
+    python3 - "$input_path" <<'PY' 2>/dev/null || printf '%s' "$input_path"
+import os
+import sys
+print(os.path.realpath(sys.argv[1]))
+PY
+  fi
+}
+
 main() {
+  local filter_repo=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -ge 2 ]] || usage
+        filter_repo="$(resolve_path "$2")"
+        shift 2
+        ;;
+      -*)
+        usage
+        ;;
+      *)
+        usage
+        ;;
+    esac
+  done
+
   if [[ ! -d "$subscribers_dir" ]]; then
     printf 'MISSING subscribers dir %s\n' "$subscribers_dir" >&2
     exit 1
@@ -129,16 +164,31 @@ main() {
     done
     printf 'latest controller log: %s\n' "${latest_log:-"-"}"
   fi
+  if [[ -n "$filter_repo" ]]; then
+    printf 'scoped to repo: %s\n' "$filter_repo"
+  fi
   printf '\n'
   printf '%-24s %-8s %-18s %-14s %-18s %s\n' "repo" "enabled" "stage" "status" "budget" "process/log"
   printf '%-24s %-8s %-18s %-14s %-18s %s\n' "------------------------" "--------" "------------------" "--------------" "------------------" "-----------"
 
-  local subscriber_file
+  local subscriber_file matched=0
   for subscriber_file in "$subscribers_dir"/*.yaml; do
     [[ -e "$subscriber_file" ]] || continue
     [[ "$(basename "$subscriber_file")" == "template.yaml" ]] && continue
+    if [[ -n "$filter_repo" ]]; then
+      local sub_repo_path sub_repo_resolved
+      sub_repo_path="$(read_field "$subscriber_file" "repo_path")"
+      [[ -n "$sub_repo_path" ]] || continue
+      sub_repo_resolved="$(resolve_path "$sub_repo_path")"
+      [[ "$sub_repo_resolved" == "$filter_repo" ]] || continue
+      matched=1
+    fi
     print_repo "$subscriber_file"
   done
+
+  if [[ -n "$filter_repo" && "$matched" -eq 0 ]]; then
+    printf '(no subscriber matches --repo %s)\n' "$filter_repo"
+  fi
 }
 
 main "$@"
