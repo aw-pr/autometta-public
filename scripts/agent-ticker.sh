@@ -164,12 +164,46 @@ PY
   fi
   printf '\n'
 
-  printf 'RECENT (last 5)\n'
+  local recent_max_age_days="${PHAT_CONTROLLER_RECENT_MAX_AGE_DAYS:-7}"
+  # Live worker-log tail: when a stage is actually in_progress, show the
+  # tail of its worker log directly in this pane so the operator does not
+  # have to go hunting for the log path while a worker is running.
+  #
+  # The log lives under the canonical repo's state/logs, not the run
+  # worktree's: spawn-worker.sh is passed repo_root and writes there, so this
+  # path survives worktree-per-run dispatch unchanged.
+  #
+  # A `claude -p` worker writes nothing until it finishes and then emits the
+  # whole log in one burst (lessons.md gotcha 6), so an empty file here is
+  # normal rather than a stalled worker. Say so, or the panel invites exactly
+  # the wrong conclusion at exactly the wrong moment.
+  if [[ -f "$state_path" ]] && command -v yq >/dev/null 2>&1; then
+    local live_stage live_status
+    live_stage="$(yq -r '.current_stage // ""' "$state_path" 2>/dev/null || true)"
+    if [[ -n "$live_stage" && "$live_stage" != "null" ]]; then
+      live_status="$(STAGE_ID="$live_stage" yq -r '.stages[] | select(.id == strenv(STAGE_ID)) | .status // ""' "$state_path" 2>/dev/null || true)"
+      if [[ "$live_status" == "in_progress" ]]; then
+        local live_log="$repo_root/state/logs/${live_stage}-worker.log"
+        printf 'LIVE (%s worker log, tail -n 8)\n' "$live_stage"
+        if [[ -s "$live_log" ]]; then
+          tail -n 8 "$live_log" | sed 's/^/  /'
+        elif [[ -f "$live_log" ]]; then
+          printf '  (log is still empty; a claude worker writes nothing until it exits)\n'
+        else
+          printf '  (no worker log yet at %s)\n' "$live_log"
+        fi
+        printf '\n'
+      fi
+    fi
+  fi
+
+  printf 'RECENT (last 5, max %sd old)\n' "$recent_max_age_days"
   if [[ -d "$recent_dir" ]]; then
-    python3 - "$recent_dir" <<'PY' || true
+    python3 - "$recent_dir" "$recent_max_age_days" <<'PY' || true
 import json, os, sys
 from datetime import datetime, timezone
 d = sys.argv[1]
+max_age_days = float(sys.argv[2])
 now = datetime.now(timezone.utc)
 def age(ts):
     if not ts:
@@ -183,17 +217,21 @@ def age(ts):
     if s < 3600:  return f"{s//60}m ago"
     if s < 86400: return f"{s//3600}h{(s%3600)//60}m ago"
     return f"{s//86400}d ago"
+cutoff = now.timestamp() - (max_age_days * 86400)
 files = []
 try:
     for n in os.listdir(d):
         if n.endswith(".json"):
             p = os.path.join(d, n)
-            files.append((os.path.getmtime(p), p))
+            mtime = os.path.getmtime(p)
+            if mtime < cutoff:
+                continue
+            files.append((mtime, p))
 except FileNotFoundError:
     pass
 files.sort(reverse=True)
 if not files:
-    print("  (none)")
+    print(f"  (none in the last {max_age_days:g}d)")
 else:
     RED, RESET = "\033[31m", "\033[0m"
     FAIL_OUTCOMES = {"fail", "failed", "verifier_failed", "stalled", "error", "stuck"}
@@ -219,7 +257,7 @@ else:
             pass
 PY
   else
-    printf '  (none)\n'
+    printf '  (none in the last %sd)\n' "$recent_max_age_days"
   fi
   printf '\n'
 

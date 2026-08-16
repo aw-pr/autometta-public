@@ -64,13 +64,28 @@ The tmux viewer has three panes: the left pane prints a status snapshot, the
 top-right pane tails the latest controller log, and the bottom-right pane
 runs the **agent ticker** (`scripts/agent-ticker.sh`). The ticker refreshes
 every five seconds (override with `PHAT_CONTROLLER_TICKER_INTERVAL`) and
-shows three sections:
+shows up to four sections:
 
 - `ACTIVE`: each agent currently in flight, with flags from the heartbeat
   watchdog (`fresh` / `silent` / `over-budget`).
-- `RECENT`: the last five completed agents with their outcomes.
+- `LIVE`: only while a stage is genuinely `in_progress` — the last eight
+  lines of `state/logs/<stage>-worker.log`, so the running worker's output
+  is in the pane rather than behind a path the operator has to go and find.
+  A `claude -p` worker writes nothing until it exits and then emits the
+  whole log at once (`docs/lessons.md` gotcha 6), so the panel says the log
+  is empty rather than leaving a blank that reads as a stalled worker.
+- `RECENT`: the last five completed agents with their outcomes, dropping
+  anything older than `PHAT_CONTROLLER_RECENT_MAX_AGE_DAYS` (default 7)
+  first. `ACTIVE` and `SCHEDULED` were already time-scoped; `RECENT` was
+  the outlier, and a repo idle for months showed two-month-old runs as
+  though they were current.
 - `SCHEDULED`: stage cards classified as `in_flight | pending`, derived
   from `manifest_patterns` and the PLAN.md status table.
+
+Both panes on the left and top-right are scoped to the attached repo:
+`scripts/status.sh --repo <path>` narrows the status table to one
+subscriber, and the log pane filters the shared tick log to lines naming
+that repo's path.
 
 It is an operator cockpit only. It must not dispatch `autometta tick`, send
 commands to workers, or keep state that cannot be reconstructed from the
