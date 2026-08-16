@@ -199,6 +199,69 @@ print(int(dt.timestamp()))
 PY
 }
 
+# A dead dispatch with no completion artefact is a configuration fault only
+# when the remaining evidence agrees: it ended almost immediately, produced a
+# tiny log, and that log contains a CLI usage, executable, or auth-route error.
+# Keeping this conjunction narrow means an ordinary verifier crash still uses
+# the existing bounded retry path.
+is_instant_dispatch_configuration_fault() {
+  local log_path="$1"
+  local started_at="$2"
+  local completion_path="$3"
+
+  [[ ! -e "$completion_path" && -f "$log_path" ]] || return 1
+
+  local log_size
+  log_size="$(wc -c < "$log_path" 2>/dev/null | tr -d '[:space:]')"
+  [[ "$log_size" =~ ^[0-9]+$ ]] || return 1
+  (( log_size > 0 && log_size <= 512 )) || return 1
+
+  local started_epoch log_epoch elapsed
+  if [[ "$started_at" =~ ^[0-9]+$ ]]; then
+    started_epoch="$started_at"
+  else
+    started_epoch="$(stage_started_epoch "$started_at" 2>/dev/null || true)"
+  fi
+  [[ "$started_epoch" =~ ^[0-9]+$ ]] || return 1
+  if ! log_epoch="$(stat -f '%m' "$log_path" 2>/dev/null)"; then
+    log_epoch="$(stat -c '%Y' "$log_path" 2>/dev/null || true)"
+  fi
+  [[ "$log_epoch" =~ ^[0-9]+$ ]] || return 1
+  elapsed=$((log_epoch - started_epoch))
+  (( elapsed >= 0 && elapsed <= 2 )) || return 1
+
+  grep -Eiq \
+    "unknown (option|argument)|unrecognized (option|argument)|unexpected argument|invalid (option|argument)|^usage:|command not found|no such file or directory|not logged in|auth-route resolver failed|op-fetch not on path|requires .*auth_mode" \
+    "$log_path"
+}
+
+halt_dispatch_configuration_fault() {
+  local repo_root="$1"
+  local stage_id="$2"
+  local role="$3"
+  local state_yaml="$repo_root/state/state.yaml"
+
+  if [[ "$role" == "verifier" ]]; then
+    # Attempts are reserved immediately before spawn. Return this one because
+    # argument parsing failed before verification began.
+    state_apply_json "$state_yaml" \
+      '(.stages[] | select(.id == $id)).verifier_attempts = ([((.stages[] | select(.id == $id) | .verifier_attempts // 0) - 1), 0] | max)
+       | (.stages[] | select(.id == $id)).verifier_pid = null
+       | (.stages[] | select(.id == $id)).status = "stalled"
+       | (.stages[] | select(.id == $id)).stall_marker = ("dispatch_configuration_fault:" + $role)
+       | .current_stage = null' \
+      --arg id "$stage_id" --arg role "$role"
+  else
+    state_apply_json "$state_yaml" \
+      '(.stages[] | select(.id == $id)).worker_pid = null
+       | (.stages[] | select(.id == $id)).status = "stalled"
+       | (.stages[] | select(.id == $id)).stall_marker = ("dispatch_configuration_fault:" + $role)
+       | .current_stage = null' \
+      --arg id "$stage_id" --arg role "$role"
+  fi
+  budget_halt "$repo_root" "dispatch-configuration-fault"
+}
+
 # Apply a jq filter to state.yaml. Pass values via --arg / --argjson rather
 # than string interpolation: a stage id with a quote or backslash would
 # otherwise break the filter (or worse). Trailing args are forwarded to jq.
@@ -952,6 +1015,15 @@ _process_repo_locked() {
           return 0
         fi
 
+        if [[ ! -f "$repo_root/state/handoffs/${current_stage}.json" ]] \
+           && is_instant_dispatch_configuration_fault \
+                "$worker_log_path" "$started_at" "$repo_root/state/handoffs/${current_stage}.json"; then
+          halt_dispatch_configuration_fault "$repo_root" "$current_stage" worker
+          log "stage ${current_stage} halted: worker exited before starting because its dispatch configuration is invalid (dispatch-configuration-fault)"
+          commit_state_branch "$repo_root"
+          return 0
+        fi
+
         local worker_work_dir_acct worker_start_epoch
         worker_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$current_stage")"
         worker_start_epoch="$(role_started_epoch "$state_yaml" "$current_stage" worker)"
@@ -1065,6 +1137,17 @@ _process_repo_locked() {
           return 0
         fi
 
+        local stale_verifier_started_at
+        stale_verifier_started_at="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_started_at // empty')"
+        if is_instant_dispatch_configuration_fault \
+             "$stale_verifier_log_path" "$stale_verifier_started_at" \
+             "$repo_root/state/verifiers/${current_stage}.json"; then
+          halt_dispatch_configuration_fault "$repo_root" "$current_stage" verifier
+          log "stage ${current_stage} halted: verifier exited before verification because its dispatch configuration is invalid; reserved attempt returned (dispatch-configuration-fault)"
+          commit_state_branch "$repo_root"
+          return 0
+        fi
+
         local stale_work_dir_acct stale_start_epoch
         stale_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$current_stage")"
         stale_start_epoch="$(role_started_epoch "$state_yaml" "$current_stage" verifier)"
@@ -1120,11 +1203,18 @@ _process_repo_locked() {
         --arg id "$current_stage" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       local verifier_work_dir
       verifier_work_dir="$(worktree_path_for_stage "$repo_root" "$current_stage")"
+      local verifier_spawn_rc=0
       if [[ -d "$verifier_work_dir" ]]; then
-        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root" "$verifier_work_dir"
+        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root" "$verifier_work_dir" || verifier_spawn_rc=$?
       else
         log "run worktree missing for ${current_stage} at ${verifier_work_dir}, verifying against ${repo_root} (deprecated fallback)"
-        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root"
+        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root" || verifier_spawn_rc=$?
+      fi
+      if (( verifier_spawn_rc != 0 )); then
+        halt_dispatch_configuration_fault "$repo_root" "$current_stage" verifier
+        log "stage ${current_stage} halted: verifier dispatch command failed before an agent started (dispatch-configuration-fault, exit ${verifier_spawn_rc}); reserved attempt returned"
+        commit_state_branch "$repo_root"
+        return 0
       fi
     else
       state_apply_json "$state_yaml" \
@@ -1170,7 +1260,12 @@ _process_repo_locked() {
           state_apply_json "$state_yaml" \
             '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | (.stages[] | select(.id == $id)).base_branch = $base | .current_stage = $id' \
             --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch"
-          "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
+          local worker_spawn_rc=0
+          "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
+          if (( worker_spawn_rc != 0 )); then
+            halt_dispatch_configuration_fault "$repo_root" "$next_stage" worker
+            log "stage ${next_stage} halted: worker dispatch command failed before an agent started (dispatch-configuration-fault, exit ${worker_spawn_rc})"
+          fi
         fi
       fi
     fi

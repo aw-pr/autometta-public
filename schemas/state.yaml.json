@@ -80,7 +80,7 @@
             "type": "integer",
             "minimum": 0,
             "default": 0,
-            "description": "Count of verifier dispatches that have completed without producing an artefact. Tick.sh increments before each dispatch; stage moves to stalled when this hits the cap (currently 3)."
+            "description": "Count of verifier dispatches reserved or completed without producing an artefact. Tick.sh increments before each dispatch and returns the reservation if the process exits instantly with a classified dispatch-configuration fault. A genuine verifier failure keeps the attempt, and the stage moves to stalled when the count hits the cap (currently 3)."
           },
           "stall_marker": {
             "type": ["string", "null"],
