@@ -86,6 +86,10 @@
             "type": ["string", "null"],
             "description": "Free-text marker written by tick.sh when stalling a stage; carries the stall reason and pid."
           },
+          "worker_envelope": {
+            "type": ["string", "null"],
+            "description": "Set to 'partial' when the worker's handoff envelope reported status=partial. The stage still proceeds to verifier dispatch \u2014 partial is the worker's annotation, not a verdict \u2014 and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
+          },
           "base_branch": {
             "type": ["string", "null"],
             "description": "Base branch this stage's run worktree (autometta/<id>) was cut from, resolved at dispatch time by resolve_base_branch in tick.sh: the subscriber/manifest 'base_branch' field if set, else the repo's current branch at dispatch. Null for a stage dispatched before worktree-per-run landed (deprecated repo_root-commit path). Persisted rather than re-resolved so a PASS can detect whether base moved since dispatch."

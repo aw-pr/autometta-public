@@ -1084,22 +1084,37 @@ _process_repo_locked() {
         local env_status_val
         env_status_val="$(jq -r '.status' "$envelope_path")"
 
-        # fail or partial: do not dispatch verifier.
-        if [[ "$env_status_val" == "fail" || "$env_status_val" == "partial" ]]; then
+        # fail: the worker itself says the run did not succeed. Do not
+        # dispatch a verifier over a run its own author disowns.
+        if [[ "$env_status_val" == "fail" ]]; then
           state_apply_json "$state_yaml" \
             '(.stages[] | select(.id == $id)).status = "failed"
              | (.stages[] | select(.id == $id)).stall_marker = $notes
              | .current_stage = null' \
             --arg id "$current_stage" --arg notes "$env_notes_val"
           budget_record_failure "$repo_root"
-          log "stage ${current_stage} failed: worker envelope status=${env_status_val}; notes: ${env_notes_val}"
+          log "stage ${current_stage} failed: worker envelope status=fail; notes: ${env_notes_val}"
           budget_increment_tick "$repo_root"
           commit_state_branch "$repo_root"
           return 0
         fi
 
-        # status=pass: fall through to verifier dispatch below.
-        log "stage ${current_stage} worker envelope status=pass, proceeding to verifier dispatch"
+        # partial: a worker-side annotation, not a verdict. The contract
+        # (docs/handoff-envelope.md) says partial means "substantially done,
+        # some criteria deferred" and that acceptability is the verifier's
+        # call, not the worker's. Treating it as fail throws away a
+        # verify-green build because the worker was honest about what its
+        # sandbox stopped it checking -- which is precisely the case the
+        # sandbox boundary is designed to produce. Record it on the stanza so
+        # spawn-verifier.sh can hand the deferred criteria to the verifier as
+        # a checklist, then take the same path as pass.
+        if [[ "$env_status_val" == "partial" ]]; then
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).worker_envelope = "partial"' \
+            --arg id "$current_stage"
+        fi
+
+        log "stage ${current_stage} worker envelope status=${env_status_val}, proceeding to verifier dispatch"
       fi
 
       if [[ -n "${verifier_pid:-}" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
