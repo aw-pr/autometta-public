@@ -76,6 +76,15 @@
       "format": "date-time",
       "description": "ISO 8601 timestamp when the halt was triggered."
     },
+    "paused_until": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Epoch seconds until which dispatch is suspended because the provider refused for a limit reason (subscription window exhausted, 429, overload). A pause is not a halt: no cap was breached, no stage failed, and the loop resumes by itself once the clock passes this value. Ticks still fire and still perform bookkeeping while paused; they simply do not dispatch. Null when not paused."
+    },
+    "paused_reason": {
+      "type": ["string", "null"],
+      "description": "The provider refusal line that caused the pause, recorded verbatim for the dashboard and the operator. Null when not paused."
+    },
     "window_started_at": {
       "type": ["string", "null"],
       "format": "date",

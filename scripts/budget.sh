@@ -153,6 +153,43 @@ budget_ensure_window() {
   fi
 }
 
+# budget_pause_until: suspend dispatch until an epoch second, because the
+# provider refused for a limit reason rather than because anything failed.
+#
+# Distinct from budget_halt on purpose. A halt is terminal for the window and
+# means a cap was breached; a pause means the work has not been attempted yet
+# and the loop should pick it up by itself once the window resets. Nothing
+# about the stage is marked bad, no failure is recorded, and no cap moves.
+budget_pause_until() {
+  local repo_root="$1"
+  local until_epoch="$2"
+  local reason="${3:-provider limit}"
+  if [[ ! "$until_epoch" =~ ^[0-9]+$ ]]; then
+    printf 'budget_pause_until: rejecting non-numeric epoch %q\n' "$until_epoch" >&2
+    return 0
+  fi
+  budget_write_atomic "$repo_root" \
+    ".paused_until = ${until_epoch} | .paused_reason = $(printf '%s' "$reason" | jq -Rs .)"
+}
+
+# budget_pause_active: succeed (0) when dispatch is currently suspended.
+# Clears an elapsed pause on the way past so the loop self-heals without an
+# operator, and prints nothing either way.
+budget_pause_active() {
+  local repo_root="$1"
+  local budget_path paused now
+  budget_path="$(budget_file "$repo_root")"
+  paused="$(jq -r '.paused_until // empty' "$budget_path")"
+  [[ -n "$paused" && "$paused" =~ ^[0-9]+$ ]] || return 1
+  now="$(date -u +%s)"
+  if (( now < paused )); then
+    return 0
+  fi
+  budget_write_atomic "$repo_root" '.paused_until = null | .paused_reason = null'
+  printf 'budget_pause_active: pause elapsed, resuming dispatch for %s\n' "$repo_root" >&2
+  return 1
+}
+
 budget_halt() {
   local repo_root="$1"
   local reason="$2"
