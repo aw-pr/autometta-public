@@ -265,3 +265,29 @@ For the evidence: `lifetime_tokens_spent` is monotonic and nothing resets it, an
 `scripts/budget-cap-smoke.sh` asserts all of it against temporary budget files with no auth, network or spend, and carries the 31 real dispatch sizes as its replay fixture. Run against the pre-fix commit it reports `halted after 31 of 31 dispatches at 149752682 tokens`, the incident's own figure.
 
 The general rule: a safety check belongs at the point of the action it guards, not at the top of the loop that eventually performs it. And any mechanism that resets a safety counter must first write down what it is resetting, or the failure it is hiding is the one nobody will ever be shown.
+
+## Headless gotcha 14: the sandbox refused the one write the loop was waiting for
+
+### One-sentence summary
+A run worktree's `state/` is a symlink out of the tree, codex's `workspace-write` sandbox makes only the `-C` root writable, so a sandboxed role did its work, passed, and was recorded as a failure because the single artefact proving it had passed was the one write the sandbox refused.
+
+### Incident origin
+2026-08-16, stage `31-budget-cap-did-not-stop-dispatch`. The verifier ran three times, reached `"overall": "PASS"` all three times, and said so in its own log:
+
+> Operational blocker: state is a symlink to `../autometta/state` outside the permitted writable root, so the sandbox refused creation of `state/verifiers/31-budget-cap-did-not-stop-dispatch.json`. This JSON is therefore returned here but was not written to disk.
+
+`ensure_run_worktree` points `state/` at the subscriber's real state dir so every role shares one set of envelopes, logs and budget rather than a per-worktree copy, which is correct and worth keeping. But codex is invoked with `-C "$work_dir" --sandbox workspace-write`, and the symlink target sits outside `$work_dir`. codex resolves the link when it checks a write, so the refusal is on the physical path and no amount of worktree-relative addressing avoids it.
+
+`tick.sh` uses the envelope as its *sole* completion signal. No artefact is read as a failed attempt. Three of those tripped `consecutive_failure_cap`, the stage was marked `stalled`, and 8.8M tokens of verified, correct work sat in a worktree that nothing was going to merge. The stage that was lost this way was, with some irony, the fix for the budget cap.
+
+Two things made it expensive rather than merely annoying. The verifier's own prose *named the cause exactly*, in a log nobody reads while a stage looks like it is simply failing. And the retry was the worst possible response: the refusal is deterministic, so every retry re-ran a full verifier dispatch, paid for it, and failed identically.
+
+### Failure mode if ignored
+This is the inverse of gotcha 13 and the more insidious of the two. There the visible signals said success and the hidden file said failure; here the visible signal says failure and the work is fine. An operator reading `stalled` and `consecutive_failures: 3` concludes the model could not do the task, re-briefs the card, and pays again for work that was already correct — while the actual defect is one flag in the dispatch line. Any completion signal carried by a *side effect* rather than a return value inherits the permissions of the thing producing it, and a permission failure is then indistinguishable from a work failure.
+
+### Mitigation
+`codex_state_argv_for_repo` in `scripts/models.sh` emits `--add-dir <resolved state dir>`, and both spawn scripts pass it on every codex dispatch. It widens the sandbox to the symlink's target and nothing else. The path is deliberately the resolved physical one (`pwd -P`), since that is what codex checks against. A repo with no `state/` yields an empty argv rather than failing, so a caller that has not adopted worktree-per-run dispatch is unaffected. Claude roles are unsandboxed and need nothing.
+
+Verified A/B against the real CLI with the same prompt and sandbox, the flag the only difference: without it, `Write failed: unable to create state/.probe`; with it, the write lands in the shared dir. `scripts/state-writable-smoke.sh` asserts the argv construction, the symlink resolution that is the whole point, and the graceful degradation when `state/` is absent, against a stub `op-fetch` so it needs no auth, network or spend. It fails closed on a pre-fix tree.
+
+The general rule: when a loop treats "artefact absent" as "agent failed", make sure the agent could physically have written it. A sandbox boundary that cuts through a completion signal converts every permission error into a false verdict about the work — and the retry that follows is guaranteed to cost the same and fail the same way.
