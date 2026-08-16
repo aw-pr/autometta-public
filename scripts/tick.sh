@@ -268,6 +268,25 @@ role_started_epoch() {
   fi
 }
 
+# dispatch_made_no_progress: succeed (0) only when a claude-family role
+# provably never completed a turn — its transcript directory exists but
+# records no usage since dispatch. Returns 1 whenever progress is unknown:
+# the codex family writes no Claude transcript, and absence of evidence is
+# not evidence of absence. Callers use this to avoid paying for a
+# re-dispatch that is already known to be futile.
+dispatch_made_no_progress() {
+  local work_dir="$1"
+  local since_epoch="$2"
+  local identity="$3"
+  [[ -n "$work_dir" ]] || return 1
+  [[ "$(costlog_family_for_identity "$identity")" == "claude" ]] || return 1
+  local dir
+  dir="$(budget_transcript_dir "$work_dir")"
+  [[ -n "$dir" && -d "$dir" ]] || return 1
+  [[ -z "$(budget_parse_tokens_from_transcript "$work_dir" "$since_epoch")" ]] || return 1
+  return 0
+}
+
 stage_snapshot_tokens() {
   local repo_root="$1"
   local state_yaml="$2"
@@ -998,11 +1017,41 @@ _process_repo_locked() {
         # Cost-log: a verifier died without an artefact. Record its spend
         # against this stage with result=aborted before we re-dispatch.
         costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "aborted"
+        # Record whether this dead verifier ever completed a turn, for the
+        # re-dispatch decision below.
+        stale_verifier_died_dead_on_arrival=""
+        if dispatch_made_no_progress "$stale_work_dir_acct" "$stale_start_epoch" \
+             "$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
+                '.stages[] | select(.id == $id) | .verifier // empty')"; then
+          stale_verifier_died_dead_on_arrival=1
+        fi
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).verifier_pid = null' \
           --arg id "$current_stage"
         verifier_pid=""
       fi
+      # A verifier that died without an artefact AND without completing a
+      # single turn never got going at all (bad flag, auth failure, SIGHUP —
+      # see lessons.md gotchas 9 and 12). Re-dispatching spends another full
+      # context to fail identically, so stall on the first such death rather
+      # than walking the attempt cap. This is not a circuit breaker in the
+      # sense the load-bearing beliefs reject: there is no backoff and no
+      # retry schedule, it declines a re-dispatch already known to be futile.
+      # A verifier that produced tokens before dying failed mid-flight and
+      # still gets its remaining attempts.
+      if [[ -n "${stale_verifier_died_dead_on_arrival:-}" ]]; then
+        log "verifier for ${current_stage} died without completing a turn (no tokens consumed); not re-dispatching, marking stalled"
+        state_apply_json "$state_yaml" \
+          '(.stages[] | select(.id == $id)).status = "stalled"
+           | (.stages[] | select(.id == $id)).stall_marker = "verifier_dead_on_arrival"
+           | .current_stage = null' \
+          --arg id "$current_stage"
+        budget_record_failure "$repo_root"
+        budget_increment_tick "$repo_root"
+        commit_state_branch "$repo_root"
+        return 0
+      fi
+
       # Bound verifier re-dispatch. A verifier that crashes without writing
       # its artefact would otherwise be re-spawned every tick until the
       # consecutive-failure cap kicks in, which is wasteful and noisy. Cap per-stage
