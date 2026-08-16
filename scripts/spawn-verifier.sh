@@ -328,10 +328,6 @@ main() {
           advisor_arg=(--advisor "$claude_advisor")
           log_msg "verifier-advisor: ${claude_advisor} (Fable-as-advisor; request model does the reading)"
         fi
-        # No effort override here: the sdk verifier takes --model but has no
-        # effort argument, so a card's "Verifier effort" is silently inert on
-        # this transport. Cards that need a declared effort must run the cli
-        # transport until verify-sdk grows the argument.
         # shellcheck disable=SC2086
         ( cd "$work_dir" && op-fetch $auth_pairs -- \
             python3 "$sdk_script" \
@@ -340,6 +336,7 @@ main() {
               --artefact-glob "$artefact_glob" \
               --out "$sdk_out" \
               --model "$(claude_model_for_identity "$verifier_identity")" \
+              ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} \
               ${advisor_arg[@]+"${advisor_arg[@]}"} \
             </dev/null >"$log_path" 2>&1 ) &
       else

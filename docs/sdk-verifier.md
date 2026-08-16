@@ -14,8 +14,11 @@ op-fetch ANTHROPIC_API_KEY="$OP_REF_ANTHROPIC_API_KEY" -- \
     --stage-id 14-auth-route-toggle \
     --card examples/self-host/14-auth-route-toggle.md \
     --artefact-glob 'scripts/auth*.sh' \
-    --out state/verifiers/14-auth-route-toggle.json
+    --out state/verifiers/14-auth-route-toggle.json \
+    --effort high
 ```
+
+`--effort` is optional. The pinned `anthropic==0.100.0` client exposes the same `low`, `medium`, `high`, `xhigh`, and `max` vocabulary through `output_config.effort`. `spawn-verifier.sh` passes a declared card `Verifier effort` to this option. With no declaration, it omits `output_config` and preserves the SDK default.
 
 Exit codes:
 
@@ -138,6 +141,7 @@ artefacts contain personal data.
 | `transport` value other than `cli` or `sdk` | Exits non-zero before spawning any process. |
 | `transport: sdk` + `scripts/verify-sdk.py` missing | Logs a warning and falls back to `cli`. |
 | `transport: sdk` + SDK package missing | `verify-sdk.py` exits `2`; logged to the stage log. |
+| `transport: sdk` + declared `Verifier effort` | Passes the level through `output_config.effort`; it is not discarded. |
 | `advisor` weaker than `--model` (inverted #66714 pair) | `verify-sdk.py` exits `2` before any API call, naming both models. |
 
 ### Artefact glob derivation

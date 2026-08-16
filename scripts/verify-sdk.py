@@ -114,6 +114,11 @@ def parse_args() -> argparse.Namespace:
         help=f"Anthropic model to use for verification (default: {MODEL}).",
     )
     parser.add_argument(
+        "--effort",
+        default=None,
+        help="Optional Anthropic effort level supplied by the card's Verifier effort field.",
+    )
+    parser.add_argument(
         "--advisor",
         default=None,
         help=(
@@ -273,6 +278,7 @@ def run_sdk(
     validator: Any,
     model: str = MODEL,
     advisor: str | None = None,
+    effort: str | None = None,
 ) -> dict[str, Any]:
     """Call the Anthropic API with a cached static block and return the validated envelope.
 
@@ -308,6 +314,8 @@ def run_sdk(
         create_kwargs["extra_body"] = {
             "advisor": {"type": "advisor_20260301", "model": advisor}
         }
+    if effort:
+        create_kwargs["output_config"] = {"effort": effort}
     response = client.messages.create(**create_kwargs)
     usage = response.usage
     write = getattr(usage, "cache_creation_input_tokens", 0) or 0
@@ -365,6 +373,7 @@ def main() -> int:
     out = Path(args.out)
     model = args.model
     advisor = args.advisor
+    effort = args.effort
     verifier_identity = identity_for_model(model)
 
     try:
@@ -379,7 +388,16 @@ def main() -> int:
         static_block = build_static_block(verifier_identity=verifier_identity)
         variable_block = build_variable_block(args.stage_id, card, artefacts, out, verifier_identity=verifier_identity)
         validator = Validator(verifier_schema())
-        envelope = run_sdk(static_block, variable_block, anthropic_api_key, Anthropic, validator, model=model, advisor=advisor)
+        envelope = run_sdk(
+            static_block,
+            variable_block,
+            anthropic_api_key,
+            Anthropic,
+            validator,
+            model=model,
+            advisor=advisor,
+            effort=effort,
+        )
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
         return 0 if envelope["overall"] == "PASS" else 1

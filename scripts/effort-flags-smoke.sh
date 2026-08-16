@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # effort-flags-smoke.sh — offline check that a card's declared effort reaches
-# the CLI as separate argv elements.
+# each verifier transport as separate argv elements.
 #
 # The defect this guards (card 30): models.sh emitted "--effort high" as one
 # space-joined string and both spawn scripts expanded it unquoted, relying on
@@ -18,8 +18,8 @@
 #   2. A dispatched claude worker/verifier passes `--effort` and `high` as two
 #      arguments, never one.
 #   3. The same for a codex role: `-c` and `model_reasoning_effort=high`.
-#   4. A card declaring no effort dispatches with no effort argument at all,
-#      for both families.
+#   4. The SDK and panel verifier routes receive the same separate arguments.
+#   5. A card declaring no effort dispatches with no effort argument at all.
 #
 # Exit 0 on all-pass, 1 on any assertion failure.
 set -euo pipefail
@@ -99,6 +99,38 @@ mkdir -p "$stub_dir"
 cat >"$stub_dir/op-fetch" <<'STUB'
 #!/usr/bin/env bash
 # Capture the argv of the dispatch instead of running it. One element per line.
+if [[ -n "${AUTOMETTA_SMOKE_CAPTURE_DIR:-}" ]]; then
+  model="" out="" previous=""
+  for a in "$@"; do
+    [[ "$previous" == "--model" ]] && model="$a"
+    [[ "$previous" == "--out" ]] && out="$a"
+    previous="$a"
+  done
+  case "$model" in
+    *opus*) label="panel-opus" ;;
+    *sonnet*) label="panel-sonnet" ;;
+    *) label="panel-codex" ;;
+  esac
+  capture="$AUTOMETTA_SMOKE_CAPTURE_DIR/${label}.argv"
+  : >"$capture"
+  for a in "$@"; do printf '%s\n' "$a" >>"$capture"; done
+
+  if [[ -z "$out" ]]; then
+    for a in "$@"; do
+      case "$a" in
+        *'Verifier artefact path:'*)
+          out="$(printf '%s\n' "$a" | sed -n 's/.*Verifier artefact path: `\([^`]*\)`.*/\1/p')"
+          ;;
+      esac
+    done
+  fi
+  if [[ -n "$out" ]]; then
+    mkdir -p "$(dirname "$out")"
+    printf '{"overall":"PASS","criteria":[],"additional_findings":""}\n' >"$out"
+  fi
+  exit 0
+fi
+
 : >"$AUTOMETTA_SMOKE_CAPTURE"
 for a in "$@"; do printf '%s\n' "$a" >>"$AUTOMETTA_SMOKE_CAPTURE"; done
 STUB
@@ -108,8 +140,8 @@ repo="$tmp/repo"
 mkdir -p "$repo/state/logs" "$repo/state/verifiers" "$repo/cards"
 
 write_card() {
-  # write_card <path> <worker-identity> <verifier-identity> <effort-or-empty>
-  local path="$1" worker="$2" verifier="$3" effort="$4"
+  # write_card <path> <worker-identity> <verifier-identity> <effort-or-empty> [panel]
+  local path="$1" worker="$2" verifier="$3" effort="$4" panel="${5:-false}"
   {
     printf '# Stage card\n\n## Metadata\n\n'
     printf -- '- **Worker:** %s\n' "$worker"
@@ -118,8 +150,10 @@ write_card() {
       printf -- '- **Worker effort:** %s\n' "$effort"
       printf -- '- **Verifier effort:** %s\n' "$effort"
     fi
-    printf -- '- **Verifier panel:** false\n\n'
+    printf -- '- **Verifier panel:** %s\n\n' "$panel"
+    printf '## Deliverables\n\n1. `scripts/example.sh`\n\n'
     printf '## Budget\n\n- **Worker wall-clock:** 1 minutes\n'
+    printf -- '- **Verifier wall-clock:** 1 minutes\n'
   } >"$path"
 }
 
@@ -129,8 +163,8 @@ write_state() {
 }
 
 capture_dispatch() {
-  # capture_dispatch <spawn-script> <card> <stage-id> — prints captured argv.
-  local spawn="$1" card="$2" stage_id="$3"
+  # capture_dispatch <spawn-script> <card> <stage-id> [claude-transport]
+  local spawn="$1" card="$2" stage_id="$3" transport="${4:-cli}"
   local capture="$tmp/capture.txt"
   rm -f "$capture"
   write_state "$stage_id"
@@ -140,8 +174,13 @@ capture_dispatch() {
     # Force subscription so the auth route emits no op:// pairs and the stub
     # needs no 1Password service account.
     export AUTOMETTA_CODEX_MODE=subscription
-    export AUTOMETTA_CLAUDE_MODE=subscription
-    export AUTOMETTA_CLAUDE_TRANSPORT=cli
+    if [[ "$transport" == "sdk" ]]; then
+      export AUTOMETTA_CLAUDE_MODE=api
+      export OP_REF_ANTHROPIC_API_KEY='op://smoke/item/key'
+    else
+      export AUTOMETTA_CLAUDE_MODE=subscription
+    fi
+    export AUTOMETTA_CLAUDE_TRANSPORT="$transport"
     "$autometta_root/scripts/$spawn" "$card" "$repo" >/dev/null 2>>"$tmp/spawn.log"
   )
   local waited=0
@@ -150,6 +189,23 @@ capture_dispatch() {
     waited=$((waited + 1))
   done
   cat "$capture" 2>/dev/null || true
+}
+
+capture_panel() {
+  # capture_panel <card> — writes one argv file per panellist.
+  local card="$1"
+  local capture_dir="$tmp/panel-captures"
+  rm -rf "$capture_dir"
+  mkdir -p "$capture_dir"
+  (
+    export PATH="$stub_dir:$PATH"
+    export AUTOMETTA_SMOKE_CAPTURE_DIR="$capture_dir"
+    export AUTOMETTA_CODEX_MODE=subscription
+    export AUTOMETTA_CLAUDE_MODE=api
+    export OP_REF_ANTHROPIC_API_KEY='op://smoke/item/key'
+    "$autometta_root/scripts/spawn-verifier-panel.sh" "$card" "$repo" --read-only \
+      >/dev/null 2>>"$tmp/spawn.log"
+  )
 }
 
 argv_has_adjacent() {
@@ -184,6 +240,23 @@ check "claude verifier passes --effort and high as separate arguments" \
 check "claude verifier passes no argument named '--effort high'" \
   "$(argv_lacks '--effort high' "$argv")"
 
+argv="$(capture_dispatch spawn-verifier.sh "$card" 40-claude-effort sdk)"
+check "SDK verifier passes --effort and high as separate arguments" \
+  "$(argv_has_adjacent '--effort' 'high' "$argv")"
+
+panel_card="$repo/cards/44-panel-effort.md"
+write_card "$panel_card" "$claude_id" "$claude_id" high true
+capture_panel "$panel_card"
+for panellist in panel-opus panel-sonnet panel-codex; do
+  argv="$(cat "$tmp/panel-captures/${panellist}.argv" 2>/dev/null || true)"
+  check "${panellist} passes its effort flag as separate arguments" \
+    "$(if [[ "$panellist" == panel-codex ]]; then
+         argv_has_adjacent '-c' 'model_reasoning_effort=high' "$argv"
+       else
+         argv_has_adjacent '--effort' 'high' "$argv"
+       fi)"
+done
+
 card="$repo/cards/41-codex-effort.md"
 write_card "$card" "$codex_id" "$codex_id" high
 argv="$(capture_dispatch spawn-worker.sh "$card" 41-codex-effort)"
@@ -203,6 +276,28 @@ check "claude worker with no effort field still dispatches" \
   "$(argv_lacks '--effort' "$argv")"
 check "claude worker with no effort field still reaches the CLI" \
   "$([[ "$argv" == *claude* ]] && printf 'ok\n' || printf 'no\n')"
+
+argv="$(capture_dispatch spawn-verifier.sh "$card" 42-no-effort)"
+check "claude CLI verifier with no effort field still dispatches unchanged" \
+  "$(argv_lacks '--effort' "$argv")"
+
+argv="$(capture_dispatch spawn-verifier.sh "$card" 42-no-effort sdk)"
+check "SDK verifier with no effort field still dispatches unchanged" \
+  "$(argv_lacks '--effort' "$argv")"
+
+panel_card="$repo/cards/45-panel-no-effort.md"
+write_card "$panel_card" "$claude_id" "$claude_id" "" true
+capture_panel "$panel_card"
+for panellist in panel-opus panel-sonnet panel-codex; do
+  argv="$(cat "$tmp/panel-captures/${panellist}.argv" 2>/dev/null || true)"
+  if [[ "$panellist" == panel-codex ]]; then
+    check "${panellist} with no effort field dispatches unchanged" \
+      "$(argv_lacks 'model_reasoning_effort' "$argv")"
+  else
+    check "${panellist} with no effort field dispatches unchanged" \
+      "$(argv_lacks '--effort' "$argv")"
+  fi
+done
 
 card="$repo/cards/43-no-effort-codex.md"
 write_card "$card" "$codex_id" "$codex_id" ""

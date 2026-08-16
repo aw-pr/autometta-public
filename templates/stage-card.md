@@ -16,7 +16,7 @@ Stage card template, part of the dispatch-contract pattern library. Reusable in 
 Dispatch happens in an ephemeral worktree cut from the base branch (`git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>`), never in the shared checkout; on PASS the orchestrator fast-forward-merges the run branch back into the base branch (or pushes it, if base moved, and notes that in HANDOFF). Pin both fields to branch names, never commit SHAs. -->
 
 - **Worker effort:** <<low|medium|high|xhigh|max — optional, omit to leave the CLI on its default>>
-- **Verifier effort:** <<low|medium|high|xhigh|max — optional, omit to leave the CLI on its default>>
+- **Verifier effort:** <<low|medium|high|xhigh|max — optional. Honoured by the Claude and Codex CLI routes, the Claude SDK route, and every verifier panel member. Omit to leave each route on its default.>>
 - **Requires GUI:** <<true if any role must drive a browser, screenshot, or otherwise reach the window server; omit otherwise. Codex roles are sandboxed and every browser aborts at NSApplication init without this, headless included. It grants that agent full machine access, so declare it only when the acceptance criteria genuinely need it.>>
 - **Verifier panel:** false
 - **Pairing rationale:** <<why-this-worker-verifier-pair>>

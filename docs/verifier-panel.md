@@ -18,6 +18,8 @@ Set `Verifier panel: true` in the stage card's Metadata section, or export `AUTO
 
 When panel mode is on, `spawn-verifier.sh` delegates immediately to `spawn-verifier-panel.sh`. The single-verifier path is not exercised.
 
+If the card declares `Verifier effort`, the panel applies it to every member. The two Claude SDK calls receive `--effort <level>`, and the Codex CLI call receives `-c model_reasoning_effort=<level>`, using the same argv helper as single-verifier dispatch. If the field is omitted, every member keeps its transport default.
+
 ## Panel composition (v1, fixed)
 
 | Panellist | Route | Identity |

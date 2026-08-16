@@ -113,6 +113,21 @@ main() {
 
   local stage_id
   stage_id="$(extract_stage_id "$card_path")"
+  local effort
+  effort="$(sed -n 's/^- \*\*Verifier effort:\*\* //p' "$card_path" | head -n1)"
+
+  local claude_effort_argv=() codex_effort_argv=()
+  effort_argv_for_family claude "$effort"
+  if [[ ${#AUTOMETTA_EFFORT_ARGV[@]} -gt 0 ]]; then
+    claude_effort_argv=("${AUTOMETTA_EFFORT_ARGV[@]}")
+  fi
+  effort_argv_for_family codex "$effort"
+  if [[ ${#AUTOMETTA_EFFORT_ARGV[@]} -gt 0 ]]; then
+    codex_effort_argv=("${AUTOMETTA_EFFORT_ARGV[@]}")
+  fi
+  if [[ -n "$effort" ]]; then
+    log_msg "panel verifier effort: ${effort} (${stage_id})"
+  fi
   local artefact_glob
   artefact_glob="$(derive_artefact_glob "$card_path")"
 
@@ -185,6 +200,7 @@ main() {
         --artefact-glob "$artefact_glob" \
         --out "$p0_out" \
         --model "$AUTOMETTA_MODEL_OPUS" \
+        ${claude_effort_argv[@]+"${claude_effort_argv[@]}"} \
       </dev/null >"$p0_log" 2>&1 ) &
   local p0_pid=$!
 
@@ -197,6 +213,7 @@ main() {
         --artefact-glob "$artefact_glob" \
         --out "$p1_out" \
         --model "$AUTOMETTA_MODEL_SONNET" \
+        ${claude_effort_argv[@]+"${claude_effort_argv[@]}"} \
       </dev/null >"$p1_log" 2>&1 ) &
   local p1_pid=$!
 
@@ -224,12 +241,12 @@ main() {
     fi
     # shellcheck disable=SC2086
     CODEX_HOME="$codex_home_override" op-fetch $codex_auth_pairs --pass CODEX_HOME -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   else
     # shellcheck disable=SC2086
     op-fetch $codex_auth_pairs -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   fi
   local p2_pid=$!
