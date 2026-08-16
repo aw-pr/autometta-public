@@ -58,9 +58,16 @@ auth_route_for_family() {
   esac
 }
 
-# Parse a worker/verifier log into an "INPUT CACHED OUTPUT" token triple.
+# Parse a worker/verifier dispatch into an "INPUT CACHED OUTPUT" token triple.
 #
-# Fidelity depends on what the route emits (see docs/cost-log.md):
+# When work_dir is supplied and a Claude Code transcript exists for it, the
+# transcript wins outright: every route below reads the role's stdout log,
+# which for `claude -p --output-format json` is written only on a clean exit,
+# so a role killed at the dispatch timeout parsed as zero. The transcript is
+# appended per turn and survives the kill. since_epoch scopes the sum to this
+# dispatch so a reused worktree does not re-bill an earlier stage.
+#
+# Otherwise fidelity depends on what the route emits (see docs/cost-log.md):
 #   - SDK verifier route:  `cache: write=W read=R input=I output=O`
 #       -> input = I + W (fresh input, cache writes folded in), cached = R,
 #          output = O. This is the one route with a true breakdown today.
@@ -72,6 +79,18 @@ auth_route_for_family() {
 # Prints the triple on success, an empty line when nothing could be parsed.
 costlog_parse_breakdown() {
   local log_path="$1"
+  local work_dir="${2:-}"
+  local since_epoch="${3:-0}"
+
+  if [[ -n "$work_dir" ]]; then
+    local from_transcript
+    from_transcript="$(budget_parse_tokens_from_transcript "$work_dir" "$since_epoch")"
+    if [[ -n "$from_transcript" ]]; then
+      printf '%s\n' "$from_transcript"
+      return 0
+    fi
+  fi
+
   if [[ ! -f "$log_path" ]]; then
     printf '\n'
     return 0
@@ -163,6 +182,13 @@ PY
 #
 # Args:
 #   repo_root stage_id role identity log_path wall_clock_s result
+#   [work_dir] [since_epoch]
+#
+# work_dir/since_epoch are optional. When given for a claude-family role they
+# route token accounting through the Claude Code transcript, which is the only
+# source that survives a role killed at the dispatch timeout. Omitted (or for
+# a codex-family role, which writes no such transcript) the behaviour is
+# unchanged.
 #
 # role:   worker | verifier
 # result: pass | fail | partial | stalled | aborted | no-artefact (free-form;
@@ -179,6 +205,8 @@ costlog_append() {
   local log_path="$5"
   local wall_clock_s="${6:-0}"
   local result="${7:-unknown}"
+  local work_dir="${8:-}"
+  local since_epoch="${9:-0}"
 
   local family tier auth_route repo_name out_file ts breakdown
   family="$(costlog_family_for_identity "$identity")"
@@ -188,7 +216,7 @@ costlog_append() {
   out_file="$repo_root/state/cost-log.jsonl"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  breakdown="$(costlog_parse_breakdown "$log_path")"
+  breakdown="$(costlog_parse_breakdown "$log_path" "$work_dir" "$since_epoch")"
   local input_tokens cached_tokens output_tokens
   if [[ -n "$breakdown" ]]; then
     # Explicit space IFS: callers (budget.sh) set IFS=$'\n\t', which would

@@ -174,6 +174,126 @@ budget_add_tokens() {
   budget_write_atomic "$repo_root" ".tokens_spent += ${tokens}"
 }
 
+# budget_transcript_dir: map a dispatch working directory to the Claude Code
+# transcript directory for that cwd. Claude Code slugifies the absolute path
+# by replacing every non-alphanumeric character with '-'.
+budget_transcript_dir() {
+  local work_dir="$1"
+  [[ -n "$work_dir" ]] || return 0
+  local slug
+  slug="$(printf '%s' "$work_dir" | LC_ALL=C tr -c 'A-Za-z0-9' '-')"
+  printf '%s/.claude/projects/%s\n' "$HOME" "$slug"
+}
+
+# budget_parse_tokens_from_transcript: recover real token usage for a
+# claude-family dispatch from its Claude Code transcript.
+#
+# `claude -p --output-format json` emits its usage object only on a clean
+# exit, so a role killed at the dispatch timeout books zero tokens: the most
+# expensive failure mode was the one that billed nothing, and no value of
+# token_cap_total could ever fire. The transcript JSONL is appended per turn
+# and survives the kill, so it is the ground truth for the claude family.
+#
+# Prints "INPUT CACHED OUTPUT" where INPUT folds cache creation in, matching
+# costlog_parse_breakdown's triple. Prints nothing when no usage is found.
+# Entries are deduplicated on requestId (a resumed or forked session repeats
+# earlier turns verbatim) and filtered to those at or after since_epoch so a
+# reused worktree does not re-bill a previous stage's spend.
+budget_parse_tokens_from_transcript() {
+  local work_dir="$1"
+  local since_epoch="${2:-0}"
+  local dir
+  dir="$(budget_transcript_dir "$work_dir")"
+  [[ -n "$dir" && -d "$dir" ]] || return 0
+  python3 - "$dir" "$since_epoch" <<'PY'
+import datetime as dt
+import json
+import os
+import sys
+
+root, since_raw = sys.argv[1], sys.argv[2]
+try:
+    since = int(since_raw)
+except ValueError:
+    since = 0
+
+seen = set()
+inp = cached = out = 0
+
+for base, _dirs, files in os.walk(root):
+    for name in files:
+        if not name.endswith(".jsonl"):
+            continue
+        path = os.path.join(base, name)
+        try:
+            fh = open(path, encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                if '"usage"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                msg = rec.get("message") or {}
+                usage = msg.get("usage") or {}
+                if not usage:
+                    continue
+                ts = rec.get("timestamp")
+                if ts and since:
+                    try:
+                        when = dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    except ValueError:
+                        when = None
+                    if when is not None and when.timestamp() < since:
+                        continue
+                key = rec.get("requestId") or msg.get("id")
+                if key is not None:
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                inp += usage.get("input_tokens", 0) or 0
+                inp += usage.get("cache_creation_input_tokens", 0) or 0
+                cached += usage.get("cache_read_input_tokens", 0) or 0
+                out += usage.get("output_tokens", 0) or 0
+
+if inp or cached or out:
+    print(f"{inp} {cached} {out}")
+PY
+}
+
+# budget_account_tokens_from_dispatch: account a finished role's spend,
+# preferring the transcript and falling back to the log parser.
+#
+# work_dir/since_epoch are optional; without them (or for a codex-family
+# role, which writes no Claude transcript) this degrades exactly to
+# budget_account_tokens_from_log. Non-fatal throughout.
+budget_account_tokens_from_dispatch() {
+  local repo_root="$1"
+  local log_path="$2"
+  local label="${3:-log}"
+  local work_dir="${4:-}"
+  local since_epoch="${5:-0}"
+
+  local triple=""
+  if [[ -n "$work_dir" ]]; then
+    triple="$(budget_parse_tokens_from_transcript "$work_dir" "$since_epoch")"
+  fi
+  if [[ -z "$triple" ]]; then
+    budget_account_tokens_from_log "$repo_root" "$log_path" "$label"
+    return 0
+  fi
+
+  local t_in t_cached t_out total
+  IFS=' ' read -r t_in t_cached t_out <<<"$triple"
+  total=$(( t_in + t_cached + t_out ))
+  budget_add_tokens "$repo_root" "$total"
+  printf 'budget_account_tokens_from_dispatch: recorded %s tokens (in=%s cached=%s out=%s) from transcript for %s (%s)\n' \
+    "$total" "$t_in" "$t_cached" "$t_out" "$work_dir" "$label" >&2
+}
+
 # budget_parse_tokens_from_log: scan a worker/verifier log for token-usage
 # lines and print the chosen integer to stdout (no trailing newline beyond
 # printf default). Prints nothing and returns 0 on no match.

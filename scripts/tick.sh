@@ -247,17 +247,52 @@ state_apply_json() {
 # never aborts on accounting noise.
 #
 # Args: repo_root, state_yaml, stage_id, log_path, role (worker|verifier)
+# role_started_epoch: epoch seconds at which a stage role was dispatched, or
+# 0 when unknown. Scopes transcript token accounting to this dispatch.
+role_started_epoch() {
+  local state_yaml="$1"
+  local stage_id="$2"
+  local role="$3"
+  local field started epoch
+  case "$role" in
+    worker) field="started_at" ;;
+    verifier) field="verifier_started_at" ;;
+    *) printf '0\n'; return 0 ;;
+  esac
+  started="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" --arg f "$field" \
+    '.stages[] | select(.id == $id) | .[$f] // empty')"
+  if [[ -n "$started" ]] && epoch="$(stage_started_epoch "$started" 2>/dev/null)"; then
+    printf '%s\n' "$epoch"
+  else
+    printf '0\n'
+  fi
+}
+
 stage_snapshot_tokens() {
   local repo_root="$1"
   local state_yaml="$2"
   local stage_id="$3"
   local log_path="$4"
   local role="$5"
-  if [[ ! -f "$log_path" ]]; then
-    return 0
+  local work_dir="${6:-}"
+  local since_epoch="${7:-0}"
+  local tokens=""
+  # Prefer the transcript for the same reason budget_account_tokens_from_dispatch
+  # does: a role killed at the dispatch timeout never writes its usage to the log.
+  if [[ -n "$work_dir" ]]; then
+    local triple t_in t_cached t_out
+    triple="$(budget_parse_tokens_from_transcript "$work_dir" "$since_epoch")"
+    if [[ -n "$triple" ]]; then
+      IFS=' ' read -r t_in t_cached t_out <<<"$triple"
+      tokens=$(( t_in + t_cached + t_out ))
+    fi
   fi
-  local tokens
-  tokens="$(budget_parse_tokens_from_log "$log_path")"
+  if [[ -z "$tokens" ]]; then
+    if [[ ! -f "$log_path" ]]; then
+      return 0
+    fi
+    tokens="$(budget_parse_tokens_from_log "$log_path")"
+  fi
   if [[ -z "$tokens" || ! "$tokens" =~ ^[0-9]+$ ]]; then
     return 0
   fi
@@ -297,12 +332,16 @@ costlog_emit_worker() {
     case "$env_status" in pass|fail|partial) result="$env_status" ;; esac
   fi
   wall=0
+  start_epoch=0
   if start_epoch="$(stage_started_epoch "$started_at" 2>/dev/null)"; then
     now_epoch="$(date -u +%s)"
     wall=$((now_epoch - start_epoch))
     (( wall < 0 )) && wall=0
+  else
+    start_epoch=0
   fi
-  costlog_append "$repo_root" "$stage_id" worker "$worker_identity" "$worker_log" "$wall" "$result" || true
+  costlog_append "$repo_root" "$stage_id" worker "$worker_identity" "$worker_log" "$wall" "$result" \
+    "$(worktree_path_for_stage "$repo_root" "$stage_id")" "$start_epoch" || true
 }
 
 # Emit one verifier cost-log line. Reads the verifier identity and
@@ -321,12 +360,16 @@ costlog_emit_verifier() {
   started="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
     '.stages[] | select(.id == $id) | .verifier_started_at // empty')"
   wall=0
+  start_epoch=0
   if [[ -n "$started" ]] && start_epoch="$(stage_started_epoch "$started" 2>/dev/null)"; then
     now_epoch="$(date -u +%s)"
     wall=$((now_epoch - start_epoch))
     (( wall < 0 )) && wall=0
+  else
+    start_epoch=0
   fi
-  costlog_append "$repo_root" "$stage_id" verifier "$verifier_identity" "$verifier_log" "$wall" "$result" || true
+  costlog_append "$repo_root" "$stage_id" verifier "$verifier_identity" "$verifier_log" "$wall" "$result" \
+    "$(worktree_path_for_stage "$repo_root" "$stage_id")" "$start_epoch" || true
 }
 
 # Stage ids end up in jq filters, yq selectors, log paths, and on-disk
@@ -775,10 +818,15 @@ _process_repo_locked() {
       # closes out. This branch runs exactly once per stage because
       # _process_verifier_artefact clears current_stage on exit.
       local verifier_log_path="$repo_root/state/logs/${current_stage}-verifier.log"
-      budget_account_tokens_from_log "$repo_root" "$verifier_log_path" "verifier" || true
+      local verifier_work_dir_acct verifier_start_epoch
+      verifier_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$current_stage")"
+      verifier_start_epoch="$(role_started_epoch "$state_yaml" "$current_stage" verifier)"
+      budget_account_tokens_from_dispatch "$repo_root" "$verifier_log_path" "verifier" \
+        "$verifier_work_dir_acct" "$verifier_start_epoch" || true
       # Per-stage snapshot (stage 11): capture verifier tokens against the
       # stage entry. Worker tokens may already be set from an earlier tick.
-      stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$verifier_log_path" "verifier"
+      stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$verifier_log_path" "verifier" \
+        "$verifier_work_dir_acct" "$verifier_start_epoch"
       # Cost-log: the verifier produced an artefact, so its log is final.
       # Emit before _process_verifier_artefact clears current_stage.
       local verifier_overall verifier_result
@@ -839,9 +887,14 @@ _process_repo_locked() {
       # not double-count.
       if [[ -n "${worker_pid:-}" ]]; then
         local worker_log_path="$repo_root/state/logs/${current_stage}-worker.log"
-        budget_account_tokens_from_log "$repo_root" "$worker_log_path" "worker" || true
+        local worker_work_dir_acct worker_start_epoch
+        worker_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$current_stage")"
+        worker_start_epoch="$(role_started_epoch "$state_yaml" "$current_stage" worker)"
+        budget_account_tokens_from_dispatch "$repo_root" "$worker_log_path" "worker" \
+          "$worker_work_dir_acct" "$worker_start_epoch" || true
         # Per-stage snapshot (stage 11).
-        stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$worker_log_path" "worker"
+        stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$worker_log_path" "worker" \
+          "$worker_work_dir_acct" "$worker_start_epoch"
         # Cost-log: the worker has exited and its log is final. Result is
         # read from the handoff envelope inside the helper.
         costlog_emit_worker "$repo_root" "$state_yaml" "$current_stage" "$started_at"
@@ -934,9 +987,14 @@ _process_repo_locked() {
       # we spawn a fresh verifier, then clear verifier_pid for idempotency.
       if [[ -n "${verifier_pid:-}" ]]; then
         local stale_verifier_log_path="$repo_root/state/logs/${current_stage}-verifier.log"
-        budget_account_tokens_from_log "$repo_root" "$stale_verifier_log_path" "verifier" || true
+        local stale_work_dir_acct stale_start_epoch
+        stale_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$current_stage")"
+        stale_start_epoch="$(role_started_epoch "$state_yaml" "$current_stage" verifier)"
+        budget_account_tokens_from_dispatch "$repo_root" "$stale_verifier_log_path" "verifier" \
+          "$stale_work_dir_acct" "$stale_start_epoch" || true
         # Per-stage snapshot (stage 11).
-        stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$stale_verifier_log_path" "verifier"
+        stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$stale_verifier_log_path" "verifier" \
+          "$stale_work_dir_acct" "$stale_start_epoch"
         # Cost-log: a verifier died without an artefact. Record its spend
         # against this stage with result=aborted before we re-dispatch.
         costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "aborted"
