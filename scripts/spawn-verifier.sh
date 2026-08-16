@@ -69,11 +69,20 @@ render_prompt() {
   local stage_id="$3"
   local verifier_identity="$4"
   local artefact_path="$5"
+  local family_notes="${6:-None}"
   local template_path="$repo_root/templates/verifier-prompt.md"
 
   if [[ ! -f "$template_path" ]]; then
     template_path="$script_dir/../templates/verifier-prompt.md"
   fi
+
+  # family_notes carries free text the worker wrote and may contain sed's
+  # delimiter, an ampersand, or a backslash. Flatten to one line and escape
+  # before it goes into a replacement.
+  family_notes="${family_notes//$'\n'/ }"
+  family_notes="${family_notes//\\/\\\\}"
+  family_notes="${family_notes//&/\\&}"
+  family_notes="${family_notes//|/\\|}"
 
   sed \
     -e "s|<<stage-id>>|${stage_id}|g" \
@@ -81,8 +90,34 @@ render_prompt() {
     -e "s|<<artefact-path>>|${artefact_path}|g" \
     -e "s|<<verifier-tier>>|${verifier_identity}|g" \
     -e "s|<<orchestrator-identity>>|phat-controller|g" \
-    -e "s|<<family-specific-notes-or-none>>|None|g" \
+    -e "s|<<family-specific-notes-or-none>>|${family_notes}|g" \
     "$template_path"
+}
+
+# resolve_family_notes: when the worker's handoff envelope for this stage
+# reports status=partial, hand its notes to the verifier as an explicit
+# checklist. status=pass, or a missing or unreadable envelope (the
+# pre-stage-17 legacy path), falls back to "None" -- byte-identical to the
+# previously hardcoded value.
+#
+# Reads the envelope off disk rather than taking it as an argument so the
+# run worktree's state symlink is the single source: tick.sh has already
+# validated this file against the schema before dispatching here.
+resolve_family_notes() {
+  local repo_root="$1"
+  local stage_id="$2"
+  local envelope_path="$repo_root/state/handoffs/${stage_id}.json"
+  if [[ -f "$envelope_path" ]] && command -v jq >/dev/null 2>&1 && jq empty "$envelope_path" 2>/dev/null; then
+    local env_status env_notes
+    env_status="$(jq -r '.status // empty' "$envelope_path" 2>/dev/null || true)"
+    if [[ "$env_status" == "partial" ]]; then
+      env_notes="$(jq -r '.notes // empty' "$envelope_path" 2>/dev/null || true)"
+      printf 'The worker self-reported incomplete acceptance (handoff envelope status=partial) — treat the deferred criteria as your checklist and decide acceptability yourself; partial is the worker'"'"'s annotation, not a verdict. Worker notes: %s' \
+        "${env_notes:-(none provided)}"
+      return 0
+    fi
+  fi
+  printf 'None'
 }
 
 # Resolve the claude verifier transport (sdk | cli).
@@ -243,7 +278,9 @@ main() {
   codex_state_argv_for_repo "$repo_root"
   log_path="$logs_dir/${stage_id}-verifier.log"
   artefact_path="state/verifiers/${stage_id}.json"
-  prompt="$(render_prompt "$work_dir" "$card_path" "$stage_id" "$verifier_identity" "$artefact_path")"
+  local family_notes
+  family_notes="$(resolve_family_notes "$work_dir" "$stage_id")"
+  prompt="$(render_prompt "$work_dir" "$card_path" "$stage_id" "$verifier_identity" "$artefact_path" "$family_notes")"
 
   # Resolve auth route via op-fetch (auth-route-security skill). Same model
   # as spawn-worker.sh: subscription emits no pairs (op-fetch still sanitises
@@ -319,7 +356,7 @@ main() {
       log_msg "verifier-transport: ${claude_transport} (provenance: ${claude_transport_provenance})"
 
       if [[ "$claude_transport" == "sdk" ]]; then
-        local artefact_glob sdk_out claude_advisor advisor_arg
+        local artefact_glob sdk_out claude_advisor advisor_arg notes_arg
         artefact_glob="$(derive_artefact_glob "$card_path")"
         sdk_out="$repo_root/$artefact_path"
         claude_advisor="$(resolve_claude_advisor "$repo_root")"
@@ -327,6 +364,14 @@ main() {
         if [[ -n "$claude_advisor" ]]; then
           advisor_arg=(--advisor "$claude_advisor")
           log_msg "verifier-advisor: ${claude_advisor} (Fable-as-advisor; request model does the reading)"
+        fi
+        # The sdk transport builds its own prompt, so the cli path's
+        # family-specific-notes substitution never reaches it. Pass a partial
+        # worker envelope's notes explicitly; verify-sdk.py puts them in the
+        # variable block, leaving the cacheable prefix untouched.
+        notes_arg=()
+        if [[ "$family_notes" != "None" ]]; then
+          notes_arg=(--worker-notes "$family_notes")
         fi
         # No effort override here: the sdk verifier takes --model but has no
         # effort argument, so a card's "Verifier effort" is silently inert on
@@ -341,6 +386,7 @@ main() {
               --out "$sdk_out" \
               --model "$(claude_model_for_identity "$verifier_identity")" \
               ${advisor_arg[@]+"${advisor_arg[@]}"} \
+              ${notes_arg[@]+"${notes_arg[@]}"} \
             </dev/null >"$log_path" 2>&1 ) &
       else
         # JSON output + claude-token-log.sh restore the "Total tokens:"

@@ -100,6 +100,7 @@ yq -o=json '.' "$state_yaml" | jq --arg id "$stage_id" '
           | .worker_tokens = 0
           | .tokens = 0
           | .stall_marker = null
+          | .worker_envelope = null
         else . end ]' > "$tmp_json"
 yq -P '.' "$tmp_json" > "$tmp_yaml"
 mv "$tmp_yaml" "$state_yaml"

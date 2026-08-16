@@ -109,6 +109,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out", required=True, help="Path to write the verifier JSON artefact.")
     parser.add_argument(
+        "--worker-notes",
+        default=None,
+        help=(
+            "Notes from a handoff envelope whose status was partial, surfaced "
+            "to the verifier as a checklist of the criteria the worker "
+            "deferred. Goes in the per-stage variable block, never the "
+            "cacheable static block, since it differs on every stage."
+        ),
+    )
+    parser.add_argument(
         "--model",
         default=MODEL,
         help=f"Anthropic model to use for verification (default: {MODEL}).",
@@ -217,11 +227,26 @@ def build_variable_block(
     artefacts: list[Path],
     out: Path,
     verifier_identity: str = VERIFIER_IDENTITY,
+    worker_notes: str | None = None,
 ) -> str:
     """Return the per-stage, non-cached portion of the prompt."""
     artefact_sections = "\n".join(numbered(path, read_text(path)) for path in artefacts)
     if not artefact_sections:
         artefact_sections = "(no artefacts matched the supplied glob)\n"
+
+    # The static block's family-specific-notes slot is fixed at "None" so the
+    # cacheable prefix stays byte-identical across stages. A partial worker
+    # envelope is per-stage by definition, so it belongs here instead.
+    partial_section = ""
+    if worker_notes:
+        partial_section = (
+            "## Worker self-reported incomplete acceptance\n\n"
+            "The handoff envelope for this stage carried `status: partial`. That is "
+            "the worker's annotation, not a verdict: acceptability is yours to decide. "
+            "Treat the criteria it names as your checklist and verify each one "
+            "yourself rather than inheriting the worker's judgement about them.\n\n"
+            f"Worker notes: {worker_notes}\n\n"
+        )
 
     return (
         "## Stage-specific context\n\n"
@@ -231,6 +256,7 @@ def build_variable_block(
         f"- Verifier identity: `{verifier_identity}`\n"
         f"- Verifier invocation: `scripts/verify-sdk.py --stage-id {stage_id} "
         f"--card {card} --artefact-glob <redacted> --out {out}`\n\n"
+        f"{partial_section}"
         "## Stage card with line numbers\n\n"
         f"{numbered(card, read_text(card))}\n"
         "## Worker artefacts with line numbers\n\n"
@@ -377,7 +403,14 @@ def main() -> int:
 
         artefacts = find_artefacts(args.artefact_glob)
         static_block = build_static_block(verifier_identity=verifier_identity)
-        variable_block = build_variable_block(args.stage_id, card, artefacts, out, verifier_identity=verifier_identity)
+        variable_block = build_variable_block(
+            args.stage_id,
+            card,
+            artefacts,
+            out,
+            verifier_identity=verifier_identity,
+            worker_notes=args.worker_notes,
+        )
         validator = Validator(verifier_schema())
         envelope = run_sdk(static_block, variable_block, anthropic_api_key, Anthropic, validator, model=model, advisor=advisor)
         out.parent.mkdir(parents=True, exist_ok=True)
