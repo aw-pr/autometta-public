@@ -807,7 +807,7 @@ _process_repo_locked() {
     1)
       local cap_name="${BUDGET_CHECK_LAST_HIT:-unknown-cap}"
       budget_halt "$repo_root" "$cap_name"
-      log "halted ${repo_root} due to ${cap_name}"
+      log "halted ${repo_root} due to ${BUDGET_CHECK_ALL_HITS:-$cap_name}"
       return 0
       ;;
     *)
@@ -1100,6 +1100,18 @@ _process_repo_locked() {
       fi
     card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
     if [[ -n "$card_path" ]]; then
+      # Cap check at the point of spend, not at the top of the tick. By here
+      # this tick may already have reaped a worker and charged its tokens
+      # (budget_account_tokens_from_log, above), so the budget read at line
+      # ~710 is stale by one dispatch. Verifiers are the expensive half on
+      # emergence-lab-gpu -- three of the five largest runs in the incident
+      # were verifier dispatches, the largest 18.1M tokens against a
+      # 1,000,000 cap.
+      if ! budget_gate_dispatch "$repo_root" "verifier dispatch for ${current_stage}"; then
+        log "not dispatching verifier for ${current_stage}: budget gate refused"
+        commit_state_branch "$repo_root"
+        return 0
+      fi
       # Stamp verifier_started_at alongside the attempt bump so the cost-log
       # can estimate verifier wall-clock when the artefact lands next tick.
       state_apply_json "$state_yaml" \
@@ -1133,6 +1145,11 @@ _process_repo_locked() {
       card_path="$(stage_card_for_id "$repo_root" "$next_stage" "$manifest_path")"
       if [[ -z "$card_path" ]]; then
         log "stage card missing for ${next_stage} in ${repo_root}"
+      elif ! budget_gate_dispatch "$repo_root" "worker dispatch for ${next_stage}"; then
+        # Refuse before any state is mutated and before a run worktree is
+        # cut, so a gated stage stays cleanly pending for the next window
+        # rather than being left in_progress with nothing running.
+        log "not dispatching worker for ${next_stage}: budget gate refused"
       else
         local base_branch work_dir
         base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"

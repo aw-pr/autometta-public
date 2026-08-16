@@ -233,3 +233,35 @@ The codex side of the same defect was silent, and worth recording because the ob
 `effort_flags_for_family` in `scripts/models.sh` now prints one argv element per line, and `effort_argv_for_family` reads those into the global array `AUTOMETTA_EFFORT_ARGV`. Both spawn scripts expand it as `${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"}` — quoted, so it survives any `IFS`, with the `+alternate` guard because bash 3.2 (the system bash on macOS) treats `"${arr[@]}"` on an empty array as unbound under `set -u`. `IFS=$'\n\t'` stays; it is there deliberately.
 
 The general rule: an array is the only safe way to carry a multi-token argument list through a shell. Reaching for word splitting means depending on a variable set 180 lines away in another file, and `shellcheck disable=SC2086` silences the one tool that would have asked about it. `scripts/effort-flags-smoke.sh` asserts on the constructed argv, captured from a stub `op-fetch` on `PATH`, so the regression is caught with no auth, no network and no spend.
+
+## Headless gotcha 13: the only safety failed silently while the run looked like a success
+
+### One-sentence summary
+`budget_check_caps` was consulted once per tick and never at the point of spend, so a loop that had already blown its token cap kept dispatching, and the daily window reset then zeroed the counters that proved it, leaving a 149x overrun that produced good work, a clean-looking state file, and no alarm at any point.
+
+### Incident origin
+2026-08-15, `emergence-lab-gpu`: 149,752,682 tokens against a `token_cap_total` of 1,000,000, and 470 ticks against a `clock_tick_cap` of 400, over an estimated 1,175.99 USD in one day. The queue drained, stages 34 to 39c all completed and the work was good. Nothing surfaced any of it; the overrun was found the next morning by reading `state/budget.json` for an unrelated reason.
+
+The arithmetic was never wrong. `tokens_spent` matched the day's `cost-log.jsonl` total to the token, and the cap did fire correctly the first time: cumulative spend crossed 1,000,000 during the stage-35 verifier at 07:42:03Z and the tick log records `halted ... due to token-cap` at 07:47:04Z, the very next tick. The check was in the wrong place, and what it produced was a latch that several things could quietly unlatch.
+
+Three defects compounded, and only the first is about the comparison:
+
+1. **The cap gated the tick, not the dispatch.** `budget_check_caps` had exactly one call site, at the top of `_process_repo_locked`, before the reap. One tick then reaps a finished agent, charging its tokens through `budget_account_tokens_from_log`, and goes on to spawn the next role against a budget read taken before that charge. The mean dispatch on this repo cost 4,830,731 tokens and 18 of the 31 dispatches individually exceeded the entire cap, so a budget consulted only between ticks could not bind however correct its arithmetic.
+2. **The window reset erased the evidence.** `budget_ensure_window` zeroes `tokens_spent`, `clock_ticks_used` and `consecutive_failures` and clears `halted` when a UTC day boundary is crossed into a halted-or-at-cap budget. Run against the incident file it turns 149,752,682-spent-and-halted into `tokens_spent: 0, halted: false` with the caps untouched. So `token_cap_total` was never a total; it was a per-day allowance that renewed itself silently, and by the following morning the file read like a healthy repo.
+3. **The first cap hit was the only one recorded.** The four caps are tested in a fixed order and the function returned on the first match, so a budget over both wrote `halt_reason: "token-cap"` and nothing else. The 470-against-400 tick breach, the simpler failure of the two and one needing no token parsing to evaluate, was never named anywhere.
+
+`requeue-stage.sh` also cleared `.halted` unconditionally, on the reasoning that the tick re-halts if a condition genuinely persists. That is true of the tick check and it makes a routine hand re-queue an unlatch of the only safety in the design.
+
+### Failure mode if ignored
+The dangerous shape is not the money, it is that **every visible signal says success**. Stages complete, commits land, the verifier passes, the dashboard is green. The one artefact that disagrees is a gitignored JSON file nobody reads while things are working, and the daily reset means that by the next morning it agrees too. "Budget file, not retries" is load-bearing precisely because there is nothing behind it: no circuit breaker, no backoff, no second line. A budget file that does not stop dispatch is not a weak safety, it is the absence of one, presented as its presence.
+
+### Mitigation
+`budget_gate_dispatch` in `scripts/budget.sh` is the cap check that guards a *spawn* rather than a tick, and `tick.sh` calls it immediately before both the worker and the verifier dispatch, after any reap in that tick has been charged. It halts the repo before refusing and fails closed on any unexpected return code. Replaying the real 2026-08-15 sequence through it halts after 2 of 31 dispatches at 5,676,364 tokens rather than 149,752,682.
+
+That number is the honest bound and worth stating plainly: 5,676,364 is still 5.7x the cap, because the dispatch that crossed it was a 5,599,240-token verifier and the cap is enforced after the fact, per dispatched process. One dispatch of overshoot is the floor for an after-the-fact cap. Pre-dispatch estimation remains future scope (`docs/phat-controller.md`, "Deferred"); until it exists, a cap smaller than a typical dispatch is decorative, and the number to set is one an overshoot of a single worker or verifier can still be afforded.
+
+For the evidence: `lifetime_tokens_spent` is monotonic and nothing resets it, and `budget_record_breach` writes an append-only `breaches[]` entry, holding counters, caps and reasons as they stood, both when a cap halts the loop and immediately before `budget_ensure_window` zeroes anything. The reset keeps its legitimate purpose, so a new day still resumes a repo that halted for a real reason; it simply no longer destroys the record on its way through. `halt_reasons` carries every cap that was over, so a tick breach is never masked by a token breach again. `requeue-stage.sh` now clears a failure-cap halt (that is what re-queueing means) and refuses, non-zero and loudly, to clear one whose spend cap is still blown.
+
+`scripts/budget-cap-smoke.sh` asserts all of it against temporary budget files with no auth, network or spend, and carries the 31 real dispatch sizes as its replay fixture. Run against the pre-fix commit it reports `halted after 31 of 31 dispatches at 149752682 tokens`, the incident's own figure.
+
+The general rule: a safety check belongs at the point of the action it guards, not at the top of the loop that eventually performs it. And any mechanism that resets a safety counter must first write down what it is resetting, or the failure it is hiding is the one nobody will ever be shown.

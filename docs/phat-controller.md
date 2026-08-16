@@ -46,12 +46,18 @@ A tick is one transition, not a loop within the tick. This is the "cron + tick >
 
 **Failure budget model.** Per [`decision-failure-budget-clock-tick`](../memory/decision-failure-budget-clock-tick.md), the budget is enforced via a clock-tick count, in addition to the pre-existing token and wall-clock caps. Concretely:
 
-- `token_cap_total` / `tokens_spent`: total token spend across all workers and verifiers dispatched by this controller for this repo. Hard stop when `tokens_spent >= token_cap_total`.
+- `token_cap_total` / `tokens_spent`: token spend for the current run window across all workers and verifiers dispatched by this controller for this repo. Hard stop when `tokens_spent >= token_cap_total`. Despite the field name this is a per-window figure, not a lifetime one: `budget_ensure_window` zeroes it at a UTC day boundary. `lifetime_tokens_spent` is the lifetime figure and nothing resets it.
 - `wall_clock_cap_seconds` / `wall_clock_elapsed_seconds`: cumulative wall-clock time spent inside dispatched processes. Hard stop when elapsed exceeds cap.
 - `clock_tick_cap` / `clock_ticks_used`: number of cron-tick fires the controller is allowed to consume for this repo. Hard stop when `clock_ticks_used >= clock_tick_cap`. This is the primary safety; it bounds wall-clock independent of how expensive individual workers were.
-- `consecutive_failure_cap` / `consecutive_failures`: number of back-to-back verifier-FAIL signals tolerated before the loop halts for the repo. Resets on a verifier PASS.
+- `consecutive_failure_cap` / `consecutive_failures`: number of back-to-back verifier-FAIL signals tolerated before the loop halts for the repo. Resets on a verifier PASS, and on a re-queue of a failed stage.
 
 Any cap exhaustion writes a stall marker and exits the tick cleanly; the loop does not silently retry. This is the "budget files, not retries" belief from `docs/philosophy.md`.
+
+**Where the caps are enforced.** Two places, and the distinction is load-bearing. `budget_check_caps` runs once at the top of each tick and decides whether the tick does anything at all. `budget_gate_dispatch` runs immediately before *every* worker and verifier spawn and decides whether that spawn happens. Only the second one binds: a tick reaps finished agents and charges their tokens partway through its own run, so the top-of-tick read is stale by one dispatch by the time a spawn is reached. Enforcing only at the top of the tick is what let `emergence-lab-gpu` spend 149,752,682 tokens against a 1,000,000 cap on 2026-08-15 (gotcha 13 in [`lessons.md`](./lessons.md)). Any new dispatch path must call `budget_gate_dispatch` or it is outside the only safety in the design.
+
+**What a cap can and cannot promise.** Token and wall-clock spend are measured after the fact, per dispatched process, so the guarantee is "stops within one dispatch's spend of the cap", never "stops at the cap". On the incident repo the mean dispatch cost 4,830,731 tokens and the largest 19,019,631, so a 1,000,000-token cap could only ever stop at roughly 5.7x itself. Set a cap you can afford to exceed by one worker or one verifier, whichever is dearer. The clock-tick cap has no such slack, which is why it is the primary safety.
+
+**Breach retention.** `budget_ensure_window` deliberately resets a halted-or-at-cap budget at a UTC day boundary so a new day can resume a repo that halted for a real reason. Because that reset zeroes exactly the counters that evidence a breach, `budget_record_breach` writes an append-only `breaches[]` entry (counters, caps and reasons as they stood) before the reset touches anything, and again whenever a cap halts the loop. `halt_reasons` records every cap that was over, not just the first one tested. Without these a 149x overrun reads as a healthy repo the next morning.
 
 **Per-repo, filesystem state.** Budget is per-repo, kept in the repo's own `state/budget.json`. The controller does not aggregate budgets across repos; one runaway repo cannot exhaust another's.
 
@@ -194,7 +200,7 @@ Items deferred beyond pass 2:
 
 - Multi-machine federation. The current design is single-machine; if a second machine wants to subscribe to the same backlog, that is out of scope.
 - Web UI or full TUI for the controller. The current design is filesystem, `git log`, and a read-only shell status view; richer visualisation is downstream.
-- Token estimation before dispatch. The current design enforces `token_cap_total` after the fact (per dispatched process). A pre-dispatch estimator is future scope.
+- Token estimation before dispatch. The current design enforces `token_cap_total` after the fact (per dispatched process). A pre-dispatch estimator is future scope. This is the residual gap card 31 could not close: `budget_gate_dispatch` guarantees the loop stops within one dispatch's spend of the cap, and nothing short of estimating a dispatch before spawning it can do better.
 - Multi-language stage cards. Currently all cards and prompts are English; localisation is future scope.
 
 ## New decisions banked by this stage

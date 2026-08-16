@@ -95,11 +95,35 @@ yq -P '.' "$tmp_json" > "$tmp_yaml"
 mv "$tmp_yaml" "$state_yaml"
 rm -f "$tmp_json"
 
-# Clear this repo's halt so the next tick considers it (tick re-halts if a
-# halt condition genuinely still exists - this is safe).
+# Clear this repo's halt so the next tick considers it. Re-queueing a stage
+# is exactly the operator saying "that failure is dealt with", so it clears
+# consecutive_failures with the halt.
+#
+# It does NOT clear a halt whose spend cap is still blown. The old version
+# cleared .halted unconditionally on the reasoning that "tick re-halts if a
+# halt condition genuinely still exists"; that is true of the *tick* check
+# but it makes a hand re-queue an unlatch of the only safety in the design,
+# and on emergence-lab-gpu the loop was re-queued repeatedly across a window
+# it had already overrun. Manufacturing token budget is not a re-queue, so
+# say so and stop.
 if [ -f "$budget_json" ]; then
+  blown="$(jq -r '
+    [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
+      (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end),
+      (if .clock_ticks_used >= .clock_tick_cap then "tick-cap" else empty end)
+    ] | join(" ")
+  ' "$budget_json")"
+  if [ -n "$blown" ]; then
+    echo "requeue: $stage_id reset to pending, but NOT clearing the halt." >&2
+    echo "requeue: spend caps still exhausted: $blown" >&2
+    jq -r '"requeue:   tokens \(.tokens_spent)/\(.token_cap_total), ticks \(.clock_ticks_used)/\(.clock_tick_cap), wall \(.wall_clock_elapsed_seconds)/\(.wall_clock_cap_seconds)"' "$budget_json" >&2
+    echo "requeue: the next UTC window resets the counters, or raise the cap" >&2
+    echo "requeue: deliberately in $budget_json. Do not clear .halted by hand." >&2
+    exit 3
+  fi
   tmp_budget="$(mktemp)"
-  jq '.halted = false | .halt_reason = null | .halted_at = null' "$budget_json" > "$tmp_budget"
+  jq '.halted = false | .halt_reason = null | .halt_reasons = null | .halted_at = null
+      | .consecutive_failures = 0' "$budget_json" > "$tmp_budget"
   mv "$tmp_budget" "$budget_json"
 fi
 

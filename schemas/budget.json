@@ -67,9 +67,44 @@
       "default": false,
       "description": "Mirror of state.yaml.halted. Set when any cap is exhausted. tick.sh sets this before exiting; subsequent ticks read it and exit immediately."
     },
+    "lifetime_tokens_spent": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic total tokens ever charged to this repo. Incremented alongside tokens_spent and never reset, including by the window reset. tokens_spent answers how much of the current window's cap remains; this answers what the repo has actually cost. Absent on a budget file predating this field; treat as unknown, not zero."
+    },
     "halt_reason": {
       "type": ["string", "null"],
-      "description": "Which cap exhausted. One of: token_cap | wall_clock_cap | clock_tick_cap | consecutive_failure_cap | operator. Null until halted is true."
+      "description": "Which cap exhausted. One of: token-cap | wall-clock-cap | tick-cap | failure-cap, or an operational reason (yq-missing, state-corrupt, invalid-stage-id, operator-*). The first hit only; see halt_reasons for the full set. Null until halted is true."
+    },
+    "halt_reasons": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "description": "Every cap that was over on the read that halted the loop, in priority order. halt_reason is its first element. Recorded separately because the caps are tested in a fixed order and the first match used to be the only one written: emergence-lab-gpu halted with clock_ticks_used 470 against a clock_tick_cap of 400 and the file said only token-cap, so the tick breach was never surfaced."
+    },
+    "breaches": {
+      "type": "array",
+      "description": "Append-only record of cap breaches, oldest first, bounded to the most recent 50. Written both when a cap halts the loop and, crucially, immediately before budget_ensure_window zeroes the counters at a window boundary. Without it a breach leaves no trace once the window rolls: the counters that prove it are exactly the ones the reset clears.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "at": { "type": "string", "format": "date-time" },
+          "cleared_by": {
+            "type": "string",
+            "enum": ["halt", "window-reset"],
+            "description": "halt: recorded as the loop latched. window-reset: recorded as the daily reset was about to erase the counters."
+          },
+          "reasons": { "type": "array", "items": { "type": "string" } },
+          "window_started_at": { "type": ["string", "null"] },
+          "tokens_spent": { "type": "integer" },
+          "token_cap_total": { "type": "integer" },
+          "wall_clock_elapsed_seconds": { "type": "integer" },
+          "wall_clock_cap_seconds": { "type": "integer" },
+          "clock_ticks_used": { "type": "integer" },
+          "clock_tick_cap": { "type": "integer" },
+          "consecutive_failures": { "type": "integer" },
+          "consecutive_failure_cap": { "type": "integer" }
+        }
+      }
     },
     "halted_at": {
       "type": ["string", "null"],
