@@ -864,7 +864,9 @@ _process_repo_locked() {
       local existing_reason budget_path
       budget_path="$(budget_file "$repo_root")"
       existing_reason="$(jq -r '.halt_reason // "unknown"' "$budget_path")"
-      log "halted ${repo_root} (reason already recorded: ${existing_reason})"
+      if budget_should_log_halt "$repo_root" "$existing_reason"; then
+        log "halted ${repo_root} (reason already recorded: ${existing_reason})"
+      fi
       return 0
       ;;
     1)

@@ -111,6 +111,14 @@
       "format": "date-time",
       "description": "ISO 8601 timestamp when the halt was triggered."
     },
+    "halt_logged_at": {
+      "type": ["integer", "null"],
+      "description": "Unix epoch seconds of the last time tick.sh emitted the 'reason already recorded' log line for the current halt_reason. Used to dedupe the halt-log spam, at most once per PHAT_CONTROLLER_HALT_LOG_INTERVAL seconds (default 3600). Cleared by budget_halt so a fresh halt always logs immediately."
+    },
+    "halt_logged_reason": {
+      "type": ["string", "null"],
+      "description": "The halt_reason value halt_logged_at corresponds to. A reason change always logs immediately regardless of the interval."
+    },
     "paused_until": {
       "type": ["integer", "null"],
       "minimum": 0,
