@@ -9,6 +9,8 @@ source "$script_dir/budget.sh"
 source "$script_dir/cost-log.sh"
 # shellcheck source=./usage-limit.sh
 source "$script_dir/usage-limit.sh"
+# shellcheck source=./session-slug.sh
+source "$script_dir/session-slug.sh"
 
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
@@ -938,10 +940,15 @@ process_repo() {
     log "tick already in progress for ${repo_root}, skipping"
     return 0
   fi
-  ensure_tmux_viewer "$repo_root"
   run_heartbeat "$repo_root"
   local rc=0
   _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
+  # Runs after the tick's own dispatch decision, not before: a stage that
+  # goes pending -> in_progress in this same tick must already be reflected
+  # in state.yaml for the "only when actually doing work" check below to see
+  # it, rather than lagging a full tick behind.
+  ensure_tmux_viewer "$repo_root"
+  sweep_repo_retention "$repo_root"
   release_repo_lock "$repo_root"
   return $rc
 }
@@ -959,12 +966,143 @@ run_heartbeat() {
 # Best-effort: keep the autometta-<repo> tmux viewer alive whenever the
 # loop is actually doing work for a repo. Idempotent and non-fatal —
 # cron runs without a TTY, but `tmux new-session -d` does not need one.
+#
+# "Actually doing work" is current_stage being non-null. Without this
+# check, ensure_tmux_viewer ran (and resurrected) a session for every
+# enabled repo on every tick, so repos halted for weeks kept their dash
+# session alive forever. dash_active_at is stamped in budget.json each
+# time this fires with a live stage, so reap_idle_dash_sessions has a
+# durable "last actually active" signal independent of how often
+# state.yaml itself gets touched (tick_count/last_tick_at update every
+# tick regardless of whether a stage is running).
 ensure_tmux_viewer() {
   local repo_root="$1"
   if ! command -v tmux >/dev/null 2>&1; then
     return 0
   fi
+  local state_yaml="$repo_root/state/state.yaml"
+  local current_stage=""
+  if [[ -f "$state_yaml" ]]; then
+    current_stage="$(state_json "$state_yaml" 2>/dev/null | jq -r '.current_stage // empty' 2>/dev/null || true)"
+  fi
+  if [[ -z "$current_stage" || "$current_stage" == "null" ]]; then
+    return 0
+  fi
+  if [[ -f "$(budget_file "$repo_root")" ]]; then
+    budget_write_atomic "$repo_root" ".dash_active_at = $(date -u +%s)" 2>/dev/null || true
+  fi
   "$script_dir/attach.sh" --ensure "$repo_root" >/dev/null 2>&1 || true
+}
+
+# reap_idle_dash_sessions: kill autometta-<slug> tmux sessions that no
+# longer earn a live viewer — the repo is disabled, unsubscribed entirely,
+# or has had no current_stage (per dash_active_at) for more than
+# PHAT_CONTROLLER_DASH_IDLE_HOURS (default 24). An attached operator
+# always wins: tmux list-clients non-empty skips the session regardless of
+# the repo's state, exactly like ensure_tmux_viewer skips spawning one for
+# an idle repo.
+reap_idle_dash_sessions() {
+  if ! command -v tmux >/dev/null 2>&1; then
+    return 0
+  fi
+  local idle_seconds=$(( ${PHAT_CONTROLLER_DASH_IDLE_HOURS:-24} * 3600 ))
+  local now_epoch
+  now_epoch="$(date -u +%s)"
+
+  local session
+  while IFS= read -r session; do
+    [[ -n "$session" ]] || continue
+    [[ "$session" == autometta-* ]] || continue
+
+    if [[ -n "$(tmux list-clients -t "$session" 2>/dev/null)" ]]; then
+      continue
+    fi
+
+    local slug="${session#autometta-}"
+    local matched_repo="" matched_enabled=""
+    local subscriber_file
+    for subscriber_file in "$subscribers_dir"/*.yaml; do
+      [[ -e "$subscriber_file" ]] || continue
+      [[ "$(basename "$subscriber_file")" == "template.yaml" ]] && continue
+      local candidate_repo
+      candidate_repo="$(read_subscriber_field "$subscriber_file" "repo_path")"
+      [[ -n "$candidate_repo" ]] || continue
+      if [[ "$(session_slug "$candidate_repo")" == "$slug" ]]; then
+        matched_repo="$candidate_repo"
+        matched_enabled="$(read_subscriber_field "$subscriber_file" "enabled")"
+        break
+      fi
+    done
+
+    if [[ -z "$matched_repo" ]]; then
+      tmux kill-session -t "$session" 2>/dev/null || true
+      log "dash reaper: killed ${session} (no subscriber matches this slug, unsubscribed)"
+      continue
+    fi
+
+    if [[ "$matched_enabled" != "true" ]]; then
+      tmux kill-session -t "$session" 2>/dev/null || true
+      log "dash reaper: killed ${session} (subscriber disabled: ${matched_repo})"
+      continue
+    fi
+
+    local budget_path="$matched_repo/state/budget.json"
+    local last_active=0
+    if [[ -f "$budget_path" ]]; then
+      last_active="$(jq -r '.dash_active_at // 0' "$budget_path" 2>/dev/null || echo 0)"
+      [[ "$last_active" =~ ^[0-9]+$ ]] || last_active=0
+    fi
+    if (( now_epoch - last_active > idle_seconds )); then
+      tmux kill-session -t "$session" 2>/dev/null || true
+      log "dash reaper: killed ${session} (idle >${idle_seconds}s, no current_stage: ${matched_repo})"
+    fi
+  done < <(tmux list-sessions -F '#S' 2>/dev/null || true)
+}
+
+# sweep_repo_retention: per-repo housekeeping run after every tick.
+# - state/recent-agents/*.json older than PHAT_CONTROLLER_RECENT_AGENT_RETENTION_DAYS
+#   (default 30) are deleted; this also caps what agent-ticker.sh's RECENT
+#   pane can ever show.
+# - state/logs/*.log (worker/verifier logs, the audit trail) are never
+#   deleted in v1, only gzip'd once older than
+#   PHAT_CONTROLLER_WORKER_LOG_GZIP_DAYS (default 30).
+# Best-effort and silent, like run_heartbeat: housekeeping is not a gate.
+sweep_repo_retention() {
+  local repo_root="$1"
+  local recent_dir="$repo_root/state/recent-agents"
+  local recent_retention_days="${PHAT_CONTROLLER_RECENT_AGENT_RETENTION_DAYS:-30}"
+  if [[ -d "$recent_dir" ]]; then
+    local f
+    while IFS= read -r f; do
+      [[ -n "$f" ]] || continue
+      rm -f "$f"
+    done < <(find "$recent_dir" -maxdepth 1 -name '*.json' -type f -mtime "+${recent_retention_days}" 2>/dev/null || true)
+  fi
+
+  local logs_dir="$repo_root/state/logs"
+  local gzip_days="${PHAT_CONTROLLER_WORKER_LOG_GZIP_DAYS:-30}"
+  if [[ -d "$logs_dir" ]] && command -v gzip >/dev/null 2>&1; then
+    local lf
+    while IFS= read -r lf; do
+      [[ -n "$lf" ]] || continue
+      gzip -f "$lf" 2>/dev/null || true
+    done < <(find "$logs_dir" -maxdepth 1 -name '*.log' -type f -mtime "+${gzip_days}" 2>/dev/null || true)
+  fi
+}
+
+# sweep_controller_log_retention: controller-wide (not per-repo) sweep of
+# ~/.phat-controller/log/tick-YYYY-MM-DD.log files older than
+# PHAT_CONTROLLER_LOG_RETENTION_DAYS (default 14). Runs once per tick fire,
+# before the subscriber loop.
+sweep_controller_log_retention() {
+  [[ -d "$controller_log_dir" ]] || return 0
+  local retention_days="${PHAT_CONTROLLER_LOG_RETENTION_DAYS:-14}"
+  local f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    rm -f "$f"
+    log "retention: deleted tick log ${f} (older than ${retention_days}d)"
+  done < <(find "$controller_log_dir" -maxdepth 1 -name 'tick-*.log' -type f -mtime "+${retention_days}" 2>/dev/null || true)
 }
 
 _process_repo_locked() {
@@ -1455,6 +1593,9 @@ main() {
     log "dependency pre-flight failed; run scripts/check-deps.sh for details"
     exit 1
   fi
+
+  sweep_controller_log_retention
+  reap_idle_dash_sessions
 
   local subscriber_file
   while IFS= read -r subscriber_file; do

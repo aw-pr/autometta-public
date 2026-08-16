@@ -27,9 +27,8 @@ PY
   fi
 }
 
-session_slug() {
-  basename "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^[:alnum:]_.-]/-/g; s/^-*//; s/-*$//'
-}
+# shellcheck source=./session-slug.sh
+source "$script_dir/session-slug.sh"
 
 dry_run=false
 ensure_only=false

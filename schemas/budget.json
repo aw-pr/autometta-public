@@ -119,6 +119,10 @@
       "type": ["string", "null"],
       "description": "The halt_reason value halt_logged_at corresponds to. A reason change always logs immediately regardless of the interval."
     },
+    "dash_active_at": {
+      "type": ["integer", "null"],
+      "description": "Unix epoch seconds of the last tick where current_stage was non-null. Stamped by tick.sh's ensure_tmux_viewer, read by its idle-dash reaper to decide whether an autometta-<slug> tmux session has been idle (no in-flight stage) for more than PHAT_CONTROLLER_DASH_IDLE_HOURS (default 24). last_tick_at and tick_count advance on every tick regardless of dispatch, so state.yaml's own mtime is not a usable idle signal; this field is written only when a stage is genuinely in flight."
+    },
     "paused_until": {
       "type": ["integer", "null"],
       "minimum": 0,
