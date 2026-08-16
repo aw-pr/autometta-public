@@ -137,6 +137,30 @@ budget_gate_dispatch() {
   esac
 }
 
+# budget_spend_caps_blown: print the space-separated names of every spend cap
+# currently exhausted, or nothing when the repo has budget left. Empty output
+# is the "safe to dispatch" answer.
+#
+# Deliberately excludes failure-cap. The three caps here bound spend, and no
+# operator action short of raising a cap or waiting for the window can make
+# them true again; consecutive_failures is a judgement about whether the work
+# is going anywhere, and re-queueing is exactly the operator saying it is.
+# scripts/requeue-stage.sh refuses to unlatch a halt while this is non-empty,
+# and tick.sh --repair skips such a repo entirely rather than spending repair
+# attempts on stages that cannot dispatch.
+budget_spend_caps_blown() {
+  local repo_root="$1"
+  local budget_path
+  budget_path="$(budget_file "$repo_root")"
+  [[ -f "$budget_path" ]] || return 0
+  jq -r '
+    [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
+      (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end),
+      (if .clock_ticks_used >= .clock_tick_cap then "tick-cap" else empty end)
+    ] | join(" ")
+  ' "$budget_path"
+}
+
 # budget_should_log_halt: dedupe the "still halted" tick log line.
 #
 # A halted repo is re-read on every tick and the log line that says so used

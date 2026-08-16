@@ -50,8 +50,146 @@ release_repo_lock() {
   rm -rf "$repo_root/state/.tick.lock"
 }
 
+# repair_mode: the unattended, every-subscriber form of requeue-stage.sh.
+#
+# Every stage sitting in stalled or failed is an infrastructure casualty --
+# an agent that died, an envelope that never arrived, a worktree the sandbox
+# refused to write. Repair puts them back in the queue. It does not touch
+# in_progress (a live worker owns it) or verifier_failed (that is a verdict,
+# not a casualty, and re-running it without re-briefing the card just buys
+# the same FAIL again).
+#
+# The per-stage mechanics are requeue-stage.sh's, called rather than copied:
+# a stage reset has to remove the run worktree and branch, kill any live
+# agent, purge the stale handoff and verifier artefacts, and refuse to
+# unlatch a halt whose spend cap is still blown. Two implementations of that
+# would drift, and the drift would only show up as a tick dispatching a
+# verifier at unfixed code.
+#
+# repair_attempts caps the loop at PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP
+# (default 2). A stage that stalls twice after repair is not an
+# infrastructure casualty; it stays down for a human, and the field is the
+# audit trail that says how many goes it had.
 repair_mode() {
-  log "repair not yet implemented, no-op"
+  if ! command -v yq >/dev/null 2>&1; then
+    log "repair: yq is required but missing, aborting"
+    exit 1
+  fi
+
+  local attempt_cap="${PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP:-2}"
+  local requeue_script="$script_dir/requeue-stage.sh"
+  if [[ ! -x "$requeue_script" ]]; then
+    log "repair: ${requeue_script} missing or not executable, aborting"
+    exit 1
+  fi
+
+  local subscriber_file
+  local total_requeued=0 total_card_missing=0 total_capped=0 total_blocked=0
+  while IFS= read -r subscriber_file; do
+    [[ -n "$subscriber_file" ]] || continue
+    local enabled repo_path manifest_path
+    enabled="$(read_subscriber_field "$subscriber_file" "enabled")"
+    repo_path="$(read_subscriber_field "$subscriber_file" "repo_path")"
+    manifest_path="$(read_subscriber_field "$subscriber_file" "manifest_path")"
+    if [[ "$enabled" != "true" ]]; then
+      continue
+    fi
+    if [[ -z "$repo_path" || ! -d "$repo_path" ]]; then
+      log "repair: invalid repo_path in ${subscriber_file}"
+      continue
+    fi
+
+    local state_yaml="$repo_path/state/state.yaml"
+    if [[ ! -s "$state_yaml" ]] || ! state_json "$state_yaml" >/dev/null 2>&1; then
+      log "repair: state.yaml missing or unreadable for ${repo_path}, skipping"
+      continue
+    fi
+
+    # A repo over a spend cap can requeue but cannot dispatch, so repairing
+    # it spends repair attempts against a wall. Ask once, before touching any
+    # stage, rather than discovering it partway through and leaving half the
+    # queue reset. requeue-stage.sh refuses on the same predicate.
+    local blown=""
+    if [[ -f "$repo_path/state/budget.json" ]]; then
+      blown="$(budget_spend_caps_blown "$repo_path")"
+    fi
+    if [[ -n "$blown" ]]; then
+      log "repair: ${repo_path} skipped, spend caps still exhausted (${blown}); the next UTC window resets the counters, or raise the cap deliberately"
+      total_blocked=$((total_blocked + 1))
+      continue
+    fi
+
+    # Take the same lock a tick takes. Requeueing a stage under a running
+    # tick would race its state writes and could remove a run worktree out
+    # from under a worker the tick has just spawned.
+    if ! acquire_repo_lock "$repo_path"; then
+      log "repair: ${repo_path} is locked by a running tick, skipping"
+      continue
+    fi
+
+    # Snapshot the candidates before mutating anything: requeue-stage.sh
+    # rewrites the whole state file, so repairing one stage must not change
+    # which other stages this pass considers.
+    local candidates
+    candidates="$(state_json "$state_yaml" | jq -r \
+      '.stages[] | select(.status == "stalled" or .status == "failed")
+       | [.id, .status, (.repair_attempts // 0)] | @tsv')"
+
+    local stage_id status repair_attempts
+    while IFS=$'\t' read -r stage_id status repair_attempts; do
+      [[ -n "$stage_id" ]] || continue
+      [[ "$repair_attempts" =~ ^[0-9]+$ ]] || repair_attempts=0
+
+      if (( repair_attempts >= attempt_cap )); then
+        log "repair: ${repo_path} ${stage_id} at repair cap (${repair_attempts}/${attempt_cap}), staying ${status}"
+        total_capped=$((total_capped + 1))
+        continue
+      fi
+
+      # Never requeue cardless work. Without a card the next dispatch has no
+      # prompt, so the stage would stall again immediately and burn one of
+      # its remaining attempts doing it.
+      local card_path
+      card_path="$(stage_card_for_id "$repo_path" "$stage_id" "$manifest_path")"
+      if [[ -z "$card_path" ]]; then
+        state_apply_json "$state_yaml" \
+          '(.stages[] | select(.id == $id)).stall_marker = "card_missing"' \
+          --arg id "$stage_id"
+        log "repair: ${repo_path} ${stage_id} stage card no longer resolves; marked card_missing, not requeued"
+        total_card_missing=$((total_card_missing + 1))
+        continue
+      fi
+
+      local rq_rc=0
+      "$requeue_script" "$repo_path" "$stage_id" >/dev/null 2>&1 || rq_rc=$?
+      case "$rq_rc" in
+        0)
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).repair_attempts =
+               (((.stages[] | select(.id == $id) | .repair_attempts) // 0) + 1)' \
+            --arg id "$stage_id"
+          log "repair: ${repo_path} ${stage_id} requeued ${status} -> pending (repair_attempts now $((repair_attempts + 1)))"
+          total_requeued=$((total_requeued + 1))
+          ;;
+        3)
+          # A cap was blown between the precheck above and this call. The
+          # stage is reset but its halt stands, so stop here rather than
+          # resetting the rest of the queue behind the same wall.
+          log "repair: ${repo_path} went over a spend cap mid-pass at ${stage_id}; stopping repair for this repo"
+          total_blocked=$((total_blocked + 1))
+          break
+          ;;
+        *)
+          log "repair: ${repo_path} ${stage_id} requeue failed (exit ${rq_rc}), left ${status}"
+          total_blocked=$((total_blocked + 1))
+          ;;
+      esac
+    done <<< "$candidates"
+
+    release_repo_lock "$repo_path"
+  done < <(sort_subscribers)
+
+  log "repair summary: requeued=${total_requeued} card_missing=${total_card_missing} capped=${total_capped} blocked=${total_blocked}"
   exit 0
 }
 
