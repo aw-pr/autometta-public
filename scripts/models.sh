@@ -108,6 +108,31 @@ claude_model_for_identity() {
 # server declares `- **Requires GUI:** true` and its codex roles run
 # unsandboxed. Declare it only when the acceptance criteria genuinely need a
 # browser: it hands that agent full machine access.
+# A run worktree gets its state/ as a symlink to the subscriber's real state
+# dir (tick.sh ensure_run_worktree), so every role shares one set of envelopes,
+# logs and budget rather than a per-worktree copy. That target sits outside the
+# worktree, and codex's workspace-write sandbox makes only the -C root writable.
+# So a sandboxed codex role can read its card but cannot write the handoff or
+# verifier envelope that the loop uses as its sole completion signal.
+#
+# The failure is silent in the worst way: the role does the work, reports its
+# verdict in prose, and exits clean. tick.sh sees no artefact, reads that as a
+# failed attempt, and burns a retry. Three of those stall the stage and discard
+# the work. Stage 31 passed verification three times this way and lost 8.8M
+# tokens of merged-nowhere output before the cause was found.
+#
+# --add-dir widens the sandbox to the symlink's real target and nothing else.
+# Emitting the resolved physical path matters: codex resolves the symlink when
+# it checks a write, so naming the worktree-relative path would not help.
+codex_state_argv_for_repo() {
+  local repo_root="$1"
+  local state_dir
+  AUTOMETTA_CODEX_STATE_ARGV=()
+  state_dir="$(cd "$repo_root/state" 2>/dev/null && pwd -P)" || return 0
+  [[ -n "$state_dir" ]] || return 0
+  AUTOMETTA_CODEX_STATE_ARGV=(--add-dir "$state_dir")
+}
+
 resolve_codex_sandbox_for_card() {
   local repo_root="$1"
   local requires_gui="$2"
