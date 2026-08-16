@@ -4,14 +4,14 @@
 
 - **Authored:** 2026-08-16
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** <<worker-identity>>
-- **Verifier:** <<verifier-identity>>
+- **Worker:** Claude Opus 5 <claude-opus-5@local>
+- **Verifier:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
 - **Worker effort:** medium
 - **Verifier effort:** medium
 - **Verifier panel:** false
-- **Pairing rationale:** <<fill at dispatch — this is operator recovery, so the
-  worker needs a real shell and real auth; the verifier checks outcomes in the
-  subscriber repo, not a diff>>
+- **Pairing rationale:** cross-family. Operator recovery needs a real shell
+  and real auth, which rules out a sandboxed seat for the worker; the Codex
+  verifier checks outcomes in the subscriber repo rather than a diff.
 - **Blocked by:** cards 29 and 30. 30 is fixed and committed; 29 is not started.
 
 ## Objective

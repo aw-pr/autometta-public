@@ -4,14 +4,15 @@
 
 - **Authored:** 2026-08-16
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** <<worker-identity>>
-- **Verifier:** <<verifier-identity>>
+- **Worker:** Claude Opus 5 <claude-opus-5@local>
+- **Verifier:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Pairing rationale:** <<fill at dispatch — cross-family. The verifier must be
-  willing to reason about a counterfactual: not "does the cap work in a unit
-  test" but "would this have stopped the run that actually happened">>
+- **Pairing rationale:** cross-family. The Claude worker reasons about the
+  counterfactual the card demands — would this cap have stopped the run that
+  actually happened — and a Codex verifier is free of the assumptions that
+  let the overrun through.
 
 ## Objective
 

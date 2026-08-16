@@ -4,14 +4,16 @@
 
 - **Authored:** 2026-08-14
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** <<worker-identity>>
-- **Verifier:** <<verifier-identity>>
+- **Worker:** Claude Opus 5 <claude-opus-5@local>
+- **Verifier:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Pairing rationale:** <<fill at dispatch — cross-family, and the verifier
-  must be able to run a real sandboxed codex dispatch end to end, because the
-  regression test for this bug is behavioural and cannot be read off the diff>>
+- **Pairing rationale:** cross-family, and deliberately not a Codex worker:
+  the bug is that a sandboxed Codex seat cannot write its envelope, so
+  dispatching this card to that family would run it straight into the defect
+  it is meant to fix. The Codex verifier supplies the real sandboxed
+  dispatch the behavioural regression test needs.
 
 ## Objective
 

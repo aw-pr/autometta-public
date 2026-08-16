@@ -4,14 +4,14 @@
 
 - **Authored:** 2026-08-16
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** <<worker-identity>>
-- **Verifier:** <<verifier-identity>>
+- **Worker:** Claude Opus 5 <claude-opus-5@local>
+- **Verifier:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Pairing rationale:** <<fill at dispatch — cross-family. The worker resolves
-  conflicts in the loop's most load-bearing files, so the verifier must not be
-  the family that wrote them>>
+- **Pairing rationale:** cross-family. The worker resolves collisions in
+  budget.sh and tick.sh, which the Claude family largely authored on dev, so
+  the verifier is Codex.
 
 ## Objective
 

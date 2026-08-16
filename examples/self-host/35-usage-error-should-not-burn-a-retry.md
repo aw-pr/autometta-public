@@ -4,12 +4,14 @@
 
 - **Authored:** 2026-08-16
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** <<worker-identity>>
-- **Verifier:** <<verifier-identity>>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Worker effort:** medium
 - **Verifier effort:** medium
 - **Verifier panel:** false
-- **Pairing rationale:** <<fill at dispatch — cross-family>>
+- **Pairing rationale:** cross-family. Same surface as card 34 and the same
+  split, so the retry-budget change is checked by the family that did not
+  write it.
 
 ## Objective
 

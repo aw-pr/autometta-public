@@ -4,12 +4,14 @@
 
 - **Authored:** 2026-08-16
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** <<worker-identity>>
-- **Verifier:** <<verifier-identity>>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Worker effort:** high
 - **Verifier effort:** medium
 - **Verifier panel:** false
-- **Pairing rationale:** <<fill at dispatch — cross-family>>
+- **Pairing rationale:** cross-family. Codex worker on the CLI-argument
+  surface it knows best; Claude verifier checks the panel and SDK routes
+  independently.
 
 ## Objective
 
