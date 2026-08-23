@@ -178,6 +178,8 @@ which is severity first, then dependency.
 | 34 | Effort silently inert on the panel and SDK verifier routes | open — follows 30 | [`34-effort-inert-on-panel-and-sdk-routes.md`](./34-effort-inert-on-panel-and-sdk-routes.md) |
 | 35 | An instant CLI usage error should not burn a verifier retry | open — raised by 30, deliberately deferred | [`35-usage-error-should-not-burn-a-retry.md`](./35-usage-error-should-not-burn-a-retry.md) |
 | 36 | Re-render the keg, recover `emergence-lab`'s five broken stages | open — blocked by 29 and 30 | [`36-ship-fixes-and-recover-emergence-lab.md`](./36-ship-fixes-and-recover-emergence-lab.md) |
+| 37 | Idle ticks consume the whole day's tick budget; SCHEDULED panel reports a queue that does not exist | open — **fleet is halted on this now**, read 31 first | [`37-idle-ticks-consume-the-day.md`](./37-idle-ticks-consume-the-day.md) |
+| 38 | Ticker shows no spend; no fleet summary pane; stale viewer sessions | open — blocked by 37 | [`38-ticker-shows-spend-and-a-fleet-pane.md`](./38-ticker-shows-spend-and-a-fleet-pane.md) |
 
 ### Operator notes (pass 4)
 
@@ -196,3 +198,10 @@ which is severity first, then dependency.
 - Card 30 is fixed on `dev` but the installed keg is at `496c7cc`, so every
   subscriber still runs the bug. Card 36 ships it.
 - `dev` is ahead of `origin/dev` and has not been pushed.
+- **Card 37 is the live one (2026-08-23).** Every enabled subscriber is halted
+  on `tick-cap` with an empty queue, five of them having spent zero tokens to
+  get there, so no overnight window has run work in days. Two contributing
+  faults: an idle tick costs the same as a dispatched one, and a second
+  fleet-wide launchd tick job was added on 2026-08-19 despite the fleet plist's
+  own comment forbidding exactly that. The operator's ticker showed a full
+  queue throughout, which is card 37's third defect.
