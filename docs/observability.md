@@ -64,13 +64,28 @@ The tmux viewer has three panes: the left pane prints a status snapshot, the
 top-right pane tails the latest controller log, and the bottom-right pane
 runs the **agent ticker** (`scripts/agent-ticker.sh`). The ticker refreshes
 every five seconds (override with `PHAT_CONTROLLER_TICKER_INTERVAL`) and
-shows three sections:
+shows up to four sections:
 
 - `ACTIVE`: each agent currently in flight, with flags from the heartbeat
   watchdog (`fresh` / `silent` / `over-budget`).
-- `RECENT`: the last five completed agents with their outcomes.
+- `LIVE`: only while a stage is genuinely `in_progress` — the last eight
+  lines of `state/logs/<stage>-worker.log`, so the running worker's output
+  is in the pane rather than behind a path the operator has to go and find.
+  A `claude -p` worker writes nothing until it exits and then emits the
+  whole log at once (`docs/lessons.md` gotcha 6), so the panel says the log
+  is empty rather than leaving a blank that reads as a stalled worker.
+- `RECENT`: the last five completed agents with their outcomes, dropping
+  anything older than `PHAT_CONTROLLER_RECENT_MAX_AGE_DAYS` (default 7)
+  first. `ACTIVE` and `SCHEDULED` were already time-scoped; `RECENT` was
+  the outlier, and a repo idle for months showed two-month-old runs as
+  though they were current.
 - `SCHEDULED`: stage cards classified as `in_flight | pending`, derived
   from `manifest_patterns` and the PLAN.md status table.
+
+Both panes on the left and top-right are scoped to the attached repo:
+`scripts/status.sh --repo <path>` narrows the status table to one
+subscriber, and the log pane filters the shared tick log to lines naming
+that repo's path.
 
 It is an operator cockpit only. It must not dispatch `autometta tick`, send
 commands to workers, or keep state that cannot be reconstructed from the
@@ -136,6 +151,52 @@ Preview the tmux commands without opening a session:
 ```sh
 autometta attach <repo-path> --dry-run
 ```
+
+## Hygiene: idle dashes and retention
+
+`tick.sh` does its own housekeeping. None of it is a gate: every sweep is
+best-effort and silent, and a failure never stops a tick.
+
+**Idle dash reaper.** `ensure_tmux_viewer` only fires when `current_stage`
+is non-null, and stamps `dash_active_at` in `budget.json` when it does. It
+runs *after* the tick's dispatch decision, so a stage that goes pending to
+`in_progress` in this same tick gets its dash immediately rather than a
+tick late. `reap_idle_dash_sessions` then kills any `autometta-<slug>`
+session whose subscriber is disabled, whose slug matches no subscriber at
+all, or whose `dash_active_at` is older than
+`PHAT_CONTROLLER_DASH_IDLE_HOURS` (default 24). An operator who is actually
+attached always wins: a session with `tmux list-clients` output is never
+reaped. `last_tick_at` and `tick_count` advance on every tick regardless of
+dispatch, which is why `state.yaml`'s mtime cannot serve as the idle signal
+and `dash_active_at` exists.
+
+`session_slug()` lives in `scripts/session-slug.sh` and is sourced by both
+`attach.sh` (which builds the session name) and `tick.sh` (which has to
+reverse-match a live session name back to a subscriber). One definition, or
+the spawner and the reaper drift and the reaper starts killing sessions it
+cannot account for.
+
+**Retention.**
+
+| What | Default | Override |
+|---|---|---|
+| `~/.phat-controller/log/tick-*.log` deleted | 14 days | `PHAT_CONTROLLER_LOG_RETENTION_DAYS` |
+| `state/recent-agents/*.json` deleted | 30 days | `PHAT_CONTROLLER_RECENT_AGENT_RETENTION_DAYS` |
+| `state/logs/*.log` gzipped, never deleted | 30 days | `PHAT_CONTROLLER_WORKER_LOG_GZIP_DAYS` |
+
+Worker and verifier logs are the audit trail, so they are compressed rather
+than removed. One consequence worth knowing: `budget_account_tokens_from_log`
+and the limit-refusal detector read the plain `.log` path, so a stage
+requeued more than 30 days after its last run finds its old log gzipped and
+logs "worker missing" instead of charging tokens twice. That is the intended
+direction of the error, but it is why the gzip threshold should stay well
+above any plausible stage turnaround.
+
+Stale run worktrees (`<repo>-run-<stage>`) are **not** swept here.
+`scripts/requeue-stage.sh` removes a stage's worktree when that stage is
+re-queued, and `tick.sh --repair` does so across a whole subscriber, but
+nothing reaps one left behind by a stage that neither completed nor was
+repaired.
 
 ## Design constraints
 

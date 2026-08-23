@@ -20,6 +20,15 @@
 # Example: requeue-stage.sh ~/repos/aegis-guardrails 01-per-call-approval-broker
 set -euo pipefail
 
+# budget.sh owns budget_spend_caps_blown, the predicate that decides whether
+# this script may unlatch a halt. tick.sh --repair asks the same question
+# before it calls this script, so the two must not drift. budget.sh narrows
+# IFS on the way in; restore this script's own so nothing below inherits it.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./budget.sh
+source "$script_dir/budget.sh"
+IFS=$' \t\n'
+
 usage() { sed -n '2,17p' "$0"; exit 2; }
 [ $# -eq 2 ] || usage
 repo_root="$(cd "$1" && pwd)"
@@ -109,12 +118,7 @@ rm -f "$tmp_json"
 # it had already overrun. Manufacturing token budget is not a re-queue, so
 # say so and stop.
 if [ -f "$budget_json" ]; then
-  blown="$(jq -r '
-    [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
-      (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end),
-      (if .clock_ticks_used >= .clock_tick_cap then "tick-cap" else empty end)
-    ] | join(" ")
-  ' "$budget_json")"
+  blown="$(budget_spend_caps_blown "$repo_root")"
   if [ -n "$blown" ]; then
     echo "requeue: $stage_id reset to pending, but NOT clearing the halt." >&2
     echo "requeue: spend caps still exhausted: $blown" >&2

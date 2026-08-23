@@ -243,3 +243,98 @@ repo idle >24h (session must survive).
 Each lands green on its own; shellcheck everything touched
 (`shellcheck scripts/*.sh` currently has a baseline — do not add new
 warnings).
+
+---
+
+## Disposition (2026-08-16, card 33)
+
+The six commits this review produced were implemented on
+`feat/control-plane-fixes` on 2026-08-01/02 and never reached `dev`. They sat
+in a second worktree for two weeks while `dev` moved on through
+worktree-per-run dispatch (`b1a3aa5`), the shared-state-dir fix (card 29) and
+the budget-cap gate (card 31), solving one of the same problems a second,
+different way.
+
+Card `33-land-or-retire-control-plane-fixes` settled each one. All six are
+now on `dev` in rewritten form, so the branch is history rather than pending
+work. Original SHAs are recorded here because the landed commits are rewrites,
+not merges, and this is the only place the correspondence is written down.
+
+| Original | Verdict | Landed as |
+|---|---|---|
+| `b2859b8` `fix(budget): self-clearing halts + dedupe the halt-log spam` | **Split: half landed, half dropped** | `71f99a7` |
+| `b755176` `feat(tick): implement --repair` | **Landed rewritten** | `4f260cc` |
+| `03854d4` `fix(tick): dispatch the verifier on a partial worker envelope` | **Landed rewritten** | `fbaf5fd` |
+| `0a2a1b8` `feat(dash): scope status/status-ticker/attach to one repo` | **Landed as-is** (one comment added) | `dc97d07` |
+| `f2ef17c` `feat(ticker): RECENT age cutoff + live worker-log tail` | **Landed rewritten** | `ecf3c76` |
+| `965d569` `feat(hygiene): idle dash reaper + retention` | **Landed rewritten** | `acb0883` |
+
+### The halt-clearing decision
+
+`b2859b8` and dev's `9666f16` are two independent answers to the same
+complaint, and section 1a of this review specified the first of them. The
+second one won.
+
+`budget_ensure_window` (dev) clears a halt at a UTC-day boundary regardless of
+reason. `budget_try_autoclear` (this branch) re-tests the halt's specific
+cause every tick and clears only if the cause has gone. The second is the more
+principled design in the abstract and it still lost, for three reasons:
+
+1. **Card 31 built on the window reset.** `budget_record_breach` writes the
+   breach to `budget.json` immediately before the reset zeroes the counters
+   that prove it. A second unlatch path would need its own equivalent or it
+   becomes the hole card 31 closed.
+2. **Its motivating case no longer exists.** `dirty-working-tree` was
+   `budget_try_autoclear`'s main re-testable reason and the one this review's
+   evidence turned on. Worktree-per-run retired it: dispatch never touches
+   `repo_root`, so `commit_state_branch` no longer guards on a clean tree.
+   (`docs/dispatch-contract.md`.)
+3. **What remained was the wrong thing to automate.** Of the other two
+   re-testable reasons, `token-cap` and `tick-cap` clear on "spend dropped
+   back under the cap" — which is to say on an operator raising a cap, or on
+   the counters being zeroed. Those are exactly the halts card 31 was written
+   to make binding after a 1M-token cap let 149M through.
+
+**One mechanism stands: `budget_ensure_window`.** Two other places clear a
+halt and neither is automatic — `tick.sh --reset-halt` and
+`scripts/requeue-stage.sh`, both operator-invoked, and the latter refuses
+while a spend cap is still blown. Stated in `docs/dispatch-contract.md` so it
+does not have to be re-derived from the absence of a second path.
+
+The halt-log dedupe half of `b2859b8` (section 3b) landed intact: it collides
+with nothing, clears nothing, and the log spam it fixes is real.
+
+### The partial-envelope question (card 29)
+
+Orthogonal and complementary. Card 29 is about whether a sandboxed worker can
+physically write its envelope through the run worktree's `state` symlink;
+`03854d4` is about what the loop does with an envelope that says `partial`.
+Card 29's own incident is the case in point: a worker that finished the work,
+ran verify green, and could not complete one item. Card 29 makes the envelope
+arrive; this stops its arrival being read as a failure.
+
+### What needed rewriting for worktree-per-run
+
+- **`--repair`** was rewritten around `scripts/requeue-stage.sh`, which
+  postdates it and knows to remove the run worktree and branch, kill a
+  registered agent, and purge verifier artefacts as well as the envelope. The
+  original carried its own older reset. It also gained a per-repo spend-cap
+  precheck, so a repo behind a cap is skipped whole rather than half-requeued.
+- **The dash log filter** matches a substring, which now also catches
+  `<repo>-run-<stage>` lines — most of the dispatch traffic. Tightening it to
+  a whole-path match would empty the pane; commented so nobody does.
+- **The ticker's LIVE panel** reads the canonical repo's `state/logs`, not the
+  run worktree's, which is already right; and an empty log now says so,
+  because a `claude -p` worker writes nothing until it exits (lessons gotcha
+  6) and a blank panel otherwise reads as a stalled worker.
+- **The hygiene sweeps** touch only the canonical `state/`, so they are
+  unaffected. They do **not** reap stale `<repo>-run-<stage>` worktrees; see
+  the open item below.
+
+### Open, deliberately not done here
+
+A stage that neither completes nor is repaired leaves its run worktree and
+branch standing forever. `requeue-stage.sh` and `--repair` remove one when
+that stage is re-queued; nothing sweeps the rest. That is a new feature rather
+than one of these six commits, so it is recorded in
+`docs/observability.md` and left for its own card.

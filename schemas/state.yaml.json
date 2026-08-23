@@ -84,7 +84,17 @@
           },
           "stall_marker": {
             "type": ["string", "null"],
-            "description": "Free-text marker written by tick.sh when stalling a stage; carries the stall reason and pid."
+            "description": "Free-text marker written by tick.sh when stalling a stage; carries the stall reason and pid. `card_missing` means `tick.sh --repair` found no resolvable stage card and refused to requeue."
+          },
+          "worker_envelope": {
+            "type": ["string", "null"],
+            "description": "Set to 'partial' when the worker's handoff envelope reported status=partial. The stage still proceeds to verifier dispatch — partial is the worker's annotation, not a verdict — and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
+          },
+          "repair_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Count of times `tick.sh --repair` has requeued this stage from stalled/failed back to pending. Capped at PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP (default 2): a stage that stalls twice after repair stays down for the operator. Absent or missing is treated as 0."
           },
           "worker_envelope": {
             "type": ["string", "null"],

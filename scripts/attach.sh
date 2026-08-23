@@ -27,9 +27,8 @@ PY
   fi
 }
 
-session_slug() {
-  basename "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^[:alnum:]_.-]/-/g; s/^-*//; s/-*$//'
-}
+# shellcheck source=./session-slug.sh
+source "$script_dir/session-slug.sh"
 
 dry_run=false
 ensure_only=false
@@ -68,8 +67,21 @@ autometta_root_q="$(shell_quote "$autometta_root")"
 controller_log_q="$(shell_quote "$controller_home/log")"
 
 repo_path_q="$(shell_quote "$repo_path")"
-status_cmd="cd $autometta_root_q && scripts/status-ticker.sh"
-log_cmd="mkdir -p $controller_log_q; latest=''; for candidate in $controller_log_q/tick-*.log; do [ -e \"\$candidate\" ] || continue; latest=\"\$candidate\"; done; printf 'Project: $repo_slug\nRepo: $repo_path\n\n'; if [ -n \"\$latest\" ]; then tail -f \"\$latest\"; else printf 'No tick log yet in $controller_home/log\\n'; exec \"\${SHELL:-/bin/sh}\"; fi"
+status_cmd="cd $autometta_root_q && scripts/status-ticker.sh --repo $repo_path_q"
+# Filter the global tick log to lines mentioning this repo's path, so the
+# pane shows this repo's dispatch/halt activity instead of every subscriber's
+# (a halted-for-weeks repo's spam used to swamp an idle repo's own pane).
+# The note prints immediately (before any filtered output, which may never
+# arrive if the repo is quiet) so an empty filter reads as "no lines for
+# this repo yet, waiting" rather than a dead pane.
+#
+# The match is a substring, not a whole path, and that is deliberate now that
+# dispatch runs in an ephemeral <repo>-run-<stage> worktree: most of the lines
+# worth watching name the run worktree, and those share this repo's path as a
+# prefix. The cost is that a sibling subscriber whose path extends this one's
+# also matches; a scoped pane showing a little too much beats one showing
+# almost nothing.
+log_cmd="mkdir -p $controller_log_q; latest=''; for candidate in $controller_log_q/tick-*.log; do [ -e \"\$candidate\" ] || continue; latest=\"\$candidate\"; done; printf 'Project: $repo_slug\nRepo: $repo_path\n\n'; if [ -n \"\$latest\" ]; then printf '(showing only lines mentioning this repo; waiting for the first one)\\n'; tail -f \"\$latest\" | grep --line-buffered -F $repo_path_q; else printf 'No tick log yet in $controller_home/log\\n'; exec \"\${SHELL:-/bin/sh}\"; fi"
 ticker_cmd="cd $autometta_root_q && scripts/agent-ticker.sh $repo_path_q"
 
 if "$dry_run"; then

@@ -230,6 +230,22 @@ clears it at the start of the next run window regardless of reason (see
 tick" (return code 2; caller must preserve the recorded reason rather
 than overwrite it).
 
+**`budget_ensure_window` is the only thing that clears a halt.** Nothing
+else in the loop unlatches one, by design: two clearing paths in one file
+is how a halt stops meaning anything, and the budget file is the only
+safety the design has. An operator clears a halt by editing
+`state/budget.json`, or `scripts/requeue-stage.sh` clears a `failure-cap`
+halt as part of re-queueing (and refuses, non-zero, if a spend cap is
+still blown). A halt whose cause is no longer true is not re-tested
+mid-window; it holds until the window rolls.
+
+The rc-2 log line is rate-limited rather than emitted every tick.
+`budget_should_log_halt` (`scripts/budget.sh`) allows one line per
+`halt_reason` per `PHAT_CONTROLLER_HALT_LOG_INTERVAL` seconds (default
+3600), always logs immediately on a change of reason, and stamps
+`halt_logged_at` / `halt_logged_reason` in the budget file. It decides
+what is written to the log and nothing else — it never clears a halt.
+
 ### Worktree-per-run dispatch
 
 Backported from the emergence-viewer stage-44 pilot (`memory/adopters/

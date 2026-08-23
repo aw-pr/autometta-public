@@ -137,6 +137,68 @@ budget_gate_dispatch() {
   esac
 }
 
+# budget_spend_caps_blown: print the space-separated names of every spend cap
+# currently exhausted, or nothing when the repo has budget left. Empty output
+# is the "safe to dispatch" answer.
+#
+# Deliberately excludes failure-cap. The three caps here bound spend, and no
+# operator action short of raising a cap or waiting for the window can make
+# them true again; consecutive_failures is a judgement about whether the work
+# is going anywhere, and re-queueing is exactly the operator saying it is.
+# scripts/requeue-stage.sh refuses to unlatch a halt while this is non-empty,
+# and tick.sh --repair skips such a repo entirely rather than spending repair
+# attempts on stages that cannot dispatch.
+budget_spend_caps_blown() {
+  local repo_root="$1"
+  local budget_path
+  budget_path="$(budget_file "$repo_root")"
+  [[ -f "$budget_path" ]] || return 0
+  jq -r '
+    [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
+      (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end),
+      (if .clock_ticks_used >= .clock_tick_cap then "tick-cap" else empty end)
+    ] | join(" ")
+  ' "$budget_path"
+}
+
+# budget_should_log_halt: dedupe the "still halted" tick log line.
+#
+# A halted repo is re-read on every tick and the log line that says so used
+# to be emitted every time, forever. A whole month of ~/.phat-controller/log
+# can be one repeated sentence, which buries every line that was worth
+# reading. Returns 0 (log it) the first time a given reason is seen, on any
+# change of reason, and again once PHAT_CONTROLLER_HALT_LOG_INTERVAL seconds
+# (default 3600) have elapsed since the last emission for that same reason.
+# Returns 1 to suppress. Stamps halt_logged_at/halt_logged_reason on every
+# rc-0 return.
+#
+# This decides what is written to the log and nothing else. It never clears a
+# halt: budget_ensure_window is the single mechanism that does that.
+budget_should_log_halt() {
+  local repo_root="$1"
+  local reason="$2"
+  local budget_path
+  budget_path="$(budget_file "$repo_root")"
+  [[ -f "$budget_path" ]] || return 0
+
+  local interval="${PHAT_CONTROLLER_HALT_LOG_INTERVAL:-3600}"
+  local last_epoch last_reason now_epoch
+  last_epoch="$(jq -r '.halt_logged_at // empty' "$budget_path")"
+  last_reason="$(jq -r '.halt_logged_reason // empty' "$budget_path")"
+  now_epoch="$(date -u +%s)"
+
+  if [[ -n "$last_epoch" && "$last_reason" == "$reason" && "$last_epoch" =~ ^[0-9]+$ ]]; then
+    if (( now_epoch - last_epoch < interval )); then
+      return 1
+    fi
+  fi
+
+  budget_write_atomic "$repo_root" \
+    '.halt_logged_at = ($now | tonumber) | .halt_logged_reason = $reason' \
+    --arg now "$now_epoch" --arg reason "$reason"
+  return 0
+}
+
 budget_increment_tick() {
   local repo_root="$1"
   budget_write_atomic "$repo_root" '.clock_ticks_used += 1'
@@ -332,6 +394,8 @@ budget_halt() {
     | .halt_reason = $reason
     | .halt_reasons = ($reasons | split(" ") | map(select(. != "")))
     | .halted_at = $ts
+    | .halt_logged_at = null
+    | .halt_logged_reason = null
   ' --arg reason "$reason" --arg reasons "$reasons" --arg ts "$ts"
   case "$reason" in
     token-cap|wall-clock-cap|tick-cap|failure-cap)
