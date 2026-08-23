@@ -100,7 +100,7 @@ to one backing script.
 | `autometta add-stage <repo-path> <stage-card-path>` | Append a stage to a subscribed repo's `state.yaml` from a stage card. |
 | `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. |
 | `autometta attach [repo-path] [--dry-run]` | Open or re-attach the tmux viewer (`autometta-<repo>`): status ticker, work pane, and agent ticker. `--dry-run` prints what it would do. `--ensure` (used internally by `init`) creates the session only if absent. |
-| `autometta tick [--repair\|--reset-halt]` | Run one controller tick across subscribers: read state, dispatch one worker and/or verifier, write next state, exit. `--reset-halt` clears `halted`/`halt_reason` on the budget file. `--repair` is a reserved no-op. |
+| `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one controller tick across subscribers: read state, dispatch one worker and/or verifier, write next state, exit. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` is a reserved no-op. |
 | `autometta check-deps` | Verify required tooling is present (bash, git, jq, yq, tmux, the CLI families, op-fetch, etc.). |
 | `autometta dashboard [--open]` | Regenerate the static dashboard under the controller home; `--open` opens it in the default browser. |
 | `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
@@ -198,7 +198,11 @@ tick writes `halted: true` with one of these canonical `halt_reason` values:
 
 - `token-cap` - tokens spent reached the total cap.
 - `wall-clock-cap` - wall-clock elapsed reached the cap.
-- `tick-cap` - clock ticks used reached `clock_tick_cap`.
+- `tick-cap` - work ticks used reached `clock_tick_cap`. Only ticks that
+  dispatched, reaped or supervised an agent count; a tick that found nothing
+  to do charges `idle_ticks_used`, which halts nothing unless the optional
+  `idle_tick_cap` is set.
+- `idle-tick-cap` - idle ticks used reached `idle_tick_cap`, where one is set.
 - `failure-cap` - consecutive failures reached `consecutive_failure_cap`.
 - `dirty-working-tree` - tree was not clean when the tick tried to advance
   state (note: a worker is allowed to leave the tree dirty while
@@ -209,8 +213,18 @@ tick writes `halted: true` with one of these canonical `halt_reason` values:
 Clear a halt once you have fixed the cause:
 
 ```sh
-autometta tick --reset-halt
+autometta tick --reset-halt                  # clears the flag and the tick / failure counters
+autometta tick --reset-halt --reset-tokens   # ... and the spend counters too
 ```
+
+`--reset-halt` clears `clock_ticks_used`, `idle_ticks_used` and
+`consecutive_failures` alongside the flag, because clearing the flag alone
+left the counter that caused the halt in place and the next tick simply
+re-halted. It will not zero `tokens_spent` unless you ask: that is real spend
+against a real cap, not a polling artefact. If a spend cap is still over after
+the counters are cleared, the halt stays latched against that cap and the
+command says so, rather than unlatching the only safety for one tick and
+letting you find out afterwards.
 
 There is no retry, no exponential backoff, and no circuit breaker by design.
 See `docs/phat-controller.md` for the full FSM and token accounting.

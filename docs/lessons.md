@@ -291,3 +291,50 @@ This is the inverse of gotcha 13 and the more insidious of the two. There the vi
 Verified A/B against the real CLI with the same prompt and sandbox, the flag the only difference: without it, `Write failed: unable to create state/.probe`; with it, the write lands in the shared dir. `scripts/state-writable-smoke.sh` asserts the argv construction, the symlink resolution that is the whole point, and the graceful degradation when `state/` is absent, against a stub `op-fetch` so it needs no auth, network or spend. It fails closed on a pre-fix tree.
 
 The general rule: when a loop treats "artefact absent" as "agent failed", make sure the agent could physically have written it. A sandbox boundary that cuts through a completion signal converts every permission error into a false verdict about the work — and the retry that follows is guaranteed to cost the same and fail the same way.
+
+## Headless gotcha 15: the tick counter measured the clock, and the dashboard measured the wrong file
+
+### One-sentence summary
+`clock_tick_cap` was documented as bounding work and implemented as bounding elapsed polling, so every repo with an empty queue reached its cap on a fixed schedule and was halted before the window it was meant to work in opened, while the panel the operator was watching read a queue the controller does not dispatch from, so it showed the empty queue as full.
+
+### Incident origin
+2026-08-23. Every enabled subscriber, read at 10:50Z:
+
+| Repo | `clock_ticks_used` / cap | `tokens_spent` | `wall_clock_elapsed_seconds` | halted at |
+|---|---|---|---|---|
+| aegis-guardrails | 400/400 | 0 | 0 | 04:13:32Z |
+| agentic-rag-kimble | 400/400 | 0 | 0 | 04:13:32Z |
+| autometta | 400/400 | 0 | 0 | 04:13:32Z |
+| fractals-from-the-90s | 400/400 | 0 | 0 | 04:13:33Z |
+| emergence-lab-surface | 180/180 | 0 | 0 | 07:32:47Z |
+| emergence-lab | 400/400 | 5,921,327 | 0 | 03:28:18Z |
+
+Five of the six consumed an entire day's tick allowance and spent zero tokens and zero wall-clock seconds doing it. `aegis-guardrails` holds exactly one stage, that stage is `completed`, and it burned 400 ticks establishing there was nothing to dispatch.
+
+`budget_increment_tick` was called on the unconditional fall-through at the end of the per-repo tick as well as on the early-return paths above it, so the counter advanced whether or not an agent was dispatched. `schemas/budget.json` had described the field as "ticks that have done work on this repo" since it was written; nothing in the code made that true. The window reset at midnight, the fleet spent the allowance through the small hours, and every subscriber was halted well before the 22:00 evening window opened. The overnight window had nothing to do with whether the overnight window opened.
+
+Three things compounded it.
+
+**A second fleet-wide tick job halved the time to cap.** `com.autometta.tick.fleet.plist` carries the comment "Do not add a second tick job per repo", written after three per-repo jobs tripled the rate and left the fleet halted through the 2026-08-15 window. `com.autometta.tick.emergence-lab-surface-v2.plist`, added 2026-08-19, is named for one repo but its `ProgramArguments` are `autometta tick` with no repo argument, so it iterated the whole fleet too. Both were loaded at `StartInterval` 300, and the controller log showed 24 ticks an hour per repo, one every 150 seconds, against an intended 12.
+
+**`--reset-halt` could not recover any of it.** It wrote `.halted = false | .halt_reason = null | .halted_at = null` and never touched `clock_ticks_used`, which is the counter that caused the halt. A run against all seven subscribers reported "reset halt state" seven times and all seven were back to `halted: true, halt_reason: tick-cap` inside one tick interval, still reading 400/400. The fleet was unstuck by hand, zeroing the counters directly in each `budget.json`.
+
+**The panel said the queue was full.** `agent-ticker.sh` renders SCHEDULED from `list-cards.sh`, which classified a card as done only if it appeared as a done row in `examples/self-host/PLAN.md` or in `state/recent-agents/` with `outcome=completed`. It never read `state/state.yaml`, the file the controller dispatches from. `PLAN.md` is autometta's own file and exists in no other subscriber, so every card in a subscriber's `docs/stages/` was reported `pending` forever. The ticker showed `emergence-lab` with sixteen pending stages while `state.yaml` recorded 31 `completed`, 3 `verifier_failed`, 2 `stalled` and not one `pending`.
+
+### Failure mode if ignored
+This is the same class of miss as the 2026-08-13 weekend, where ~9.4M tokens went on ticking against an empty queue, except here the operator had a display that actively said the queue was full. Two numbers named for one thing and measuring another: a cap called a work budget that measured elapsed time, and a panel called SCHEDULED that measured a file the scheduler does not read. Each on its own is survivable. Together the fleet spent its whole allowance doing nothing, halted itself out of the window where there was something to do, and reported a healthy backlog throughout.
+
+The reset command made it self-sustaining. A recovery path that reports success and changes nothing is worse than no recovery path, because the operator stops looking.
+
+### Mitigation
+`budget_increment_tick` takes a kind. `clock_ticks_used` counts work ticks only (supervised a stage in flight, reaped or killed an agent, transitioned a stage, dispatched a queued one) and is the counter `clock_tick_cap` still halts on, so the cap binds exactly where it was always documented to. Idle polling is counted in `idle_ticks_used`, which halts nothing unless an operator sets the optional `idle_tick_cap`. Unknown kinds charge as work, so a dispatch path added later that forgets to classify itself is bounded rather than unbounded.
+
+`budget_reset_halt` clears `clock_ticks_used`, `idle_ticks_used` and `consecutive_failures` with the flag, writes a `breaches[]` record first, and reports any spend cap still over. `tokens_spent` moves only under `--reset-tokens`: a polling artefact can be zeroed freely, real spend cannot.
+
+`scripts/health-check.sh` counts loaded launchd jobs that run the fleet tick and fails when there is more than one. It matches on what a job runs rather than what it is called, because the duplicate was named for a repo, and a label-pattern check would have missed it. The comment in the plist is now enforced rather than merely written down.
+
+`list-cards.sh` treats `state.yaml` as authoritative for every card it records and falls back to `PLAN.md` / `recent-agents` only for cards it has never seen. A card on disk the controller has never been given is a real category and gets its own label, `unqueued`, so an empty queue is visible as an empty queue. The ticker prints queue depth as a number whether or not it is zero, and the ALERTS panel raises an empty queue on an enabled subscriber.
+
+`scripts/idle-tick-smoke.sh` asserts both directions against temporary budget files with no auth, network or spend: a simulated full day of idle polling does not halt, work ticks still halt at the cap, `--reset-halt` leaves a capped repo able to tick again, and a second loaded tick job fails the health check.
+
+The general rule: when a counter's name and its increment site disagree, the name is what everyone reasons about and the increment site is what happens. And a status panel must read the file the thing it reports on actually reads, or it is a second, independently-wrong source of truth that is at its most confident when it is at its most wrong.

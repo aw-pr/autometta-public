@@ -45,12 +45,22 @@
     "clock_tick_cap": {
       "type": "integer",
       "minimum": 1,
-      "description": "Primary safety. Maximum number of cron-tick fires the controller may consume on this repo. Halt when clock_ticks_used >= cap. Bounds wall-clock independent of how expensive individual workers were."
+      "description": "Primary safety. Maximum number of WORK ticks the controller may consume on this repo. Halt when clock_ticks_used >= cap. Bounds wall-clock independent of how expensive individual workers were. It does not bound polling: see idle_tick_cap."
     },
     "clock_ticks_used": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of ticks that have done work on this repo. Incremented when a tick transitions the state."
+      "description": "Number of ticks that have done work on this repo: supervised a stage in flight, reaped or killed an agent, transitioned a stage, or dispatched a queued one. A tick that finds nothing to do charges idle_ticks_used instead. Until 2026-08-23 this counter was advanced on the unconditional fall-through at the end of every per-repo tick, so an idle repo reached its cap on a fixed schedule: five of six enabled subscribers were halted on tick-cap having spent zero tokens and zero seconds."
+    },
+    "idle_ticks_used": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of ticks that found nothing to do -- no stage in flight and nothing pending. An odometer, not a cap: it answers how much of the window went on polling an empty queue, and halts nothing unless idle_tick_cap is set. Zeroed at the window boundary alongside the other counters. Absent on a budget file predating this field; treat as zero."
+    },
+    "idle_tick_cap": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Optional bound on idle polling, halting with idle-tick-cap when idle_ticks_used >= cap. Absent (the default) means idle polling is unbounded, which is deliberate: an empty queue is not a fault, and a cap whose only reachable effect is to halt an idle repo converts 'nothing to do' into 'cannot work when there is'. Set it only where a repo polling an empty queue is itself the thing to catch."
     },
     "consecutive_failure_cap": {
       "type": "integer",
@@ -74,7 +84,7 @@
     },
     "halt_reason": {
       "type": ["string", "null"],
-      "description": "Which cap exhausted. One of: token-cap | wall-clock-cap | tick-cap | failure-cap, or an operational reason (yq-missing, state-corrupt, invalid-stage-id, operator-*). The first hit only; see halt_reasons for the full set. Null until halted is true."
+      "description": "Which cap exhausted. One of: token-cap | wall-clock-cap | tick-cap | idle-tick-cap | failure-cap, or an operational reason (yq-missing, state-corrupt, invalid-stage-id, operator-*). The first hit only; see halt_reasons for the full set. Null until halted is true."
     },
     "halt_reasons": {
       "type": ["array", "null"],
@@ -90,8 +100,8 @@
           "at": { "type": "string", "format": "date-time" },
           "cleared_by": {
             "type": "string",
-            "enum": ["halt", "window-reset"],
-            "description": "halt: recorded as the loop latched. window-reset: recorded as the daily reset was about to erase the counters."
+            "enum": ["halt", "window-reset", "reset-halt"],
+            "description": "halt: recorded as the loop latched. window-reset: recorded as the daily reset was about to erase the counters. reset-halt: recorded as an operator's `tick.sh --reset-halt` was about to erase them."
           },
           "reasons": { "type": "array", "items": { "type": "string" } },
           "window_started_at": { "type": ["string", "null"] },
@@ -101,6 +111,8 @@
           "wall_clock_cap_seconds": { "type": "integer" },
           "clock_ticks_used": { "type": "integer" },
           "clock_tick_cap": { "type": "integer" },
+          "idle_ticks_used": { "type": "integer" },
+          "idle_tick_cap": { "type": ["integer", "null"] },
           "consecutive_failures": { "type": "integer" },
           "consecutive_failure_cap": { "type": "integer" }
         }

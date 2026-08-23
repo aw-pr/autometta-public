@@ -15,7 +15,7 @@ Usage:
   autometta add-stage <repo-path> <stage-card-path>
   autometta status
   autometta attach [repo-path] [--dry-run]
-  autometta tick [--repair|--reset-halt]
+  autometta tick [--repair|--reset-halt [--reset-tokens]]
   autometta check-deps
   autometta dashboard [--open]
   autometta retro-grade [--last N] [--dry-run]

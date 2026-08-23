@@ -38,8 +38,8 @@ budget_write_atomic() {
 #   0 — no halt condition; caller may proceed.
 #   1 — a real cap was hit on this read. The specific cap name is written
 #       to the global BUDGET_CHECK_LAST_HIT (one of: token-cap,
-#       wall-clock-cap, tick-cap, failure-cap). The caller is expected to
-#       pass that value to budget_halt as the halt_reason.
+#       wall-clock-cap, tick-cap, idle-tick-cap, failure-cap). The caller is
+#       expected to pass that value to budget_halt as the halt_reason.
 #   2 — the repo was already halted before this call. halt_reason is
 #       preserved verbatim in budget.json; the caller MUST NOT call
 #       budget_halt again or it will overwrite the original reason.
@@ -64,7 +64,7 @@ budget_check_caps() {
   BUDGET_CHECK_LAST_HIT=""
   BUDGET_CHECK_ALL_HITS=""
 
-  local halted token_hit wall_hit tick_hit fail_hit
+  local halted token_hit wall_hit tick_hit idle_hit fail_hit
   halted="$(jq -r '.halted // false' "$budget_path")"
 
   if [[ "$halted" == "true" ]]; then
@@ -74,12 +74,18 @@ budget_check_caps() {
   token_hit="$(jq -r '.tokens_spent >= .token_cap_total' "$budget_path")"
   wall_hit="$(jq -r '.wall_clock_elapsed_seconds >= .wall_clock_cap_seconds' "$budget_path")"
   tick_hit="$(jq -r '.clock_ticks_used >= .clock_tick_cap' "$budget_path")"
+  # idle_tick_cap is absent by default and an absent cap never binds: an idle
+  # repo must be able to sit through a whole window without halting. Written
+  # with an explicit null test because jq compares null against a number
+  # rather than erroring, and `null >= null` is true.
+  idle_hit="$(jq -r '(.idle_tick_cap // null) != null and ((.idle_ticks_used // 0) >= .idle_tick_cap)' "$budget_path")"
   fail_hit="$(jq -r '.consecutive_failures >= .consecutive_failure_cap' "$budget_path")"
 
   local hits=""
   [[ "$token_hit" == "true" ]] && hits="${hits}token-cap "
   [[ "$wall_hit"  == "true" ]] && hits="${hits}wall-clock-cap "
   [[ "$tick_hit"  == "true" ]] && hits="${hits}tick-cap "
+  [[ "$idle_hit"  == "true" ]] && hits="${hits}idle-tick-cap "
   [[ "$fail_hit"  == "true" ]] && hits="${hits}failure-cap "
   hits="${hits% }"
 
@@ -137,9 +143,46 @@ budget_gate_dispatch() {
   esac
 }
 
+# budget_increment_tick: charge one tick against the repo, as either work or
+# idle polling. kind is "work" (the default) or "idle".
+#
+# The split is the whole of card 37. schemas/budget.json has always described
+# clock_ticks_used as "ticks that have done work on this repo", but the
+# counter was advanced on the unconditional fall-through at the end of the
+# per-repo tick as well as on the early returns above it, so it advanced
+# whether or not an agent was dispatched. A repo with an empty queue then
+# reached clock_tick_cap on a fixed schedule no matter what: on 2026-08-23
+# five of six enabled subscribers were halted on tick-cap having spent zero
+# tokens and zero wall-clock seconds, and aegis-guardrails -- which holds one
+# stage, and that stage is completed -- burned 400 ticks establishing there
+# was nothing to dispatch. The window then reset at midnight, the fleet spent
+# the allowance through the small hours, and every subscriber was halted
+# before the evening window opened. A cap whose only reachable effect is to
+# halt an idle repo converts "nothing to do" into "cannot work when there
+# is".
+#
+# idle_ticks_used is an odometer, not a cap: it answers "how much of this
+# window went on polling nothing" without halting anything. It binds only if
+# the operator sets idle_tick_cap, which is absent by default.
+#
+# Unknown kinds charge as work. Fail-safe rather than fail-open: a caller
+# added later that forgets to classify itself is bounded, not unbounded.
 budget_increment_tick() {
   local repo_root="$1"
-  budget_write_atomic "$repo_root" '.clock_ticks_used += 1'
+  local kind="${2:-work}"
+  case "$kind" in
+    idle)
+      budget_write_atomic "$repo_root" '.idle_ticks_used = ((.idle_ticks_used // 0) + 1)'
+      ;;
+    work)
+      budget_write_atomic "$repo_root" '.clock_ticks_used += 1'
+      ;;
+    *)
+      printf 'budget_increment_tick: unknown kind %q for %s, charging as work\n' \
+        "$kind" "$repo_root" >&2
+      budget_write_atomic "$repo_root" '.clock_ticks_used += 1'
+      ;;
+  esac
 }
 
 budget_record_failure() {
@@ -178,6 +221,7 @@ budget_ensure_window() {
     or (.tokens_spent >= .token_cap_total)
     or (.wall_clock_elapsed_seconds >= .wall_clock_cap_seconds)
     or (.clock_ticks_used >= .clock_tick_cap)
+    or ((.idle_tick_cap // null) != null and (.idle_ticks_used // 0) >= .idle_tick_cap)
     or (.consecutive_failures >= .consecutive_failure_cap)
   ' "$budget_path")"
 
@@ -193,6 +237,7 @@ budget_ensure_window() {
       [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
         (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end),
         (if .clock_ticks_used >= .clock_tick_cap then "tick-cap" else empty end),
+        (if (.idle_tick_cap // null) != null and (.idle_ticks_used // 0) >= .idle_tick_cap then "idle-tick-cap" else empty end),
         (if .consecutive_failures >= .consecutive_failure_cap then "failure-cap" else empty end)
       ] | join(" ")
     ' "$budget_path")"
@@ -207,6 +252,7 @@ budget_ensure_window() {
       .tokens_spent = 0
       | .wall_clock_elapsed_seconds = 0
       | .clock_ticks_used = 0
+      | .idle_ticks_used = 0
       | .consecutive_failures = 0
       | .halted = false
       | .halt_reason = null
@@ -299,6 +345,8 @@ budget_record_breach() {
         wall_clock_cap_seconds: .wall_clock_cap_seconds,
         clock_ticks_used: .clock_ticks_used,
         clock_tick_cap: .clock_tick_cap,
+        idle_ticks_used: (.idle_ticks_used // 0),
+        idle_tick_cap: .idle_tick_cap,
         consecutive_failures: .consecutive_failures,
         consecutive_failure_cap: .consecutive_failure_cap
       }]) | .[-($retain | tonumber):])
@@ -334,10 +382,91 @@ budget_halt() {
     | .halted_at = $ts
   ' --arg reason "$reason" --arg reasons "$reasons" --arg ts "$ts"
   case "$reason" in
-    token-cap|wall-clock-cap|tick-cap|failure-cap)
+    token-cap|wall-clock-cap|tick-cap|idle-tick-cap|failure-cap)
       budget_record_breach "$repo_root" "halt" "$reasons"
       ;;
   esac
+}
+
+# budget_reset_halt: the operator's recovery command, as opposed to the
+# window boundary's automatic one.
+#
+# It must clear the counters that cause a halt, not merely the flag. Before
+# card 37 it wrote only `.halted = false | .halt_reason = null | .halted_at =
+# null`, leaving clock_ticks_used at the cap that triggered the halt, so
+# budget_check_caps re-halted the repo on the very next tick. Observed on
+# 2026-08-23: a --reset-halt run reported "reset halt state" for all seven
+# subscribers and all seven were back to halted with halt_reason tick-cap
+# inside one tick interval, still reading 400/400. A recovery command that
+# leaves the machine in the state it was rescued from is worse than none,
+# because it reports success.
+#
+# tokens_spent is the one counter it will not clear by default: a polling
+# artefact can be zeroed freely, but real spend against a real cap is the
+# operator's decision to make explicitly. Pass reset_tokens="true" for that.
+# While a spend cap is still over the halt stays latched and is re-stamped to
+# the cap that is actually still breached, so the reset never briefly unlatches
+# the only safety in the design. Prints the caps still over, empty when none
+# are, so the caller can say so rather than let the operator discover it a tick
+# later.
+#
+# The breach record is written first, for the same reason budget_ensure_window
+# writes one: the counters that prove the breach are exactly the ones about to
+# be zeroed.
+budget_reset_halt() {
+  local repo_root="$1"
+  local reset_tokens="${2:-false}"
+  local budget_path
+  budget_path="$(budget_file "$repo_root")"
+
+  local over
+  over="$(jq -r '
+    [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
+      (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end),
+      (if .clock_ticks_used >= .clock_tick_cap then "tick-cap" else empty end),
+      (if (.idle_tick_cap // null) != null and (.idle_ticks_used // 0) >= .idle_tick_cap then "idle-tick-cap" else empty end),
+      (if .consecutive_failures >= .consecutive_failure_cap then "failure-cap" else empty end)
+    ] | join(" ")
+  ' "$budget_path")"
+  if [[ -n "$over" ]]; then
+    budget_record_breach "$repo_root" "reset-halt" "$over"
+  fi
+
+  local token_clause=""
+  if [[ "$reset_tokens" == "true" ]]; then
+    token_clause=' | .tokens_spent = 0 | .wall_clock_elapsed_seconds = 0'
+  fi
+  budget_write_atomic "$repo_root" "
+    .clock_ticks_used = 0
+    | .idle_ticks_used = 0
+    | .consecutive_failures = 0${token_clause}
+  "
+
+  # What is still over once the polling counters are gone. Only spend can be,
+  # because everything else was just zeroed.
+  local remaining
+  remaining="$(jq -r '
+    [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
+      (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end)
+    ] | join(" ")
+  ' "$budget_path")"
+
+  if [[ -z "$remaining" ]]; then
+    budget_write_atomic "$repo_root" \
+      '.halted = false | .halt_reason = null | .halt_reasons = null | .halted_at = null'
+  else
+    # The halt stays latched, re-stamped to the cap that is actually still
+    # over, so the flag never contradicts the counters. Unlatching a live
+    # spend breach is not a recovery, it is manufacturing budget -- the same
+    # line requeue-stage.sh draws.
+    budget_write_atomic "$repo_root" '
+      .halted = true
+      | .halt_reason = ($reasons | split(" ") | .[0])
+      | .halt_reasons = ($reasons | split(" ") | map(select(. != "")))
+    ' --arg reasons "$remaining"
+  fi
+
+  printf '%s' "$remaining"
 }
 
 # budget_add_tokens: increment .tokens_spent by an integer count.

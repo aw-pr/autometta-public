@@ -209,7 +209,10 @@ and nothing else overwrites a pre-existing reason on subsequent ticks:
 
 - `token-cap` — `tokens_spent >= token_cap_total`.
 - `wall-clock-cap` — `wall_clock_elapsed_seconds >= wall_clock_cap_seconds`.
-- `tick-cap` — `clock_ticks_used >= clock_tick_cap`.
+- `tick-cap` — `clock_ticks_used >= clock_tick_cap`. Work ticks only: a
+  tick that found nothing to do charges `idle_ticks_used` instead.
+- `idle-tick-cap` — `idle_ticks_used >= idle_tick_cap`. Only reachable
+  where an operator has set `idle_tick_cap`; it is absent by default.
 - `failure-cap` — `consecutive_failures >= consecutive_failure_cap`.
 - `yq-missing` — the `yq` binary required to read `state/state.yaml`
   was not on PATH.

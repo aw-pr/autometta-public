@@ -55,7 +55,13 @@ repair_mode() {
   exit 0
 }
 
+# reset_halts_mode: the documented recovery path. Clears the halt flag *and*
+# the counters that produce a halt, because clearing the flag alone put every
+# subscriber straight back into halted/tick-cap on the following tick (card
+# 37, defect C). tokens_spent and wall_clock_elapsed_seconds are real spend
+# rather than a polling artefact, so they move only under --reset-tokens.
 reset_halts_mode() {
+  local reset_tokens="${1:-false}"
   local subscriber_file
   while IFS= read -r subscriber_file; do
     [[ -n "$subscriber_file" ]] || continue
@@ -74,8 +80,15 @@ reset_halts_mode() {
       log "budget file missing for ${repo_path}, skipping reset"
       continue
     fi
-    budget_write_atomic "$repo_path" '.halted = false | .halt_reason = null | .halted_at = null'
-    log "reset halt state for ${repo_path}"
+    local before_reason before_ticks still_over
+    before_reason="$(jq -r '.halt_reason // "none"' "$budget_path")"
+    before_ticks="$(jq -r '"\(.clock_ticks_used)/\(.clock_tick_cap)"' "$budget_path")"
+    still_over="$(budget_reset_halt "$repo_path" "$reset_tokens")"
+    if [[ -n "$still_over" ]]; then
+      log "reset halt state for ${repo_path} (was ${before_reason}, ticks ${before_ticks}); tick and failure counters cleared but ${still_over} is still over cap, so the halt stays latched; pass --reset-tokens to clear it"
+    else
+      log "reset halt state for ${repo_path} (was ${before_reason}, ticks ${before_ticks}); counters cleared"
+    fi
   done < <(sort_subscribers)
   exit 0
 }
@@ -886,10 +899,21 @@ _process_repo_locked() {
     fi
   fi
 
+  # Work versus idle polling (card 37). A tick charges clock_ticks_used only
+  # when it supervises a stage in flight or dispatches a queued one; a tick
+  # that finds nothing to do charges idle_ticks_used, which halts nothing.
+  # Every early return below is a work path by construction -- each one has
+  # reaped, killed, stalled or observed an agent -- so they charge "work"
+  # explicitly. The single path that reaches the fall-through still holding
+  # "idle" is "no stage in flight and nothing pending", which is exactly the
+  # state that burned the fleet's whole allowance on 2026-08-23.
+  local tick_kind="idle"
+
   local current_stage
   current_stage="$(state_json "$state_yaml" | jq -r '.current_stage')"
 
   if [[ "$current_stage" != "null" && -n "$current_stage" ]]; then
+    tick_kind="work"
     if ! validate_stage_id "$current_stage"; then
       log "rejecting malformed current_stage id ${current_stage} in ${repo_root}"
       budget_halt "$repo_root" "invalid-stage-id"
@@ -932,7 +956,7 @@ _process_repo_locked() {
       esac
       costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "$verifier_result"
       _process_verifier_artefact "$repo_root" "$state_yaml" "$current_stage" "$artefact" "$manifest_path"
-      budget_increment_tick "$repo_root"
+      budget_increment_tick "$repo_root" work
       commit_state_branch "$repo_root"
       return 0
     fi
@@ -960,7 +984,7 @@ _process_repo_locked() {
             --arg id "$current_stage"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} stalled after ${elapsed}s (budget ${budget_seconds}s + 50% grace), marked stalled"
-          budget_increment_tick "$repo_root"
+          budget_increment_tick "$repo_root" work
           commit_state_branch "$repo_root"
           return 0
         fi
@@ -972,7 +996,7 @@ _process_repo_locked() {
     local card_path
     if [[ -n "${worker_pid:-}" ]] && kill -0 "$worker_pid" 2>/dev/null; then
         log "worker ${worker_pid} for ${current_stage} still running, skipping verifier dispatch"
-        budget_increment_tick "$repo_root"
+        budget_increment_tick "$repo_root" work
         commit_state_branch "$repo_root"
         return 0
       fi
@@ -1043,7 +1067,7 @@ _process_repo_locked() {
             --arg id "$current_stage"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} stalled: worker exited but wrote no handoff envelope (worker_envelope_missing_after_exit)"
-          budget_increment_tick "$repo_root"
+          budget_increment_tick "$repo_root" work
           commit_state_branch "$repo_root"
           return 0
         fi
@@ -1074,7 +1098,7 @@ _process_repo_locked() {
             --arg id "$current_stage"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} stalled: handoff envelope failed schema validation (worker_envelope_invalid); moved to ${invalid_path}"
-          budget_increment_tick "$repo_root"
+          budget_increment_tick "$repo_root" work
           commit_state_branch "$repo_root"
           return 0
         fi
@@ -1094,7 +1118,7 @@ _process_repo_locked() {
             --arg id "$current_stage" --arg notes "$env_notes_val"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} failed: worker envelope status=fail; notes: ${env_notes_val}"
-          budget_increment_tick "$repo_root"
+          budget_increment_tick "$repo_root" work
           commit_state_branch "$repo_root"
           return 0
         fi
@@ -1119,7 +1143,7 @@ _process_repo_locked() {
 
       if [[ -n "${verifier_pid:-}" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
         log "verifier ${verifier_pid} for ${current_stage} still running, skipping verifier dispatch"
-        budget_increment_tick "$repo_root"
+        budget_increment_tick "$repo_root" work
         commit_state_branch "$repo_root"
         return 0
       fi
@@ -1181,7 +1205,7 @@ _process_repo_locked() {
           '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
           --arg id "$current_stage"
         budget_record_failure "$repo_root"
-        budget_increment_tick "$repo_root"
+        budget_increment_tick "$repo_root" work
         commit_state_branch "$repo_root"
         return 0
       fi
@@ -1230,6 +1254,7 @@ _process_repo_locked() {
     local next_stage
     next_stage="$(state_json "$state_yaml" | jq -r '.stages[] | select(.status == "pending") | .id' | head -n1)"
     if [[ -n "$next_stage" ]]; then
+      tick_kind="work"
       if ! validate_stage_id "$next_stage"; then
         log "rejecting malformed pending stage id ${next_stage} in ${repo_root}"
         budget_halt "$repo_root" "invalid-stage-id"
@@ -1275,25 +1300,43 @@ _process_repo_locked() {
     fi
   fi
 
-  budget_increment_tick "$repo_root"
+  budget_increment_tick "$repo_root" "$tick_kind"
   commit_state_branch "$repo_root"
 }
 
 main() {
+  # Flags are collected before any of them acts, so --reset-halt can be
+  # qualified by --reset-tokens whatever order they arrive in.
+  local do_repair=false do_reset_halt=false reset_tokens=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repair)
-        repair_mode
+        do_repair=true
         ;;
       --reset-halt)
-        reset_halts_mode
+        do_reset_halt=true
+        ;;
+      --reset-tokens)
+        reset_tokens=true
         ;;
       *)
         log "unknown flag: $1"
         exit 1
         ;;
     esac
+    shift
   done
+
+  if [[ "$reset_tokens" == "true" && "$do_reset_halt" != "true" ]]; then
+    log "--reset-tokens only qualifies --reset-halt; nothing to do"
+    exit 1
+  fi
+  if [[ "$do_repair" == "true" ]]; then
+    repair_mode
+  fi
+  if [[ "$do_reset_halt" == "true" ]]; then
+    reset_halts_mode "$reset_tokens"
+  fi
 
   mkdir -p "$controller_log_dir"
 

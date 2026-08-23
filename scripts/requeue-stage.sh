@@ -119,7 +119,10 @@ if [ -f "$budget_json" ]; then
     echo "requeue: $stage_id reset to pending, but NOT clearing the halt." >&2
     echo "requeue: spend caps still exhausted: $blown" >&2
     jq -r '"requeue:   tokens \(.tokens_spent)/\(.token_cap_total), ticks \(.clock_ticks_used)/\(.clock_tick_cap), wall \(.wall_clock_elapsed_seconds)/\(.wall_clock_cap_seconds)"' "$budget_json" >&2
-    echo "requeue: the next UTC window resets the counters, or raise the cap" >&2
+    echo "requeue: the next UTC window resets the counters; or clear them now with" >&2
+    echo "requeue:   autometta tick --reset-halt [--reset-tokens]" >&2
+    echo "requeue: (--reset-tokens is required for a token or wall-clock breach);" >&2
+    echo "requeue: or raise the cap" >&2
     echo "requeue: deliberately in $budget_json. Do not clear .halted by hand." >&2
     exit 3
   fi
