@@ -273,6 +273,14 @@ observed half-drawn is the acceptance bar.
   the total is a running sum; Codex records a cumulative `total_token_usage`,
   so the total is the last one seen. Summing the Codex figure would multiply
   it by the turn count.
+- Resolve the transcript on every frame until it is found, and cache only a
+  success. A CLI does not create its transcript when it execs: op-fetch, the
+  prompt assembly and CLI start-up put seconds between the registry entry
+  appearing and the first transcript byte. The prototype cached that first
+  miss and pinned the pane to "tokens unavailable" for the rest of the run,
+  which is the same defect as `tokens:0` wearing a different label. Say
+  "waiting" during the opening seconds and "unavailable" only once the wait
+  is no longer normal, so the two cases are not one message.
 - `repo-ticker-proto.py` settles three questions the worker would otherwise
   spend the budget on. The agent's working directory, which keys the Claude
   transcript, comes from `lsof -a -p <pid> -d cwd` without touching the

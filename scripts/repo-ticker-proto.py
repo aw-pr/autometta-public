@@ -424,13 +424,19 @@ def in_flight_lines(repo, width):
         elapsed = time.time() - started
         budget = e.get("budget_seconds") or 0
 
+        # Resolution is retried every frame until it succeeds, and only a
+        # success is cached. A CLI does not create its transcript at exec:
+        # op-fetch, prompt assembly and CLI start-up put seconds between the
+        # registry entry and the first transcript byte, and caching that first
+        # miss pinned the pane to "tokens unavailable" for the whole run.
         reader = readers.get(pid)
         if reader is None:
             cwd = agent_cwd(pid)
             path = (claude_transcript(cwd, started) if family == "claude"
                     else codex_transcript(cwd, started))
-            reader = TranscriptReader(path, family) if path else False
-            readers[pid] = reader
+            if path:
+                reader = TranscriptReader(path, family)
+                readers[pid] = reader
         total = reader.poll() if reader else None
         rate = reader.rate_per_min() if reader else None
 
@@ -438,7 +444,10 @@ def in_flight_lines(repo, width):
         lines.append(head[:width + (len(head) - len(strip_ansi(head)))])
 
         if total is None:
-            tok = YELLOW("tokens unavailable (no transcript found)")
+            # Distinguish the normal opening seconds from a genuine miss.
+            # Both render as no number, and only one of them is a problem.
+            tok = (DIM("waiting for transcript") if elapsed < 120
+                   else YELLOW("tokens unavailable (no transcript found)"))
         else:
             tok = BOLD("%s tok" % short_tokens(total))
             if rate is not None:
