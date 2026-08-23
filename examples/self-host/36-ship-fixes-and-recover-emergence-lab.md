@@ -133,3 +133,48 @@ requeued stages got; and confirmation the other two subscribers still dispatch.
 Requeue and keg rendering need a real shell and working auth for whichever
 family the requeued stages name. A sandboxed codex worker cannot re-render a
 Homebrew keg.
+
+## Retired, 2026-08-23
+
+This card is retired unrun rather than requeued. Its premise does not hold and
+its deliverables are landed, superseded, or belong to a successor.
+
+Its own worker established the premise was wrong: none of the five broken
+`emergence-lab` stages is a victim of cards 29 or 30, which postdate the
+2026-05-26/27 incidents by two and a half months. The statuses matched only
+because `verifier_failed` and `stalled` are the only terminal states the loop
+has. That finding, with five per-stage verdicts and log citations, is the
+card's one durable artefact and is committed at
+`docs/incidents/2026-08-16-emergence-lab-five-broken-stages.md` (2e0415f). It
+was salvaged from the run worktree, where it was untracked and would have gone
+with the first requeue.
+
+Disposition of the rest:
+
+- Keg re-render: superseded. The keg has been re-rendered three times since,
+  most recently to 1fe7588, so the version the card names is long gone.
+- Five verdicts: landed, as above.
+- Requeue of `emergence-lab` stage 16: performed, and it has since stalled
+  again at `verifier_attempts: 0`. Unfinished, and it belongs to the successor
+  rather than to this card.
+- `HANDOFF.md`: written at the time.
+
+The run worktree and `autometta/36-ship-fixes-and-recover-emergence-lab` are
+removed. The branch carried no commits: the worker's output was uncommitted
+working-tree state, and the only part of it worth having is the incident doc.
+
+What is left undone is not this card's shape. Stages 13, 14 and 15 have
+working code committed (`a0ba582`, `6af7104`, `38b5e6d`) and one FAIL each,
+every time on the browser-evidence criterion, because the verifier could not
+obtain a browser rather than because the code was wrong. Stage 16 carries a
+criterion of the same kind. When this card ran on 2026-08-16 that was an open
+capability gap and its worker correctly refused to re-brief four of the
+operator's cards on its own initiative.
+
+The gap has since closed. `templates/verifier-prompt.md` now requires any
+browser check to run fully headless against a dev server the verifier starts
+itself (7c7f22b, 2026-08-22), which is the instruction whose absence let each
+verifier decide it could not look. A successor card should re-brief those four
+stages against that rule, and check whether a codex verifier also needs
+`Requires GUI: true` on those cards, since a sandboxed codex role aborts at
+NSApplication init even headless.
