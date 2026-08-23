@@ -93,10 +93,23 @@ it against the recorded frontier verdict. Report per candidate:
    plain sleeps and a hard daily stop (budget file, not retries).
 2. A single-shot caller for the cloud candidates. OpenRouter and Groq are
    both OpenAI-compatible chat endpoints, so one caller with a base URL
-   and key name per provider covers both: `OPENROUTER_API_KEY` and
-   `GROQ_API_KEY` through op-fetch from op-refs, fail-closed when the ref
-   is unset. Reuse the card-45 route machinery where it fits; do not build
-   a fourth auth path.
+   and key name per provider covers both. Auth follows the
+   auth-route-security route-isolation rule, which is what makes a free
+   cloud route safe by construction rather than by intention:
+   - New refs `OP_REF_GROQ_API_KEY` and `OP_REF_OPENROUTER_API_KEY`:
+     placeholder rows in the committed `op-refs.sh`, real refs only in
+     the gitignored `op-refs.local.sh`.
+   - Each provider's caller goes through op-fetch naming ONLY its own
+     key. The paid refs (`OP_REF_OPENAI_API_KEY`,
+     `OP_REF_ANTHROPIC_API_KEY`) are never named on a free route, so
+     `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are structurally absent
+     from the child env: a free run cannot silently rebill to a paid
+     key, which is gotcha 8's failure mode closed at the route layer.
+   - Fail closed when the route's own ref is unset or still a
+     `op://YOUR_VAULT/...` placeholder, as the existing routes do.
+   Reuse the card-45 route machinery where it fits; do not build a
+   fourth auth path, and do not let either caller inherit the parent
+   shell's env.
 3. `docs/verifier-bake-off.md` - the results table, the per-candidate
    recommendation (trust for mechanical acceptance / trust generally / do
    not trust), and the raw verdict artefacts checked in under
@@ -129,8 +142,11 @@ it against the recorded frontier verdict. Report per candidate:
 2. FAIL recall, PASS agreement, artefact discipline and cost-in-time
    reported per candidate in `docs/verifier-bake-off.md`.
 3. Every score is re-derivable from checked-in artefacts.
-4. The OpenRouter caller fails closed with no key, and its request count
-   per verification is measured and reported.
+4. Each cloud caller fails closed with no key, and a dispatch through it
+   demonstrates route isolation: with `OPENAI_API_KEY` and
+   `ANTHROPIC_API_KEY` exported in the parent shell, the child env holds
+   only the free route's key. Request count per verification is measured
+   and reported.
 5. A stated recommendation: which candidate (if any) becomes the default
    free verifier, for which stage kinds, and what stays frontier-only.
 6. Existing offline smoke scripts still pass; `sdk-cache-smoke.sh` needs

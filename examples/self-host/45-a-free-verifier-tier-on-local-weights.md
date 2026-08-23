@@ -198,7 +198,9 @@ Two findings inside that probe are load-bearing:
 - A Gemini or OpenRouter route. Document the OpenRouter option in
   `docs/setup.md` as the investigated fallback (custom `model_providers`
   entry, `OPENROUTER_API_KEY` via op-refs, 20/min and 50-1,000/day free
-  caps, rotating model list); implement nothing.
+  caps, rotating model list); implement nothing. Card 46 owns the cloud
+  free tiers, with the route-isolation guarantee that a free route names
+  only its own op-ref so the paid keys are structurally absent.
 - Local workers. The plumbing this card builds will mostly allow it, but
   worker quality on local weights is an experiment for a later card;
   verifiers are the budget relief the operator asked for.
