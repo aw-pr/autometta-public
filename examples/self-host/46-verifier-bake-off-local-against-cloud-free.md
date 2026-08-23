@@ -35,15 +35,25 @@ weights before betting overnight runs on any of them.
 | `qwen3-coder:30b` | local Ollama, already pulled | 30B | $0 | none; the fast local option |
 | `qwen/qwen3-coder:free` | OpenRouter | 480B-A35B MoE, 1M context | $0 | 20 req/min; 50 req/day, 1,000/day after a one-time $10 credit purchase |
 | DeepSeek R1 (`:free`) | OpenRouter | 671B MoE | $0 | same free-tier caps; list rotates without notice |
-| Grok (any tier) | xAI / OpenRouter | - | paid | no usable free API route found; xAI's coding model is paid on OpenRouter. Drop unless this changes |
+| `gpt-oss-120b` on Groq | Groq free tier | 120B MoE | $0 | 30 req/min, 1,000 req/day, 8K tokens/min, 200K tokens/day; first ceiling hit returns 429 |
+| Grok (any tier) | xAI / OpenRouter | - | paid | recorded for completeness: no usable free API route; xAI's coding model is paid on OpenRouter |
 
-Grok is in the table to record the negative result: the operator named it,
-and the investigation found no free route worth building against. Puter-style
-"free unlimited Grok" proxies exist and are not acceptable: an unofficial
-proxy inside the verification path is a supply-chain risk in exactly the
-place whose job is to be trustworthy.
+Groq (the LPU inference host, not xAI's Grok) is the interesting cloud
+entry: it serves the same `gpt-oss-120b` the local route runs, at hundreds
+of tokens per second. That makes it the clean experiment in the matrix -
+same weights, local against hosted - so any verdict difference is serving
+and speed, not parameters. Its binding constraint is tokens, not requests:
+at 200K tokens/day and 8K tokens/min, one verification whose packaged
+evidence runs long can consume a large fraction of the day, and a card plus
+diff that exceeds the per-minute token ceiling has to be chunked or
+truncated. Measure the token budget per verification before trusting the
+1,000 req/day headline.
 
-The OpenRouter daily caps shape the design: at 50/day an agentic verifier
+Puter-style "free unlimited" proxies for any provider are not acceptable:
+an unofficial proxy inside the verification path is a supply-chain risk in
+exactly the place whose job is to be trustworthy.
+
+The free-tier caps shape the design: at 50/day an agentic verifier
 that burns several requests per criterion exhausts the quota in one or two
 verifications, so the cloud candidates are only usable in single-shot mode
 (one request: card, diff and evidence in, verdict JSON out), not as
@@ -81,10 +91,12 @@ it against the recorded frontier verdict. Report per candidate:
    stage and emits a comparable verdict JSON; a batch mode loops the
    matrix and respects the OpenRouter per-minute and per-day caps with
    plain sleeps and a hard daily stop (budget file, not retries).
-2. An OpenRouter single-shot caller for the cloud candidates, routed
-   through op-fetch with `OPENROUTER_API_KEY` from op-refs, fail-closed
-   when the ref is unset. Reuse the card-45 route machinery where it fits;
-   do not build a fourth auth path.
+2. A single-shot caller for the cloud candidates. OpenRouter and Groq are
+   both OpenAI-compatible chat endpoints, so one caller with a base URL
+   and key name per provider covers both: `OPENROUTER_API_KEY` and
+   `GROQ_API_KEY` through op-fetch from op-refs, fail-closed when the ref
+   is unset. Reuse the card-45 route machinery where it fits; do not build
+   a fourth auth path.
 3. `docs/verifier-bake-off.md` - the results table, the per-candidate
    recommendation (trust for mechanical acceptance / trust generally / do
    not trust), and the raw verdict artefacts checked in under
@@ -110,8 +122,8 @@ it against the recorded frontier verdict. Report per candidate:
 
 ## Acceptance criteria
 
-1. The matrix ran: every candidate in the table (Grok excluded, reason
-   recorded) over at least 10 benchmark stages including at least 3 with
+1. The matrix ran: every free candidate in the table (paid Grok excluded,
+   reason recorded) over at least 10 benchmark stages including at least 3 with
    frontier FAIL verdicts, or the daily-cap arithmetic showing why fewer
    cloud runs were possible, with the shortfall named.
 2. FAIL recall, PASS agreement, artefact discipline and cost-in-time
@@ -150,5 +162,10 @@ it against the recorded frontier verdict. Report per candidate:
 - Single-shot means the candidate cannot gather evidence itself. Package
   the same evidence for every candidate so the comparison is of judgement,
   not of retrieval.
-- 20 req/min is per key: the batch loop can interleave candidates but
-  must serialise per provider.
+- Rate caps are per provider key: the batch loop can interleave
+  candidates but must serialise per provider. Groq's are
+  multi-dimensional (requests and tokens, per minute and per day); treat
+  a 429 as the daily stop unless the retry-after header says minute.
+- The Groq-hosted `gpt-oss-120b` against local `gpt-oss:120b` is the
+  controlled pair: report it as its own comparison line, since it
+  isolates serving from model quality.
