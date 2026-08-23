@@ -25,6 +25,52 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 refresh_interval="${PHAT_CONTROLLER_TICKER_INTERVAL:-5}"
 
+# Resolve list-cards.sh: prefer this script's own dir (dev checkout), then
+# fall back to the brew-installed CLI's scripts dir, so a stale tmux pane
+# launched from an older cellar still finds the current helper.
+resolve_list_cards() {
+  if [[ -x "$script_dir/list-cards.sh" ]]; then
+    printf '%s' "$script_dir/list-cards.sh"
+    return 0
+  fi
+  if command -v autometta >/dev/null 2>&1; then
+    local autometta_bin candidate
+    autometta_bin="$(command -v autometta)"
+    candidate="$(cd "$(dirname "$autometta_bin")/.." && pwd)/scripts/list-cards.sh"
+    [[ -x "$candidate" ]] && printf '%s' "$candidate"
+  fi
+}
+list_cards_bin="$(resolve_list_cards)"
+
+# Strip one layer of surrounding quotes. subscribe-repo.sh writes quoted
+# strings; the subscriber template uses the unquoted form. Accept both, as
+# tick.sh's read_subscriber_field does.
+unquote_field() {
+  local v="$1"
+  v="${v%\"}"; v="${v#\"}"
+  v="${v%\'}"; v="${v#\'}"
+  printf '%s' "$v"
+}
+
+# Is this repo an enabled subscriber? An empty queue only warrants an alert
+# where the controller is actually meant to be dispatching. Prints
+# true | false | unknown.
+subscriber_enabled() {
+  local controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+  local resolved f rp
+  resolved="$(cd "$repo_root" 2>/dev/null && pwd || printf '%s' "$repo_root")"
+  for f in "$controller_home"/subscribers/*.yaml; do
+    [[ -e "$f" ]] || continue
+    [[ "$(basename "$f")" == "template.yaml" ]] && continue
+    rp="$(unquote_field "$(sed -n 's/^repo_path:[[:space:]]*//p' "$f" | head -n1)")"
+    if [[ "$rp" == "$repo_root" || "$rp" == "$resolved" ]]; then
+      unquote_field "$(sed -n 's/^enabled:[[:space:]]*//p' "$f" | head -n1)"
+      return 0
+    fi
+  done
+  printf 'unknown'
+}
+
 render_once() {
   local active_dir="$repo_root/state/active-agents"
   local recent_dir="$repo_root/state/recent-agents"
@@ -71,10 +117,31 @@ PY
   # the operator's attention so the panel stays signal, not noise.
   local state_path="$repo_root/state/state.yaml"
   local budget_path="$repo_root/state/budget.json"
-  python3 - "$state_path" "$budget_path" "$repo_root" <<'PY' || true
+  # The card table is read once and shared by ALERTS and SCHEDULED, so the
+  # alert and the panel can never disagree about queue depth.
+  local cards=""
+  if [[ -n "$list_cards_bin" ]]; then
+    cards="$("$list_cards_bin" "$repo_root" 2>/dev/null || true)"
+  fi
+  local pending_count in_flight_count enabled
+  pending_count="$(printf '%s' "$cards" | awk -F'\t' '$2 == "pending"' | grep -c . || true)"
+  in_flight_count="$(printf '%s' "$cards" | awk -F'\t' '$2 == "in_flight"' | grep -c . || true)"
+  enabled="$(subscriber_enabled)"
+  python3 - "$state_path" "$budget_path" "$repo_root" "$pending_count" "$in_flight_count" "$enabled" <<'PY' || true
 import json, os, sys
 state_path, budget_path, repo_root = sys.argv[1], sys.argv[2], sys.argv[3]
+pending_count, in_flight_count, enabled = int(sys.argv[4]), int(sys.argv[5]), sys.argv[6]
 alerts = []
+
+# Empty queue on an enabled subscriber. The controller will tick this repo
+# every interval of every window and dispatch nothing, which is how ~9.4M
+# tokens went on an empty queue over the 2026-08-13 weekend
+# (token-maxing/WEEKEND-RUNS.md) and how the 2026-08-23 overnight windows came
+# up dead. Suppressed while something is in flight -- a queue drained down to
+# its last running stage is not idle.
+if enabled == "true" and pending_count == 0 and in_flight_count == 0:
+    alerts.append("queue empty: 0 pending stages while subscriber is enabled, "
+                  "nothing will dispatch this window")
 
 # Budget halts
 try:
@@ -261,31 +328,30 @@ PY
   fi
   printf '\n'
 
-  printf 'SCHEDULED\n'
-  # Resolve list-cards.sh: prefer this script's own dir (dev checkout),
-  # then fall back to the brew-installed CLI's libexec/scripts (so a
-  # stale tmux pane launched from an older cellar still finds the
-  # current helper).
-  local lc=""
-  if [[ -x "$script_dir/list-cards.sh" ]]; then
-    lc="$script_dir/list-cards.sh"
-  elif command -v autometta >/dev/null 2>&1; then
-    local autometta_bin candidate
-    autometta_bin="$(command -v autometta)"
-    candidate="$(cd "$(dirname "$autometta_bin")/.." && pwd)/scripts/list-cards.sh"
-    [[ -x "$candidate" ]] && lc="$candidate"
-  fi
-  if [[ -n "$lc" ]]; then
-    pending="$("$lc" "$repo_root" 2>/dev/null | awk -F'\t' '$2 == "pending" {print $1}' | head -5)"
-    in_flight="$("$lc" "$repo_root" 2>/dev/null | awk -F'\t' '$2 == "in_flight" {print $1}')"
-    if [[ -n "$in_flight" ]]; then
-      printf '%s\n' "$in_flight" | sed 's/^/  in_flight  /'
+  # SCHEDULED reads list-cards.sh, which reads state/state.yaml -- the queue
+  # the controller actually dispatches from. The depth is printed as a number
+  # whether or not it is zero, because "(no pending cards)" is easy to read as
+  # "nothing to show" and an empty queue on an enabled subscriber is the whole
+  # signal.
+  printf 'SCHEDULED (queue depth %s pending, %s in flight)\n' \
+    "$pending_count" "$in_flight_count"
+  if [[ -n "$list_cards_bin" ]]; then
+    local unqueued_count
+    unqueued_count="$(printf '%s' "$cards" | awk -F'\t' '$2 == "unqueued"' | grep -c . || true)"
+    printf '%s' "$cards" | awk -F'\t' '$2 == "in_flight" {print "  in_flight  " $1}'
+    printf '%s' "$cards" | awk -F'\t' '$2 == "pending" {print "  pending    " $1}' | head -5
+    if (( pending_count == 0 && in_flight_count == 0 )); then
+      printf '  queue empty: 0 pending, 0 in flight\n'
     fi
-    if [[ -n "$pending" ]]; then
-      printf '%s\n' "$pending" | sed 's/^/  pending    /'
-    fi
-    if [[ -z "$in_flight" && -z "$pending" ]]; then
-      printf '  (no pending cards)\n'
+    # Cards on disk the controller has never been given. Not queue depth, and
+    # deliberately not spelled the same way as a queued-and-waiting stage.
+    if (( unqueued_count > 0 )); then
+      printf '  %s card(s) on disk never queued (autometta add-stage to queue one):\n' \
+        "$unqueued_count"
+      printf '%s' "$cards" | awk -F'\t' '$2 == "unqueued" {print "  unqueued   " $1}' | head -3
+      if (( unqueued_count > 3 )); then
+        printf '  unqueued   ... and %s more\n' "$(( unqueued_count - 3 ))"
+      fi
     fi
   else
     # Last-resort fallback: read state.yaml directly so the pane is

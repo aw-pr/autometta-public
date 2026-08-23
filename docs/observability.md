@@ -66,6 +66,9 @@ runs the **agent ticker** (`scripts/agent-ticker.sh`). The ticker refreshes
 every five seconds (override with `PHAT_CONTROLLER_TICKER_INTERVAL`) and
 shows up to four sections:
 
+- `ALERTS`: shown only when something needs attention. Budget halts,
+  consecutive failures, stages in a terminal-failure state, and an **empty
+  queue on an enabled subscriber** (zero pending and nothing in flight).
 - `ACTIVE`: each agent currently in flight, with flags from the heartbeat
   watchdog (`fresh` / `silent` / `over-budget`).
 - `LIVE`: only while a stage is genuinely `in_progress` — the last eight
@@ -79,8 +82,24 @@ shows up to four sections:
   first. `ACTIVE` and `SCHEDULED` were already time-scoped; `RECENT` was
   the outlier, and a repo idle for months showed two-month-old runs as
   though they were current.
-- `SCHEDULED`: stage cards classified as `in_flight | pending`, derived
-  from `manifest_patterns` and the PLAN.md status table.
+- `SCHEDULED`: queue depth as a number, pending and in flight, followed by
+  the stages themselves, from `scripts/list-cards.sh`.
+
+`list-cards.sh` treats `state/state.yaml` as authoritative for every card it
+records, because that is the file the controller dispatches from. `PLAN.md`
+and `state/recent-agents/` are consulted only for cards `state.yaml` has never
+seen. A card on disk that has never been queued is labelled `unqueued`, which
+is deliberately not the same word as `pending`: it is a real and useful
+category, but it is not queue depth.
+
+The distinction is what the panel got wrong. It used to classify a card as
+done only from `examples/self-host/PLAN.md`, which is autometta's own file and
+exists in no other subscriber, so every card in a subscriber's `docs/stages/`
+read `pending` forever. On 2026-08-23 the ticker showed `emergence-lab` with
+sixteen pending stages against a `state.yaml` recording 31 completed, 3
+verifier-failed, 2 stalled and not one pending: an empty queue displayed as a
+full one, while the overnight windows came up dead. Queue depth is therefore
+printed as a number whether or not it is zero, and zero raises an alert.
 
 Both panes on the left and top-right are scoped to the attached repo:
 `scripts/status.sh --repo <path>` narrows the status table to one
