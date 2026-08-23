@@ -59,7 +59,12 @@ verifications, so the cloud candidates are only usable in single-shot mode
 (one request: card, diff and evidence in, verdict JSON out), not as
 tool-looping agents. That is a different verifier shape from the CLI one,
 and this card measures whether the shape loses more than the parameters
-gain. The one-time $10 unlock to 1,000/day is the operator's call and
+gain. The repo already owns that shape: `scripts/verify-sdk.py` is the SDK
+verifier transport (card, artefact glob and evidence packaged by the
+harness, one structured call out, verdict JSON written directly, no agent
+loop). The cloud callers are a sibling of it on the OpenAI-compatible API,
+not a new invention, and whatever they learn about packaging evidence for
+a single shot feeds back into the SDK transport's own prompt. The one-time $10 unlock to 1,000/day is the operator's call and
 changes the arithmetic if taken.
 
 ## Method: retro-grading against verdicts we already trust
@@ -84,6 +89,20 @@ it against the recorded frontier verdict. Report per candidate:
 - **Artefact discipline** - does it produce parseable verdict JSON every
   time. A verifier whose output cannot be parsed is a stalled stage.
 - **Wall clock and, for cloud, requests consumed** per verification.
+
+## Inputs (read these in your own context)
+
+- `scripts/verify-sdk.py` and `docs/sdk-verifier.md` - the single-shot
+  verifier shape to mirror: how it derives the artefact glob from the
+  card, packages evidence, forces structured output, and writes the
+  artefact. Reuse its packaging and its artefact schema so bake-off
+  verdicts are comparable with real ones.
+- `scripts/retro-grade.sh` and `docs/retro-grade.md` - the existing
+  re-run-the-rubric harness this card generalises.
+- `scripts/spawn-verifier.sh` - the transport resolver, for where a cloud
+  transport would eventually slot if a candidate wins.
+- `op-refs.sh` and the auth-route-security skill - the route-isolation
+  contract the cloud callers must satisfy.
 
 ## Deliverables
 
@@ -177,7 +196,12 @@ it against the recorded frontier verdict. Report per candidate:
   criteria they failed were genuinely unmet.
 - Single-shot means the candidate cannot gather evidence itself. Package
   the same evidence for every candidate so the comparison is of judgement,
-  not of retrieval.
+  not of retrieval. `verify-sdk.py` already solves the packaging half:
+  start from its card-plus-glob assembly rather than re-deriving it.
+- If a cloud candidate wins, the follow-up route card should extend the
+  existing sdk transport branch in `spawn-verifier.sh` (a provider knob on
+  the same transport) rather than adding a transport: `cli | sdk` stays
+  the whole enum, with the sdk arm learning a base URL and key name.
 - Rate caps are per provider key: the batch loop can interleave
   candidates but must serialise per provider. Groq's are
   multi-dimensional (requests and tokens, per minute and per day); treat
