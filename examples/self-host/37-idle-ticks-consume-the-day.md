@@ -87,7 +87,26 @@ Measured, from today's controller log, ticks logged per hour for one repo:
 rate is 12. Every subscriber is being double-ticked, and the tick cap therefore
 arrives in half the intended time.
 
-### Defect C: the SCHEDULED panel and the controller read different queues
+### Defect C: `--reset-halt` cannot recover the fleet
+
+`reset_halts_mode` (`scripts/tick.sh:77`) writes:
+
+```
+.halted = false | .halt_reason = null | .halted_at = null
+```
+
+It never resets `clock_ticks_used`, which is the counter that caused the halt.
+`budget_check_caps` re-evaluates `.clock_ticks_used >= .clock_tick_cap` on the
+next tick and halts again immediately. Observed on 2026-08-23: a run of
+`tick.sh --reset-halt` reported "reset halt state" for all seven subscribers,
+and all seven were back to `halted: true, halt_reason: tick-cap` within one
+tick interval, still reading 400/400.
+
+The documented recovery path therefore does not recover anything. The fleet was
+unstuck by hand, zeroing `clock_ticks_used` and `consecutive_failures` directly
+in each `budget.json`.
+
+### Defect D: the SCHEDULED panel and the controller read different queues
 
 `agent-ticker.sh` renders SCHEDULED from `list-cards.sh`, which classifies a
 card as `done` only if it appears as a done row in
@@ -146,9 +165,15 @@ queue was full.
    `WEEKEND-RUNS.md` flagged on 2026-08-14 against
    `ai-schedules/bin/preflight_autometta.sh` and it belongs in both places —
    preflight catches it before a window, the ticker catches it during one.
-5. **Recover the fleet.** Clear the current `tick-cap` halts
-   (`autometta tick --reset-halt`) once 1 and 2 are in, and confirm a tick
-   with an empty queue no longer advances toward a halt.
+5. **Make `--reset-halt` actually reset.** It must clear the counters that
+   trigger a halt, not just the flag: `clock_ticks_used`,
+   `consecutive_failures`, and — behind an explicit opt-in flag, since it is
+   real spend rather than a polling artefact — `tokens_spent`. A recovery
+   command that leaves the machine in the state it was rescued from is worse
+   than none, because it reports success.
+6. **Recover the fleet.** Confirm a tick with an empty queue no longer
+   advances toward a halt. Done by hand on 2026-08-23 as a stopgap; the fix
+   must make the stopgap unnecessary.
 
 ## Acceptance criteria
 
@@ -162,7 +187,9 @@ queue was full.
    labels the unqueued `docs/stages/*.md` cards distinctly from queued ones.
 5. The ALERTS panel shows an empty-queue alert for every currently-enabled
    subscriber, all seven of which qualify today.
-6. All existing smoke tests still pass against the installed keg:
+6. `tick.sh --reset-halt` leaves a previously tick-capped repo able to tick
+   without immediately re-halting; assert on the counter, not the flag.
+7. All existing smoke tests still pass against the installed keg:
    `state-writable-smoke.sh`, `effort-flags-smoke.sh`, `usage-error-smoke.sh`,
    `budget-cap-smoke.sh`.
 
@@ -173,6 +200,13 @@ queue was full.
   stops work that should never have been counted. Read it first, and expect to
   touch `scripts/budget.sh` in the same region, which is also where card 33's
   stranded branch collides. Do not land card 33's `b2859b8` alongside this.
+- **Live risk while this card is open.** With the duplicate job removed the
+  fleet ticks at 12/hour, so a repo still burns its cap on idle polling, just
+  half as fast. `emergence-lab-surface-v2` (cap 100) reaches its cap in about
+  eight hours of idling and will halt before an evening window unless its cap
+  is raised or this card lands. `emergence-lab` (cap 400) has roughly 33 hours
+  of headroom and is safe. Caps were deliberately left unchanged: raising a
+  safety number to work around a defect is what card 31 was about.
 - Fleet hygiene, noted but explicitly **out of scope** for this card: three
   emergence-lab subscribers are enabled (`emergence-lab`,
   `emergence-lab-surface`, `emergence-lab-surface-v2`) and the ticker's stale
