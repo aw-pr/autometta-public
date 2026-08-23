@@ -141,3 +141,154 @@ seat can produce. The dispatch loop has no way to distinguish "the code is
 wrong" from "I could not look", and it spends the retry cap the same way on
 both. A criterion that only a human at a screen can satisfy is not an
 acceptance criterion for an autonomous loop; it is a manual gate wearing one.
+
+## The re-brief, 2026-08-23
+
+Card 40 carried the finding above into action: the four stages whose only FAIL
+was a browser criterion have been re-briefed and requeued. Stage 05 is
+untouched, for the reason given above.
+
+### What made the re-brief possible
+
+On 2026-08-16 there was no answer to "how should a verifier obtain browser
+evidence", so a re-brief would have been guesswork about what a headless seat
+may substitute. That gap closed on 2026-08-22: step 5 of
+`templates/verifier-prompt.md` now requires any browser check to run fully
+headless, launching the verifier's own headless Chromium against a dev server
+it starts itself, and forbids attaching to the operator's Chrome (`7c7f22b`).
+The instruction whose absence let each verifier conclude it could not look now
+exists.
+
+### One correction to the verdicts above
+
+Stage 16 was recorded here as the one stage with no committed work, on the
+evidence that its worker never ran and no verifier ever recorded a verdict.
+Both of those remain true. The code is nonetheless committed: `8099310` on
+`dev`, "16-sandpile-larger-slower: enlarge and slow default", carries the
+card's deliverables 1 to 3 (`DEFAULT_INITIAL_PILE` 100000 to 300000, the
+`abelian-sandpile` speed profile 4 to 0.8, and the matching kernel test). It
+was committed by the orchestrator session on 2026-05-27, the same day the
+stage's worker failed to start.
+
+So all four stages have working committed code, not three:
+
+| Stage | Commit | Criterion that failed |
+|---|---|---|
+| 13-reset-all-controls-to-defaults | `a0ba582` | 2, reset restores every visible control |
+| 14-fractal-colour-cycle-pacing | `6af7104` | 5, low multipliers no longer jumpy |
+| 15-boids-density-motion-tuning | `38b5e6d` | 4, denser flock, faster motion, no blank canvas |
+| 16-sandpile-larger-slower | `8099310` | 4, larger pattern without freezing the UI (never reached) |
+
+### What each card gained
+
+Each browser criterion keeps its wording and gains a headless method by
+reference to step 5 of `templates/verifier-prompt.md`. The rule is referenced,
+never restated, so there is one copy of it to maintain rather than five.
+
+- **13**, criterion 2: load the route in headless Chromium against a dev
+  server the verifier starts itself, move a control in each affected group,
+  press `Reset to defaults`, read the inputs and canvas attributes back.
+- **14**, criterion 5: at the `0.5x` minimum multiplier, capture a timed burst
+  of canvas screenshots on each fractal and show successive frames advance in
+  small palette steps. Jumpiness is a large per-frame phase step, so a burst
+  showing small steps is the evidence; an impression formed at a headed window
+  never was.
+- **15**, criterion 4: run the in-repo `boids` case in `e2e/smoke.spec.ts`
+  (Playwright, `headless: true`, its own Vite `webServer`), which asserts a
+  visible canvas, a named renderer backend, a non-zero display size and an
+  advancing iteration counter, and writes a screenshot. Read the live
+  `boidCount` and `maxSpeed` off the control inputs for the density and speed
+  half.
+- **16**, criterion 4: the same smoke case for `abelian-sandpile`. An
+  advancing counter is the not-frozen half; the screenshot and the live
+  `initialPile` are the pattern-size half.
+
+`e2e/smoke.spec.ts` was the useful find. A headless harness that starts its own
+server and screenshots the canvas has been in the repo the whole time; nothing
+in the four cards pointed at it, so three verifiers went looking for a browser
+on their own and did not find one.
+
+### The `Requires GUI` question card 36 left open
+
+Card 36 asked whether a codex verifier needs `Requires GUI: true` on these
+cards, since a sandboxed codex role aborts at `NSApplication init` even
+headless. It would. None of the four declares it, because none of them has a
+codex role that touches a browser any more: the browser pass sits in the Claude
+verifier seat, which is unsandboxed by nature, and the codex worker seat is
+confirmation only. `Requires GUI` widens the codex sandbox and nothing else
+(`resolve_codex_sandbox_for_card` in `scripts/models.sh`), so declaring it for
+a Claude role grants that role nothing while reading as though it does. Cards
+35, 36 and 37 in `emergence-lab` each declare it "for the Claude verifier",
+which is inert. Card 55 states the current rule correctly and is the precedent
+followed here.
+
+The roles the next run uses are `GPT-5.6 Sol <gpt-5-6-sol@local>` as worker and
+`Claude Opus 5 <claude-opus-5@local>` as verifier and orchestrator. The old
+trio (worker `Claude Opus 4.7`, orchestrator and verifier `GPT-5.5`) is
+recorded in each card's re-brief section; the commits already on `dev` keep
+their authorship and were not rewritten.
+
+### Why stage 16 stalled the second time
+
+The 2026-08-16 requeue worked. The worker got past the login refusal that
+killed attempt 1 and ran for real. It then ended its turn with a 75-byte log
+reading "The benchmark is running. I'll report once it lands", having spent
+2,196,052 tokens, and never wrote its handoff envelope; `state.yaml` recorded
+`worker_envelope_missing_after_exit`. No tooling failed. A role that defers its
+result to a measurement it is no longer running to collect stalls the stage
+however much work it did, because the envelope is the loop's only completion
+signal.
+
+So this round is not the same requeue again. The worker seat changes family,
+the job is confirmation only, and every card now says explicitly: do not start
+anything you then wait on, run to completion, then hand off. A `partial`
+envelope naming what is missing is worth more than a turn that ends waiting.
+
+### The tree has moved, and the re-brief says so
+
+Three months of later work sit between these stages and the tree a fresh
+verifier will judge. Two of the four are affected and both cards now say so:
+
+- **15**: `187c087` (2026-06-01) added spatial binning, raised the count
+  ceiling and shrank the default glyph, restoring `pointSize` to `min: 4,
+  max: 16`. That also settles the design question left open above: the stage
+  worker's `min = max = 16` was a misreading, `16` was a ceiling for the glyph
+  and never a fixed value, and the degenerate slider is not to be restored.
+  `4f2bcf3` (2026-08-16) later set clustered flocks and a 1x default speed.
+- **16**: `f44c65d` and `417776b` (both 2026-06-06) refilled the screen and put
+  the default simulation speed back to 1.
+
+Neither card re-tunes anything. Where a criterion no longer holds because later
+deliberate work moved a value, the verifier records it in
+`additional_findings`; that is a fact about the tree, not a licence to change
+code.
+
+### The requeues
+
+Four runs of the sanctioned path, one per stage:
+
+```sh
+scripts/requeue-stage.sh ~/repos/emergence-lab <stage-id>
+```
+
+All four are `pending` with `verifier_attempts: 0`, no handoff envelope, no
+verifier artefact, no run worktree and no `autometta/*` branch. `state.yaml`
+was not hand-edited. `emergence-lab` remains paused until 22:05 for the card 57
+sweep (`paused_until` is untouched by `requeue-stage.sh`) and nothing was
+dispatched into it. The archived `.log.gz` files for stages 13 to 15 are left
+in place: they are the evidence this document cites, and the tick reads only
+the uncompressed `<stage>-worker.log` / `<stage>-verifier.log` paths, which are
+gone.
+
+### One thing the re-brief could not fix
+
+`scripts/add-stage.sh` captures a card's worker and verifier identities into
+`state/state.yaml` once, when the stage is added, and nothing refreshes them.
+`spawn-worker.sh` and `spawn-verifier.sh` re-read the card at dispatch time, so
+a re-brief that changes the roles does dispatch the new ones. `tick.sh` reads
+`state.yaml` for the commit author and for the cost-log tier, so it will
+attribute the resulting commit to `Claude Opus 4.7 <claude-opus-4-7@local>` and
+bill a codex worker at the old rate. All four stages currently carry that stale
+pair. Correcting it needs either a hand edit of `state.yaml`, which the
+re-queue skill rules out, or a change to `requeue-stage.sh` to re-read the card,
+which is outside card 40. It is left for the operator.
