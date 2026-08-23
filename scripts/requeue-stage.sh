@@ -16,7 +16,14 @@
 # tree, which this script refused to touch rather than discard; that no
 # longer applies since dispatch never touches repo_root.)
 #
-# Usage: requeue-stage.sh <repo-root> <stage-id>
+# --worktree-only removes the run worktree and run branch and does nothing
+# else: no state reset, no halt clearing, no envelope purge. It exists so
+# every caller that needs a stage's worktree gone -- a re-queue, tick.sh's
+# teardown after an ff-merge, tick.sh re-cutting a stale one at dispatch,
+# and reap-worktrees.sh collecting one nobody came back for -- shares this
+# one implementation rather than four copies of the same four git commands.
+#
+# Usage: requeue-stage.sh [--worktree-only] <repo-root> <stage-id>
 # Example: requeue-stage.sh ~/repos/aegis-guardrails 01-per-call-approval-broker
 set -euo pipefail
 
@@ -29,14 +36,42 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/budget.sh"
 IFS=$' \t\n'
 
-usage() { sed -n '2,17p' "$0"; exit 2; }
+usage() { sed -n '2,27p' "$0"; exit 2; }
+
+worktree_only=false
+if [ "${1:-}" = "--worktree-only" ]; then
+  worktree_only=true
+  shift
+fi
 [ $# -eq 2 ] || usage
 repo_root="$(cd "$1" && pwd)"
 stage_id="$2"
+[ -n "$stage_id" ] || usage
 
-for tool in yq jq; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "requeue: $tool is required" >&2; exit 1; }
-done
+# Removing a worktree needs neither yq nor jq, and --worktree-only is called
+# from housekeeping paths that must not fail a tick over a missing tool.
+if [ "$worktree_only" = false ]; then
+  for tool in yq jq; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "requeue: $tool is required" >&2; exit 1; }
+  done
+fi
+
+# The removal itself, shared by both entry points.
+remove_worktree_and_branch() {
+  local run_branch work_dir
+  run_branch="autometta/${stage_id}"
+  work_dir="$(dirname "$repo_root")/$(basename "$repo_root")-run-${stage_id}"
+  git -C "$repo_root" worktree remove --force "$work_dir" >/dev/null 2>&1 || true
+  rm -rf "$work_dir"
+  git -C "$repo_root" worktree prune >/dev/null 2>&1 || true
+  git -C "$repo_root" branch -D "$run_branch" >/dev/null 2>&1 || true
+  echo "requeue: removed run worktree ${work_dir} and branch ${run_branch} (if present)"
+}
+
+if [ "$worktree_only" = true ]; then
+  remove_worktree_and_branch
+  exit 0
+fi
 
 state_yaml="$repo_root/state/state.yaml"
 budget_json="$repo_root/state/budget.json"
@@ -51,13 +86,7 @@ yq -o=json '.' "$state_yaml" | jq -e --arg id "$stage_id" \
 # repo_root, so repo_root's tree is never a re-queue blocker. Remove that
 # worktree and run branch so the next tick cuts a fresh one; the WIP inside
 # is simply discarded (the verifier already FAILed it, or it stalled).
-run_branch="autometta/${stage_id}"
-work_dir="$(dirname "$repo_root")/$(basename "$repo_root")-run-${stage_id}"
-git -C "$repo_root" worktree remove --force "$work_dir" >/dev/null 2>&1 || true
-rm -rf "$work_dir"
-git -C "$repo_root" worktree prune >/dev/null 2>&1 || true
-git -C "$repo_root" branch -D "$run_branch" >/dev/null 2>&1 || true
-echo "requeue: removed run worktree ${work_dir} and branch ${run_branch} (if present)"
+remove_worktree_and_branch
 
 # Kill any live agent working this stage, then drop its registration.
 for agent_file in "$repo_root"/state/active-agents/*.json; do

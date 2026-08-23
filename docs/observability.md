@@ -231,11 +231,26 @@ logs "worker missing" instead of charging tokens twice. That is the intended
 direction of the error, but it is why the gzip threshold should stay well
 above any plausible stage turnaround.
 
-Stale run worktrees (`<repo>-run-<stage>`) are **not** swept here.
-`scripts/requeue-stage.sh` removes a stage's worktree when that stage is
-re-queued, and `tick.sh --repair` does so across a whole subscriber, but
-nothing reaps one left behind by a stage that neither completed nor was
-repaired.
+Stale run worktrees (`<repo>-run-<stage>`) are swept by
+`scripts/reap-worktrees.sh`, which `sweep_repo_retention` calls after every
+tick. Card 33 recorded that nothing collected a worktree left behind by a
+stage that neither completed nor was re-queued; card 39 is that reaper.
+
+It removes a worktree only when its stage is finished with it, and the
+removal itself goes through `requeue-stage.sh --worktree-only` so there is
+one implementation of it rather than four. It leaves standing, and reports:
+
+| Condition | Why it stays |
+|---|---|
+| stage is `in_progress` | a live worker owns the tree |
+| uncommitted work, other than the known `state/` symlink | on a verifier FAIL the worker's diff is uncommitted by design, and it is the whole of what the operator inspects |
+| run branch holds commits not on the base branch | the stage passed but base had moved, so this is the only local copy of that commit; recorded as `integration.state: awaiting` |
+| no such stage in `state.yaml` | something else made it |
+
+A reported worktree is reported again on every tick until someone deals with
+it. `autometta status` prints an `awaiting integration` line for each stage
+in the third case, which is the one that needs a person rather than a
+deletion. Run the reaper by hand with `--dry-run` to see what it would do.
 
 ## Design constraints
 

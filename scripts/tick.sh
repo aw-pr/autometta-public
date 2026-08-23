@@ -628,27 +628,108 @@ validate_stage_id() {
   [[ "$stage_id" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]
 }
 
+# The loop's own snapshot ref. A branch rather than a private ref namespace
+# because docs/phat-controller.md has named it phat-controller/state since
+# pass 2 was designed and operators look for it there. Loop-owned: never
+# checked out, never pushed, and no operator ever commits on it.
+state_snapshot_ref="refs/heads/phat-controller/state"
+
+# commit_state_branch: snapshot the loop's state files onto
+# phat-controller/state without touching repo_root's HEAD, index or working
+# tree.
+#
+# Why plumbing rather than a checkout. The previous implementation ran
+# `git checkout -B phat-controller/state` in repo_root, committed, and
+# restored the operator's branch from an EXIT trap. The window is short, but
+# repo_root is the tree the operator is expected to work in and the fleet job
+# opens the window roughly 288 times a day per subscriber. On 2026-08-23 an
+# orchestrator commit authored against dev landed on phat-controller/state
+# inside that window (2d4dc08). It was invisible to `git push origin dev`,
+# and the next tick's `checkout -B` would have reset the ref past it and made
+# it unreachable; it survived only because it was noticed within minutes and
+# cherry-picked back as 1efd82a.
+#
+# A throwaway index plus write-tree / commit-tree / update-ref has no window
+# at all: no checkout, no HEAD move, no write to repo_root's index (the lock
+# taken is $GIT_INDEX_FILE.lock, not .git/index.lock), and no change to any
+# file in the working tree. A concurrent operator commit has nothing to race
+# with. A dedicated worktree for the ref would also have kept HEAD still, but
+# it is a fixture to create, maintain and reap, and the files being snapshot
+# live in repo_root/state, so it would have to copy them across on every
+# tick. Plumbing needs neither.
+#
+# What is captured: state/state.yaml and state/budget.json, plus whatever of
+# state/verifiers and state/handoffs the repo does not ignore. What is not:
+# state/logs, state/cost-log.jsonl, state/active-agents, state/recent-agents
+# and state/heartbeat.json, all of which are either large, high-churn or
+# machine-local liveness.
+#
+# state.yaml and budget.json are gitignored in every subscriber, so they are
+# staged with `git add -f`. That is deliberate and it is the only way this
+# ref can hold what its name promises: before this change the plain
+# `git add state/state.yaml` was a documented no-op (docs/lessons.md gotcha
+# 10), so the ref only ever held the repo tree it had been reset to and not
+# one line of state. Forcing them here does not make them tracked on any
+# working branch -- .gitignore still governs every operator commit, and
+# whether state.yaml should be tracked is a separate decision this did not
+# take. The commit body names exactly what landed, so the snapshot never
+# claims more than it holds.
+#
+# Durable means recoverable from the local object store. The loop never
+# pushes this ref, and nothing else should either.
 commit_state_branch() {
   local repo_root="$1"
-  (
+  local index_file
+  index_file="$(mktemp)"
+  rm -f "$index_file"
+  if ! (
     cd "$repo_root"
-    local original_branch
-    original_branch="$(git rev-parse --abbrev-ref HEAD)"
-    # Keep operator branch unchanged when tick.sh is run interactively.
-    trap 'git checkout "$original_branch" >/dev/null 2>&1 || true' EXIT
-    # No clean-tree guard here: dispatch happens in an ephemeral sibling
-    # worktree (see ensure_run_worktree below), never in repo_root, so
-    # repo_root's non-state tree is never dirtied by a stage in flight.
-    # Any dirt here is pre-existing operator content, out of scope for the
-    # loop -- see templates/orchestrator-checklist.md ("Worktree dispatch
-    # pre-flight") and memory/adopters/emergence-viewer/
-    # feedback-worktree-dispatch-thinned-preflight.md.
-    git checkout -B phat-controller/state >/dev/null 2>&1
-    git add state/state.yaml state/budget.json state/verifiers state/handoffs/.gitkeep state/handoffs/README.md 2>/dev/null || true
-    if ! git diff --cached --quiet; then
-      git commit --author="$(agent-whoami)" -m "phat-controller: tick state update" >/dev/null 2>&1
+    export GIT_INDEX_FILE="$index_file"
+    local -a captured=()
+    local p
+    for p in state/state.yaml state/budget.json; do
+      if [[ -f "$p" ]] && git add -f -- "$p" >/dev/null 2>&1; then
+        captured+=( "$p" )
+      fi
+    done
+    for p in state/verifiers state/handoffs; do
+      if [[ -e "$p" ]] && git add -- "$p" >/dev/null 2>&1; then
+        captured+=( "$p" )
+      fi
+    done
+    local tree parent
+    tree="$(git write-tree)"
+    parent="$(git rev-parse -q --verify "${state_snapshot_ref}^{commit}" 2>/dev/null || true)"
+    if [[ -n "$parent" ]] \
+       && [[ "$(git rev-parse -q --verify "${parent}^{tree}" 2>/dev/null || true)" == "$tree" ]]; then
+      exit 0
     fi
-  )
+    # IFS is newline/tab in this script, so join the list in a subshell
+    # rather than letting ${captured[*]} fold it onto separate lines.
+    local body
+    body="captured: $(IFS=' '; printf '%s' "${captured[*]:-nothing}")"
+    local -a commit_argv=( commit-tree "$tree" )
+    [[ -n "$parent" ]] && commit_argv+=( -p "$parent" )
+    commit_argv+=( -m "phat-controller: tick state update" -m "$body" )
+    # Author is the agent identity when the helper resolves it, per the
+    # global attribution rules; committer stays whatever git is configured
+    # with. A missing helper is not worth failing a tick over, so the
+    # snapshot falls back to the configured identity for both.
+    local ident
+    if ident="$(agent-whoami 2>/dev/null)" && [[ "$ident" =~ ^(.+)[[:space:]]\<(.+)\>$ ]]; then
+      export GIT_AUTHOR_NAME="${BASH_REMATCH[1]}" GIT_AUTHOR_EMAIL="${BASH_REMATCH[2]}"
+    fi
+    local commit
+    commit="$(git "${commit_argv[@]}")"
+    [[ -n "$commit" ]] || exit 1
+    # Compare-and-swap on the old tip: two ticks racing on the same repo
+    # cannot lose one another's snapshot silently.
+    git update-ref "$state_snapshot_ref" "$commit" "${parent:-}"
+  ); then
+    log "commit_state_branch: state snapshot failed for ${repo_root} (non-fatal)"
+  fi
+  rm -f "$index_file"
+  return 0
 }
 
 # --- Worktree-per-run dispatch --------------------------------------------
@@ -689,6 +770,34 @@ worktree_path_for_stage() {
   printf '%s/%s-run-%s\n' "$(dirname "$repo_root")" "$(basename "$repo_root")" "$stage_id"
 }
 
+# remove_run_worktree: the single implementation of "get rid of this stage's
+# run worktree and run branch", which is requeue-stage.sh's. It is called
+# rather than copied so a reset, a teardown after an ff-merge, a re-cut of a
+# stale worktree and the reaper cannot drift apart; --worktree-only is the
+# entry point that does the removal and nothing else to the stage.
+remove_run_worktree() {
+  local repo_root="$1" stage_id="$2"
+  "$script_dir/requeue-stage.sh" --worktree-only "$repo_root" "$stage_id" >/dev/null 2>&1 || true
+}
+
+# worktree_dir_for_branch: the checkout that currently holds a branch, or
+# empty if no worktree has it checked out. Used to move a branch without
+# ever running `git checkout` in repo_root.
+worktree_dir_for_branch() {
+  local repo_root="$1" branch="$2"
+  local line dir=""
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*) dir="${line#worktree }" ;;
+      "branch refs/heads/$branch")
+        printf '%s\n' "$dir"
+        return 0
+        ;;
+    esac
+  done < <(cd "$repo_root" && git worktree list --porcelain 2>/dev/null || true)
+  return 0
+}
+
 # ensure_run_worktree: remove any worktree/branch left standing by a prior
 # attempt at this stage, cut a fresh one from base_branch, and link its
 # state/ to the shared repo_root/state/ (state.yaml, budget.json, logs,
@@ -700,12 +809,9 @@ ensure_run_worktree() {
   local run_branch work_dir
   run_branch="$(run_branch_for_stage "$stage_id")"
   work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  remove_run_worktree "$repo_root" "$stage_id"
   (
     cd "$repo_root"
-    git worktree remove --force "$work_dir" >/dev/null 2>&1 || true
-    rm -rf "$work_dir"
-    git worktree prune >/dev/null 2>&1 || true
-    git branch -D "$run_branch" >/dev/null 2>&1 || true
     git worktree add "$work_dir" -b "$run_branch" "$base_branch" >/dev/null 2>&1
   ) || { log "ensure_run_worktree: failed to cut ${work_dir} from ${base_branch} for ${stage_id}"; return 1; }
   rm -rf "${work_dir:?}/state"
@@ -716,30 +822,92 @@ ensure_run_worktree() {
 # teardown_run_worktree: remove the worktree and run branch after a
 # successful ff-merge. Never called on FAIL -- that path leaves both
 # standing for operator inspection (autometta-requeue tears them down on
-# re-dispatch).
+# re-dispatch, and reap-worktrees.sh collects one nobody came back for).
 teardown_run_worktree() {
   local repo_root="$1" stage_id="$2"
-  local run_branch work_dir
-  run_branch="$(run_branch_for_stage "$stage_id")"
-  work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
-  (
-    cd "$repo_root"
-    git worktree remove --force "$work_dir" >/dev/null 2>&1 || true
-    git branch -d "$run_branch" >/dev/null 2>&1 || true
-  )
+  remove_run_worktree "$repo_root" "$stage_id"
+}
+
+# integration_record / record_stage_integration: the stage's answer to "did
+# this land on the base branch, and if not, what has to happen next".
+#
+# 'merged' means the ff-merge happened and there is nothing outstanding.
+# 'awaiting' means base moved between dispatch and PASS -- the normal case
+# during an active session, not an edge case -- so the run branch holds a
+# real commit that is not on base yet. The record is the only machine-
+# readable statement of that, and reap-worktrees.sh refuses to remove a
+# worktree while it says 'awaiting'.
+integration_record() {
+  local state="$1" base_branch="$2" run_branch="$3" head="$4" pushed="$5"
+  jq -nc \
+    --arg state "$state" \
+    --arg base "$base_branch" \
+    --arg run "$run_branch" \
+    --arg head "$head" \
+    --arg pushed "$pushed" \
+    --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{state: $state, base_branch: $base, run_branch: $run,
+      head: (if $head == "" then null else $head end),
+      pushed: (if $pushed == "" then null else ($pushed == "true") end),
+      recorded_at: $now}'
+}
+
+record_stage_integration() {
+  local state_yaml="$1" stage_id="$2" record_json="$3"
+  [[ -n "$record_json" ]] || return 0
+  state_apply_json "$state_yaml" \
+    '(.stages[] | select(.id == $id)).integration = ($rec | fromjson)' \
+    --arg id "$stage_id" --arg rec "$record_json" || true
 }
 
 # finalize_run_worktree: on PASS, fast-forward the base branch to the run
 # branch if base hasn't moved since the worktree was cut. If base has
-# moved (the ff fails), push the run branch instead and leave it and the
-# worktree standing for manual integration. Prints 'merged' or 'diverged'.
+# moved, print 'diverged' and leave both branch and worktree alone for the
+# caller to record and push. Prints 'merged' or 'diverged'.
+#
+# The fast-forward never checks out base in repo_root. It used to, and that
+# is the same shared-tree HEAD move commit_state_branch had: an operator on
+# another branch would find themselves moved onto base mid-session. A
+# fast-forward is a ref move, so this does the ref move where it can and
+# only asks git to touch a working tree when the branch is checked out in
+# one -- in which case that tree has to be updated anyway, and HEAD stays on
+# the branch it was already on.
 finalize_run_worktree() {
   local repo_root="$1" stage_id="$2" base_branch="$3"
   local run_branch
   run_branch="$(run_branch_for_stage "$stage_id")"
   (
     cd "$repo_root"
-    if git checkout "$base_branch" >/dev/null 2>&1 && git merge --ff-only "$run_branch" >/dev/null 2>&1; then
+    local run_tip base_tip current_branch base_dir
+    run_tip="$(git rev-parse -q --verify "refs/heads/${run_branch}" 2>/dev/null || true)"
+    base_tip="$(git rev-parse -q --verify "refs/heads/${base_branch}" 2>/dev/null || true)"
+    if [[ -z "$run_tip" || -z "$base_tip" ]]; then
+      printf 'diverged\n'
+      exit 0
+    fi
+    if ! git merge-base --is-ancestor "$base_tip" "$run_tip" 2>/dev/null; then
+      printf 'diverged\n'
+      exit 0
+    fi
+    current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    if [[ "$current_branch" == "$base_branch" ]]; then
+      if git merge --ff-only "$run_branch" >/dev/null 2>&1; then
+        printf 'merged\n'
+      else
+        printf 'diverged\n'
+      fi
+      exit 0
+    fi
+    base_dir="$(worktree_dir_for_branch "$repo_root" "$base_branch")"
+    if [[ -n "$base_dir" ]]; then
+      if git -C "$base_dir" merge --ff-only "$run_branch" >/dev/null 2>&1; then
+        printf 'merged\n'
+      else
+        printf 'diverged\n'
+      fi
+      exit 0
+    fi
+    if git update-ref "refs/heads/${base_branch}" "$run_tip" "$base_tip" 2>/dev/null; then
       printf 'merged\n'
     else
       printf 'diverged\n'
@@ -897,24 +1065,35 @@ _process_verifier_artefact() {
   commit_sha="$(cd "$commit_dir" && git rev-parse HEAD 2>/dev/null || true)"
 
   # Integrate the run branch: ff-merge into base if base hasn't moved,
-  # otherwise push the run branch and leave it (and the worktree) standing
-  # for manual integration. No-op on the deprecated repo_root-commit path
-  # (base_branch empty / no worktree).
+  # otherwise leave the run branch standing for a person to merge. Either
+  # way the outcome is written to the stage's .integration record, which is
+  # what `autometta status` reads and what reap-worktrees.sh consults before
+  # it removes anything. Before that record existed, the only trace of an
+  # outstanding merge was one appended line in HANDOFF.md, and the stage
+  # read as plain "completed" everywhere an operator actually looks. No-op
+  # on the deprecated repo_root-commit path (base_branch empty / no
+  # worktree).
   if [[ -n "$base_branch" && -d "$work_dir" ]]; then
-    local merge_result
+    local merge_result run_branch run_tip
+    run_branch="$(run_branch_for_stage "$stage_id")"
+    run_tip="$(cd "$repo_root" && git rev-parse -q --verify "refs/heads/${run_branch}" 2>/dev/null || true)"
     merge_result="$(finalize_run_worktree "$repo_root" "$stage_id" "$base_branch")"
     if [[ "$merge_result" == "merged" ]]; then
       teardown_run_worktree "$repo_root" "$stage_id"
-      log "stage ${stage_id} PASS: fast-forwarded ${base_branch} to $(run_branch_for_stage "$stage_id") and removed the run worktree"
+      record_stage_integration "$state_yaml" "$stage_id" \
+        "$(integration_record merged "$base_branch" "$run_branch" "$run_tip" "")"
+      log "stage ${stage_id} PASS: fast-forwarded ${base_branch} to ${run_branch} and removed the run worktree"
     else
-      local run_branch push_note
-      run_branch="$(run_branch_for_stage "$stage_id")"
+      local push_note pushed=false
       push_note="stage ${stage_id}: ${base_branch} moved since dispatch; ${run_branch} left standing"
       if (cd "$repo_root" && git push origin "$run_branch" >/dev/null 2>&1); then
+        pushed=true
         push_note="${push_note}, pushed to origin/${run_branch} for manual integration"
       else
         push_note="${push_note}; push to origin also failed, integrate locally"
       fi
+      record_stage_integration "$state_yaml" "$stage_id" \
+        "$(integration_record awaiting "$base_branch" "$run_branch" "$run_tip" "$pushed")"
       log "stage ${stage_id} PASS: ${push_note}"
       if [[ -f "$repo_root/HANDOFF.md" ]]; then
         printf '\n- %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$push_note" >> "$repo_root/HANDOFF.md"
@@ -1068,9 +1247,18 @@ reap_idle_dash_sessions() {
 # - state/logs/*.log (worker/verifier logs, the audit trail) are never
 #   deleted in v1, only gzip'd once older than
 #   PHAT_CONTROLLER_WORKER_LOG_GZIP_DAYS (default 30).
+# - run worktrees whose stage is finished with them, via reap-worktrees.sh.
 # Best-effort and silent, like run_heartbeat: housekeeping is not a gate.
 sweep_repo_retention() {
   local repo_root="$1"
+  # The reaper prints only when it acts on or reports a worktree, so a
+  # quiet tick stays quiet. It refuses to remove anything in_progress,
+  # dirty, or awaiting integration; see reap-worktrees.sh.
+  local reap_line
+  while IFS= read -r reap_line; do
+    [[ -n "$reap_line" ]] || continue
+    log "$reap_line"
+  done < <("$script_dir/reap-worktrees.sh" "$repo_root" 2>/dev/null || true)
   local recent_dir="$repo_root/state/recent-agents"
   local recent_retention_days="${PHAT_CONTROLLER_RECENT_AGENT_RETENTION_DAYS:-30}"
   if [[ -d "$recent_dir" ]]; then

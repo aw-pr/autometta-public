@@ -38,8 +38,19 @@ the only safety: a hard stop on bounded spend, with no retries or backoff.
 
 - Runtime: `scripts/tick.sh`, `scripts/spawn-worker.sh`,
   `scripts/spawn-verifier.sh`, `scripts/budget.sh`.
+- Housekeeping: `scripts/reap-worktrees.sh` collects run worktrees
+  (`../<repo>-run-<stage>`) that no stage still needs, after every tick.
+  Run it by hand with `--dry-run` to see what it would do.
 - Schemas: `schemas/state.yaml.json`, `schemas/budget.json`.
 - Design: `docs/phat-controller.md`. Operator setup: `docs/setup.md`.
+
+The tick never moves `repo_root`'s HEAD. It snapshots state onto the
+`phat-controller/state` ref with git plumbing rather than checking that
+branch out, and it fast-forwards a base branch by moving the ref rather than
+checking base out. Both used to run `git checkout` in the shared tree, which
+put an operator commit on the wrong branch on 2026-08-23. See
+`docs/phat-controller.md` section (j); `scripts/state-branch-smoke.sh` is the
+offline proof, and it replays the race rather than arguing about it.
 
 The loop sits on top of the dispatch contract and never bypasses it. You can
 use the dispatch contract without the loop; you cannot use the loop without the
@@ -98,10 +109,10 @@ to one backing script.
 | `autometta init [repo-path]` | Subscribe a repo and prepare it: runs `init-host`, subscribes the repo, and ensures a tmux viewer. Defaults to the current directory. Then review and commit the generated `.gitignore`, `state/state.yaml`, `state/budget.json`. |
 | `autometta subscribe [repo-path]` | Subscribe a repo to the controller without the full init flow. Defaults to the current directory. |
 | `autometta add-stage <repo-path> <stage-card-path>` | Append a stage to a subscribed repo's `state.yaml` from a stage card. |
-| `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. `scripts/status.sh --repo <path>` narrows the table to one subscriber; the tmux status pane uses it so an attached dash shows the repo you attached to. |
+| `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Any stage whose run branch is still waiting to be merged into its base branch gets an `awaiting integration` line under the repo's row, naming the branch to merge. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. `scripts/status.sh --repo <path>` narrows the table to one subscriber; the tmux status pane uses it so an attached dash shows the repo you attached to. |
 | `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`): status ticker, work pane, and agent ticker. An interactive attach replaces an existing viewer so ticker script changes take effect. `--dry-run` prints what it would do. `--ensure` (used internally by `init`) creates the session only if absent. The `autometta-autometta` session opens on the fleet summary; its `repo` window retains the control-plane repo view. Orphaned viewers whose subscriber is disabled or gone are reported. |
 | `autometta detach [repo-path\|--all]` | Remove one tmux viewer, defaulting to the current repo, or tear down every `autometta-*` viewer with `--all`. Other tmux sessions are never touched. |
-| `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one controller tick across subscribers: read state, dispatch one worker and/or verifier, write next state, exit. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` requeues every stalled or failed stage across all enabled subscribers, via the same reset `scripts/requeue-stage.sh` performs by hand; it leaves `in_progress` and `verifier_failed` alone, refuses a stage whose card no longer resolves (`stall_marker: card_missing`), skips a repo still over a spend cap, and stops at `repair_attempts` 2 per stage (`PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP`). |
+| `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one controller tick across subscribers: read state, dispatch one worker and/or verifier, write next state, snapshot state onto `phat-controller/state`, sweep retention and stale run worktrees, exit. It never changes the branch checked out in a subscriber's own checkout. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` requeues every stalled or failed stage across all enabled subscribers, via the same reset `scripts/requeue-stage.sh` performs by hand; it leaves `in_progress` and `verifier_failed` alone, refuses a stage whose card no longer resolves (`stall_marker: card_missing`), skips a repo still over a spend cap, and stops at `repair_attempts` 2 per stage (`PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP`). |
 | `autometta check-deps` | Verify required tooling is present (bash, git, jq, yq, tmux, the CLI families, op-fetch, etc.). |
 | `autometta dashboard [--open]` | Regenerate the static dashboard under the controller home; `--open` opens it in the default browser. |
 | `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
