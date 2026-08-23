@@ -9,6 +9,8 @@
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
+- **Worker wall-clock:** 45 minutes
+- **Verifier wall-clock:** 30 minutes
 - **Pairing rationale:** cross-family, same reasoning as card 31. The two
   defects here are both cases of a control-plane number meaning something
   other than what its name says, and a same-family verifier is the one most
@@ -183,10 +185,13 @@ queue was full.
    exceeds it; the cap must not become decorative. Demonstrate both directions.
 3. Exactly one loaded launchd job runs `autometta tick`;
    `scripts/health-check.sh` fails if a second is introduced.
-4. For `emergence-lab`, the SCHEDULED panel reports zero pending stages and
-   labels the unqueued `docs/stages/*.md` cards distinctly from queued ones.
-5. The ALERTS panel shows an empty-queue alert for every currently-enabled
-   subscriber, all seven of which qualify today.
+4. For `emergence-lab`, the SCHEDULED panel reports the queue depth the
+   controller would actually dispatch from, and labels the unqueued
+   `docs/stages/*.md` cards distinctly from queued ones. Correctness is
+   agreement with `state.yaml`, whatever that file says at the time.
+5. The ALERTS panel shows an empty-queue alert for exactly those enabled
+   subscribers whose queue is empty, and withholds it from any subscriber
+   with pending or in-flight work.
 6. `tick.sh --reset-halt` leaves a previously tick-capped repo able to tick
    without immediately re-halting; assert on the counter, not the flag.
 7. All existing smoke tests still pass against the installed keg:
@@ -211,3 +216,31 @@ queue was full.
   emergence-lab subscribers are enabled (`emergence-lab`,
   `emergence-lab-surface`, `emergence-lab-surface-v2`) and the ticker's stale
   tmux sessions date to 18 and 19 August. Card 38 covers both.
+
+## Amendment, 2026-08-23
+
+Criteria 4 and 5 originally required the SCHEDULED panel to report *zero*
+pending stages for `emergence-lab` and the ALERTS panel to fire for *all
+seven* enabled subscribers. Both were written against the fleet snapshot in
+"Defect A", taken at 10:50Z, when every queue happened to be empty. They
+describe the state of the fleet on one morning, not the behaviour of the
+panels, and no implementation can satisfy them once anything is queued.
+
+The first verifier run failed on exactly that: `emergence-lab` had acquired a
+genuine pending stage, `57-interestingness-sweep-harness`, held for the 22:05
+window. The panel reported "1 pending, 0 in flight, 22 unqueued" and the alert
+fired for the six subscribers that were idle, which is the behaviour the card
+wanted and the opposite of what the criteria could accept.
+
+Rewritten to specify agreement with `state.yaml` rather than a literal count.
+The verdict on the original wording is preserved at
+`state/verifiers/37-idle-ticks-consume-the-day.attempt-1-fail.json`; criteria
+1, 2, 3, 6 and 7 passed there and are unchanged here.
+
+The metadata also gained the `Worker wall-clock` and `Verifier wall-clock`
+lines it was authored without. Their absence is why this stage was marked
+`stalled` at 15 minutes: `tick.sh` defaults an undeclared worker budget to 600
+seconds, and the worker needed roughly 23. It survived being marked stalled
+only because of the `disown` / `AbandonProcessGroup` fix from gotcha 9, and
+wrote a `status: pass` envelope eight minutes after the loop had written the
+stage off.
