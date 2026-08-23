@@ -816,6 +816,15 @@ ensure_run_worktree() {
   ) || { log "ensure_run_worktree: failed to cut ${work_dir} from ${base_branch} for ${stage_id}"; return 1; }
   rm -rf "${work_dir:?}/state"
   ln -s "../$(basename "$repo_root")/state" "$work_dir/state"
+  # A fresh worktree has no node_modules, so every gate the card leans on
+  # (tsc, vitest, the verify script) exits 127 and the stage comes back
+  # partial with its acceptance criteria unverified rather than failed --
+  # observed on emergence-lab stage 13, 2026-08-23. Share the checkout's
+  # own install rather than running npm ci per dispatch, which would add
+  # minutes to every worktree in every repo, node or not.
+  if [[ -d "$repo_root/node_modules" && ! -e "$work_dir/node_modules" ]]; then
+    ln -s "../$(basename "$repo_root")/node_modules" "$work_dir/node_modules"
+  fi
   printf '%s\n' "$work_dir"
 }
 
