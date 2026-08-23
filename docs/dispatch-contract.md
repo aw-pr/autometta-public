@@ -94,6 +94,13 @@ The orchestrator identity is read from the stage card's `Orchestrator` metadata 
 - `overall: FAIL` (or a missing / malformed `overall` field, treated as FAIL by the orchestrator) — no commit. The stage moves to `verifier_failed`, `current_stage` is cleared, and the dirty working tree is left intact for the operator to inspect, amend the stage card, and re-run, or revert.
 - Backward-compat — if a worker on an older prompt self-committed before the verifier ran, the working tree on a PASS artefact will be clean. The tick logs a deprecated-path warning and marks the stage `completed` without erroring. New stages should rely on the orchestrator commit path so the `Co-Authored-By: <verifier>` trailer appears in `git log`.
 
+**Committed is not integrated.** The commit lands on the stage's run branch, inside its own worktree. Whether it reaches the base branch depends on whether base moved between dispatch and PASS, and during an active session it usually has: any orchestrator commit to base produces it. Both outcomes are written to the stage's `integration` record in `state/state.yaml`.
+
+- `integration.state: merged`. Base had not moved, the run branch was fast-forwarded into it, and the run worktree was removed. Nothing outstanding.
+- `integration.state: awaiting`. Base had moved. The run branch is pushed to `origin` (the record's `pushed` field says whether that worked) and it, and its worktree, are left standing for a person to merge. `autometta status` prints an `awaiting integration` line for the stage until the merge happens, and `scripts/reap-worktrees.sh` will not remove the worktree while it stands; once the run branch is contained in base, the next sweep closes the record out and collects the worktree.
+
+Neither path checks a branch out in the shared checkout at `repo_root`. See `docs/phat-controller.md` section (j).
+
 This concentrates the commit decision at the one point where the verifier verdict is known. A worker that self-committed before the verifier ran would land its diff with an unknown verifier identity (the cross-family co-author trailer would be missing on every commit) and would force a `git revert` whenever the verifier later said FAIL. See [[memory/decision-orchestrator-commits-on-verifier-pass]] for the full rationale and rejected alternatives.
 
 ## Contract tests: freezing acceptance as executable assertions

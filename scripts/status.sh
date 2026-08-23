@@ -47,6 +47,26 @@ state_value() {
   yq -r "$filter" "$state_file" 2>/dev/null || printf '-'
 }
 
+# A stage whose run branch could not be fast-forwarded into base is
+# completed but not integrated: the commit exists only on autometta/<stage>
+# and a person has to merge it. That is the common outcome whenever the
+# operator commits to base during a session, and until it was printed here
+# the only trace was one appended line in HANDOFF.md. Printed under the
+# repo's row rather than in it, because there can be several and the
+# operator needs the branch name to act on.
+print_awaiting_integration() {
+  local state_file="$1"
+  [[ -f "$state_file" ]] || return 0
+  yq -r '
+    .stages[]
+    | select(.integration.state == "awaiting")
+    | "    awaiting integration: " + .id
+      + " -> merge " + (.integration.run_branch // "?")
+      + " into " + (.integration.base_branch // "?")
+      + " (pushed to origin: " + (.integration.pushed // false | tostring) + ")"
+  ' "$state_file" 2>/dev/null || true
+}
+
 print_repo() {
   local subscriber_file="$1"
   local enabled repo_root repo_name state_file budget_file current_stage halted halt_reason tick_count failures status worker_pid verifier_pid pid_summary log_path
@@ -103,6 +123,7 @@ print_repo() {
   fi
 
   printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "on" "$current_stage" "$status" "ticks:${tick_count}/fail:${failures}" "$pid_summary $log_path"
+  print_awaiting_integration "$state_file"
 }
 
 usage() {

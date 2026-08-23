@@ -23,7 +23,7 @@ A tick is a single non-interactive invocation of `autometta tick`, which delegat
 3. Checks the budget. If any of `token_cap_total`, `wall_clock_cap_seconds`, `clock_tick_cap`, or `consecutive_failure_cap` is exhausted, the tick writes a stall marker into `state.yaml` and exits without dispatching.
 4. Selects exactly one transition to make. The transition rule is the simplest possible: if a stage is `in_progress`, advance it by running its verifier (if the worker has reported done) or by checking it for stall; if no stage is `in_progress`, claim the next `pending` stage and dispatch its worker; if no `pending` stage exists, the queue is drained and the tick exits cleanly.
 5. Updates `state.yaml` and `budget.json` atomically. "Atomically" means: write to a temp file in the same directory, then `mv` into place. The `mv` is the atomicity primitive on POSIX filesystems given same-directory restraint.
-6. Commits the state update on a `phat-controller/state` branch (not `dev`, to avoid interleaving with human commits) using the per-agent author attribution from the global dev rules.
+6. Snapshots the state update onto the `phat-controller/state` ref, using the per-agent author attribution from the global dev rules. It does this with git plumbing and never checks the branch out: see (j).
 7. Exits. The next tick is the next cron fire.
 
 A tick is one transition, not a loop within the tick. This is the "cron + tick > daemon" belief from `docs/philosophy.md`. The cron schedule defines the loop; the script is a one-shot.
@@ -170,11 +170,43 @@ The controller is observable through files it already owns:
 - `state/logs/<stage-id>-worker.log` and `state/logs/<stage-id>-verifier.log` for process output.
 - `state/verifiers/<stage-id>.json` for structured verifier reports.
 - `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/log/tick-YYYY-MM-DD.log` for controller-level tick output.
-- `phat-controller/state` for committed state snapshots.
+- `phat-controller/state` for committed state snapshots (see (j) for what is in one).
 
 `autometta status` is the read-only operator view over those files. `autometta init <repo>` creates a detached tmux viewer named `autometta-<project-name>` when `tmux` is available. `autometta attach <repo>` opens or creates that same viewer, tails the latest controller log, and opens a status pane. It is deliberately downstream of the filesystem state; it does not dispatch, supervise, or retry work.
 
 This gives the operator an attachable cockpit without creating a resident controller daemon.
+
+## (j) The state snapshot, and keeping out of the shared tree
+
+`repo_root` is the operator's checkout. The loop dispatches into an ephemeral sibling worktree precisely so no worker or verifier touches it, and two paths in the tick have to hold the same line: the state snapshot, and the fast-forward of the base branch on PASS.
+
+**The snapshot never checks anything out.** `commit_state_branch` used to run `git checkout -B phat-controller/state` in `repo_root`, commit, and restore the operator's branch from an `EXIT` trap. The window is a fraction of a second, and the fleet job opens it roughly 288 times a day per subscriber in a tree a person is expected to be working in. On 2026-08-23 an orchestrator commit authored against `dev` landed on `phat-controller/state` inside that window (`2d4dc08`). `git push origin dev` answered "Everything up-to-date", which is how it was noticed; the next tick's `checkout -B` would have reset the ref past it and made it unreachable. It was recovered as a cherry-pick, `1efd82a`, within minutes.
+
+The replacement builds the commit with plumbing: `git add` into a throwaway `GIT_INDEX_FILE`, `git write-tree`, `git commit-tree`, one `git update-ref` with the previous tip as its compare-and-swap guard. No checkout, no HEAD move, no write to `repo_root`'s index or working tree, and nothing for a concurrent operator commit to race with. A dedicated worktree for the ref would also have kept HEAD still, but it is a fixture to create, maintain and reap, and the state files live in `repo_root/state`, so it would have to copy them across on every tick.
+
+**What a snapshot holds.** `state/state.yaml` and `state/budget.json`, plus whatever of `state/verifiers` and `state/handoffs` the repo does not ignore. Not `state/logs`, `state/cost-log.jsonl`, `state/active-agents`, `state/recent-agents` or `state/heartbeat.json`. The commit body names exactly what was captured, so the ref never claims more than it holds, and an unchanged state adds no commit.
+
+`state.yaml` and `budget.json` are gitignored in every subscriber, so the snapshot stages them with `git add -f`. That is deliberate. Before this, the plain `git add state/state.yaml` was a silent no-op (`docs/lessons.md` gotcha 10) and the ref held only the repo tree it had been reset to: the branch documented here as "committed state snapshots" had never contained one line of state. Forcing them onto this ref does not make them tracked on any working branch, `.gitignore` still governs every operator commit, and whether `state.yaml` should be tracked remains an open question this did not answer. The snapshot is local: the loop never pushes the ref, and nothing else should.
+
+`state/state.yaml.bak`, the rolling copy `state_apply_json` writes, stays. It recovers the previous good state within the same tick; the snapshot ref recovers a history of them.
+
+**The fast-forward never checks base out either.** On PASS, `finalize_run_worktree` advances `base_branch` to the run branch when base has not moved since dispatch. It used to `git checkout "$base_branch"` in `repo_root` to do it, which moves an operator working on some other branch onto base mid-session. A fast-forward is a ref move, so the tick does the ref move where it can: base checked out in `repo_root` is merged in place (HEAD stays on the branch it was already on, and the tree has to be updated anyway), base checked out in another worktree is merged there, and base checked out nowhere is moved with `git update-ref` behind an ancestry check.
+
+**When base has moved.** That is the common case, not an edge case: any orchestrator commit to base between dispatch and PASS produces it. The run branch is pushed to `origin` and left standing, and the stage's `integration` record in `state.yaml` says so:
+
+```yaml
+integration:
+  state: awaiting        # or merged
+  base_branch: dev
+  run_branch: autometta/39-loop-moves-head-in-the-shared-tree
+  head: 0d1e2f3...
+  pushed: true
+  recorded_at: 2026-08-23T14:02:11Z
+```
+
+`autometta status` prints an `awaiting integration` line per outstanding stage under the repo's row. Before the record existed the stage read as plain `completed` everywhere an operator looks, and the only trace of the outstanding merge was one appended line in `HANDOFF.md`.
+
+**Reaping.** `scripts/reap-worktrees.sh` runs after every tick as part of `sweep_repo_retention`, and by hand with `--dry-run`. It removes a run worktree whose stage is finished with it, through `requeue-stage.sh --worktree-only` so that removal has one implementation. It refuses to remove a worktree whose stage is `in_progress`, one holding uncommitted work that is not the known `state/` symlink artefact (a verifier FAIL leaves the worker's diff uncommitted by design, and that diff is what the operator inspects), one whose run branch holds commits that are not on base, and one whose stage it cannot find in `state.yaml`. Those it reports instead, on every tick until someone deals with them. When a person merges an `awaiting` branch by hand, the next sweep notices the containment, closes the record out to `merged`, and collects the worktree.
 
 ## Operational entry points
 
@@ -198,6 +230,8 @@ The CLI delegates to these scripts:
 - `scripts/add-stage.sh`: idempotent queue insertion.
 - `scripts/status.sh`: read-only operator status view.
 - `scripts/attach.sh`: optional tmux viewer for status and controller logs.
+- `scripts/reap-worktrees.sh`: per-repo sweep of run worktrees nobody came back for. Called after every tick; safe to run by hand with `--dry-run`.
+- `scripts/state-branch-smoke.sh`: offline proof that a tick leaves `repo_root`'s HEAD alone and still snapshots its state.
 
 The contract surface remains the state file, budget file, verifier handoff format, subscriber registry, and identity resolution. The CLI is convenience, not a separate state owner.
 
