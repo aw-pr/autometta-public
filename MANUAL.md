@@ -110,7 +110,7 @@ to one backing script.
 | `autometta subscribe [repo-path]` | Subscribe a repo to the controller without the full init flow. Defaults to the current directory. |
 | `autometta add-stage <repo-path> <stage-card-path>` | Append a stage to a subscribed repo's `state.yaml` from a stage card. |
 | `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Any stage whose run branch is still waiting to be merged into its base branch gets an `awaiting integration` line under the repo's row, naming the branch to merge. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. `scripts/status.sh --repo <path>` narrows the table to one subscriber; the tmux status pane uses it so an attached dash shows the repo you attached to. |
-| `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`): status ticker, work pane, and agent ticker. An interactive attach replaces an existing viewer so ticker script changes take effect. `--dry-run` prints what it would do. `--ensure` (used internally by `init`) creates the session only if absent. The `autometta-autometta` session opens on the fleet summary; its `repo` window retains the control-plane repo view. Orphaned viewers whose subscriber is disabled or gone are reported. |
+| `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`): status ticker, work pane, and agent ticker. An interactive attach replaces an existing viewer so ticker script changes take effect. `--dry-run` prints what it would do. `--ensure` (used internally by `init`) creates the session only if absent. The `autometta-autometta` session opens on the fleet summary; its `repo` window retains the control-plane repo view and a separate background job refreshes fleet `data.json` every 120 seconds. Orphaned viewers whose subscriber is disabled or gone are reported. |
 | `autometta detach [repo-path\|--all]` | Remove one tmux viewer, defaulting to the current repo, or tear down every `autometta-*` viewer with `--all`. Other tmux sessions are never touched. |
 | `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one controller tick across subscribers: read state, dispatch one worker and/or verifier, write next state, snapshot state onto `phat-controller/state`, sweep retention and stale run worktrees, exit. It never changes the branch checked out in a subscriber's own checkout. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` requeues every stalled or failed stage across all enabled subscribers, via the same reset `scripts/requeue-stage.sh` performs by hand; it leaves `in_progress` and `verifier_failed` alone, refuses a stage whose card no longer resolves (`stall_marker: card_missing`), skips a repo still over a spend cap, and stops at `repair_attempts` 2 per stage (`PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP`). |
 | `autometta check-deps` | Verify required tooling is present (bash, git, jq, yq, tmux, the CLI families, op-fetch, etc.). |
@@ -365,10 +365,16 @@ without further coupling.
 
 - **Fleet viewer**: `autometta attach /path/to/autometta` opens
   `autometta-autometta` on a read-only roll-up sourced from dashboard
-  `data.json`. It shows enabled subscribers, halts, queue depth, window spend,
-  last dispatch, fleet totals and the alert union. Missing or stale data is
-  labelled plainly. The control-plane repo's original three-pane view remains
-  in the `repo` window.
+  `data.json`. It shows enabled subscribers, halts, queue depth, today's tokens
+  and estimated cost, shortened window spend, last dispatch and fleet totals.
+  Alerts are a stable repo / stage-card / kind / detail table. Repo-level rows
+  say `repo`; completed roles are excluded from provider-limit scans so source
+  text and commit subjects cannot cry wolf. A separate job reuses the existing
+  aggregator every 120 seconds, while the ticker only reads the snapshot. The
+  pane states the exact generation time and still labels genuinely stale data.
+  Override the refresh interval with `PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL`.
+  The control-plane repo's original three-pane view remains in the `repo`
+  window.
 
 A family asymmetry to remember: `claude -p` does not stream its log; the file
 stays at 0 bytes until the run completes. So log-mtime staleness is not a stuck

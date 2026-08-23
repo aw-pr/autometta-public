@@ -2,8 +2,10 @@
 
 `autometta dashboard` regenerates a static, offline-renderable HTML
 dashboard that visualises token spend and stage activity across every
-subscribed repo. There is no daemon and no live update — the page is
-regenerated on demand and on every successful tick.
+subscribed repo. There is no daemon. The page is regenerated on demand; while
+the fleet tmux viewer exists, a separate refresh job also regenerates the data
+snapshot every 120 seconds. The fleet ticker remains a read-only renderer and
+never walks subscriber repos.
 
 ## Subcommand
 
@@ -40,10 +42,15 @@ SHA256 hash; a mismatch fails the install loudly.
 3. With `--open`, launches the local file via `open` (macOS) or
    `xdg-open` (linux).
 
-The aggregator and copy steps are also wired into `scripts/tick.sh` via
-the per-stage `tokens` snapshot — every commit-on-PASS records its
-worker / verifier token counts onto the matching stage entry in
-`state.yaml`, which `data.json` then surfaces.
+Every commit-on-PASS records worker and verifier token counts onto the matching
+stage entry in `state.yaml`. The next aggregator run surfaces those snapshots
+in `data.json`; the tick itself does not walk the fleet.
+
+`autometta attach /path/to/autometta` starts one background refresh job in the
+tmux session. Override its 120-second interval with
+`PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL`. The fleet pane prints the exact
+`generated_at` timestamp and its age, and retains the stale warning after
+`PHAT_CONTROLLER_FLEET_STALE_SECONDS` (default 600).
 
 ## Four breakdowns
 
@@ -80,6 +87,11 @@ worker / verifier token counts onto the matching stage entry in
       "token_cap_total": 1000000,
       "halted": false,
       "halt_reason": null,
+      "today_tokens": 12345678,
+      "today_cost_usd_est": 3.455,
+      "seven_day_cost_usd_est": 12.34,
+      "last_hour_tokens": 456789,
+      "last_dispatch_at": "...",
       "stages": [
         {
           "id": "01-...",
@@ -105,3 +117,6 @@ worker / verifier token counts onto the matching stage entry in
 The per-stage `tokens` / `worker_tokens` / `verifier_tokens` fields are
 **additive** — older `state.yaml` files without them parse to `0` /
 `null` and continue to render.
+
+The fleet pane shortens token counts for scanning and rounds estimated USD to
+two decimal places. The exact token and cost values remain in `data.json`.

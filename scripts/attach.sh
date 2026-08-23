@@ -8,7 +8,7 @@ subscribers_dir="$controller_home/subscribers"
 
 usage() {
   printf 'Usage: %s [repo-path] [--dry-run] [--ensure]\n' "$(basename "$0")" >&2
-  printf '       %s --detach [repo-path] | --detach-all | --fleet-ticker\n' "$(basename "$0")" >&2
+  printf '       %s --detach [repo-path] | --detach-all | --fleet-ticker | --fleet-refresh\n' "$(basename "$0")" >&2
   exit 1
 }
 
@@ -50,23 +50,36 @@ render_fleet_once() {
   now="$(date -u +%s)"
   generated_epoch="$(jq -r 'try (.generated_at | fromdateiso8601) catch 0' "$data_path")"
   age=$(( now - generated_epoch ))
+  local generated_at
+  generated_at="$(jq -r '.generated_at' "$data_path")"
+  printf 'Data generated: %s (%ss ago)\n' "$generated_at" "$age"
   if (( generated_epoch == 0 || age > stale_seconds )); then
     printf 'FLEET DATA STALE: generated %ss ago (limit %ss)\n' "$age" "$stale_seconds"
-    printf '  Run `autometta dashboard`; stale data is not rendered as a healthy fleet.\n\n'
-  else
-    printf 'Data age: %ss\n\n' "$age"
+    printf '  The scheduled refresh is not running; stale data is not rendered as healthy.\n'
   fi
+  printf '\n'
 
   printf 'TOTALS\n'
-  jq -r '
+  local totals
+  totals="$(jq -r '
     (.fleet_totals // {}) as $t |
-    "  enabled: \($t.enabled_repos // ([.repos[] | select(.enabled)] | length))" +
-    "  today: \($t.today_tokens // 0) tokens / $\($t.today_cost_usd_est // 0) est" +
-    "  window: \($t.window_tokens_spent // 0) / \($t.window_token_cap_total // 0) tokens"
-  ' "$data_path"
+    [($t.enabled_repos // ([.repos[] | select(.enabled)] | length)),
+     ($t.today_tokens // 0), ($t.today_cost_usd_est // 0),
+     ($t.window_tokens_spent // 0), ($t.window_token_cap_total // 0)] | @tsv
+  ' "$data_path")"
+  local total_enabled total_today_tokens total_today_cost total_window_spent total_window_cap
+  IFS=$'\t' read -r total_enabled total_today_tokens total_today_cost total_window_spent total_window_cap <<<"$totals"
+  printf '  enabled: %s  today: %s tokens / $%.2f est  window: %s / %s tokens\n' \
+    "$total_enabled" "$total_today_tokens" "$total_today_cost" "$total_window_spent" "$total_window_cap"
   printf '\nREPOS\n'
-  printf '  %-26s %-8s %-22s %-9s %-18s %s\n' 'subscriber' 'enabled' 'state' 'queue' 'window' 'last dispatch'
+  printf '  %-26s %-8s %-22s %-9s %-18s %-16s %s\n' \
+    'subscriber' 'enabled' 'state' 'queue' 'today' 'window' 'last dispatch'
   jq -r --argjson now "$now" '
+    def short_tokens:
+      if . >= 1000000000 then (((. / 100000000 | round) / 10 | tostring) + "B")
+      elif . >= 1000000 then (((. / 100000 | round) / 10 | tostring) + "M")
+      elif . >= 1000 then (((. / 100 | round) / 10 | tostring) + "K")
+      else tostring end;
     def age:
       (try (. | fromdateiso8601) catch 0) as $then |
       if $then == 0 then "never"
@@ -77,11 +90,12 @@ render_fleet_once() {
     .repos[] | select(.enabled) |
     [ .name, "yes", (if .halted then "HALTED:" + (.halt_reason // "unknown") else "running" end),
       ((.queue_depth // 0 | tostring) + "/" + (.in_flight // 0 | tostring)),
-      ((.tokens_spent // 0 | tostring) + "/" + (.token_cap_total // 0 | tostring)),
+      (.today_tokens // 0 | short_tokens), (.today_cost_usd_est // 0),
+      ((.tokens_spent // 0 | short_tokens) + "/" + (.token_cap_total // 0 | short_tokens)),
       ((.last_dispatch_at // "") | age) ] | @tsv' "$data_path" |
-    while IFS=$'\t' read -r name enabled state queue window last_dispatch; do
-      printf '  %-26s %-8s %-22s %-9s %-18s %s\n' \
-        "$name" "$enabled" "$state" "$queue" "$window" "$last_dispatch"
+    while IFS=$'\t' read -r name enabled state queue today_tokens today_cost window last_dispatch; do
+      printf '  %-26s %-8s %-22s %-9s %7s/$%-9.2f %-16s %s\n' \
+        "$name" "$enabled" "$state" "$queue" "$today_tokens" "$today_cost" "$window" "$last_dispatch"
     done
 
   printf '\nALERTS (fleet union)\n'
@@ -95,12 +109,24 @@ render_fleet_once() {
   if (( alert_count == 0 )); then
     printf '  (none)\n'
   else
-    jq -r '.repos[] | select(.enabled) as $r |
-      (if $r.halted then "  " + $r.name + ": halted, " + ($r.halt_reason // "unknown") else empty end),
-      (if ($r.consecutive_failures // 0) > 0 then "  " + $r.name + ": consecutive failures " + ($r.consecutive_failures | tostring) + "/" + ($r.consecutive_failure_cap | tostring) else empty end),
-      (if (($r.queue_depth // 0) == 0 and ($r.in_flight // 0) == 0) then "  " + $r.name + ": queue empty" else empty end),
-      ($r.stages[]? | select(.status == "failed" or .status == "verifier_failed" or .status == "stalled") | "  " + $r.name + ": " + .id + " " + .status),
-      ($r.alerts[]? | "  " + $r.name + ": " + (.line // tostring))' "$data_path"
+    printf '  %-26s %-44s %-18s %s\n' 'repo' 'stage/card' 'kind' 'detail'
+    jq -r '
+      def log_stage:
+        (.log // "" | split("/")[-1]
+         | sub("-(worker|verifier)(\\.attempt-[0-9]+)?\\.log$"; "")) as $id |
+        if $id == "" then "repo" else $id end;
+      [ .repos[] | select(.enabled) as $r |
+        (if $r.halted then {repo:$r.name, subject:"repo", kind:"halt", detail:($r.halt_reason // "unknown")} else empty end),
+        (if ($r.consecutive_failures // 0) > 0 then {repo:$r.name, subject:"repo", kind:"failures", detail:((($r.consecutive_failures | tostring) + "/" + ($r.consecutive_failure_cap | tostring)))} else empty end),
+        (if (($r.queue_depth // 0) == 0 and ($r.in_flight // 0) == 0) then {repo:$r.name, subject:"repo", kind:"queue", detail:"empty"} else empty end),
+        ($r.stages[]? | select(.status == "failed" or .status == "verifier_failed" or .status == "stalled") | {repo:$r.name, subject:.id, kind:"stage", detail:.status}),
+        ($r.alerts[]? | {repo:$r.name, subject:log_stage, kind:"provider-limit", detail:(.line // tostring)})
+      ] | sort_by(.repo, .subject, .kind, .detail)[] |
+      [.repo, .subject, .kind, .detail] | @tsv' "$data_path" |
+      while IFS=$'\t' read -r alert_repo alert_subject alert_kind alert_detail; do
+        printf '  %-26s %-44s %-18s %s\n' \
+          "$alert_repo" "$alert_subject" "$alert_kind" "$alert_detail"
+      done
   fi
 
   local overlap
@@ -108,6 +134,19 @@ render_fleet_once() {
   if [[ -n "$overlap" ]]; then
     printf '\nOVERLAP\n  emergence-lab subscribers enabled together: %s\n' "$overlap"
   fi
+}
+
+fleet_refresher() {
+  local interval="${PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL:-120}"
+  local session="${PHAT_CONTROLLER_FLEET_SESSION:-}"
+  trap 'exit 0' INT TERM
+  while true; do
+    if [[ -n "$session" ]] && ! tmux has-session -t "$session" 2>/dev/null; then
+      return 0
+    fi
+    "$script_dir/aggregate-dashboard.sh" >/dev/null 2>&1 || true
+    sleep "$interval"
+  done
 }
 
 fleet_ticker() {
@@ -197,6 +236,7 @@ while [[ $# -gt 0 ]]; do
     --fleet-ticker) mode=fleet ;;
     --detach) mode=detach ;;
     --detach-all) mode=detach_all ;;
+    --fleet-refresh) mode=fleet_refresh ;;
     -*) usage ;;
     *)
       [[ "$repo_path" == "." ]] || usage
@@ -208,6 +248,10 @@ done
 
 if [[ "$mode" == fleet ]]; then
   fleet_ticker
+  exit 0
+fi
+if [[ "$mode" == fleet_refresh ]]; then
+  fleet_refresher
   exit 0
 fi
 
@@ -253,6 +297,8 @@ status_cmd="cd $autometta_root_q && scripts/status-ticker.sh --repo $repo_path_q
 log_cmd="mkdir -p $controller_log_q; latest=''; for candidate in $controller_log_q/tick-*.log; do [ -e \"\$candidate\" ] || continue; latest=\"\$candidate\"; done; printf 'Project: $repo_slug\nRepo: $repo_path\n\n'; if [ -n \"\$latest\" ]; then printf '(showing only lines mentioning this repo; waiting for the first one)\\n'; tail -f \"\$latest\" | grep --line-buffered -F $repo_path_q; else printf 'No tick log yet in $controller_home/log\n'; exec \"\${SHELL:-/bin/sh}\"; fi"
 ticker_cmd="cd $autometta_root_q && scripts/agent-ticker.sh $repo_path_q"
 fleet_cmd="cd $autometta_root_q && scripts/attach.sh --fleet-ticker"
+session_name_q="$(shell_quote "$session_name")"
+fleet_refresh_cmd="cd $autometta_root_q && PHAT_CONTROLLER_FLEET_SESSION=$session_name_q scripts/attach.sh --fleet-refresh"
 
 report_orphans
 
@@ -278,6 +324,7 @@ if ! tmux has-session -t "$session_name" 2>/dev/null; then
   if [[ "$repo_slug" == autometta ]]; then
     "$script_dir/aggregate-dashboard.sh" >/dev/null 2>&1 || true
     tmux new-session -d -s "$session_name" -n fleet "$fleet_cmd"
+    tmux run-shell -b -t "$session_name" "$fleet_refresh_cmd"
     tmux new-window -d -t "$session_name" -n repo "$status_cmd"
     tmux split-window -h -t "$session_name":repo "$log_cmd"
     tmux split-window -v -t "$session_name":repo.1 "$ticker_cmd"
