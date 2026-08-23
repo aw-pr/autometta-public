@@ -24,6 +24,7 @@ fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 refresh_interval="${PHAT_CONTROLLER_TICKER_INTERVAL:-5}"
+cost_log_tail_rows="${PHAT_CONTROLLER_COST_LOG_TAIL_ROWS:-5000}"
 
 # Resolve list-cards.sh: prefer this script's own dir (dev checkout), then
 # fall back to the brew-installed CLI's scripts dir, so a stale tmux pane
@@ -200,10 +201,42 @@ if alerts:
     print()
 PY
 
+  # SPEND is deliberately computed from a bounded tail. The ledger is
+  # append-only, so recent rows are at the end and refresh cost stays fixed as
+  # cost-log.jsonl grows.
+  local cost_log_path="$repo_root/state/cost-log.jsonl"
+  printf 'SPEND (USD estimates use list prices)\n'
+  if [[ -f "$budget_path" ]] && command -v jq >/dev/null 2>&1; then
+    { if [[ -f "$cost_log_path" ]]; then tail -n "$cost_log_tail_rows" "$cost_log_path" 2>/dev/null; fi; } \
+      | jq -sr \
+      --argjson budget "$(jq -c '.' "$budget_path" 2>/dev/null || printf '{}')" \
+      --argjson now "$(date -u +%s)" '
+      def tokens: ((.input_tokens // 0) + (.cached_input_tokens // 0) + (.output_tokens // 0));
+      def epoch: try (.ts | fromdateiso8601) catch 0;
+      [ .[] | select(type == "object") ] as $rows |
+      ($now - ($now % 86400)) as $today |
+      ($budget.tokens_spent // 0) as $spent |
+      ($budget.token_cap_total // 0) as $cap |
+      [$rows[] | select(epoch >= $today)] as $today_rows |
+      [$rows[] | select(epoch >= ($today - 518400))] as $week_rows |
+      [$rows[] | select(epoch >= ($now - 3600))] as $hour_rows |
+      ($today_rows | map(.cost_usd_est // 0) | add // 0) as $today_cost |
+      ($week_rows | map(.cost_usd_est // 0) | add // 0) as $week_cost |
+      ($today_rows | map(.cache_hit_rate // 0) | if length > 0 then add / length else 0 end) as $hit |
+      ($hour_rows | map(tokens) | add // 0) as $hour_tokens |
+      "  window: \($spent) / \($cap) tokens (\(if $cap > 0 then (($spent * 10000 / $cap) | floor) / 100 else 0 end)%)",
+      "  today: $\($today_cost | tostring) est  |  7d: $\($week_cost | tostring) est",
+      "  mean cache hit today: \(($hit * 1000 | floor) / 10)%  |  last hour: \($hour_tokens) tokens/h"
+    ' || printf '  (budget or cost log unreadable)\n'
+  else
+    printf '  (budget.json missing or jq unavailable)\n'
+  fi
+  printf '\n'
+
   printf 'ACTIVE\n'
   if [[ -f "$heartbeat_path" ]]; then
     python3 - "$heartbeat_path" <<'PY' || true
-import json, sys
+import json, re, sys
 try:
     with open(sys.argv[1]) as fh:
         rep = json.load(fh)
@@ -216,12 +249,35 @@ if not entries:
 else:
     for e in entries:
         flags = ",".join(e.get("flags", [])) or "fresh"
-        print("  %-7s %-9s %-30s pid %-6s %5ss  log:%sB  %s" % (
+        running_tokens = None
+        try:
+            with open(e.get("log_path", ""), errors="replace") as fh:
+                fh.seek(0, 2)
+                fh.seek(max(0, fh.tell() - 262144))
+                data = fh.read()
+            matches = []
+            matches += [sum(map(int, m)) for m in re.findall(
+                r"cache:\s*write=(\d+)\s+read=(\d+)\s+input=(\d+)\s+output=(\d+)", data)]
+            matches += [int(x.replace(",", "")) for x in re.findall(
+                r"(?:tokens used\s*|Total tokens:\s*)([0-9][0-9,]*)", data, re.I)]
+            usage = re.findall(r'"usage"\s*:\s*\{([^{}]+)\}', data)
+            for block in usage:
+                values = [int(x) for x in re.findall(
+                    r'"(?:input_tokens|output_tokens|cache_creation_input_tokens|cache_read_input_tokens)"\s*:\s*(\d+)', block)]
+                if values:
+                    matches.append(sum(values))
+            if matches:
+                running_tokens = matches[-1]
+        except (OSError, TypeError, ValueError):
+            pass
+        token_text = str(running_tokens) if running_tokens is not None else "0"
+        print("  %-7s %-9s %-30s pid %-6s %5ss  tokens:%-8s log:%sB  %s" % (
             e.get("family", "?"),
             e.get("role", "?"),
             (e.get("card_path","")[-30:] or "-").lstrip("/"),
             e.get("pid", "?"),
             e.get("elapsed_seconds", "?"),
+            token_text,
             e.get("log_size", "?"),
             flags,
         ))

@@ -15,6 +15,7 @@ Usage:
   autometta add-stage <repo-path> <stage-card-path>
   autometta status
   autometta attach [repo-path] [--dry-run]
+  autometta detach [repo-path|--all]
   autometta tick [--repair|--reset-halt [--reset-tokens]]
   autometta check-deps
   autometta dashboard [--open]
@@ -95,6 +96,16 @@ case "$command_name" in
     ;;
   attach)
     run_script attach.sh "$@"
+    ;;
+  detach)
+    if [[ $# -eq 1 && "$1" == "--all" ]]; then
+      run_script attach.sh --detach-all
+    elif [[ $# -le 1 ]]; then
+      run_script attach.sh --detach "${1:-.}"
+    else
+      printf 'usage: autometta detach [repo-path|--all]\n' >&2
+      exit 1
+    fi
     ;;
   tick)
     run_script tick.sh "$@"

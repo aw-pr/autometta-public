@@ -60,17 +60,26 @@ Open or create the viewer manually:
 autometta attach <repo-path>
 ```
 
-The tmux viewer has three panes: the left pane prints a status snapshot, the
+The per-repo tmux viewer has three panes: the left pane prints a status snapshot, the
 top-right pane tails the latest controller log, and the bottom-right pane
 runs the **agent ticker** (`scripts/agent-ticker.sh`). The ticker refreshes
 every five seconds (override with `PHAT_CONTROLLER_TICKER_INTERVAL`) and
-shows up to four sections:
+shows these sections:
 
 - `ALERTS`: shown only when something needs attention. Budget halts,
   consecutive failures, stages in a terminal-failure state, and an **empty
   queue on an enabled subscriber** (zero pending and nothing in flight).
+- `SPEND`: current-window tokens against the cap, today's and seven-day USD
+  estimates at list prices, today's mean cache-hit rate, and tokens burned in
+  the last hour. It reads at most the final
+  `PHAT_CONTROLLER_COST_LOG_TAIL_ROWS` rows (default 5,000), so refresh cost is
+  bounded as the append-only ledger grows. Token figures remain the primary
+  signal on subscription routes.
 - `ACTIVE`: each agent currently in flight, with flags from the heartbeat
-  watchdog (`fresh` / `silent` / `over-budget`).
+  watchdog (`fresh` / `silent` / `over-budget`) and the latest token count
+  parseable from that agent's log. `0` means the route has not emitted a usage
+  line yet; it is reported usage, not an inference about hidden provider-side
+  work.
 - `LIVE`: only while a stage is genuinely `in_progress` — the last eight
   lines of `state/logs/<stage>-worker.log`, so the running worker's output
   is in the pane rather than behind a path the operator has to go and find.
@@ -105,6 +114,17 @@ Both panes on the left and top-right are scoped to the attached repo:
 `scripts/status.sh --repo <path>` narrows the status table to one
 subscriber, and the log pane filters the shared tick log to lines naming
 that repo's path.
+
+`autometta-autometta` is the fleet viewer. Its default `fleet` window renders
+only `${PHAT_CONTROLLER_HOME}/dashboard/data.json`, which is produced by the
+existing dashboard aggregator. It shows every enabled subscriber, halt reason,
+queue depth, window spend, last dispatch, fleet totals and the alert union. A
+missing snapshot or one older than `PHAT_CONTROLLER_FLEET_STALE_SECONDS`
+(default 600) is labelled missing or stale rather than healthy. The `repo`
+window preserves autometta's own per-repo view. Interactive `autometta attach`
+refreshes its viewer so long-running ticker loops pick up script changes;
+`autometta detach --all` removes all `autometta-*` viewers and nothing else.
+Attach also reports viewers whose subscriber is disabled or absent.
 
 It is an operator cockpit only. It must not dispatch `autometta tick`, send
 commands to workers, or keep state that cannot be reconstructed from the

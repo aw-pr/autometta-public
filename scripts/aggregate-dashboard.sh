@@ -79,16 +79,41 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
 
   state_yaml="$repo_path/state/state.yaml"
   budget_path="$repo_path/state/budget.json"
+  cost_log_path="$repo_path/state/cost-log.jsonl"
 
   tokens_spent=0
   token_cap_total=0
   halted=false
   halt_reason=null
+  consecutive_failures=0
+  consecutive_failure_cap=0
   if [[ -f "$budget_path" ]]; then
     tokens_spent="$(jq -r '.tokens_spent // 0' "$budget_path")"
     token_cap_total="$(jq -r '.token_cap_total // 0' "$budget_path")"
     halted="$(jq -r '.halted // false' "$budget_path")"
     halt_reason="$(jq -c '.halt_reason // null' "$budget_path")"
+    consecutive_failures="$(jq -r '.consecutive_failures // 0' "$budget_path")"
+    consecutive_failure_cap="$(jq -r '.consecutive_failure_cap // 0' "$budget_path")"
+  fi
+
+  # The aggregator is the single fleet walker. Do the ledger roll-up here so
+  # tmux renderers only read data.json and never walk subscriber repos.
+  cost_rollup='{"today_tokens":0,"today_cost_usd_est":0,"seven_day_cost_usd_est":0,"last_hour_tokens":0,"last_dispatch_at":null}'
+  if [[ -f "$cost_log_path" ]]; then
+    now_epoch="$(date -u +%s)"
+    cost_rollup="$(jq -s -c --argjson now "$now_epoch" '
+      def tokens: ((.input_tokens // 0) + (.cached_input_tokens // 0) + (.output_tokens // 0));
+      def epoch: try (.ts | fromdateiso8601) catch 0;
+      ($now - ($now % 86400)) as $today |
+      [ .[] | select(type == "object") ] as $rows |
+      {
+        today_tokens: ([$rows[] | select(epoch >= $today) | tokens] | add // 0),
+        today_cost_usd_est: ([$rows[] | select(epoch >= $today) | (.cost_usd_est // 0)] | add // 0),
+        seven_day_cost_usd_est: ([$rows[] | select(epoch >= ($today - 518400)) | (.cost_usd_est // 0)] | add // 0),
+        last_hour_tokens: ([$rows[] | select(epoch >= ($now - 3600)) | tokens] | add // 0),
+        last_dispatch_at: ([$rows[] | select(epoch > 0) | .ts] | max // null)
+      }
+    ' "$cost_log_path" 2>/dev/null || printf '%s' "$cost_rollup")"
   fi
 
   stages_json='[]'
@@ -161,8 +186,11 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson token_cap_total "${token_cap_total:-0}" \
     --argjson halted "$([[ "$halted" == "true" ]] && printf 'true' || printf 'false')" \
     --argjson halt_reason "$halt_reason" \
+    --argjson consecutive_failures "${consecutive_failures:-0}" \
+    --argjson consecutive_failure_cap "${consecutive_failure_cap:-0}" \
     --argjson stages "$stages_json" \
     --argjson alerts "$alerts_json" \
+    --argjson cost_rollup "$cost_rollup" \
     '. + [{
        name: $name,
        repo_path: $repo_path,
@@ -171,9 +199,13 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
        token_cap_total: $token_cap_total,
        halted: $halted,
        halt_reason: $halt_reason,
+       consecutive_failures: $consecutive_failures,
+       consecutive_failure_cap: $consecutive_failure_cap,
+       queue_depth: ([$stages[] | select(.status == "pending")] | length),
+       in_flight: ([$stages[] | select(.status == "in_progress")] | length),
        alerts: $alerts,
        stages: $stages
-     }]' "$repos_array_file" > "${repos_array_file}.tmp"
+     } + $cost_rollup]' "$repos_array_file" > "${repos_array_file}.tmp"
   mv "${repos_array_file}.tmp" "$repos_array_file"
 done
 
@@ -207,12 +239,23 @@ by_day_json="$(jq -c '
 
 generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+fleet_totals_json="$(jq -c '
+  {
+    enabled_repos: ([.[] | select(.enabled)] | length),
+    today_tokens: ([.[] | select(.enabled) | (.today_tokens // 0)] | add // 0),
+    today_cost_usd_est: ([.[] | select(.enabled) | (.today_cost_usd_est // 0)] | add // 0),
+    window_tokens_spent: ([.[] | select(.enabled) | (.tokens_spent // 0)] | add // 0),
+    window_token_cap_total: ([.[] | select(.enabled) | (.token_cap_total // 0)] | add // 0)
+  }
+' "$repos_array_file")"
+
 jq -n \
   --arg generated_at "$generated_at" \
   --argjson repos "$(cat "$repos_array_file")" \
   --argjson by_model "$by_model_json" \
   --argjson by_day "$by_day_json" \
-  '{generated_at: $generated_at, repos: $repos, by_model: $by_model, by_day: $by_day}' \
+  --argjson fleet_totals "$fleet_totals_json" \
+  '{generated_at: $generated_at, repos: $repos, by_model: $by_model, by_day: $by_day, fleet_totals: $fleet_totals}' \
   > "$data_json"
 
 rm -f "$repos_array_file"
