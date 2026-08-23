@@ -66,17 +66,25 @@ If the diff is correct and acceptance has passed, the stage is done. If either i
 
 The commit is atomic and follows the per-agent author attribution rule laid down in `~/.claude/rules/mcp-hub-dev-rules.md`: committer is the human user; author is the canonical agent identity of the primary worker. A co-author trailer is added when a second agent contributed non-trivially. The stage card is committed alongside the deliverables so the audit trail is in git, not in chat.
 
-A dispatch involves three roles in at least two model families, so the commit records all three. The author is the worker, the coder, which keeps `git shortlog` and `git blame` attributing the code to the model that wrote it, at model-version granularity. The orchestrator and verifier are kept as `Co-Authored-By` trailers for git-native tooling, with each role shown in the display name (git and GitHub key co-authorship off the email, so the parenthetical is display-only). On top of that, all three roles are recorded as role-keyed trailers carrying the clean canonical identity, so later analysis can ask which model performs best in each role:
+A dispatch involves three roles in at least two model families, so the commit records all three. The author is the worker, the coder, which keeps `git shortlog` and `git blame` attributing the code to the model that wrote it, at model-version granularity. The orchestrator and verifier are kept as `Co-Authored-By` trailers for git-native tooling, each carrying its plain canonical identity. On top of that, all three roles are recorded as role-keyed trailers carrying the clean canonical identity, so later analysis can ask which model performs best in each role:
 
 ```
 Author: GPT-5.6 Sol <gpt-5-6-sol@local>
 
-Co-Authored-By: Claude Opus 4.8 (orchestrator) <claude-opus-4-8@local>
-Co-Authored-By: Claude Sonnet 4.6 (verifier) <claude-sonnet-4-6@local>
-Autometta-Orchestrator: Claude Opus 4.8 <claude-opus-4-8@local>
+Co-Authored-By: Claude Opus 5 <claude-opus-5@local>
+Co-Authored-By: Claude Sonnet 5 <claude-sonnet-5@local>
+Autometta-Orchestrator: Claude Opus 5 <claude-opus-5@local>
 Autometta-Worker: GPT-5.6 Sol <gpt-5-6-sol@local>
-Autometta-Verifier: Claude Sonnet 4.6 <claude-sonnet-4-6@local>
+Autometta-Verifier: Claude Sonnet 5 <claude-sonnet-5@local>
 ```
+
+A `Co-Authored-By` carries an identity, never a role: an annotated
+`Claude Opus 5 (orchestrator)` is a different display name from a plain
+`Claude Opus 5`, so the forge lists one model as two people and `git shortlog`
+splits it. The role belongs in the `Autometta-*` trailers below, which is what
+they are for. The `commit-msg` attribution hook strips a trailing parenthetical
+from an `@local` identity, so an older card that still emits one is corrected
+rather than honoured.
 
 The orchestrator identity is read from the stage card's `Orchestrator` metadata line (it is fixed at card-authoring time); the worker and verifier come from `state.yaml`. Query one role with `git log --format='%(trailers:key=Autometta-Worker,valueonly)'` (the `Autometta-*` trailers hold the unannotated identity, so they group cleanly), and join against `state/cost-log.jsonl` for cost and token context per role. The autonomous loop emits these automatically (`scripts/tick.sh`); a manual orchestrator commit should pass the same trailer block.
 

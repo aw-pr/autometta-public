@@ -627,19 +627,6 @@ stage_card_orchestrator() {
     | sed -E 's/^- \*\*Orchestrator:\*\*[[:space:]]*//'
 }
 
-# Annotate a 'Name <email>' identity with its role in the display name, for a
-# human-readable Co-Authored-By line: 'Name (role) <email>'. Git and GitHub key
-# co-authorship off the email, so the parenthetical is display-only. The clean
-# canonical identity is preserved separately in the Autometta-* role trailers.
-annotate_role() {
-  local id="$1" role="$2"
-  if [[ "$id" == *" <"* ]]; then
-    printf '%s (%s) <%s' "${id% <*}" "$role" "${id#*<}"
-  else
-    printf '%s (%s)' "$id" "$role"
-  fi
-}
-
 # Decide what to do with a verifier artefact: commit-on-PASS or
 # mark-verifier_failed-on-FAIL. Treats a missing / malformed 'overall'
 # field as FAIL (fail-safe). The working tree on the operator branch
@@ -723,14 +710,16 @@ _process_verifier_artefact() {
       exit 0
     fi
     # Author is the worker (the coder). Trailers carry the full role record:
-    # role-named Co-Authored-By lines for the orchestrator and verifier
-    # (git-native convention, role shown in the display name), plus role-keyed
-    # Autometta-* trailers holding the clean canonical identity for analysis.
-    # All trailer lines go in one -m so git parses them as a single block.
+    # plain Co-Authored-By lines for the orchestrator and verifier (git-native
+    # convention), plus role-keyed Autometta-* trailers for analysis. The role
+    # is never folded into the display name — an annotated identity is a
+    # different name for the same model, which lists it twice on the forge and
+    # splits `git shortlog`. All trailer lines go in one -m so git parses them
+    # as a single block.
     local commit_args=( --author="$worker_identity" -m "$commit_subject" )
     local -a trailer_lines=()
-    [[ -n "$orchestrator_identity" ]] && trailer_lines+=( "Co-Authored-By: $(annotate_role "$orchestrator_identity" orchestrator)" )
-    [[ -n "$verifier_identity" ]]     && trailer_lines+=( "Co-Authored-By: $(annotate_role "$verifier_identity" verifier)" )
+    [[ -n "$orchestrator_identity" ]] && trailer_lines+=( "Co-Authored-By: $orchestrator_identity" )
+    [[ -n "$verifier_identity" ]]     && trailer_lines+=( "Co-Authored-By: $verifier_identity" )
     [[ -n "$orchestrator_identity" ]] && trailer_lines+=( "Autometta-Orchestrator: $orchestrator_identity" )
     [[ -n "$worker_identity" ]]       && trailer_lines+=( "Autometta-Worker: $worker_identity" )
     [[ -n "$verifier_identity" ]]     && trailer_lines+=( "Autometta-Verifier: $verifier_identity" )
