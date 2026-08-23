@@ -31,6 +31,54 @@ them against the halt cap.
 Add a terminal `superseded` status that is honest about this and is not treated
 as a failure by the budget.
 
+### The status is not the whole job: the alerts have to stop
+
+Reported by the operator on 2026-08-23 at 19:35Z, reading the emergence-lab
+pane. Four retired cards were still raising alerts on every refresh of every
+panel:
+
+```
+! 05-math-formula-rendering verifier_failed crit 6
+! 14-fractal-colour-cycle-pacing verifier_failed crit 4
+! 15-boids-density-motion-tuning stalled
+! 16-sandpile-larger-slower failed
+```
+
+An alert panel that shows four decisions the operator has already made is the
+cry-wolf failure card 41 fixed for the fleet pane in another form. Three
+things have to line up before those four lines go, and this card originally
+delivered only the first:
+
+1. The status exists. That is deliverables 1 to 4 above.
+2. The subscriber's ledger actually carries it. This card must not reach into
+   another repo, so what it owes is a documented operator procedure, not the
+   edit.
+3. Every alert renderer agrees that `superseded` is not alert-worthy.
+
+Point 3 is the one that will be missed, because the alert-worthy set is not
+defined anywhere. It is spelled out as a literal list in at least four places:
+
+```
+scripts/attach.sh:107   select(.status == "failed" or .status == "verifier_failed" or .status == "stalled")
+scripts/attach.sh:122   select(.status == "failed" or .status == "verifier_failed" or .status == "stalled")
+scripts/agent-ticker.sh:170   if current_status in ("failed", "verifier_failed", "stalled"):
+scripts/agent-ticker.sh:176   if current_status in ("failed", "verifier_failed", "stalled"):
+```
+
+Each is a whitelist, so a new status is silently excluded from all four and
+this appears to work. That is luck rather than design, and card 41 has already
+paid for the general version of this lesson: it found the same judgement
+written three times in three places and drifting apart. Make the alert-worthy
+set one definition that every renderer reads, and make `superseded`'s absence
+from it a deliberate, tested fact rather than an accident of enumeration.
+
+Note the discrepancy on card 05 before acting on it. Card 40's disposition
+table records it as `verifier_failed` and "genuine failure, leave alone",
+while the operator now counts it among the retired four. One of those is out
+of date. The reason belongs on card 05 itself before its status changes; a
+retirement with no recorded reason is indistinguishable next month from a
+failure someone hid.
+
 ## Inputs (read these in your own context)
 
 - `schemas/state.yaml.json`
@@ -55,10 +103,18 @@ Do not read anything else unless you need to; keep your context lean.
    explicit `--force`, since doing so contradicts a recorded human decision.
    Without it, refuse non-zero with a message naming the status.
 5. `docs/dispatch-contract.md` — the status documented alongside the existing
-   terminal states, with the retirement of emergence-lab 14/15/16 as the worked
-   example, and guidance that the card itself must carry the reason.
+   terminal states, with the retirement of emergence-lab 05/14/15/16 as the
+   worked example, and guidance that the card itself must carry the reason.
 6. The contract version bumped per the repo's own rule that a change to the
    shape of the contract is a versioned decision.
+7. One definition of the alert-worthy stage statuses, read by every renderer
+   that currently spells the list out: `scripts/attach.sh` (both sites),
+   `scripts/agent-ticker.sh` (both sites), and `scripts/aggregate-dashboard.sh`
+   if it carries its own copy. `superseded` is not in it.
+8. `docs/dispatch-contract.md` — an operator procedure for retiring a card in
+   a subscriber repo that is already running: which field changes, what to
+   write on the card, and how to confirm the alert has gone. Written so it can
+   be followed against emergence-lab 05/14/15/16 without further design.
 
 ## Constraints
 
@@ -83,7 +139,17 @@ Do not read anything else unless you need to; keep your context lean.
    and proceeds with it.
 5. A pre-change `state.yaml` fixture validates and ticks exactly as before.
 6. `docs/dispatch-contract.md` documents the status and the version is bumped.
-7. `bash -n` passes on every shell file touched; `npm run verify` or the repo's
+7. A stage with status `superseded` raises no alert in the fleet pane, the
+   per-repo ticker, or the dashboard. Demonstrate against a fixture ledger
+   carrying one superseded stage and one genuinely failed stage: the failed
+   one still alerts. A test that only proves the superseded stage is quiet is
+   half a test.
+8. The alert-worthy set has exactly one definition in the tree. Show that
+   changing it in one place changes every renderer.
+9. Following the operator procedure from deliverable 8 against a copy of
+   emergence-lab's ledger clears the four alerts and leaves every other alert
+   standing.
+10. `bash -n` passes on every shell file touched; `npm run verify` or the repo's
    own gate passes if one applies; no file outside the deliverables is modified
    except this card.
 
@@ -96,7 +162,11 @@ Do not read anything else unless you need to; keep your context lean.
 
 - Any status beyond `superseded` (no `blocked`, no `deferred`).
 - A CLI subcommand for retiring a card. Editing state plus writing the reason on
-  the card is enough; add the verb only if the need recurs.
+  the card is enough; add the verb only if the need recurs. The need has now
+  recurred once, for four cards at a time, so record in the handoff whether it
+  is time.
+- Editing emergence-lab's ledger. The procedure is this card's deliverable;
+  running it is the operator's, after this card lands.
 - Changing how cards are authored or re-briefed.
 
 ## Budget

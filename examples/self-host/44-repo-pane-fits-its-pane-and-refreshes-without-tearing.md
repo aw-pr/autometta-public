@@ -215,7 +215,12 @@ observed half-drawn is the acceptance bar.
   present.
 - Both families throughout. A fit that only works for Claude, or an in-flight
   figure only Codex can produce, fails the two-family invariant.
-- Do not change what counts as an alert, what is queued, or any budget.
+- Do not change what counts as an alert, what is queued, or any budget. Card
+  43 owns that question: it adds the `superseded` status and makes the
+  alert-worthy set one shared definition instead of the four literal lists it
+  is today. If 43 has landed first, read that definition rather than copying
+  the list a fifth time. If it has not, leave a single named constant this
+  card's renderer reads, so 43 has one place to change.
 - British English, no em dashes.
 
 ## Acceptance criteria
@@ -238,7 +243,13 @@ observed half-drawn is the acceptance bar.
 5. Neither ticker is ever observed half-drawn: capture the pane repeatedly
    across several refresh cycles and show that every capture is a complete
    frame. Report the render time of each ticker before and after.
-6. `scripts/ticker-fit-smoke.sh` passes, and every existing offline smoke
+6. A retired stage raises no alert in the repo pane. Against a fixture ledger
+   carrying a `superseded` stage and a genuinely `failed` one, the pane shows
+   the failure and not the retirement. This is the operator-visible half of
+   card 43: on 2026-08-23 the emergence-lab pane was still alerting on four
+   cards whose retirement had already been decided, which is the same
+   cry-wolf fault card 41 fixed for the fleet pane.
+7. `scripts/ticker-fit-smoke.sh` passes, and every existing offline smoke
    script still passes. `sdk-cache-smoke.sh` requires live API credentials and
    is not run: say so.
 
@@ -290,6 +301,6 @@ observed half-drawn is the acceptance bar.
   directory holds the previous agent's transcript too, and the file has to be
   chosen by mtime against `started_at` rather than by being the only one
   there.
-- Criterion 6 excludes `sdk-cache-smoke.sh` deliberately: it needs
+- Criterion 7 excludes `sdk-cache-smoke.sh` deliberately: it needs
   `ANTHROPIC_API_KEY` and this repo bills on the subscription route. Cards 39
   and 41 both burned a verifier attempt on that wording before it was fixed.
