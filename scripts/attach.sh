@@ -125,6 +125,31 @@ fleet_ticker() {
   done
 }
 
+# viewer_sessions: the tmux sessions this tool owns, one per subscriber in the
+# registry, enabled or disabled. A disabled subscriber's viewer is still ours
+# to report and remove; a session that merely starts with "autometta-" is not.
+#
+# The prefix glob this replaces was a real hazard rather than a tidiness point.
+# An operator's own shell or agent session can share the prefix -- on
+# 2026-08-23 report_orphans flagged autometta-cl, an attached Claude Code
+# session, as an orphaned viewer, and detach --all would have killed it on the
+# strength of the same match. Killing a session because its name collides is
+# unrecoverable, so ownership is established from the registry, never guessed
+# from the name.
+viewer_sessions() {
+  local f base repo slug
+  for f in "$subscribers_dir"/*.yaml "$subscribers_dir"/*.yaml.disabled; do
+    [[ -e "$f" ]] || continue
+    base="$(basename "$f")"
+    case "$base" in template.yaml|template.yaml.disabled) continue ;; esac
+    repo="$(read_field "$f" repo_path)"
+    [[ -n "$repo" ]] || continue
+    slug="$(session_slug "$repo")"
+    [[ -n "$slug" ]] || continue
+    printf 'autometta-%s\n' "$slug"
+  done
+}
+
 report_orphans() {
   command -v tmux >/dev/null 2>&1 || return 0
   local expected='' f enabled repo slug session
@@ -138,8 +163,10 @@ report_orphans() {
     slug="$(session_slug "$repo")"
     expected="${expected}autometta-${slug}"$'\n'
   done
+  local owned
+  owned="$(viewer_sessions)"
   while IFS= read -r session; do
-    [[ "$session" == autometta-* ]] || continue
+    printf '%s' "$owned" | grep -Fqx "$session" || continue
     if ! printf '%s' "$expected" | grep -Fqx "$session"; then
       printf 'ORPHAN tmux viewer %s (subscriber disabled or gone; use `autometta detach --all` or `tmux kill-session -t %s`)\n' "$session" "$session" >&2
     fi
@@ -192,8 +219,9 @@ fi
 
 if [[ "$mode" == detach_all ]]; then
   removed=0
+  owned="$(viewer_sessions)"
   while IFS= read -r session; do
-    [[ "$session" == autometta-* ]] || continue
+    printf '%s' "$owned" | grep -Fqx "$session" || continue
     tmux kill-session -t "$session"
     printf 'PASS tmux viewer removed %s\n' "$session"
     removed=$(( removed + 1 ))
