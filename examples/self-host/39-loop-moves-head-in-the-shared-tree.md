@@ -149,8 +149,10 @@ conflicts, because each run worktree was cut before the previous stage landed.
 5. A run worktree belonging to a stage that is neither `in_progress` nor
    awaiting integration is reaped, and one with unexpected uncommitted content
    is reported rather than removed.
-6. `scripts/state-branch-smoke.sh` passes, and every existing smoke script
-   still passes.
+6. `scripts/state-branch-smoke.sh` passes, and every existing offline smoke
+   script still passes. A script that requires live API credentials is not run:
+   name it and say so. `sdk-cache-smoke.sh` is the only one, it needs
+   `ANTHROPIC_API_KEY`, and this repo bills on the subscription route.
 
 ## Out of scope
 
@@ -177,3 +179,37 @@ conflicts, because each run worktree was cut before the previous stage landed.
   looks like it did last week.
 - The orchestrator committing to `dev` mid-session is the normal case, so
   treat the base-moved path as the common one and the ff path as the lucky one.
+
+## Amendment, 2026-08-23
+
+Criterion 6 originally read "every existing smoke script still passes". That is
+unsatisfiable here: `sdk-cache-smoke.sh` exits 2 without `ANTHROPIC_API_KEY`,
+and this repo bills on the subscription route, so the only way to satisfy the
+criterion as written was to spend real API tokens. The second verifier
+attempt failed on exactly that, having passed everything else in the criterion.
+
+The orchestrator wrote the criterion and the orchestrator amended it, which is
+worth naming rather than burying. It is the second such amendment today, after
+card 37's criteria 4 and 5. The first verdict is preserved at
+`state/verifiers/39-loop-moves-head-in-the-shared-tree.attempt-2-fail.json`.
+
+Two orchestrator fixes were made to the worker's output between attempts, both
+recorded here rather than passed off as the worker's:
+
+- `state-branch-smoke.sh` set a sandbox `PHAT_CONTROLLER_HOME` for one section
+  and unset it afterwards, but `tick.sh` resolves its log path once at source
+  time, so later sections wrote to the operator's real home. It passed on the
+  operator's machine and failed in a sandboxed verifier. The sandbox home is
+  now exported before the source.
+- `reap-worktrees.sh` excluded the whole `state` pathspec from its dirty-tree
+  check, where `docs/phat-controller.md` promises only the known symlink
+  artefact is forgiven. A run worktree whose `state` was a real directory with
+  modified tracked content was reaped with that content inside. It now excludes
+  `state` only when it is in fact a symlink, and
+  `state-branch-smoke.sh` gained two assertions for the case, confirmed to fail
+  against the unpatched reaper and pass against the fixed one.
+
+The second of those was found by the verifier constructing the unsafe case by
+hand, not by reading the code, and it had passed the same criterion on the
+first attempt by reading. That difference is the argument for the sandbox
+boundary being real rather than ceremonial.
