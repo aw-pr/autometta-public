@@ -9,6 +9,8 @@
 - **Worker effort:** medium
 - **Verifier effort:** medium
 - **Verifier panel:** false
+- **Worker wall-clock:** 45 minutes
+- **Verifier wall-clock:** 30 minutes
 - **Pairing rationale:** presentation work over data that already exists, so a
   Codex worker on the cheaper tier is the right call; the verifier's job is to
   check the panels against the underlying files rather than to reason about
@@ -81,12 +83,20 @@ window in that session, not the default one.
 
 ## 3. Session hygiene
 
-`tmux ls` on 2026-08-23 shows seven `autometta-*` sessions, created 18, 19 and
-22 August, all still alive. Each holds a `status-ticker`, a `tail` on a log,
-and an `agent-ticker` loop. They are viewers, so they cost little, but nothing
-ever tears them down and the older ones outlive the thing they were watching:
-the panes created on 18 August have been rendering a queue that has been empty
-since, and card 37 explains why they were rendering it as full.
+Nothing ever tears a viewer session down. Each holds a `status-ticker`, a
+`tail` on a log, and an `agent-ticker` loop, so they cost little, but they
+outlive the thing they were watching: on 2026-08-23 seven `autometta-*`
+sessions were alive, created on 18, 19 and 22 August, several rendering a
+queue that had been empty since they were created, and card 37 explains why
+they rendered it as full. That set has since been torn down by hand, which is
+the point: by hand is the only way there is.
+
+A second staleness the same day, and the reason this card carries no fixed
+subscriber count: a running `agent-ticker.sh` does not pick up edits to its
+own script, so the `autometta-autometta` pane went on rendering card 37's
+pre-merge panels until it was respawned. Whatever this card changes in that
+script, an operator will need to be told to restart the viewer, or attach.sh
+will need to do it for them.
 
 Two changes:
 
@@ -96,11 +106,67 @@ Two changes:
 - Add `autometta detach --all` to tear the viewers down in one command, and
   document the pairing in `MANUAL.md`.
 
-Related, and a **decision for the operator rather than the worker**: three
-emergence-lab subscribers are enabled at once — `emergence-lab`,
-`emergence-lab-surface`, `emergence-lab-surface-v2` — each with its own repo,
-budget and 400-tick allowance. Surface the overlap in the fleet pane; do not
-disable anything as part of this card.
+Related, and a **decision for the operator rather than the worker**: the
+emergence-lab family has repeatedly had several subscribers enabled at once,
+each with its own repo, budget and 400-tick allowance. At the time of writing
+`emergence-lab-surface`, `emergence-lab-surface-v2` and `emergence-lab-gpu`
+carry the `.disabled` suffix and `emergence-lab` does not, but that has
+changed more than once. Surface the overlap in the fleet pane by reading the
+registry; do not disable anything as part of this card.
+
+## Inputs (read these in your own context)
+
+- `scripts/agent-ticker.sh` - the per-repo ticker. The SPEND panel goes
+  between ALERTS and ACTIVE.
+- `scripts/attach.sh` - creates the `autometta-<repo>` viewer sessions.
+- `scripts/status.sh`, `scripts/status-ticker.sh` - existing renderers,
+  already scoped to one repo by card 33.
+- `scripts/aggregate-dashboard.sh` - the fleet walker. Reuse it.
+- `~/.phat-controller/dashboard/data.json` - its output, and the fleet pane's
+  data source.
+- `~/.phat-controller/subscribers/*.yaml` - the subscriber registry. A
+  `.disabled` suffix marks a disabled subscriber; read the set, never hardcode
+  a count.
+- Each subscriber's `state/budget.json` and `state/cost-log.jsonl`, read-only.
+- `docs/cost-log.md` - the cost-log schema and the prompt-caching notes.
+- `docs/observability.md` - the panel contract, as updated by cards 33 and 37.
+- `docs/dashboard.md` - the existing web dashboard, whose `data.json` you are
+  consuming.
+- `bin/autometta` - subcommand dispatch. `attach` is at line 96; `detach` is
+  new.
+- `MANUAL.md` - the command table.
+- `examples/self-host/37-idle-ticks-consume-the-day.md` - the queue-depth
+  definition this builds on, landed in 98673a5.
+
+## Deliverables
+
+- `scripts/agent-ticker.sh` - SPEND panel, per-ACTIVE-row token counts.
+- `scripts/attach.sh` - fleet roll-up as the default window of
+  `autometta-autometta`, per-repo view as a second window, orphan reporting.
+- `bin/autometta` - `detach [--all]`.
+- `scripts/aggregate-dashboard.sh` - only if the roll-up needs a field it does
+  not already emit.
+- `scripts/ticker-spend-smoke.sh` - new. Asserts the panel figures against a
+  fixture `cost-log.jsonl` and `budget.json`, and carries the refresh-cost
+  measurement criterion 3 asks for.
+- `MANUAL.md`, `docs/observability.md` - document both.
+
+## Constraints
+
+- Read-only on every repo, adopter repos included. The ticker must never write
+  to a subscriber's `state/`.
+- The 5-second refresh must not re-scan the whole of `cost-log.jsonl`. Tail it,
+  or cache a daily rollup keyed on file mtime.
+- Reuse `aggregate-dashboard.sh`'s walk. A third walker over the subscriber set
+  is a defect, not an implementation detail.
+- If `data.json` is stale or missing, the pane says so. An empty fleet must
+  never render as a healthy one.
+- Label `cost_usd_est` as an estimate against list prices. On the subscription
+  route the token figures are the load-bearing ones.
+- The autometta repo's own per-repo view stays reachable as a second window.
+- Do not enable, disable or consolidate any subscriber.
+- No new runtime dependencies beyond bash 3.2, jq, yq, tmux and git.
+- British English, no em dashes.
 
 ## Acceptance criteria
 
@@ -110,12 +176,28 @@ disable anything as part of this card.
 2. Each ACTIVE row carries a running token count alongside its elapsed time.
 3. A full ticker refresh on the largest current `cost-log.jsonl` costs no more
    wall-clock than the present implementation; state the measured figure.
-4. `autometta-autometta` renders the fleet roll-up by default, covering all
-   seven current subscribers, and says so plainly when `data.json` is stale.
+4. `autometta-autometta` renders the fleet roll-up by default, covering every
+   subscriber the registry reports as enabled at the time it runs, and says so
+   plainly when `data.json` is stale.
 5. The autometta repo's own per-repo view is still reachable in that session.
 6. `attach.sh` reports orphaned sessions; `autometta detach --all` removes the
    viewers; both are documented in `MANUAL.md`.
 7. Every panel remains read-only on adopter repos.
+
+## Out of scope
+
+- Consolidating the emergence-lab subscribers. Surface the overlap in the
+  fleet pane; the decision is the operator's.
+- Changing any cap or budget value.
+- The web dashboard under `dashboard/`. Only its `data.json` is consumed.
+- The queue-depth definition itself. That is card 37, landed.
+- Anything `tick.sh` dispatches, or how it dispatches it.
+- tmux sessions that are not `autometta-<repo>` viewers.
+
+## Budget
+
+- **Worker wall-clock:** 45 minutes
+- **Verifier wall-clock:** 30 minutes
 
 ## Notes for the worker
 
