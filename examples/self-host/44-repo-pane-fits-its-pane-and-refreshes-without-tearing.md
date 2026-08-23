@@ -173,6 +173,12 @@ observed half-drawn is the acceptance bar.
   `spawn-worker.sh` - why nothing lands in the log until exit.
 - A live transcript under `~/.claude/projects/` and one under
   `~/.codex/sessions/`. Read a real one before designing the parser.
+- `scripts/repo-ticker-proto.py` - a working prototype of all four asks,
+  written while this card was drafted and wired into nothing. It resolves a
+  transcript for both families, tracks the total incrementally from a byte
+  offset, fits 39x15, and repaints in one write. Read it for the shape of the
+  answer, not as the answer: it is a long-lived Python process, and the two
+  shipped tickers are bash that re-spawns a dozen subprocesses per frame.
 - `scripts/ticker-spend-smoke.sh` and `scripts/alerts-table-smoke.sh` - the
   fixture style to follow.
 - `docs/observability.md`, `docs/cost-log.md`, `docs/dashboard.md`,
@@ -262,7 +268,20 @@ observed half-drawn is the acceptance bar.
   the next operator's pane is some third number.
 - On ask 3, read a real transcript before designing anything. Sum the usage
   keys rather than assuming one of them is the total: cache reads dominate a
-  long run and dropping them understates spend by an order of magnitude.
+  long run and dropping them understates spend by an order of magnitude. The
+  two families need different arithmetic: Claude records per-message usage, so
+  the total is a running sum; Codex records a cumulative `total_token_usage`,
+  so the total is the last one seen. Summing the Codex figure would multiply
+  it by the turn count.
+- `repo-ticker-proto.py` settles three questions the worker would otherwise
+  spend the budget on. The agent's working directory, which keys the Claude
+  transcript, comes from `lsof -a -p <pid> -d cwd` without touching the
+  registry. Codex rollouts carry their `cwd` in the `session_meta` first line,
+  so they are matched by reading one line per recent file and caching the
+  index. A run worktree is reused across dispatches, so its Claude project
+  directory holds the previous agent's transcript too, and the file has to be
+  chosen by mtime against `started_at` rather than by being the only one
+  there.
 - Criterion 6 excludes `sdk-cache-smoke.sh` deliberately: it needs
   `ANTHROPIC_API_KEY` and this repo bills on the subscription route. Cards 39
   and 41 both burned a verifier attempt on that wording before it was fixed.
