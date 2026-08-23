@@ -118,13 +118,23 @@ that repo's path.
 `autometta-autometta` is the fleet viewer. Its default `fleet` window renders
 only `${PHAT_CONTROLLER_HOME}/dashboard/data.json`, which is produced by the
 existing dashboard aggregator. It shows every enabled subscriber, halt reason,
-queue depth, window spend, last dispatch, fleet totals and the alert union. A
-missing snapshot or one older than `PHAT_CONTROLLER_FLEET_STALE_SECONDS`
-(default 600) is labelled missing or stale rather than healthy. The `repo`
-window preserves autometta's own per-repo view. Interactive `autometta attach`
-refreshes its viewer so long-running ticker loops pick up script changes;
-`autometta detach --all` removes all `autometta-*` viewers and nothing else.
-Attach also reports viewers whose subscriber is disabled or absent.
+queue depth, today's tokens and estimated cost, shortened window spend, last
+dispatch and fleet totals. The alert union is a stable table with repo,
+stage/card, kind and detail columns; repo-level conditions say `repo` in the
+stage/card column. Completed worker handoffs and verifier artefacts prevent
+source text or commit subjects about rate limits from becoming provider-limit
+alerts.
+
+A separate tmux background job runs the existing dashboard aggregator every
+`PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL` seconds (default 120). The ticker
+continues to read only `data.json`, so there is still one fleet walker. It
+prints the snapshot's exact generation time and age. A missing snapshot or one
+older than `PHAT_CONTROLLER_FLEET_STALE_SECONDS` (default 600) is labelled
+missing or stale rather than healthy. The `repo` window preserves autometta's
+own per-repo view. Interactive `autometta attach` refreshes its viewer so
+long-running ticker loops pick up script changes; `autometta detach --all`
+removes all `autometta-*` viewers and nothing else. Attach also reports viewers
+whose subscriber is disabled or absent.
 
 It is an operator cockpit only. It must not dispatch `autometta tick`, send
 commands to workers, or keep state that cannot be reconstructed from the

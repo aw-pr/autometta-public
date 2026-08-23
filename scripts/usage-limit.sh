@@ -24,18 +24,22 @@
 # Matched case-insensitively against the whole log.
 USAGE_LIMIT_PATTERN='session[ _-]limit|usage[ _-]limit|limit reached|hit your .{0,24}limit|reached your .{0,24}limit|too many requests|rate[ _-]limit|overloaded_error|quota exceeded|credit balance|insufficient credit|at capacity|HTTP 429|status 429|"code": *429'
 
-# Lines that merely *name* this machinery are not refusals. An agent working
-# on the limit-handling code writes "scan-usage-limits.sh" into its own log
-# and would otherwise park the whole loop; a verifier log did exactly that in
-# testing. Applied after USAGE_LIMIT_PATTERN, never instead of it.
+# Lines that merely *name* this machinery are not refusals. This is a narrow
+# first pass; the completion signal supplied to usage_limit_hit is the
+# load-bearing distinction between a provider refusal and completed work that
+# discussed one. Applied after USAGE_LIMIT_PATTERN, never instead of it.
 USAGE_LIMIT_EXCLUDE='scan-usage-limits|usage-limit\.sh|USAGE_LIMIT_|usage_limit_|--usage-limit'
 
-# usage_limit_hit <log_path>
+# usage_limit_hit <log_path> [completion_signal]
 # Exit 0 and print the first matching line when the log carries a refusal.
-# Exit 1 otherwise (including a missing log).
+# Exit 1 otherwise (including a missing log or a completed role). Provider
+# refusals do not produce a worker handoff or verifier artefact; finished work
+# does, even when its source, prompt or commit subject contains limit wording.
 usage_limit_hit() {
   local log_path="${1:-}"
+  local completion_signal="${2:-}"
   [[ -n "$log_path" && -f "$log_path" ]] || return 1
+  [[ -z "$completion_signal" || ! -f "$completion_signal" ]] || return 1
   local hit
   hit="$(grep -iE "$USAGE_LIMIT_PATTERN" "$log_path" 2>/dev/null \
          | grep -ivE "$USAGE_LIMIT_EXCLUDE" 2>/dev/null \
