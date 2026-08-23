@@ -338,3 +338,27 @@ The reset command made it self-sustaining. A recovery path that reports success 
 `scripts/idle-tick-smoke.sh` asserts both directions against temporary budget files with no auth, network or spend: a simulated full day of idle polling does not halt, work ticks still halt at the cap, `--reset-halt` leaves a capped repo able to tick again, and a second loaded tick job fails the health check.
 
 The general rule: when a counter's name and its increment site disagree, the name is what everyone reasons about and the increment site is what happens. And a status panel must read the file the thing it reports on actually reads, or it is a second, independently-wrong source of truth that is at its most confident when it is at its most wrong.
+
+## Headless gotcha 16: a criterion the verifier's seat cannot satisfy fails exactly like broken code
+
+### One-sentence summary
+An acceptance criterion that asks for evidence the verifying seat has no way to produce returns `FAIL` in the same field, with the same weight, as a criterion the code genuinely misses, so the loop spends its whole retry cap proving the same thing over and over and parks working code in a terminal state.
+
+### Incident origin
+2026-05-27, `emergence-lab` stages 13 to 16. Each carried one browser-smoke criterion among seven or eight, each landed its implementation on `dev` (`a0ba582`, `6af7104`, `38b5e6d`, `8099310`), and each failed on the browser criterion alone. The verifier artefacts say so plainly: "Overall is FAIL only because the required browser smoke test could not be executed to completion in this sandbox", and, from stage 13, a list of four different ways it had tried to get a browser and failed. Stage 15's worker had flagged it in advance: "I could not perform the browser smoke test (acceptance criterion 4) from this environment."
+
+Nothing in the loop distinguished that from a worker that got the code wrong. All four sat terminal for three months. Stage 16 spent its entire attempt cap without any role ever forming an opinion about the code, and a requeue on 2026-08-16 reproduced the position rather than changing it, because the criterion, not the code, was what had to change.
+
+The part worth sitting with: `e2e/smoke.spec.ts` had been in that repo the whole time. Playwright, `headless: true`, its own Vite `webServer`, canvas screenshots per simulation route. It is exactly the evidence the four criteria wanted. No card mentioned it, so three verifiers went looking for a browser on their own, each found a different way not to have one, and each wrote FAIL.
+
+### Failure mode if ignored
+The terminal state is quiet and it reads as a code problem. An operator scanning `state.yaml` sees `verifier_failed` and reasonably concludes the worker got it wrong; the artefact that says otherwise is one field deep in a JSON file. The retry cap makes it worse rather than better, because every retry is deterministic: the seat that could not look still cannot look. Three attempts buy three copies of the same verdict.
+
+This is the mirror of gotcha 4. There the sandbox boundary is exploited deliberately, because a worker that cannot verify itself is the point. Here the same boundary silently decides an acceptance criterion, and nothing declares that it has.
+
+### Mitigation
+Step 5 of `templates/verifier-prompt.md` (`7c7f22b`, 2026-08-22) makes the method explicit for every verifier in the fleet: any browser check runs fully headless, launching the verifier's own headless Chromium against a dev server it starts itself, never attaching to the operator's Chrome. That closes the "I could not obtain a browser" case for an unsandboxed seat. `Requires GUI` in `templates/stage-card.md` closes the sandboxed-codex case, and closes only that one: it widens the codex sandbox and nothing else, so declaring it for a Claude role grants that role nothing while reading as though it does.
+
+The authoring rule those two support: **before writing a criterion, name the seat that will judge it and the command that produces its evidence.** A criterion whose evidence has no command behind it is a manual gate wearing an acceptance criterion, and a manual gate belongs to the operator, not to the retry cap. Where the repo already has a harness, the card points at it by path, because a verifier that has to invent the method will sometimes invent one that does not work in its seat.
+
+Where a criterion has already failed this way, the fix is a re-brief that names the method and leaves the claim alone, not a requeue and not a softened criterion. The worked example is `docs/incidents/2026-08-16-emergence-lab-five-broken-stages.md`, which carries the four verdicts and the re-brief that followed them.
