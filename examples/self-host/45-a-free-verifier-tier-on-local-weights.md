@@ -235,3 +235,24 @@ Two findings inside that probe are load-bearing:
   liveness signal that already handles this).
 - If `gpt-oss:120b` proves too slow per verification, `qwen3-coder:30b`
   is already pulled and is the natural second setting of the same knob.
+
+## Re-brief for attempt 2 (2026-08-24, after Sol's FAIL on criterion 4)
+
+Attempt 1 passed criteria 1-3 and 5-7; the verifier artefact at
+`state/verifiers/45-a-free-verifier-tier-on-local-weights.json` records the
+evidence. Do not redo that work: the whole implementation is committed as
+WIP `d5f98ab` on branch `autometta/45-a-free-verifier-tier-on-local-weights`
+(reachable from the reflog if the branch has been cleaned). Cherry-pick or
+restore it first, re-run `scripts/local-route-smoke.sh` to confirm it still
+passes, then close the one gap:
+
+- **Criterion 4 only.** Run one real local dispatch through the new route on
+  this machine so `state/cost-log.jsonl` gains an entry with real token
+  counts, `auth_route` local, `cost_usd_est` 0 and the
+  `Codex GPT-OSS 120B <codex-gpt-oss-120b@local>` identity, and make the
+  stage commit attributed to that identity through the normal trailer
+  machinery.
+- The blocker attempt 1 named is cleared: the identity row and the
+  `agent-whoami` case are committed in mcp-hub (`86218a6`) and synced to
+  the platform rules files, so attribution resolves without leaving this
+  repo.
