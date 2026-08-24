@@ -211,6 +211,50 @@ it against the recorded frontier verdict. Report per candidate:
 - The Groq-hosted `gpt-oss-120b` against local `gpt-oss:120b` is the
   controlled pair: report it as its own comparison line, since it
   isolates serving from model quality.
+
+## Re-brief for the scoring attempt (2026-08-24, after two dispatches)
+
+Two hard-won lessons and a pile of finished work stand behind this
+attempt. Read this before doing anything.
+
+**Why the last attempts died.** Attempt 1 hit the Claude session limit.
+Attempt 2 built the whole harness, launched the batch, and then ended
+its turn "to wait for the background batch notifications". A `claude -p`
+worker is one shot: ending the turn is exiting. **Never end your turn
+while your batches run. Run them in the foreground and wait, polling if
+you must.** The batches from attempt 2 kept running after their parent
+died and completed on their own.
+
+**What already exists.** Everything is committed as `dfbc92b` (branch
+`wip/46-attempt-2`): the harness (`scripts/verifier-bake-off.sh`,
+`-caller.py`, `-score.py`, the route smoke), the manifest of 10
+benchmark stages, frontier ground truth 10/10, and the cloud arm's
+artefacts under `examples/bake-off/`: nemotron-ultra-550b 9/10,
+nemotron-super-120b 6/10 (both OpenRouter `:free`; the card's original
+Qwen/DeepSeek rows had rotated out, these are their measured
+replacements). Groq produced 1/10: its 8,000 tokens/min ceiling cannot
+fit a ~12-15K-token verification prompt at all. That is a finding, not
+a gap: record it and do not retry the other nine. `batch.log` was
+excluded by the publish guard (machine paths); its content is
+summarised above.
+
+**What this attempt does, in order:**
+
+1. Restore the WIP (`git cherry-pick dfbc92b` or reset onto the branch).
+2. Complete the local arm, foreground: `local-gpt-oss-120b` (0/10 today,
+   and the card 45 default whose choice this card must back) and
+   `local-qwen3:32b` (0/10), then finish `local-devstral` (2/10) and
+   `local-qwen3-coder-30b` (1/10). Local runs are free and uncapped;
+   wall-clock is the only constraint. If the budget cannot fit all
+   four, priority is exactly that order, and the shortfall is named in
+   the doc.
+3. Score everything with `scripts/verifier-bake-off-score.py`, finish
+   `docs/verifier-bake-off.md` (results table, per-candidate
+   recommendation, the Groq ceiling finding, the local-model default
+   recommendation for `AUTOMETTA_MODEL_CODEX_LOCAL`, the $10-unlock
+   verdict now that the operator has taken it), and write the handoff
+   envelope. The envelope is the last thing you write, and you write it
+   yourself, in your turn, before ending it.
 - The `codex --oss` path speaks gpt-oss's native tool format; the other
   local candidates (`qwen3-coder:30b`, `qwen3:32b`, `devstral`) go through
   Ollama's compatibility layer and may lose tool-calling fidelity in
