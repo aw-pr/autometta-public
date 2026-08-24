@@ -113,11 +113,29 @@ Do not read anything else unless you need to; keep your context lean.
 6. Offline smoke: fixtures for each remediation and for at least three
    refusal cases (conflicted merge, non-stale pause, FAIL needing an
    amendment), with assertions able to fail.
+7. **A mandate manifest, set at provisioning time** (operator ask,
+   2026-08-24): a committed template plus a gitignored operator copy in
+   the controller home, holding the knobs the role reads at every pass:
+   escalation thresholds (attempt cap, the twice-without-progress rule,
+   what counts as metered spend), pass cadence, which repos it minds,
+   and the reporting voice for its surfaced summaries. Budget figures
+   are referenced from `state/budget.json` and card 47's host defaults,
+   never restated in the mandate. The warden prompt is rendered from
+   template plus mandate at dispatch, so changing the mandate changes
+   behaviour at the next pass with no code edit; the **action list is
+   not in the mandate** and cannot be extended from it.
+8. **A skill for the interactive side**: an autometta-hosted skill that
+   loads the same mandate and action list into an interactive
+   orchestrator session, so a human-driven minding session (as run on
+   2026-08-24) and the scheduled pass operate under one contract. The
+   skill states plainly that the interactive orchestrator may exceed
+   the list only with the operator in the conversation.
 
 ## Constraints
 
 - **The allowed-actions list is closed.** Adding an action is a card,
-  not a prompt edit.
+  not a prompt edit, and not a mandate edit: the mandate tunes
+  thresholds and cadence, never authority.
 - One remediation per pass, hard-coded in `warden.sh`, not delegated to
   the prompt.
 - The warden never edits acceptance criteria, never force-pushes, never
