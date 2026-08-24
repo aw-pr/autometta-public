@@ -3,9 +3,9 @@
 ## Metadata
 
 - **Authored:** 2026-08-23
-- **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
-- **Verifier:** Claude Opus 5 <claude-opus-5@local>
+- **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
+- **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>
 - **Worker effort:** high
 - **Verifier effort:** medium
 - **Verifier panel:** false
@@ -13,9 +13,11 @@
 - **Verifier wall-clock:** 45 minutes
 - **Pairing rationale:** auth-route and spawn plumbing with a fail-closed
   requirement, which is exactly the surface where a plausible-looking wrong
-  branch silently redirects billing (gotcha 8). Claude verifies because the
-  deliverable is codex-side and cross-family review is the default; the
-  verifier must actually run the local dispatch, not read it.
+  branch silently redirects billing (gotcha 8). The deliverable is bash the
+  Claude side writes well; Codex verifies cross-family, and as the codex
+  family's own route it must actually run the local dispatch, not read it.
+  (Re-paired 2026-08-24 from a Codex worker and Claude verifier: the
+  operator is protecting the codex weekly budget for verification.)
 
 ## Objective
 
