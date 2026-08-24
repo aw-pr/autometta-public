@@ -1,0 +1,58 @@
+{
+  "stage_id": "06-real-dispatch-test",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-ultra-550b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-ultra-550b --stage 06-real-dispatch-test",
+  "ran_at": "2026-08-24T12:17:53Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "File exists and non-empty",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh exists with 107 lines (wc -l confirms non-empty)"
+    },
+    {
+      "id": 2,
+      "name": "First three lines exact",
+      "verdict": "PASS",
+      "evidence": "Line 1: #!/usr/bin/env bash, Line 2: set -euo pipefail, Line 3: IFS=$'\\n\\t' \u2014 matches requirement exactly"
+    },
+    {
+      "id": 3,
+      "name": "bash -n passes on new script",
+      "verdict": "PASS",
+      "evidence": "bash -n scripts/health-check.sh returns exit code 0 (no syntax errors)"
+    },
+    {
+      "id": 4,
+      "name": "Iterates scripts/*.sh",
+      "verdict": "PASS",
+      "evidence": "Line 14: 'for script_path in scripts/*.sh; do' \u2014 greppable iteration pattern"
+    },
+    {
+      "id": 5,
+      "name": "Calls bash -n in body",
+      "verdict": "PASS",
+      "evidence": "Line 18: 'if bash -n \"$script_path\"; then' \u2014 direct call to bash -n"
+    },
+    {
+      "id": 6,
+      "name": "No files outside deliverables modified",
+      "verdict": "PASS",
+      "evidence": "git status -s shows only scripts/health-check.sh as new file (A), plus state/ symlink churn which is contract infrastructure exempt from scope"
+    },
+    {
+      "id": 7,
+      "name": "Style audit (em-dash + banned vocab)",
+      "verdict": "PASS",
+      "evidence": "grep -c '\u2014' scripts/health-check.sh returns 0 (no em dashes); case-insensitive grep for banned words (delve, tapestry, robust, leverage, seamless, comprehensive, holistic, cutting-edge, streamline, crucial) returns 0; note: criterion's 'grep -c '-' appears to be a typo for em-dash check \u2014 script contains normal hyphens which are required for bash flags and printf format strings"
+    },
+    {
+      "id": 8,
+      "name": "No external dependencies",
+      "verdict": "PASS",
+      "evidence": "grep -E 'jq|yq|python3' scripts/health-check.sh returns 0 \u2014 only uses bash, launchctl, plutil, sed, grep, printf, id (all in base dep set)"
+    }
+  ],
+  "additional_findings": "Script includes launchd tick-job guard beyond the minimal spec (lines 26-107) but this does not violate any acceptance criterion. Self-exclusion logic at lines 12-16 correctly skips own path. All constraints satisfied.",
+  "overall": "PASS"
+}

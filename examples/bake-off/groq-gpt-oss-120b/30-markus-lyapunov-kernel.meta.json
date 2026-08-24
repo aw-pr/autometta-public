@@ -1,0 +1,8 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "candidate": "groq-gpt-oss-120b",
+  "request_count": 0,
+  "parsed_ok": false,
+  "skipped": true,
+  "error": "estimated prompt ~12493 tokens leaves no room under Groq's 8000/min ceiling even at the 768-token completion floor"
+}

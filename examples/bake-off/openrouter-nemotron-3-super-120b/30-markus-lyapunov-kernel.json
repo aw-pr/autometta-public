@@ -1,0 +1,46 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-super-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-super-120b --stage 30-markus-lyapunov-kernel",
+  "ran_at": "2026-08-24T12:12:40Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Verifier findings: npm run verify green (274 tests)"
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs passes with closed-form assertions",
+      "verdict": "PASS",
+      "evidence": "Test file exists and passes; verifier findings confirm closed-form \u03bb assertions at ln(0.5)\u2248-0.6931 and ln(2)\u22480.6931 genuine"
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke renders recognisable Markus\u2013Lyapunov fractal",
+      "verdict": "PASS",
+      "evidence": "Verifier findings: Zircon Zity preset renders classic swallow-curve stability filaments in amber over dark blue chaos at 45\u201347 fps"
+    },
+    {
+      "id": 4,
+      "name": "Stable/yellow-brown and chaotic/blue-black colour split with visible \u03bb=0 boundary",
+      "verdict": "PASS",
+      "evidence": "Verifier findings: stable regions render on amber (yellow/brown) ramp, chaotic on ice (blue/black) ramp, with clear \u03bb=0 boundary"
+    },
+    {
+      "id": 5,
+      "name": "Sequence parameter changes fractal shape",
+      "verdict": "PASS",
+      "evidence": "Verifier findings: switching sequence from AB to AABB at same Zircon view visibly re-organises topology"
+    },
+    {
+      "id": 6,
+      "name": "No files outside deliverables modified (except scoped amendment)",
+      "verdict": "PASS",
+      "evidence": "Only new files under src/sims/markus-lyapunov/, updates to src/app/colormap.ts, src/app/registry.ts, src/app/presets.ts, and scoped amendment to src/app/webglRenderer.ts (allowed per orchestrator scope amendment)"
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

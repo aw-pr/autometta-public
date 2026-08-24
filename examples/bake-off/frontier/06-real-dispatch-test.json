@@ -1,0 +1,58 @@
+{
+  "stage_id": "06-real-dispatch-test",
+  "verifier_identity": "Claude Sonnet 4.6",
+  "verifier_invocation": "Task sub-agent, model sonnet, dispatched by Claude Opus 4.7 orchestrator session",
+  "ran_at": "2026-05-22T17:28:04Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "File exists and is non-empty",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh exists at repo root, 353 bytes. `ls -la` confirms -rw-r--r-- 353 bytes, 18 lines of content."
+    },
+    {
+      "id": 2,
+      "name": "First three lines exact match",
+      "verdict": "PASS",
+      "evidence": "hexdump confirms bytes: line1=`#!/usr/bin/env bash` (0x23 0x21 0x2f...), line2=`set -euo pipefail`, line3=`IFS=$'\\n\\t'`. Exact match to spec. No trailing spaces or CR characters."
+    },
+    {
+      "id": 3,
+      "name": "bash -n scripts/health-check.sh returns 0",
+      "verdict": "PASS",
+      "evidence": "`bash -n /Users/AnthonyWest/repos/autometta/scripts/health-check.sh` returned exit code 0 with no output."
+    },
+    {
+      "id": 4,
+      "name": "Iterates scripts/*.sh",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh:7: `for script_path in scripts/*.sh; do` — glob iteration pattern present."
+    },
+    {
+      "id": 5,
+      "name": "Calls bash -n in script body",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh:11: `if bash -n \"$script_path\"; then` — exactly one hit from grep for `bash -n`."
+    },
+    {
+      "id": 6,
+      "name": "No files outside deliverables set are modified",
+      "verdict": "PASS",
+      "evidence": "`git status --porcelain` from repo root returns exactly one line: `?? scripts/health-check.sh`. No other untracked or modified files. Stage card and PLAN.md exemptions not triggered."
+    },
+    {
+      "id": 7,
+      "name": "Style audit: no em-dashes, no AI-tell vocabulary",
+      "verdict": "PASS",
+      "evidence": "`grep -c '—' scripts/health-check.sh` returned 0. Case-insensitive grep for delve|tapestry|robust|leverage|seamless|comprehensive|holistic|cutting-edge|streamline|crucial returned 0."
+    },
+    {
+      "id": 8,
+      "name": "No external dependencies (jq, yq, python3)",
+      "verdict": "PASS",
+      "evidence": "`grep -cE 'jq|yq|python3' scripts/health-check.sh` returned 0 (exit 1 = no matches). Script uses only bash built-ins and `bash -n`."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

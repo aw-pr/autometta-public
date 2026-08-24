@@ -1,0 +1,7 @@
+{
+  "stage_id": "05-math-formula-rendering",
+  "candidate": "local-qwen3-coder-30b",
+  "request_count": 1,
+  "parsed_ok": false,
+  "error": "timed out"
+}

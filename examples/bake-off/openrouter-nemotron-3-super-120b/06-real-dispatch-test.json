@@ -1,0 +1,58 @@
+{
+  "stage_id": "06-real-dispatch-test",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-super-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-super-120b --stage 06-real-dispatch-test",
+  "ran_at": "2026-08-24T12:07:14Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "File exists",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh exists and contains 107 lines (non-empty)"
+    },
+    {
+      "id": 2,
+      "name": "First three lines",
+      "verdict": "PASS",
+      "evidence": "Lines 1-3: #!/usr/bin/env bash\\nset -euo pipefail\\nIFS=$'\\n\\t'"
+    },
+    {
+      "id": 3,
+      "name": "bash -n returns 0",
+      "verdict": "PASS",
+      "evidence": "Command 'bash -n scripts/health-check.sh' exited with code 0"
+    },
+    {
+      "id": 4,
+      "name": "Iterates scripts/*.sh",
+      "verdict": "PASS",
+      "evidence": "Line 14: for script_path in scripts/*.sh; do"
+    },
+    {
+      "id": 5,
+      "name": "Calls bash -n",
+      "verdict": "PASS",
+      "evidence": "Line 18: if bash -n \\\"$script_path\\\"; then"
+    },
+    {
+      "id": 6,
+      "name": "No files outside deliverables set modified",
+      "verdict": "PASS",
+      "evidence": "git status --porcelain shows only scripts/health-check.sh as changed (untracked); no modifications to files outside scripts/health-check.sh, state/, or exempt files (this stage card and examples/self-host/PLAN.md)"
+    },
+    {
+      "id": 7,
+      "name": "Style audit",
+      "verdict": "FAIL",
+      "evidence": "grep -c '-' scripts/health-check.sh returns 45 (non-zero); violates requirement for zero hyphens"
+    },
+    {
+      "id": 8,
+      "name": "No external dependencies",
+      "verdict": "PASS",
+      "evidence": "grep -E 'jq|yq|python3' scripts/health-check.sh returns 0"
+    }
+  ],
+  "additional_findings": "Style audit fails due to hyphens in script (e.g., 'health-check', '-e', '-n', 'LaunchAgents', etc.). Criterion 7 as written requires zero hyphens, which conflicts with the stage card's style note about 'no em dashes' but is enforced literally per verification instructions.",
+  "overall": "FAIL"
+}

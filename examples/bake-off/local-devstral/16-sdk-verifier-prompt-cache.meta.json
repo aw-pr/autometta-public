@@ -1,0 +1,7 @@
+{
+  "stage_id": "16-sdk-verifier-prompt-cache",
+  "candidate": "local-devstral",
+  "request_count": 1,
+  "parsed_ok": false,
+  "error": "timed out"
+}

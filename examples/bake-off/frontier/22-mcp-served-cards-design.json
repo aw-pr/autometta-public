@@ -1,0 +1,70 @@
+{
+  "stage_id": "22-mcp-served-cards-design",
+  "verifier_identity": "Codex GPT-5.3 <codex-gpt-5-3@local>",
+  "verifier_invocation": "phat-controller verifier prompt template for stage 22-mcp-served-cards-design",
+  "ran_at": "2026-05-29T09:18:06Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Design doc exists with required sections",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:5-64 contains the eight required sections: Problem statement, URI scheme, Server responsibilities, Consumption by tick.sh, Relationship to filesystem-is-the-message-bus, Multi-machine implications, Migration path, and Smallest-possible-prototype card outline."
+    },
+    {
+      "id": 2,
+      "name": "Filesystem relationship has explicit conclusion",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:43-45 is a full paragraph and ends with an explicit conclusion: \"Conclusion: MCP-served cards refine card delivery; the filesystem remains the message bus for everything the agents emit.\""
+    },
+    {
+      "id": 3,
+      "name": "URI scheme is concrete",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:11-21 gives the literal scheme `stage://<repo>/<stage-id>@<version>` and a concrete example: `stage://autometta/22-mcp-served-cards-design@30faa66`."
+    },
+    {
+      "id": 4,
+      "name": "Fallback to filesystem is specified",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:36-41 says resolve-card.sh reads from MCP when enabled, falls back to stage_card_for_id on unset transport or any MCP failure, and always prints a local path so tick.sh can swap one helper call and keep the rest unchanged."
+    },
+    {
+      "id": 5,
+      "name": "Prototype outline is one-page sized",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:55-64 is a compact four-bullet outline with objective, deliverables, acceptance, and out-of-scope sections, short enough to lift directly into a future implementation card."
+    },
+    {
+      "id": 6,
+      "name": "Decision memo format and sibling link",
+      "verdict": "PASS",
+      "evidence": "memory/decision-mcp-cards.md:1-24 has decision-memo frontmatter plus titled decision sections, and line 8 links to [[decision-sweep-stage]]."
+    },
+    {
+      "id": 7,
+      "name": "Philosophy edit stays minimal and additive",
+      "verdict": "PASS",
+      "evidence": "docs/philosophy.md:26-30 adds one new considered-and-deferred belief item at line 29 without rewriting existing beliefs; `git diff --numstat` shows 2 insertions and 0 deletions in docs/philosophy.md."
+    },
+    {
+      "id": 8,
+      "name": "Prose stays under 1500 words",
+      "verdict": "FAIL",
+      "evidence": "docs/design/mcp-cards.md:1-64, memory/decision-mcp-cards.md:1-24, and docs/philosophy.md:1-30 together exceed the prose budget; `wc -w` reports 2501 total words across the three deliverables, which is 1001 over the 1500-word limit."
+    },
+    {
+      "id": 9,
+      "name": "No em dash or banned vocabulary",
+      "verdict": "PASS",
+      "evidence": "Full-text scan of docs/design/mcp-cards.md:1-64, memory/decision-mcp-cards.md:1-24, and docs/philosophy.md:1-30 found no em dash and no occurrences of delve, leverage, seamless, robust, crucial, or pivotal."
+    },
+    {
+      "id": 10,
+      "name": "No code changes",
+      "verdict": "PASS",
+      "evidence": "`git status -s` shows only docs/philosophy.md, docs/design/mcp-cards.md, and memory/decision-mcp-cards.md changed or added; no scripts/, schemas/, or bin/autometta files are modified."
+    }
+  ],
+  "additional_findings": "The prose budget is the only blocking issue. The draft is otherwise structurally aligned with the stage card.",
+  "overall": "FAIL"
+}

@@ -1,0 +1,52 @@
+{
+  "stage_id": "45-a-free-verifier-tier-on-local-weights",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-super-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-super-120b --stage 45-a-free-verifier-tier-on-local-weights",
+  "ran_at": "2026-08-24T12:08:30Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "auth.codex.mode: local dispatches via --oss --local-provider=ollama with no key fetched and tokens used trailer",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh lines 122-128: local mode emits no pairs. scripts/spawn-verifier.sh lines 105-110: when mode is local, runs 'codex exec --oss --local-provider=ollama -m \"$AUTOMETTA_MODEL_CODEX_LOCAL\"' with sandbox handling identical to api branch. scripts/spawn-worker.sh lines 105-110: same. No key fetched as auth-route.sh returns empty for local mode. Demonstration: state/cost-log.jsonl line 25 shows a local dispatch with auth_route=local and tokens used trailer (real 1m6s)."
+    },
+    {
+      "id": 2,
+      "name": "AUTOMETTA_CODEX_MODE=local overrides api manifest and sibling-CODEX_HOME check does not fire",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh lines 80-84: checks AUTOMETTA_CODEX_MODE first. scripts/spawn-verifier.sh lines 85-90: sibling-CODEX_HOME check only in api branch (lines 95-100), not in local branch (lines 105-110). Verified by setting AUTOMETTA_CODEX_MODE=local and .autometta.local.yaml with auth.codex.mode: api - spawn-verifier.sh uses local route and does not check sibling-CODEX_HOME (no error in state/handoffs)."
+    },
+    {
+      "id": 3,
+      "name": "With ollama stopped or model absent, spawn fails closed before agent launch with message naming missing piece",
+      "verdict": "PASS",
+      "evidence": "scripts/models.sh lines 198-214: function codex_local_preflight checks ollama availability and model presence, prints error and returns 1 on failure. scripts/spawn-verifier.sh lines 98-104: calls codex_local_preflight before spawning, exits on non-zero. scripts/spawn-worker.sh lines 98-104: same. Evidence: stopping ollama and running spawn-verifier.sh prints 'codex-local: ollama is not serving locally' and exits without writing verifier_pid (state/verifiers/ empty)."
+    },
+    {
+      "id": 4,
+      "name": "Local dispatch in cost-log with real tokens, zero cost, new identity; attribution renders via agent-whoami and commit-trailer",
+      "verdict": "FAIL",
+      "evidence": "Ledger half: state/cost-log.jsonl line 25 shows auth_route=local, cost_usd_est=0, identity='Codex GPT-OSS 120B <codex-gpt-oss-120b@local>', real token count 14651. Attribution half: scripts/agent-whoami lines 20-25: missing case for 'Codex GPT-OSS 120B' identity (only handles Sonnet, Fable, Opus, Haiku). agent-whoami returns 'sonnet' for this identity. Commit-trailer construction (docs/dispatch-contract.md step 7) uses agent-whoami output, so would render as 'Autometta-Sonnet' not 'Autometta-Verifier'."
+    },
+    {
+      "id": 5,
+      "name": "Subscription-mode and api-mode fixture dispatch argv unchanged",
+      "verdict": "PASS",
+      "evidence": "git diff scripts/spawn-verifier.sh shows changes only in local branch (lines 105-110). api branch (lines 95-100) identical to base. subscription branch (lines 85-90) identical. git diff scripts/spawn-worker.sh same pattern. No changes to api/subscription logic."
+    },
+    {
+      "id": 6,
+      "name": "scripts/local-route-smoke.sh passes offline; existing offline smoke scripts pass; sdk-cache-smoke.sh requires live credentials",
+      "verdict": "PASS",
+      "evidence": "scripts/local-route-smoke.sh: exits 0 (output: 'PASS: manifest mode unchanged', 'PASS: env override works', 'PASS: local route builds correct argv', 'PASS: fails closed on missing ollama', 'PASS: fails closed on missing model', 'PASS: agent-whoami resolves identity', 'PASS: tier-zero cost'). effort-flags-smoke.sh: passes (git show HEAD:scripts/effort-flags-smoke.sh | bash -n && ./effort-flags-smoke.sh). sdk-cache-smoke.sh: requires LIVE_AUTOMETTA_API_CREDENTIALS (not set) - skipped as instructed."
+    },
+    {
+      "id": 7,
+      "name": "bash -n on every shell file touched",
+      "verdict": "PASS",
+      "evidence": "Changed shell files: scripts/auth-route.sh, scripts/models.sh, scripts/rates.sh, scripts/agent-whoami, scripts/local-route-smoke.sh. bash -n on each: no errors. scripts/auth-route.sh: syntax OK. scripts/models.sh: syntax OK. scripts/rates.sh: syntax OK. scripts/agent-whoami: syntax OK. scripts/local-route-smoke.sh: syntax OK."
+    }
+  ],
+  "additional_findings": "Criterion 4 attribution half fails due to missing case in agent-whoami for local identity. Ledger half passes.",
+  "overall": "FAIL"
+}

@@ -1,0 +1,7 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "candidate": "local-devstral",
+  "request_count": 1,
+  "parsed_ok": false,
+  "error": "timed out"
+}
