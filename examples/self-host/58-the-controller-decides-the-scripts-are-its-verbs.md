@@ -4,13 +4,13 @@
 
 - **Authored:** 2026-08-24
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Worker:** Claude Opus 5 <claude-opus-5@local>
 - **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>
 - **Base branch:** dev
 - **Run branch:** autometta/58-the-controller-decides-the-scripts-are-its-verbs
 - **Worker effort:** high
 - **Verifier effort:** high
-- **Verifier panel:** false
+- **Verifier panel:** true
 - **Gate:** after 56. That card frees the name phat-controller from the tick
   loop, and this card gives the name to the role.
 - **Pairing rationale:** the deliverable is mostly prose that another agent

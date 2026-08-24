@@ -4,8 +4,8 @@
 
 - **Authored:** 2026-08-24
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>
+- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
+- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/57-dash-lights-agents-and-spend
 - **Worker effort:** high

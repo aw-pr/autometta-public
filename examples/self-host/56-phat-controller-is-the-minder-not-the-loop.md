@@ -4,7 +4,7 @@
 
 - **Authored:** 2026-08-24
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
 - **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/56-phat-controller-is-the-minder-not-the-loop
