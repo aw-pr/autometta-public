@@ -215,6 +215,7 @@ The dispatch contract is for one stage. Anything that spans stages is out of sco
 The autonomous loop now exists as `phat-controller`. It is still layered on this contract:
 
 - `autometta tick`: one cron-safe pass-2 tick.
+- `autometta warden`: one cron-safe pass that triages the queue and performs at most one of a closed set of remediations; see `docs/phat-controller.md` section (k).
 - `state/state.yaml`: per-repo queue state.
 - `state/budget.json`: per-repo budget and halt state.
 - `schemas/`: JSON schemas for the state and budget files.
@@ -331,6 +332,9 @@ and nothing else overwrites a pre-existing reason on subsequent ticks:
   was not on PATH.
 - `invalid-stage-id` — `current_stage` (or a referenced stage id) failed
   the id-format validator.
+- `warden-escalation` - the warden reached a repeated-failure threshold,
+  found no usable budget ledger, met a forbidden metered route, or received
+  an unexpected provider-payment signal. It requires operator review.
 
 `dirty-working-tree` is retired as of the worktree-per-run backport (see
 below): dispatch happens in an ephemeral sibling worktree, never
@@ -396,6 +400,42 @@ stage record's `wip_commit` in the re-brief. `scripts/requeue-stage.sh` removes
 the ephemeral worktree and `autometta/<stage>` branch, prints the preserved
 SHA, and leaves every `wip/` ref standing. Those refs are per-attempt and are
 not garbage-collected automatically.
+
+The warden (`scripts/warden.sh`, `docs/phat-controller.md` section (k)) can
+perform this re-brief-and-requeue step unattended: it dispatches one bounded
+triage agent that reads the verifier artefact and the `wip_commit` diff,
+judges whether the FAIL is a work defect or a card defect, and either
+appends the re-brief and requeues (work defect) or appends a
+`PROPOSED-AMENDMENT` block and requeues nothing (card defect, which only an
+operator or an interactive orchestrator may turn into an actual criterion
+change). It is bounded to one such action per pass and escalates rather than
+trying a third time against a stage that is not advancing.
+
+Its authority is the following closed list:
+
+1. **Requeue a `verifier_failed` stage** after triage: read the verifier
+   artefact and the preserved WIP (card 53's `wip_commit`), append a
+   re-brief to the card citing both, and run `requeue-stage.sh`. If the
+   artefact shows the FAIL rests on the card's own wording rather than
+   the work, the warden appends a **proposed** amendment to the card
+   marked `PROPOSED-AMENDMENT`, requeues nothing, and surfaces it: only
+   the operator, or an interactive orchestrator, turns a proposal into a
+   criterion change.
+2. **Merge an `awaiting` integration** into base when the merge is
+   conflict-free, run the repo's offline smokes on the result, push per
+   `git-push-check`, and re-render the installed build at a queue gap.
+   A conflict is surfaced, never resolved by the warden.
+3. **Clear a pause or halt that is provably stale**: the recorded reason
+   names a reset time that has passed (card 52's grace rule), or a
+   `tick-cap` halt from a previous window. Anything else stands.
+4. **Queue the next card** from `stage-cards` `PLAN.md` order when the
+   queue is empty and the plan names an unqueued card whose stated gate
+   (e.g. card 51's "after 46") is satisfied.
+
+Anything outside this list is surfaced and left untouched. The scheduled
+warden cannot extend its authority through either its prompt or mandate; an
+interactive orchestrator may exceed the list only while the operator is in
+the conversation and explicitly authorises it.
 
 ### Budget window auto-reset
 

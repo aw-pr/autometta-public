@@ -208,6 +208,134 @@ integration:
 
 **Reaping.** `scripts/reap-worktrees.sh` runs after every tick as part of `sweep_repo_retention`, and by hand with `--dry-run`. It removes a run worktree whose stage is finished with it, through `requeue-stage.sh --worktree-only` so that removal has one implementation. It refuses to remove a worktree whose stage is `in_progress`, one holding uncommitted work that is not the known `state/` symlink artefact (a verifier FAIL leaves the worker's diff uncommitted by design, and that diff is what the operator inspects), one whose run branch holds commits that are not on base, and one whose stage it cannot find in `state.yaml`. Those it reports instead, on every tick until someone deals with them. When a person merges an `awaiting` branch by hand, the next sweep notices the containment, closes the record out to `merged`, and collects the worktree.
 
+## (k) The warden role
+
+The tick loop dispatches and verifies; it does not decide that a verifier
+FAIL is a card defect rather than a work defect, merge an integration a
+person would otherwise merge by hand, clear a stale pause, or keep the
+queue fed. On 2026-08-24 an interactive orchestrator session did all of
+that on a 15-minute check cadence while the operator left the queue running
+unattended. The cadence and the checklist worked; the warden is that
+checklist, packaged as a second scheduled pass rather than a person.
+
+**Cron plus tick, same as the loop itself.** `scripts/warden.sh`, dispatched
+as `autometta warden` on its own LaunchAgent interval
+(`templates/launchagent-warden.plist.tpl`,
+`scripts/install-launchagent-warden.sh`, singleton label
+`com.autometta.warden.fleet`, same `AbandonProcessGroup` care as the tick's
+own). One pass reads state across every enabled subscriber, performs
+**at most one** remediation, writes state, exits. It is not a daemon and it
+does not watch anything continuously.
+
+**The whole list, closed by construction:**
+
+1. **Requeue a `verifier_failed` stage after triage.** The only remediation
+   that dispatches an agent. The agent reads the verifier artefact and the
+   preserved WIP (`wip_commit`, card 53), judges work defect vs card defect
+   vs inconclusive, and writes a structured decision envelope --
+   `scripts/warden.sh` performs the actual mutation (append the re-brief,
+   commit it narrowly to `repo_root` attributed to `Autometta Warden
+   <autometta-warden@local>`, run `requeue-stage.sh`), never the agent
+   itself. A card-defect verdict appends and commits a `PROPOSED-AMENDMENT`
+   block and requeues nothing: only the operator or an interactive
+   orchestrator turns a proposal into a criterion change. The commit stages
+   only the one card path, never a broad `git add`, so an operator's own
+   unrelated dirty file in `repo_root` is never swept in; a commit that
+   fails (an unexpected checked-out branch, a dirty index) leaves the
+   append on disk and logs loudly rather than losing it. It does not requeue
+   unless that card-only commit succeeds.
+2. **Merge a conflict-free `awaiting` integration.** Checked with
+   `git merge-tree --write-tree` before any ref moves; a conflict is
+   surfaced, never resolved by the warden. A clean fast-forward reuses
+   `finalize_run_worktree`; the ordinary `awaiting` case, where base and the
+   run branch diverged cleanly, produces a two-parent merge commit attributed
+   to the warden. It then tears down through the existing helper, runs every
+   offline `scripts/*-smoke.sh` in the repo (the live, metered
+   `sdk-cache-smoke.sh` is excluded), and pushes the exact base refspec per
+   `git-push-check` when it is on `PATH` -- never without it.
+3. **Clear a pause or halt that is provably stale.** Reuses
+   `budget_pause_active` and `budget_ensure_window` verbatim rather than
+   re-deriving staleness: those are the same audited functions a regular
+   tick already calls, and a second implementation of "is this stale" could
+   only drift from the first. This remediation exists because nothing
+   guarantees a tick has run recently enough to have already done it for a
+   given repo.
+4. **Queue the next `PLAN.md` card** when a repo's queue is empty and the
+   plan names an unqueued card whose stated gate (`blocked by`, `gated on`,
+   `after`, followed by stage numbers) is satisfied -- checked against
+   `PLAN.md`'s own `done` column first (authoritative for cards never
+   dispatched through `state.yaml`) and `state.yaml`'s `completed` status
+   second. A gate the warden cannot parse is left unmet, never guessed.
+
+Nothing else. The action list lives in `scripts/warden.sh` and nowhere
+else -- not in the rendered triage prompt (`templates/warden-prompt.md`),
+not in the mandate manifest below. Adding a fifth action is a card.
+
+**One remediation per pass, in a fixed priority order:** clear-stale (3),
+merge-awaiting (2), requeue-verifier-failed (1), queue-next-card (4).
+Unblocking dispatch matters more than anything that dispatch would enable;
+landing already-verified work is the cheapest win; triage is the only
+remediation that spends tokens, so it comes after the free ones; queueing
+fresh work only matters once a queue is confirmed empty. The order is
+hard-coded in `warden_pass`, not a mandate knob.
+
+**No silent action.** Every applied remediation appends one attributed JSON
+line to `<repo>/state/warden-actions.jsonl`. Card amendments and divergent
+merges also carry the warden as git author; the runtime audit covers actions
+such as stale-pause clears, fast-forwards and queue additions that are state
+writes rather than new commits.
+
+**Escalation, not a third attempt.** The two things the objective names as
+needing a human: repeated failure and metered spend.
+
+- *Repeated failure* is tracked per stage in `<repo>/state/warden-state.json`
+  (gitignored): a counter per `(stage_id, remediation)`, dropped once the
+  stage reaches a resolved state (`completed`/`superseded` for remediation
+  1, integration leaving `awaiting` for remediation 2). At the mandate's
+  `same_remediation_without_progress_cap` (default 2), the next application
+  escalates instead. A `verifier_failed` stage at or above the mandate's
+  `attempt_cap` escalates immediately rather than triaging again.
+- *Metered spend* is checked before the one remediation that spends
+  anything. The normal `budget_gate_dispatch` guards triage exactly as it
+  guards a worker or verifier, and the returned token usage is charged back
+  to `state/budget.json` before the triage verdict is applied. The mandate
+  classifies metered auth routes, may forbid them even within budget, and
+  carries the provider-payment signal pattern that escalates rather than
+  acting on a returned envelope. `triage_dispatch_enabled` can turn triage
+  off entirely.
+
+Escalation is `budget_halt "$repo_root" "warden-escalation"` -- the loud log
+line acceptance criteria ask for is the `ESCALATION:` line in
+`warden-YYYY-MM-DD.log`, and the ticker-visible alert is `halted` itself,
+the signal every renderer (dashboard, agent-ticker, alerts table) already
+reads. No second alert channel exists to drift from the first. A halted
+repo dispatches nothing further -- worker, verifier, or warden -- until an
+operator clears it.
+
+**The mandate manifest.** A committed template
+(`templates/warden-mandate.yaml.tpl`) copied verbatim to
+`$PHAT_CONTROLLER_HOME/warden-mandate.yaml` (gitignored, operator-owned) the
+first time the warden runs with no operator copy present. It holds
+escalation thresholds including what counts as metered spend, pass cadence
+(read by the installer at provisioning time; re-run it to reschedule a live
+LaunchAgent), which repos the warden minds (empty means every
+enabled subscriber, the same convention a drain's `repos` list uses), the
+triage dispatch identity, and the reporting voice for surfaced summaries.
+Budget figures are never restated here: they live in each repo's
+`state/budget.json` and the controller's host defaults (card 47). The
+warden prompt is rendered from template plus mandate at dispatch time for
+either Claude or Codex, through the same family auth routes and bounded by
+the mandate's effort and timeout. Editing the mandate changes behaviour at
+the next pass with no code edit --
+the action list above is the one thing the mandate cannot touch.
+
+**The interactive side.** The `autometta-warden` skill loads the same
+mandate and the same closed action list into an interactive orchestrator
+session, so a human-driven minding session (as run on 2026-08-24) and the
+scheduled pass operate under one contract. The skill states plainly that an
+interactive orchestrator may exceed the list only with the operator in the
+conversation -- the warden itself never does.
+
 ## Operational entry points
 
 The `autometta` CLI is the preferred operator surface:
@@ -216,12 +344,15 @@ The `autometta` CLI is the preferred operator surface:
 - `autometta init <repo>`: initialise host state if needed, subscribe one repo, and create its tmux viewer when `tmux` is available.
 - `autometta add-stage <repo> <card>`: add a stage card to the repo queue.
 - `autometta tick`: run one cron-safe controller tick.
+- `autometta warden [--print-mandate]`: run one warden pass (see (k)); the flag prints the resolved mandate without acting.
 - `autometta status`: print a read-only status table.
 - `autometta attach <repo>`: open or create the repo-scoped tmux viewer.
 
 The CLI delegates to these scripts:
 
 - `scripts/tick.sh`: the cron entry point.
+- `scripts/warden.sh`: the warden's cron entry point; sources `tick.sh` for its merge/teardown/state-write mechanics rather than duplicating them.
+- `scripts/install-launchagent-warden.sh` / `scripts/uninstall-launchagent-warden.sh`: the warden's own LaunchAgent, on a separate schedule and label from the tick's.
 - `scripts/spawn-worker.sh`: helper invoked by `tick.sh` to dispatch one worker per the stage card.
 - `scripts/spawn-verifier.sh`: helper invoked by `tick.sh` to dispatch the cross-family verifier.
 - `scripts/budget.sh`: helper for reading and updating `state/budget.json` atomically.

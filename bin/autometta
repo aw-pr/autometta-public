@@ -33,6 +33,7 @@ Usage:
   autometta attach [repo-path] [--dry-run]
   autometta detach [repo-path|--all]
   autometta tick [--repair|--reset-halt [--reset-tokens]]
+  autometta warden [--print-mandate]
   autometta drain start [--cap N|--lift] [--hours H] [--repo PATH] [--reason TEXT]
   autometta drain status
   autometta drain end
@@ -42,6 +43,8 @@ Usage:
   autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]
   autometta uninstall-launchagent <repo-path>
+  autometta install-launchagent-warden <repo-path> [--interval N]
+  autometta uninstall-launchagent-warden
   autometta install-homebrew-local [--dry-run]
   autometta auth status
   autometta auth check <codex|claude>
@@ -163,6 +166,9 @@ case "$command_name" in
   tick)
     run_script tick.sh "$@"
     ;;
+  warden)
+    run_script warden.sh "$@"
+    ;;
   drain)
     run_script drain.sh "$@"
     ;;
@@ -191,6 +197,20 @@ case "$command_name" in
       exit 1
     fi
     run_script uninstall-launchagent.sh "$@"
+    ;;
+  install-launchagent-warden)
+    if [[ $# -lt 1 ]]; then
+      printf 'usage: autometta install-launchagent-warden <repo-path> [--interval N]\n' >&2
+      exit 1
+    fi
+    run_script install-launchagent-warden.sh "$@"
+    ;;
+  uninstall-launchagent-warden)
+    if [[ $# -ne 0 ]]; then
+      printf 'usage: autometta uninstall-launchagent-warden\n' >&2
+      exit 1
+    fi
+    run_script uninstall-launchagent-warden.sh "$@"
     ;;
   install-homebrew-local)
     run_script install-homebrew-local.sh "$@"
