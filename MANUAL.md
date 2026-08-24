@@ -337,10 +337,12 @@ without further coupling.
 
 - **Register** a dispatched agent so the watchdog can see it:
   ```sh
-  scripts/register-agent.sh <repo_root> <pid> <role> <family> <identity> <card> <log> [budget_secs]
+  scripts/register-agent.sh <repo_root> <pid> <role> <family> <identity> <card> <log> [budget_secs] [working_dir]
   ```
   role is `worker` or `verifier`; family is `codex` or `claude`. Idempotent on
-  the same pid; writes `state/active-agents/<pid>.json`.
+  the same pid; writes `state/active-agents/<pid>.json`. Dispatchers record the
+  launch working directory so the ticker can identify the matching harness
+  transcript without reconstructing a worktree path.
 
 - **Heartbeat** walks `state/active-agents/`, checks liveness and budget, and
   writes `state/heartbeat.json`. It moves dead entries to `state/recent-agents/`
@@ -359,9 +361,12 @@ without further coupling.
   ticker's ALERTS panel is the load-bearing FAIL signal; it reads `state.yaml`
   and the verifier artefacts. SPEND shows the current window against its token
   cap, today's and seven-day list-price estimates, today's mean cache-hit rate,
-  and the last-hour token burn. ACTIVE pairs elapsed time with the latest token
-  count parseable from each live agent log. Run `autometta detach --all` to
-  tear down all viewers.
+  and the last-hour token burn. ACTIVE reads bounded transcript increments for
+  both families: summed Claude message usage and the latest cumulative Codex
+  total. Missing transcripts say `waiting` or `unavailable`, never zero. The
+  renderer measures the pane, keeps alerts and active work first, reports
+  hidden counts, and repaints each completed frame in one write. Run
+  `autometta detach --all` to tear down all viewers.
 
 - **Fleet viewer**: `autometta attach /path/to/autometta` opens
   `autometta-autometta` on a read-only roll-up sourced from dashboard
@@ -372,6 +377,9 @@ without further coupling.
   text and commit subjects cannot cry wolf. A separate job reuses the existing
   aggregator every 120 seconds, while the ticker only reads the snapshot. The
   pane states the exact generation time and still labels genuinely stale data.
+  Fleet, status and agent headers name the running `autometta <sha>`; a
+  mismatch between the installed command and checkout HEAD is shown as build
+  drift and rechecked at most once a minute.
   Override the refresh interval with `PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL`.
   The control-plane repo's original three-pane view remains in the `repo`
   window.

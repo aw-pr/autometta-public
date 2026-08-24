@@ -5,6 +5,26 @@ IFS=$'\n\t'
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
+build_checked_at=0
+build_sha="unknown"
+installed_sha="unknown"
+build_warning=""
+
+refresh_build_status() {
+  local now version
+  now="$(date +%s)"
+  (( now - build_checked_at < 60 )) && return 0
+  build_checked_at="$now"
+  build_sha="$(git -C "$script_dir/.." rev-parse --short HEAD 2>/dev/null || printf unknown)"
+  version="$(autometta --version 2>/dev/null || true)"
+  installed_sha="$(printf '%s' "$version" | grep -Eo '[0-9a-f]{7,40}' | head -n1 || true)"
+  [[ -n "$installed_sha" ]] || installed_sha=unknown
+  [[ "$installed_sha" == unknown ]] || installed_sha="${installed_sha:0:7}"
+  build_warning=""
+  if [[ "$build_sha" != unknown && "$installed_sha" != unknown && "$build_sha" != "$installed_sha" ]]; then
+    build_warning="BUILD DRIFT: installed ${installed_sha}, checkout ${build_sha} (fallback comparison)"
+  fi
+}
 
 usage() {
   printf 'Usage: %s [repo-path] [--dry-run] [--ensure]\n' "$(basename "$0")" >&2
@@ -42,7 +62,7 @@ source "$script_dir/alert-statuses.sh"
 render_fleet_once() {
   local data_path="$controller_home/dashboard/data.json"
   local stale_seconds="${PHAT_CONTROLLER_FLEET_STALE_SECONDS:-600}"
-  printf 'Autometta fleet: %s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'autometta %s fleet: %s\n\n' "$build_sha" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ ! -s "$data_path" ]] || ! jq -e '.generated_at and (.repos | type == "array")' "$data_path" >/dev/null 2>&1; then
     printf 'FLEET DATA MISSING\n  Run `autometta dashboard`; an empty fleet is not assumed healthy.\n'
     return 0
@@ -110,7 +130,10 @@ render_fleet_once() {
     (if ((.queue_depth // 0) == 0 and (.in_flight // 0) == 0) then 1 else 0 end),
     ([.stages[]? | select(.status as $s | $alert_statuses | index($s))] | length),
     (.alerts[]? | 1)] | add // 0' "$data_path")"
-  if (( alert_count == 0 )); then
+  if [[ -n "$build_warning" ]]; then
+    printf '  %s\n' "$build_warning"
+  fi
+  if (( alert_count == 0 )) && [[ -z "$build_warning" ]]; then
     printf '  (none)\n'
   else
     printf '  %-26s %-44s %-18s %s\n' 'repo' 'stage/card' 'kind' 'detail'
@@ -156,14 +179,16 @@ fleet_refresher() {
 fleet_ticker() {
   local interval="${PHAT_CONTROLLER_STATUS_TICKER_INTERVAL:-5}"
   if [[ "${PHAT_CONTROLLER_FLEET_ONCE:-false}" == true ]]; then
+    refresh_build_status
     render_fleet_once
     return 0
   fi
   trap 'exit 0' INT TERM
   while true; do
-    clear
+    refresh_build_status
+    printf '\033[H'
     render_fleet_once
-    printf '\nRefresh: %ss\n' "$interval"
+    printf '\nRefresh: %ss\033[J\n' "$interval"
     sleep "$interval"
   done
 }

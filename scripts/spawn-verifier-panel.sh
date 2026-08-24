@@ -261,11 +261,11 @@ main() {
   [[ "$budget_secs" -eq 0 ]] && budget_secs=2700  # default 45 min
 
   "$script_dir/register-agent.sh" "$repo_root" "$p0_pid" verifier claude \
-    "$PANELLIST_OPUS" "$card_path" "$p0_log" "$budget_secs" >/dev/null 2>&1 || true
+    "$PANELLIST_OPUS" "$card_path" "$p0_log" "$budget_secs" "$repo_root" >/dev/null 2>&1 || true
   "$script_dir/register-agent.sh" "$repo_root" "$p1_pid" verifier claude \
-    "$PANELLIST_SONNET" "$card_path" "$p1_log" "$budget_secs" >/dev/null 2>&1 || true
+    "$PANELLIST_SONNET" "$card_path" "$p1_log" "$budget_secs" "$repo_root" >/dev/null 2>&1 || true
   "$script_dir/register-agent.sh" "$repo_root" "$p2_pid" verifier codex \
-    "$PANELLIST_CODEX" "$card_path" "$p2_log" "$budget_secs" >/dev/null 2>&1 || true
+    "$PANELLIST_CODEX" "$card_path" "$p2_log" "$budget_secs" "$repo_root" >/dev/null 2>&1 || true
 
   # Poll for all three artefacts until budget_secs deadline.
   local deadline=$(( $(date +%s) + budget_secs ))

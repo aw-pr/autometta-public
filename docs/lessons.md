@@ -2,6 +2,20 @@
 
 This document records the failure patterns that shaped pass 1 of Autometta. It extends the protocol in [dispatch-contract step model](dispatch-contract.md#the-seven-steps) with incident context, failure modes, and mitigations.
 
+## Headless gotcha 14: a zero-byte process log is not zero usage
+
+### One-sentence summary
+A live Claude process writes no final log until exit, so log scraping reports a false zero throughout the run even while its harness transcript records usage.
+
+### Incident origin
+On 2026-08-23 the repo ticker showed `tokens:0` for a 1,815-second Claude worker whose live transcript totalled 30,074,356 tokens. The run worktree, not the subscribed repo root, keyed the Claude transcript; Codex stored its working directory inside `session_meta` instead.
+
+### Failure mode if ignored
+An idle process and a high-spend overnight worker look identical. Parsing the whole transcript on every five-second refresh fixes the number but makes frame cost grow with files that reach tens of megabytes.
+
+### Mitigation
+Record `working_dir` in `state/active-agents/<pid>.json`. Resolve Claude by its path slug and start time, and Codex by `session_meta.cwd` and start time. Sum Claude's four usage keys incrementally while persisting a byte offset and total in the active registry; use the latest Codex cumulative `total_token_usage` rather than summing it. Read at most 16 MiB per refresh, retry misses until the transcript appears, and distinguish `waiting` from `unavailable`.
+
 ## Headless gotcha 1: stdin hang
 
 ### One-sentence summary

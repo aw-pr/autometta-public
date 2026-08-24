@@ -5,6 +5,15 @@ IFS=$'\n\t'
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
 controller_log_dir="$controller_home/log"
+status_width="${AUTOMETTA_TICKER_COLUMNS:-${COLUMNS:-$(tput cols 2>/dev/null || printf 120)}}"
+
+print_compact_repo() {
+  local repo="$1" enabled="$2" stage="$3" status="$4" budget="$5" process="$6"
+  printf '%-*.*s %s %.*s\n' "$((status_width > 12 ? status_width - 12 : 1))" \
+    "$((status_width > 12 ? status_width - 12 : 1))" "$repo" "$enabled" 8 "$stage"
+  printf '  %-12.12s %-14.14s %.*s\n' "$status" "$budget" \
+    "$((status_width > 31 ? status_width - 31 : 1))" "$process"
+}
 
 read_field() {
   local file_path="$1"
@@ -78,12 +87,14 @@ print_repo() {
   budget_file="$repo_root/state/budget.json"
 
   if [[ "$enabled" != "true" ]]; then
-    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "off" "-" "-" "-" "-"
+    if (( status_width < 80 )); then print_compact_repo "$repo_name" off - - - -
+    else printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "off" "-" "-" "-" "-"; fi
     return 0
   fi
 
   if [[ ! -f "$state_file" ]]; then
-    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "missing" "-" "-" "-" "$state_file"
+    if (( status_width < 80 )); then print_compact_repo "$repo_name" missing - - - "$state_file"
+    else printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "missing" "-" "-" "-" "$state_file"; fi
     return 0
   fi
 
@@ -122,7 +133,11 @@ print_repo() {
     status="halted:${halt_reason}"
   fi
 
-  printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "on" "$current_stage" "$status" "ticks:${tick_count}/fail:${failures}" "$pid_summary $log_path"
+  if (( status_width < 80 )); then
+    print_compact_repo "$repo_name" on "$current_stage" "$status" "tick:${tick_count}/fail:${failures}" "$pid_summary"
+  else
+    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "on" "$current_stage" "$status" "ticks:${tick_count}/fail:${failures}" "$pid_summary $log_path"
+  fi
   print_awaiting_integration "$state_file"
 }
 
@@ -189,8 +204,13 @@ main() {
     printf 'scoped to repo: %s\n' "$filter_repo"
   fi
   printf '\n'
-  printf '%-24s %-8s %-18s %-14s %-18s %s\n' "repo" "enabled" "stage" "status" "budget" "process/log"
-  printf '%-24s %-8s %-18s %-14s %-18s %s\n' "------------------------" "--------" "------------------" "--------------" "------------------" "-----------"
+  if (( status_width < 80 )); then
+    printf '%.*s\n' "$status_width" 'repo / enabled / stage; status / budget / process'
+    printf '%*s\n' "$status_width" '' | tr ' ' '-'
+  else
+    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "repo" "enabled" "stage" "status" "budget" "process/log"
+    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "------------------------" "--------" "------------------" "--------------" "------------------" "-----------"
+  fi
 
   local subscriber_file matched=0
   for subscriber_file in "$subscribers_dir"/*.yaml; do

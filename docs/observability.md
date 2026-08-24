@@ -76,10 +76,12 @@ shows these sections:
   bounded as the append-only ledger grows. Token figures remain the primary
   signal on subscription routes.
 - `ACTIVE`: each agent currently in flight, with flags from the heartbeat
-  watchdog (`fresh` / `silent` / `over-budget`) and the latest token count
-  parseable from that agent's log. `0` means the route has not emitted a usage
-  line yet; it is reported usage, not an inference about hidden provider-side
-  work.
+  watchdog (`fresh` / `silent` / `over-budget`) and an in-flight token total
+  from that agent's harness transcript. Claude message usage is summed
+  incrementally from a persisted byte offset; Codex uses the latest cumulative
+  `total_token_usage`. A transcript that has not appeared says `waiting`, and
+  a genuine miss says `unavailable`; an empty Claude log never becomes a
+  misleading zero.
 - `LIVE`: only while a stage is genuinely `in_progress` — the last eight
   lines of `state/logs/<stage>-worker.log`, so the running worker's output
   is in the pane rather than behind a path the operator has to go and find.
@@ -93,6 +95,18 @@ shows these sections:
   though they were current.
 - `SCHEDULED`: queue depth as a number, pending and in flight, followed by
   the stages themselves, from `scripts/list-cards.sh`.
+
+The ticker measures its terminal on every frame. At 39 columns by 15 rows it
+keeps alerts and active agents first, folds lower-priority panels, and names
+every hidden count. It builds the complete frame before one cursor-home write,
+so refresh does not expose a cleared or half-drawn pane. The status ticker uses
+the same repaint rule and switches `status.sh` to a compact two-line repo row
+below 80 columns; direct full-width `autometta status` output is unchanged.
+
+All three viewer headers include `autometta <sha>`. Installed-build drift is
+checked at start-up and no more than once a minute. Until the installed-build
+authority helper ships, the viewer labels its fallback comparison of
+`autometta --version` with the checkout HEAD.
 
 `list-cards.sh` treats `state/state.yaml` as authoritative for every card it
 records, because that is the file the controller dispatches from. `PLAN.md`

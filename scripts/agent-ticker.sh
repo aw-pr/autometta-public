@@ -25,6 +25,26 @@ fi
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 refresh_interval="${PHAT_CONTROLLER_TICKER_INTERVAL:-5}"
 cost_log_tail_rows="${PHAT_CONTROLLER_COST_LOG_TAIL_ROWS:-5000}"
+build_checked_at=0
+build_sha="unknown"
+installed_sha="unknown"
+build_warning=""
+
+refresh_build_status() {
+  local now version
+  now="$(date +%s)"
+  (( now - build_checked_at < 60 )) && return 0
+  build_checked_at="$now"
+  build_sha="$(git -C "$script_dir/.." rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
+  version="$(autometta --version 2>/dev/null || true)"
+  installed_sha="$(printf '%s' "$version" | grep -Eo '[0-9a-f]{7,40}' | head -n1 || true)"
+  [[ -n "$installed_sha" ]] || installed_sha="unknown"
+  [[ "$installed_sha" == unknown ]] || installed_sha="${installed_sha:0:7}"
+  build_warning=""
+  if [[ "$build_sha" != unknown && "$installed_sha" != unknown && "$build_sha" != "$installed_sha" ]]; then
+    build_warning="BUILD DRIFT: installed ${installed_sha}, checkout ${build_sha} (fallback comparison)"
+  fi
+}
 
 # Resolve list-cards.sh: prefer this script's own dir (dev checkout), then
 # fall back to the brew-installed CLI's scripts dir, so a stale tmux pane
@@ -77,15 +97,18 @@ subscriber_enabled() {
   printf 'unknown'
 }
 
-render_once() {
+render_full() {
   local active_dir="$repo_root/state/active-agents"
   local recent_dir="$repo_root/state/recent-agents"
   local heartbeat_path="$repo_root/state/heartbeat.json"
   local now_iso
   now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  printf 'Autometta agent ticker — %s\n' "$now_iso"
+  printf 'autometta %s agent ticker — %s\n' "$build_sha" "$now_iso"
   printf 'Repo: %s\n' "$repo_root"
+  if [[ -n "$build_warning" ]]; then
+    printf 'ALERTS (need attention)\n  %s\n\n' "$build_warning"
+  fi
   if [[ -f "$heartbeat_path" ]]; then
     python3 - "$heartbeat_path" <<'PY' || true
 import json, sys
@@ -213,7 +236,8 @@ PY
   local cost_log_path="$repo_root/state/cost-log.jsonl"
   printf 'SPEND (USD estimates use list prices)\n'
   if [[ -f "$budget_path" ]] && command -v jq >/dev/null 2>&1; then
-    { if [[ -f "$cost_log_path" ]]; then tail -n "$cost_log_tail_rows" "$cost_log_path" 2>/dev/null; fi; } \
+    local spend_fields spent cap today_cost week_cost hit hour_tokens pct
+    spend_fields="$({ if [[ -f "$cost_log_path" ]]; then tail -n "$cost_log_tail_rows" "$cost_log_path" 2>/dev/null; fi; } \
       | jq -sr \
       --argjson budget "$(jq -c '.' "$budget_path" 2>/dev/null || printf '{}')" \
       --argjson now "$(date -u +%s)" '
@@ -230,10 +254,21 @@ PY
       ($week_rows | map(.cost_usd_est // 0) | add // 0) as $week_cost |
       ($today_rows | map(.cache_hit_rate // 0) | if length > 0 then add / length else 0 end) as $hit |
       ($hour_rows | map(tokens) | add // 0) as $hour_tokens |
-      "  window: \($spent) / \($cap) tokens (\(if $cap > 0 then (($spent * 10000 / $cap) | floor) / 100 else 0 end)%)",
-      "  today: $\($today_cost | tostring) est  |  7d: $\($week_cost | tostring) est",
-      "  mean cache hit today: \(($hit * 1000 | floor) / 10)%  |  last hour: \($hour_tokens) tokens/h"
-    ' || printf '  (budget or cost log unreadable)\n'
+      [$spent,$cap,$today_cost,$week_cost,$hit,$hour_tokens] | @tsv
+    ' 2>/dev/null || true)"
+    if [[ -n "$spend_fields" ]]; then
+      IFS=$'\t' read -r spent cap today_cost week_cost hit hour_tokens <<<"$spend_fields"
+      pct="$(awk -v s="$spent" -v c="$cap" 'BEGIN { printf "%.1f", (c > 0 ? s * 100 / c : 0) }')"
+      short_tokens() { awk -v n="$1" 'BEGIN { if (n>=1000000000) printf "%.1fB",n/1000000000; else if (n>=1000000) printf "%.1fM",n/1000000; else if (n>=1000) printf "%.1fK",n/1000; else printf "%d",n }'; }
+      printf '  window: %s/%s tokens (%s%%)\n' "$(short_tokens "$spent")" "$(short_tokens "$cap")" "$pct"
+      printf '  today: $%.2f est  |  7d: $%.2f est\n' "$today_cost" "$week_cost"
+      printf '  mean cache hit today: %g%%  |  last hour: %s tokens/h\n' \
+        "$(awk -v h="$hit" 'BEGIN { print h * 100 }')" "$(short_tokens "$hour_tokens")"
+      printf '  exact window: %s / %s tokens (%g%%)\n' "$spent" "$cap" "$pct"
+      printf '  exact today: $%g est  |  7d: $%g est (state/cost-log.jsonl)\n' "$today_cost" "$week_cost"
+    else
+      printf '  (budget or cost log unreadable)\n'
+    fi
   else
     printf '  (budget.json missing or jq unavailable)\n'
   fi
@@ -241,8 +276,11 @@ PY
 
   printf 'ACTIVE\n'
   if [[ -f "$heartbeat_path" ]]; then
-    python3 - "$heartbeat_path" <<'PY' || true
-import json, re, sys
+    python3 - "$heartbeat_path" "$active_dir" \
+      "${AUTOMETTA_CLAUDE_PROJECTS:-$HOME/.claude/projects}" \
+      "${AUTOMETTA_CODEX_SESSIONS:-$HOME/.codex/sessions}" <<'PY' || true
+import calendar, glob, json, os, re, sys
+from datetime import datetime, timezone
 try:
     with open(sys.argv[1]) as fh:
         rep = json.load(fh)
@@ -250,40 +288,143 @@ except Exception:
     print("  (heartbeat.json unreadable)")
     sys.exit(0)
 entries = rep.get("entries", [])
+active_dir, claude_root, codex_root = sys.argv[2:]
+
+def epoch(ts):
+    try:
+        return calendar.timegm(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").timetuple())
+    except Exception:
+        return 0
+
+def registry(entry):
+    path = os.path.join(active_dir, "%s.json" % entry.get("pid"))
+    try:
+        with open(path) as fh: return json.load(fh), path
+    except Exception:
+        return {}, path
+
+def transcript(entry, reg):
+    cached = reg.get("transcript_path")
+    if cached and os.path.isfile(cached):
+        return cached
+    cwd = reg.get("working_dir")
+    if not cwd:
+        return None
+    started = epoch(reg.get("started_at") or "")
+    family = entry.get("family")
+    candidates = []
+    if family == "claude":
+        slug = re.sub(r"[^A-Za-z0-9]", "-", cwd)
+        candidates = glob.glob(os.path.join(claude_root, slug, "*.jsonl"))
+    elif family == "codex":
+        paths = glob.glob(os.path.join(codex_root, "*", "*", "*", "rollout-*.jsonl"))
+        paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        for path in paths[:200]:
+            try:
+                if os.path.getmtime(path) < started - 120:
+                    continue
+                with open(path, errors="replace") as fh:
+                    meta = json.loads(fh.readline()).get("payload") or {}
+                if meta.get("cwd") == cwd:
+                    candidates.append(path)
+            except Exception:
+                pass
+    candidates = [p for p in candidates if os.path.getmtime(p) >= started - 120]
+    if candidates:
+        reg["transcript_path"] = max(candidates, key=os.path.getmtime)
+        return reg["transcript_path"]
+    return None
+
+def transcript_tokens(path, family, reg):
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, 2); size = fh.tell()
+            if family == "claude":
+                if reg.get("transcript_path") != path:
+                    reg["transcript_path"], reg["transcript_offset"], reg["transcript_tokens"] = path, 0, 0
+                    reg["transcript_tokens_found"] = False
+                offset = min(int(reg.get("transcript_offset") or 0), size)
+                total = int(reg.get("transcript_tokens") or 0)
+                previously_found = bool(reg.get("transcript_tokens_found"))
+                fh.seek(offset); chunk = fh.read(16 * 1024 * 1024)
+                cut = chunk.rfind(b"\n")
+                if cut < 0:
+                    return (total if previously_found else None), offset < size
+                consumed = chunk[:cut + 1]
+                data = consumed.decode("utf-8", "replace")
+                reg["transcript_offset"] = offset + len(consumed)
+            else:
+                fh.seek(max(0, size - 16 * 1024 * 1024))
+                data = fh.read().decode("utf-8", "replace")
+                if size > 16 * 1024 * 1024: data = data.split("\n", 1)[-1]
+                total = 0
+    except OSError:
+        return None, False
+    found = False
+    for line in data.splitlines():
+        if '"usage"' not in line and '"total_token_usage"' not in line:
+            continue
+        try:
+            doc = json.loads(line)
+        except ValueError:
+            continue
+        if family == "codex":
+            info = doc.get("payload") or doc
+            usage = info.get("total_token_usage") or (info.get("info") or {}).get("total_token_usage")
+            if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
+                total = max(total, usage["total_tokens"]); found = True
+        else:
+            usage = (doc.get("message") or {}).get("usage") or doc.get("usage")
+            if isinstance(usage, dict):
+                values = [usage.get(k) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]
+                if any(isinstance(v, int) for v in values):
+                    total += sum(v for v in values if isinstance(v, int)); found = True
+    if family == "claude":
+        reg["transcript_tokens"] = total
+        reg["transcript_tokens_found"] = found or previously_found
+        return (total if reg["transcript_tokens_found"] else None), reg.get("transcript_offset", 0) < size
+    return (total if found else None), False
+
+def save_registry(path, reg):
+    try:
+        tmp = path + ".ticker-tmp"
+        with open(tmp, "w") as fh:
+            json.dump(reg, fh, indent=2, sort_keys=True); fh.write("\n")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+def log_tokens(path):
+    try:
+        with open(path, errors="replace") as fh:
+            fh.seek(0, 2); fh.seek(max(0, fh.tell() - 262144)); data = fh.read()
+        vals = [int(x.replace(",", "")) for x in re.findall(r"(?:tokens used\s*|Total tokens:\s*)([0-9][0-9,]*)", data, re.I)]
+        return vals[-1] if vals else None
+    except Exception:
+        return None
+
 if not entries:
     print("  (none)")
 else:
     for e in entries:
         flags = ",".join(e.get("flags", [])) or "fresh"
-        running_tokens = None
-        try:
-            with open(e.get("log_path", ""), errors="replace") as fh:
-                fh.seek(0, 2)
-                fh.seek(max(0, fh.tell() - 262144))
-                data = fh.read()
-            matches = []
-            matches += [sum(map(int, m)) for m in re.findall(
-                r"cache:\s*write=(\d+)\s+read=(\d+)\s+input=(\d+)\s+output=(\d+)", data)]
-            matches += [int(x.replace(",", "")) for x in re.findall(
-                r"(?:tokens used\s*|Total tokens:\s*)([0-9][0-9,]*)", data, re.I)]
-            usage = re.findall(r'"usage"\s*:\s*\{([^{}]+)\}', data)
-            for block in usage:
-                values = [int(x) for x in re.findall(
-                    r'"(?:input_tokens|output_tokens|cache_creation_input_tokens|cache_read_input_tokens)"\s*:\s*(\d+)', block)]
-                if values:
-                    matches.append(sum(values))
-            if matches:
-                running_tokens = matches[-1]
-        except (OSError, TypeError, ValueError):
-            pass
-        token_text = str(running_tokens) if running_tokens is not None else "0"
-        print("  %-7s %-9s %-30s pid %-6s %5ss  tokens:%-8s log:%sB  %s" % (
+        reg, reg_path = registry(e)
+        path = transcript(e, reg)
+        running_tokens, catching_up = transcript_tokens(path, e.get("family"), reg) if path else (None, False)
+        if path: save_registry(reg_path, reg)
+        if running_tokens is None:
+            running_tokens = log_tokens(e.get("log_path", ""))
+        elapsed = int(e.get("elapsed_seconds") or 0)
+        token_text = ((str(running_tokens) + "+") if catching_up else str(running_tokens)) if running_tokens is not None else ("waiting" if elapsed < 120 else "unavailable")
+        print("  %-7s %-9s tokens:%-8s pid %-6s %5ss  %-24s log:%sB  %s" % (
             e.get("family", "?"),
             e.get("role", "?"),
-            (e.get("card_path","")[-30:] or "-").lstrip("/"),
+            token_text,
             e.get("pid", "?"),
             e.get("elapsed_seconds", "?"),
-            token_text,
+            (e.get("card_path","")[-24:] or "-").lstrip("/"),
             e.get("log_size", "?"),
             flags,
         ))
@@ -442,15 +583,88 @@ if shown==0: print("  (no pending or in-progress stages in state.yaml)")
   fi
 }
 
+render_once() {
+  local width height raw
+  width="${AUTOMETTA_TICKER_COLUMNS:-${COLUMNS:-$(tput cols 2>/dev/null || printf 80)}}"
+  height="${AUTOMETTA_TICKER_ROWS:-${LINES:-$(tput lines 2>/dev/null || printf 24)}}"
+  raw="$(render_full)"
+  AUTOMETTA_TICKER_FRAME="$raw" python3 - "$width" "$height" "$refresh_interval" <<'PY'
+import os, re, sys
+width, height, interval = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+raw = os.environ.get("AUTOMETTA_TICKER_FRAME", "").splitlines()
+names = ("ALERTS", "ACTIVE", "LIVE", "SPEND", "RECENT", "SCHEDULED")
+panels = {n: [] for n in names}
+current = None
+header = raw[0] if raw else "autometta unknown agent ticker"
+health = []
+for line in raw[1:]:
+    if line.startswith("Health:"):
+        current = None
+        if not line.endswith("(ok)"): health.append(line)
+        continue
+    if not line.strip() or line.startswith("Repo:"):
+        current = None
+        continue
+    found = next((n for n in names if line.startswith(n)), None)
+    if found:
+        current = found
+        if not panels[found]:
+            panels[found].append(line)
+    elif current:
+        if line.strip(): panels[current].append(line)
+
+ansi = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+def fit(s):
+    plain = ansi.sub("", s)
+    return plain if len(plain) <= width else plain[:max(0, width - 1)] + ">"
+
+alerts = panels["ALERTS"] or ["ALERTS  none"]
+if health:
+    alerts += ["  " + h for h in health]
+active = panels["ACTIVE"] or ["ACTIVE", "  (none)"]
+if panels["LIVE"]:
+    active += ["  LIVE: %d line(s) hidden" % max(1, len(panels["LIVE"]) - 1)]
+
+def bounded(lines, cap, label):
+    if len(lines) <= cap:
+        return lines
+    hidden = len(lines) - max(0, cap - 1)
+    if cap == 1:
+        return ["%s: %d line(s) hidden" % (label, len(lines))]
+    return lines[:cap - 1] + ["  > %d more %s line(s) hidden" % (hidden, label)]
+
+body = []
+roomy = height >= 20
+body += bounded(alerts, 4, "ALERTS")
+body += bounded(active, max(3, height - 14), "ACTIVE")
+body += bounded(panels["SPEND"] or ["SPEND unavailable"], 6 if roomy else 3, "SPEND")
+body += bounded(panels["RECENT"] or ["RECENT: 0 entries"], 2 if roomy else 1, "RECENT")
+body += bounded(panels["SCHEDULED"] or ["SCHEDULED: 0 entries"], 2 if roomy else 1, "SCHEDULED")
+footer = "Refresh: %ss  Ctrl+C to quit" % interval
+available = max(0, height - 2)
+if len(body) > available:
+    hidden = len(body) - max(0, available - 1)
+    body = body[:max(0, available - 1)] + ["PANELS: %d fitted line(s) hidden" % hidden]
+lines = [header] + body
+lines += [""] * max(0, height - len(lines) - 1)
+lines.append(footer)
+sys.stdout.write("\n".join(fit(line) for line in lines[:height]))
+PY
+}
+
 if "$once"; then
+  refresh_build_status
   render_once
   exit 0
 fi
 
 trap 'exit 0' INT TERM
 
+printf '\033[?25l\033[2J'
+trap 'printf "\033[?25h\n"; exit 0' INT TERM EXIT
 while true; do
-  clear
-  render_once
+  refresh_build_status
+  frame="$(render_once)"
+  printf '\033[H%s\033[J' "$frame"
   sleep "$refresh_interval"
 done

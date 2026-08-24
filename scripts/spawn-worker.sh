@@ -237,7 +237,7 @@ main() {
     budget_secs="${BASH_REMATCH[1]}"
   fi
   "$script_dir/register-agent.sh" "$repo_root" "$pid" "worker" "$family" \
-    "$worker_identity" "$card_path" "$log_path" "$budget_secs" >/dev/null 2>&1 || true
+    "$worker_identity" "$card_path" "$log_path" "$budget_secs" "$work_dir" >/dev/null 2>&1 || true
 
   printf '%s\n' "$pid"
 }
