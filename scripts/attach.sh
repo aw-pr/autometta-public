@@ -187,8 +187,11 @@ fleet_ticker() {
   while true; do
     refresh_build_status
     printf '\033[H'
-    render_fleet_once
-    printf '\nRefresh: %ss\033[J\n' "$interval"
+    # Erase each line's tail as it is overwritten: home-and-repaint leaves
+    # the old frame's longer lines showing through otherwise (REPOS over
+    # agentic-rag-kimble rendered as REPOSntic-rag-kimble, 2026-08-24).
+    render_fleet_once | sed -e $'s/$/\033[K/'
+    printf '\nRefresh: %ss\033[K\033[J\n' "$interval"
     sleep "$interval"
   done
 }
