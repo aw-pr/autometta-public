@@ -212,3 +212,30 @@ superseded/failed pair for criterion 5. State which smoke scripts ran.
 ## Family-specific notes
 
 None
+
+## Re-brief (attempt 2, 2026-08-24)
+
+Attempt 1 (WIP preserved at commit `2db88cb` on branch `wip/49-attempt-1`)
+passed every criterion except 6, and criterion 6 failed on a defect in the
+new smoke itself, not in the renderer. The verifier's evidence, confirmed:
+`fleet-pane-smoke.sh`'s colour capture pins `TERM=xterm-256color` and
+`PHAT_CONTROLLER_FLEET_STYLE=colour` but not a UTF-8 locale, while
+`fleet_style_init` (scripts/attach.sh) also requires `locale charmap` to
+report UTF-8 before selecting box drawing. In a headless dispatch shell
+(charmap US-ASCII) the renderer correctly falls back to ASCII and the
+smoke's box-drawing assertion fails against correct behaviour.
+
+Do, in order:
+
+1. Cherry-pick or restore the attempt-1 WIP (`2db88cb`) onto the fresh run
+   branch. It is one commit holding the whole implementation; do not
+   re-derive it.
+2. Close the one gap: the smoke's colour capture must pin a UTF-8 locale
+   (`LC_ALL=en_GB.UTF-8` alongside the existing TERM/style pins), and its
+   ASCII capture must pin the opposite (`LC_ALL=C`) rather than inheriting
+   whatever the dispatch shell has. State in a comment why both pins exist.
+3. Re-run scripts/fleet-pane-smoke.sh from a shell with LANG unset to prove
+   the capture no longer depends on the caller's locale, then the full
+   offline smoke sweep as criterion 6 requires.
+
+Nothing else in the attempt-1 implementation needs changing.
