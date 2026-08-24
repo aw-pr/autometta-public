@@ -247,8 +247,31 @@ budget_increment_tick() {
   esac
 }
 
+# budget_status_is_failure: does this terminal stage status count against the
+# consecutive-failure cap? Everything terminal does except superseded, which
+# records an operator decision that the card should not run. Counting a
+# decision as a failure walks the fleet toward a halt for work nobody wanted
+# done; on 2026-08-23 three retired emergence-lab cards did exactly that,
+# because failed was the only terminal status available.
+budget_status_is_failure() {
+  case "${1:-}" in
+    superseded) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# budget_record_failure <repo-root> [stage-status]
+#
+# The optional status lets a caller that is finalising a stage say which
+# status it is recording. A non-failure terminal status (superseded) is a
+# no-op: no increment, so it can never contribute to a failure-cap halt.
+# Omitting it keeps the old behaviour for every caller that is recording a
+# genuine casualty.
 budget_record_failure() {
-  local repo_root="$1"
+  local repo_root="$1" stage_status="${2:-}"
+  if [ -n "$stage_status" ] && ! budget_status_is_failure "$stage_status"; then
+    return 0
+  fi
   budget_write_atomic "$repo_root" '.consecutive_failures += 1'
 }
 
