@@ -71,7 +71,15 @@ landed fix to keep:
    PROPOSED-AMENDMENT markers once the queue-minder role (card 54)
    lands. Empty section renders as one quiet line, not omitted, so its
    absence is never ambiguous.
-9. **Keep the tail-erase repaint.** The interleaved double-frame in the
+9. **Tables drawn as tables.** The operator pointed at Claude Code's own
+   TUI rendering as the bar: box-drawing borders (`─ │ ┌ ┬ ┼`), header
+   row separated by a rule, numeric columns right-aligned, emphasis in
+   bold for the rows that matter. Render every tabular section that way,
+   sized to the pane per deliverable 2, with an ASCII fallback (`- | +`)
+   when the locale or terminal cannot take the box-drawing set, chosen
+   the same way as the colour fallback. One table renderer shared by all
+   sections, not per-section drawing code.
+10. **Keep the tail-erase repaint.** The interleaved double-frame in the
    screenshot (REPOS printed over agentic-rag-kimble as
    "REPOSntic-rag-kimble") was home-and-repaint without per-line erase;
    fixed in `04b6dec` by suffixing every rendered line with
@@ -171,6 +179,10 @@ Do not read anything else unless you need to; keep your context lean.
 9. REQUIRED ACTIONS renders its rows above FAILURES, and renders its
    one-line quiet form when empty. Times render relative everywhere,
    from one formatter.
+10. Tabular sections render with box-drawing borders, ruled header and
+    right-aligned numerics from one shared renderer, and degrade to the
+    ASCII set under the same conditions as the colour fallback. Both
+    captured.
 
 ## Contract test
 
