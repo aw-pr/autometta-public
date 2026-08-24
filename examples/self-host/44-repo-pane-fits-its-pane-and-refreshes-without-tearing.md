@@ -2,14 +2,14 @@
 
 ## Metadata
 
-- **Authored:** 2026-08-23
-- **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Authored:** 2026-08-23, ask 5 added 2026-08-24
+- **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
+- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
 - **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Worker effort:** medium
 - **Verifier effort:** medium
 - **Verifier panel:** false
-- **Worker wall-clock:** 60 minutes
+- **Worker wall-clock:** 75 minutes
 - **Verifier wall-clock:** 30 minutes
 - **Pairing rationale:** asks 1, 2 and 4 are presentation over data that
   already exists, which is the cheaper Codex tier's ground, exactly as cards
@@ -24,7 +24,7 @@ Card 41 made the fleet pane readable. The per-repo viewer, which is where the
 operator actually watches one run, did not get the same treatment and is
 worse off than the fleet pane was.
 
-Four asks. Ask 1 is the one that makes the other three visible at all.
+Five asks. Ask 1 is the one that makes the others visible at all.
 
 ## Reported by
 
@@ -157,6 +157,29 @@ Whether a slow render deserves a smaller interval, a longer one, or a
 first-paint-then-refill is the worker's call, but a pane that is never
 observed half-drawn is the acceptance bar.
 
+### Ask 5: the viewer names the build it renders and warns when it is stale
+
+Requested by the operator on 2026-08-24, the day the installed keg sat at
+`baf6fcb` while the checkout HEAD was `70db4fc` and nothing on any pane said
+so. The viewers are where the operator actually looks, so that is where the
+version belongs.
+
+Every renderer's header line carries the autometta build it is running, in
+the form `autometta <sha>`: the fleet pane, `status-ticker.sh` and
+`agent-ticker.sh` alike. When the installed build and the checkout disagree
+about what the fleet tick will run, the pane shows a one-line warning in the
+alerts area naming both shas, so drift is visible without anyone thinking to
+run a doctor command.
+
+Card 42 builds the authority for this question: its
+`scripts/check-installed-build.sh` reports which root the fleet tick will
+actually run. If 42 has landed, consume its verdict rather than re-deriving
+one. If it has not, fall back to comparing `autometta --version` against
+`git -C "$autometta_root" rev-parse --short HEAD` and say plainly that the
+comparison is the fallback. Either way the check runs at ticker start-up and
+at most once a minute thereafter, never per frame: it costs subprocesses, and
+ask 4 is about making frames cheaper, not dearer.
+
 ## Inputs (read these in your own context)
 
 - `scripts/agent-ticker.sh` - all five panels, the render loop, and the
@@ -187,9 +210,12 @@ observed half-drawn is the acceptance bar.
 ## Deliverables
 
 - `scripts/agent-ticker.sh` - fit to pane, spend formatting, in-flight
-  tokens, tear-free repaint.
+  tokens, tear-free repaint, version header and drift warning.
 - `scripts/status-ticker.sh` and `scripts/status.sh` - fit to pane, tear-free
-  repaint. Keep `status.sh` usable on its own at a full-width terminal.
+  repaint, version header. Keep `status.sh` usable on its own at a
+  full-width terminal.
+- `scripts/attach.sh` - `render_fleet_once` gains the same version header
+  and drift warning; nothing else in the fleet renderer changes.
 - `scripts/register-agent.sh` and its callers, if ask 3 takes the recorded
   working directory route.
 - `scripts/ticker-fit-smoke.sh` - new. Asserts the pane-fit and repaint
@@ -249,14 +275,20 @@ observed half-drawn is the acceptance bar.
    card 43: on 2026-08-23 the emergence-lab pane was still alerting on four
    cards whose retirement had already been decided, which is the same
    cry-wolf fault card 41 fixed for the fleet pane.
-7. `scripts/ticker-fit-smoke.sh` passes, and every existing offline smoke
+7. Each of the three renderers shows `autometta <sha>` in its header, and
+   with the installed build perturbed to disagree with the checkout (restore
+   it afterwards) the pane shows the drift warning naming both shas. With
+   the two in agreement, no warning. The check is demonstrated to run at
+   most once a minute, not per frame.
+8. `scripts/ticker-fit-smoke.sh` passes, and every existing offline smoke
    script still passes. `sdk-cache-smoke.sh` requires live API credentials and
    is not run: say so.
 
 ## Out of scope
 
 - The fleet pane's own renderer and its formatting, which card 41 settled.
-  Match it; do not rewrite it.
+  Match it; do not rewrite it. Ask 5's header and drift warning are the one
+  sanctioned addition to it.
 - The tmux pane layout and sizes in `attach.sh`. This card makes the
   renderers fit whatever pane they are given.
 - The web dashboard under `dashboard/`.
@@ -268,7 +300,7 @@ observed half-drawn is the acceptance bar.
 
 ## Budget
 
-- **Worker wall-clock:** 60 minutes
+- **Worker wall-clock:** 75 minutes
 - **Verifier wall-clock:** 30 minutes
 
 ## Notes for the worker
