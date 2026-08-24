@@ -15,6 +15,11 @@
 : "${OP_REF_ANTHROPIC_API_KEY:=op://YOUR_VAULT/anthropic-api-key/credential}"
 : "${OP_REF_CLAUDE_CODE_OAUTH_TOKEN:=op://YOUR_VAULT/claude-code-oauth-token/credential}"
 
+# Free verification routes (card 46). Each caller names ONLY its own ref,
+# so the paid keys are structurally absent from a free route's child env.
+: "${OP_REF_OPENROUTER_API_KEY:=op://YOUR_VAULT/openrouter-api-key/credential}"
+: "${OP_REF_GROQ_API_KEY:=op://YOUR_VAULT/groq-api-key/credential}"
+
 # Resolution order for op-refs.local.sh (first existing file wins):
 #   1. $AUTOMETTA_LOCAL_REFS  — explicit operator override.
 #   2. $XDG_CONFIG_HOME/autometta/op-refs.local.sh  (default
@@ -40,3 +45,4 @@ done
 unset _xdg_dir _script_dir _candidate
 
 export OP_REF_OPENAI_API_KEY OP_REF_ANTHROPIC_API_KEY OP_REF_CLAUDE_CODE_OAUTH_TOKEN
+export OP_REF_OPENROUTER_API_KEY OP_REF_GROQ_API_KEY
