@@ -31,6 +31,9 @@ Usage:
   autometta attach [repo-path] [--dry-run]
   autometta detach [repo-path|--all]
   autometta tick [--repair|--reset-halt [--reset-tokens]]
+  autometta drain start [--cap N|--lift] [--hours H] [--repo PATH] [--reason TEXT]
+  autometta drain status
+  autometta drain end
   autometta check-deps
   autometta check-build
   autometta dashboard [--open]
@@ -147,6 +150,9 @@ case "$command_name" in
     ;;
   tick)
     run_script tick.sh "$@"
+    ;;
+  drain)
+    run_script drain.sh "$@"
     ;;
   check-deps)
     run_script check-deps.sh "$@"

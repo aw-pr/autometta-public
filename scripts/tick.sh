@@ -1344,6 +1344,16 @@ _process_repo_locked() {
     return 0
   fi
 
+  # A drain is a deliberate, time-boxed lift of the token cap, so it says so
+  # in the log for every tick it is in force. A cap that moved silently is
+  # indistinguishable from a cap that was never there.
+  local drain_cap
+  if drain_cap="$(budget_drain_active "$repo_root" 2>/dev/null)" && [[ -n "$drain_cap" ]]; then
+    local drain_expires
+    drain_expires="$(jq -r '.expires_at // 0' "$(budget_drain_file)" 2>/dev/null || echo 0)"
+    log "drain active for ${repo_root}: token cap ${drain_cap} until $(date -r "$drain_expires" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || echo "$drain_expires")"
+  fi
+
   local budget_rc=0
   budget_check_caps "$repo_root" || budget_rc=$?
   case "$budget_rc" in

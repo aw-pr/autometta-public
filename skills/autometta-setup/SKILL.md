@@ -148,11 +148,32 @@ Headline checklist (refer to `docs/setup.md` in Autometta for details):
 2. Run `scripts/install-homebrew-local.sh` from the Autometta checkout.
 3. Run `autometta init <target-repo-root>` to create host state if needed and register the repo.
 4. Confirm the target repo has a gitignored `.autometta.local.yaml` manifest.
-5. Review and commit `.gitignore`, `state/state.yaml`, and `state/budget.json` before the first tick.
+5. Review and commit `.gitignore`, `state/state.yaml`, and `state/budget.json` before the first tick. Leave `token_cap_total` out of `budget.json` unless this repo genuinely differs from the host default; see "Budget policy" below.
 6. Install a cron or launchd entry per `docs/setup.md` section 4.
 7. Confirm the loop ticks cleanly by firing `autometta tick` once manually before handing it to cron.
 
 If `state/budget.json` halts mid-run, `autometta tick --reset-halt` clears it. To add a new stage to the loop, `autometta add-stage <repo-root> <stage-card-path>` is the idempotent helper.
+
+### Budget policy: the daily cap is a host decision
+
+Most adopters should not choose a token cap at all. `autometta init-host` asks for one daily `token_cap_total` and writes it to `~/.phat-controller/config.yaml`; every subscribed repo inherits it. That is the intended resting state.
+
+- **What the daily cap is for.** Catching a runaway, not budgeting a project. It is the number that stops a loop which has started spending without producing, and nothing about a healthy run should ever approach it.
+- **Why it is a host decision.** The machine has one provider window and the caps compete for it, so a number chosen per repo is a number chosen without seeing the others. Autometta's own fleet ended up carrying 3,000,000 / 8,000,000 / 100,000,000 / 150,000,000 across five subscribers, and nothing recorded why any of them held. That spread was accumulated history, not policy.
+- **When a repo should override.** Only where it genuinely differs, and say so in the commit that sets it: a repo doing deliberately cheap doc work, or one whose stages are known to be far larger than the fleet average. Setting `token_cap_total` in `state/budget.json` wins over the host default.
+- **A missing cap inherits, it does not free.** Resolution runs drain, then repo, then host default, then a floor of 20,000,000. There is no unlimited resting state.
+
+**A drain is not a raised cap.** Deliberately spending the provider window down overnight is a different intent from catching a runaway, and it gets its own mode rather than a bigger number in `budget.json`:
+
+```sh
+autometta drain start --cap 400000000 --hours 8 --reason "weekly window drain"
+autometta drain status
+autometta drain end
+```
+
+It is host-level and per run, it says so in the tick log for every tick it is in force, it edits no repo's `budget.json`, and it expires by itself (8 hours by default, 12 maximum). A drain that outlives the night it was opened for would just be an unlimited cap with extra steps. It does not unlatch a halt already taken; that stays `autometta tick --reset-halt`.
+
+Full resolution order and the incident behind it: `docs/dispatch-contract.md`, section "Which token cap binds".
 
 **Strong recommendation:** add `state/` to `.gitignore` in the target repo. The directory holds runtime state, logs, and verifier artefacts, none of which belong in version control. Autometta's resolution of this is banked at `memory/feedback-state-yaml-leaks-home-path.md`.
 

@@ -82,10 +82,15 @@ fi
 if [[ -f "$budget_file" ]]; then
   printf 'PASS budget exists %s\n' "$budget_file"
 else
+  # No token_cap_total: the daily cap is a host decision, set once by
+  # init-host.sh in the controller config.yaml and inherited here. Seeding a
+  # number per repo is how the fleet came to carry four different ones with
+  # nothing recording why. Add the field to this file only where this repo
+  # genuinely differs; absent means inherit, never unlimited. Resolution order
+  # is in scripts/budget.sh.
   cat > "$budget_file" <<'JSON'
 {
   "version": 1,
-  "token_cap_total": 150000000,
   "tokens_spent": 0,
   "lifetime_tokens_spent": 0,
   "breaches": [],

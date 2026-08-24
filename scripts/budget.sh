@@ -31,6 +31,177 @@ budget_write_atomic() {
   mv "$tmp_path" "$budget_path"
 }
 
+# ---------------------------------------------------------------------------
+# Token-cap resolution
+#
+# The daily token cap is a host decision, not a per-repo accident. Five
+# subscribers carried 3,000,000 / 8,000,000 / 100,000,000 / 150,000,000
+# between them and nothing recorded why any of them held its number; the
+# spread was accumulated history. So a repo's own token_cap_total is now
+# optional, and the cap that actually binds is resolved in this order, first
+# hit wins:
+#
+#   1. an active drain      $PHAT_CONTROLLER_HOME/drain.json, while unexpired
+#   2. the repo's own cap   state/budget.json .token_cap_total, when present
+#   3. the host default     token_cap_total: in the controller config.yaml
+#   4. the floor            $AUTOMETTA_TOKEN_CAP_FLOOR
+#
+# Rule 4 is why there is no unlimited resting state. A repo with no cap of
+# its own, on a host whose config predates this card, still gets a number;
+# the floor is deliberately small enough to be noticed rather than large
+# enough to be harmless.
+#
+# Only the drain can raise a cap above the resting one, and a drain expires
+# by itself (see budget_drain_active).
+AUTOMETTA_TOKEN_CAP_FLOOR="${AUTOMETTA_TOKEN_CAP_FLOOR:-20000000}"
+
+# The ceiling a --lift drain resolves to. "Lifted" still has to be an
+# integer: every cap comparison in this file is a jq numeric test, and a null
+# cap would make `tokens_spent >= null` the thing standing between a runaway
+# and the provider. A billion tokens is above any provider window a single
+# overnight run can reach, so it lifts the local cap in practice while
+# leaving the arithmetic total.
+AUTOMETTA_DRAIN_LIFT_CAP="${AUTOMETTA_DRAIN_LIFT_CAP:-1000000000}"
+
+# Longest drain the operator may ask for, in seconds. A drain that outlives
+# the night it was opened for is just an unlimited cap with extra steps.
+AUTOMETTA_DRAIN_MAX_SECONDS="${AUTOMETTA_DRAIN_MAX_SECONDS:-43200}"
+
+budget_controller_home() {
+  printf '%s' "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+}
+
+budget_drain_file() {
+  printf '%s/drain.json' "$(budget_controller_home)"
+}
+
+_budget_is_positive_int() {
+  [[ "${1:-}" =~ ^[0-9]+$ && "${1:-0}" -gt 0 ]]
+}
+
+# _budget_host_cap_declared: the host default exactly as declared, empty when
+# the host has not declared one. Split out from budget_host_token_cap so
+# budget_cap_source can tell "the host said 20,000,000" from "nobody said
+# anything and this is the floor".
+_budget_host_cap_declared() {
+  local value=""
+  if [[ -n "${AUTOMETTA_HOST_TOKEN_CAP:-}" ]]; then
+    value="$AUTOMETTA_HOST_TOKEN_CAP"
+  else
+    local config_file
+    config_file="$(budget_controller_home)/config.yaml"
+    if [[ -f "$config_file" ]]; then
+      value="$(sed -n 's/^token_cap_total:[[:space:]]*//p' "$config_file" | head -n 1)"
+      value="${value%%#*}"
+      value="${value//[\"\'\ \	]/}"
+    fi
+  fi
+  printf '%s' "$value"
+}
+
+# budget_host_token_cap: the host default, or the floor when the host has no
+# opinion. Always prints a positive integer.
+budget_host_token_cap() {
+  local value
+  value="$(_budget_host_cap_declared)"
+  if _budget_is_positive_int "$value"; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$AUTOMETTA_TOKEN_CAP_FLOOR"
+  fi
+}
+
+# budget_drain_active <repo-root>: succeed (0) when a drain is in force for
+# this repo, printing the cap it grants. Fails (1) and prints nothing
+# otherwise.
+#
+# Expiry is enforced on read rather than by anything that has to remember to
+# run: the first caller past expires_at moves drain.json aside to
+# drain.expired.json and reports no drain. That is the whole reason a drain
+# cannot silently become the permanent setting -- there is no path where the
+# file keeps binding after its own clock.
+budget_drain_active() {
+  local repo_root="${1:-}"
+  local drain_path
+  drain_path="$(budget_drain_file)"
+  [[ -f "$drain_path" ]] || return 1
+  local expires
+  expires="$(jq -r '.expires_at // empty' "$drain_path" 2>/dev/null || true)"
+  if ! [[ "$expires" =~ ^[0-9]+$ ]]; then
+    printf 'budget_drain_active: %s has no usable expires_at, ignoring it\n' "$drain_path" >&2
+    return 1
+  fi
+  local now
+  now="$(date -u +%s)"
+  if (( now >= expires )); then
+    mv "$drain_path" "${drain_path%.json}.expired.json" 2>/dev/null || rm -f "$drain_path"
+    printf 'budget_drain_active: drain expired at %s, cap back to the resting value\n' \
+      "$(date -r "$expires" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$expires")" >&2
+    return 1
+  fi
+  # An empty or absent repos[] means every subscriber; a populated one is an
+  # allow-list of absolute repo paths.
+  local scoped
+  scoped="$(jq -r --arg repo "$repo_root" '
+    if ((.repos // []) | length) == 0 then "all"
+    elif ((.repos // []) | index($repo)) != null then "listed"
+    else "excluded" end
+  ' "$drain_path" 2>/dev/null || printf 'excluded')"
+  [[ "$scoped" == "excluded" ]] && return 1
+  local cap
+  cap="$(jq -r '.token_cap_total // empty' "$drain_path" 2>/dev/null || true)"
+  if ! _budget_is_positive_int "$cap"; then
+    printf 'budget_drain_active: %s has no usable token_cap_total, ignoring it\n' "$drain_path" >&2
+    return 1
+  fi
+  printf '%s' "$cap"
+  return 0
+}
+
+# budget_effective_token_cap <repo-root>: the cap that actually binds, as a
+# positive integer. Every token comparison in this file goes through it, so
+# there is one resolution order rather than one per call site.
+budget_effective_token_cap() {
+  local repo_root="$1"
+  local drain_cap
+  if drain_cap="$(budget_drain_active "$repo_root" 2>/dev/null)" && [[ -n "$drain_cap" ]]; then
+    printf '%s' "$drain_cap"
+    return 0
+  fi
+  local budget_path own=""
+  budget_path="$(budget_file "$repo_root")"
+  if [[ -f "$budget_path" ]]; then
+    own="$(jq -r '.token_cap_total // empty' "$budget_path" 2>/dev/null || true)"
+  fi
+  if _budget_is_positive_int "$own"; then
+    printf '%s' "$own"
+    return 0
+  fi
+  budget_host_token_cap
+}
+
+# budget_cap_source <repo-root>: which rule won, for the log and the
+# dashboard. Never branches anything.
+budget_cap_source() {
+  local repo_root="$1"
+  if budget_drain_active "$repo_root" >/dev/null 2>&1; then
+    printf 'drain'
+    return 0
+  fi
+  local own="" budget_path
+  budget_path="$(budget_file "$repo_root")"
+  if [[ -f "$budget_path" ]]; then
+    own="$(jq -r '.token_cap_total // empty' "$budget_path" 2>/dev/null || true)"
+  fi
+  if _budget_is_positive_int "$own"; then
+    printf 'repo'
+  elif _budget_is_positive_int "$(_budget_host_cap_declared)"; then
+    printf 'host-default'
+  else
+    printf 'floor'
+  fi
+}
+
 # budget_check_caps: inspect the per-repo budget.json and decide whether
 # the tick loop should proceed.
 #
@@ -64,14 +235,17 @@ budget_check_caps() {
   BUDGET_CHECK_LAST_HIT=""
   BUDGET_CHECK_ALL_HITS=""
 
-  local halted token_hit wall_hit tick_hit idle_hit fail_hit
+  local halted token_hit wall_hit tick_hit idle_hit fail_hit token_cap
   halted="$(jq -r '.halted // false' "$budget_path")"
 
   if [[ "$halted" == "true" ]]; then
     return 2
   fi
 
-  token_hit="$(jq -r '.tokens_spent >= .token_cap_total' "$budget_path")"
+  # The cap that binds is resolved, not read: a repo may carry no cap of its
+  # own and inherit the host default, and a drain may be raising it tonight.
+  token_cap="$(budget_effective_token_cap "$repo_root")"
+  token_hit="$(jq -r --argjson cap "$token_cap" '.tokens_spent >= $cap' "$budget_path")"
   wall_hit="$(jq -r '.wall_clock_elapsed_seconds >= .wall_clock_cap_seconds' "$budget_path")"
   tick_hit="$(jq -r '.clock_ticks_used >= .clock_tick_cap' "$budget_path")"
   # idle_tick_cap is absent by default and an absent cap never binds: an idle
@@ -159,8 +333,8 @@ budget_spend_caps_blown() {
   local budget_path
   budget_path="$(budget_file "$repo_root")"
   [[ -f "$budget_path" ]] || return 0
-  jq -r '
-    [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
+  jq -r --argjson cap "$(budget_effective_token_cap "$repo_root")" '
+    [ (if .tokens_spent >= $cap then "token-cap" else empty end),
       (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end),
       (if .clock_ticks_used >= .clock_tick_cap then "tick-cap" else empty end)
     ] | join(" ")
@@ -300,10 +474,11 @@ budget_ensure_window() {
   if [[ "$stored" == "$today" ]]; then
     return 0
   fi
-  local recovered
-  recovered="$(jq -r '
+  local recovered token_cap
+  token_cap="$(budget_effective_token_cap "$repo_root")"
+  recovered="$(jq -r --argjson cap "$token_cap" '
     (.halted == true)
-    or (.tokens_spent >= .token_cap_total)
+    or (.tokens_spent >= $cap)
     or (.wall_clock_elapsed_seconds >= .wall_clock_cap_seconds)
     or (.clock_ticks_used >= .clock_tick_cap)
     or ((.idle_tick_cap // null) != null and (.idle_ticks_used // 0) >= .idle_tick_cap)
@@ -318,8 +493,8 @@ budget_ensure_window() {
   # than a clean-looking budget.
   if [[ "$recovered" == "true" ]]; then
     local over
-    over="$(jq -r '
-      [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
+    over="$(jq -r --argjson cap "$token_cap" '
+      [ (if .tokens_spent >= $cap then "token-cap" else empty end),
         (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end),
         (if .clock_ticks_used >= .clock_tick_cap then "tick-cap" else empty end),
         (if (.idle_tick_cap // null) != null and (.idle_ticks_used // 0) >= .idle_tick_cap then "idle-tick-cap" else empty end),
@@ -425,7 +600,7 @@ budget_record_breach() {
         reasons: ($reasons | split(" ") | map(select(. != ""))),
         window_started_at: .window_started_at,
         tokens_spent: .tokens_spent,
-        token_cap_total: .token_cap_total,
+        token_cap_total: $cap,
         wall_clock_elapsed_seconds: .wall_clock_elapsed_seconds,
         wall_clock_cap_seconds: .wall_clock_cap_seconds,
         clock_ticks_used: .clock_ticks_used,
@@ -436,7 +611,8 @@ budget_record_breach() {
         consecutive_failure_cap: .consecutive_failure_cap
       }]) | .[-($retain | tonumber):])
   ' --arg ts "$ts" --arg cleared_by "$cleared_by" --arg reasons "$reasons" \
-    --arg retain "$BUDGET_BREACH_RETAIN"
+    --arg retain "$BUDGET_BREACH_RETAIN" \
+    --argjson cap "$(budget_effective_token_cap "$repo_root")"
 }
 
 # budget_halt: latch the repo. reason is the first cap hit (kept as
@@ -506,9 +682,10 @@ budget_reset_halt() {
   local budget_path
   budget_path="$(budget_file "$repo_root")"
 
-  local over
-  over="$(jq -r '
-    [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
+  local over token_cap
+  token_cap="$(budget_effective_token_cap "$repo_root")"
+  over="$(jq -r --argjson cap "$token_cap" '
+    [ (if .tokens_spent >= $cap then "token-cap" else empty end),
       (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end),
       (if .clock_ticks_used >= .clock_tick_cap then "tick-cap" else empty end),
       (if (.idle_tick_cap // null) != null and (.idle_ticks_used // 0) >= .idle_tick_cap then "idle-tick-cap" else empty end),
@@ -532,8 +709,8 @@ budget_reset_halt() {
   # What is still over once the polling counters are gone. Only spend can be,
   # because everything else was just zeroed.
   local remaining
-  remaining="$(jq -r '
-    [ (if .tokens_spent >= .token_cap_total then "token-cap" else empty end),
+  remaining="$(jq -r --argjson cap "$token_cap" '
+    [ (if .tokens_spent >= $cap then "token-cap" else empty end),
       (if .wall_clock_elapsed_seconds >= .wall_clock_cap_seconds then "wall-clock-cap" else empty end)
     ] | join(" ")
   ' "$budget_path")"

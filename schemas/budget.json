@@ -7,7 +7,6 @@
   "additionalProperties": false,
   "required": [
     "version",
-    "token_cap_total",
     "tokens_spent",
     "wall_clock_cap_seconds",
     "wall_clock_elapsed_seconds",
@@ -23,9 +22,9 @@
       "description": "Schema major version."
     },
     "token_cap_total": {
-      "type": "integer",
+      "type": ["integer", "null"],
       "minimum": 0,
-      "description": "Hard cap on total tokens consumed by workers and verifiers dispatched against this repo. Tick halts when tokens_spent >= cap."
+      "description": "This repo's own hard cap on total tokens consumed by workers and verifiers dispatched against it. Optional since card 47, and absent means inherit rather than unlimited: scripts/budget.sh resolves the cap that binds as active drain, then this field, then token_cap_total in the controller config.yaml, then the AUTOMETTA_TOKEN_CAP_FLOOR floor. Set it only where this repo genuinely differs from the host default; the fleet once carried four different numbers here with nothing recording why any of them held. Tick halts when tokens_spent >= the resolved cap."
     },
     "tokens_spent": {
       "type": "integer",
@@ -106,7 +105,7 @@
           "reasons": { "type": "array", "items": { "type": "string" } },
           "window_started_at": { "type": ["string", "null"] },
           "tokens_spent": { "type": "integer" },
-          "token_cap_total": { "type": "integer" },
+          "token_cap_total": { "type": "integer", "description": "The cap that actually bound at the moment of the breach, after resolution: a drain, this repo's own cap, the host default, or the floor." },
           "wall_clock_elapsed_seconds": { "type": "integer" },
           "wall_clock_cap_seconds": { "type": "integer" },
           "clock_ticks_used": { "type": "integer" },

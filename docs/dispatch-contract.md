@@ -402,9 +402,79 @@ window this is a no-op: a halt or cap hit (including `failure-cap`) still
 holds, and `consecutive_failures` keeps accumulating and can still halt
 the loop mid-window.
 
+### Which token cap binds: host default, repo override, drain
+
+The daily token cap is a host decision. It is written once by
+`scripts/init-host.sh` into `~/.phat-controller/config.yaml` as
+`token_cap_total`, and every subscribed repo inherits it. A repo sets its own
+`token_cap_total` in `state/budget.json` only where it genuinely differs.
+
+`budget_effective_token_cap` (in `scripts/budget.sh`) is the single place that
+answers the question, and every token comparison in that file goes through it.
+First hit wins:
+
+| Order | Source | Where |
+|---|---|---|
+| 1 | An active drain | `~/.phat-controller/drain.json`, while unexpired |
+| 2 | The repo's own cap | `state/budget.json` `token_cap_total`, when present |
+| 3 | The host default | `token_cap_total:` in the controller `config.yaml` |
+| 4 | The floor | `AUTOMETTA_TOKEN_CAP_FLOOR`, 20,000,000 by default |
+
+Rule 4 is why the resting state is never unlimited. A repo with no cap of its
+own, on a host whose config predates this, is still capped; the floor is small
+enough to be noticed rather than large enough to be harmless.
+`budget_cap_source` names the winning rule for the log and the dashboard, and
+`AUTOMETTA_HOST_TOKEN_CAP` overrides the config file for one invocation.
+
+The spread this replaced was accumulated history, not policy: five subscribers
+carried 3,000,000 / 8,000,000 / 100,000,000 / 150,000,000 between them and
+nothing recorded why any of them held its number.
+
+### Drain mode: the deliberate overnight run
+
+A daily cap catches a runaway. An overnight drain is the opposite intent:
+spend the provider window down on purpose and stop when the *provider* stops,
+around 01:00. The two used to be the same number. On 2026-08-23
+emergence-lab spent 104,942,068 against its 100,000,000 cap during a
+deliberate drain: the gate refused a verifier dispatch at 00:01 with a
+finished worker sitting on a passing envelope, re-halted through two attempts
+to clear it, and released only when the midnight window reset zeroed the
+counter at 01:01. The cap was doing its job; the number did not describe the
+intent.
+
+A drain is host-level, per run, and self-expiring:
+
+```sh
+autometta drain start --cap 400000000 --hours 8 --reason "weekly window drain"
+autometta drain start --lift --hours 6          # up to AUTOMETTA_DRAIN_LIFT_CAP
+autometta drain start --cap 400000000 --repo /path/to/repo   # repeatable; default is all
+autometta drain status
+autometta drain end
+```
+
+- **Explicit.** `--cap N` or `--lift` is required; a drain with no stated cap
+  is not a decision. `--lift` resolves to `AUTOMETTA_DRAIN_LIFT_CAP`
+  (1,000,000,000), an integer rather than a null, because every cap comparison
+  is a numeric test and `tokens_spent >= null` is not a safety.
+- **Visible.** `tick.sh` logs `drain active for <repo>: token cap N until
+  <time>` on every tick a drain is in force. A cap that moved silently is
+  indistinguishable from a cap that was never there.
+- **Self-expiring.** `expires_at` is enforced on read: the first caller past it
+  moves `drain.json` to `drain.expired.json` and the resting cap applies again.
+  Default 8 hours, maximum 12 (`AUTOMETTA_DRAIN_MAX_SECONDS`). There is no path
+  where a drain keeps binding past its own clock.
+- **Non-destructive.** No repo's `budget.json` is edited, so there is nothing
+  to remember to put back.
+- **Not a halt clearer.** A halt already latched survives the drain with its
+  original `halt_reason`. Raising a cap is not a licence to unlatch a halt that
+  was correctly taken; that stays `tick.sh --reset-halt`.
+
+`scripts/cap-resolution-smoke.sh` asserts all of the above offline, including
+the expiry and the refusal from the incident.
+
 ### Token accounting
 
-`state/budget.json` carries `tokens_spent` and `token_cap_total`. The
+`state/budget.json` carries `tokens_spent` and an optional `token_cap_total`. The
 loop increments `tokens_spent` after each worker and verifier phase by
 parsing the captured CLI log; `token-cap` then becomes an enforceable
 halt reason rather than a decorative field.
@@ -443,7 +513,7 @@ halt reason rather than a decorative field.
   `wall-clock-cap` and `tick-cap` paths still provide a backstop.
 - **Cap enforcement is automatic.** The next `budget_check_caps` after
   the increment will surface the `token-cap` halt reason if
-  `tokens_spent >= token_cap_total`. No new gate is added.
+  `tokens_spent >= budget_effective_token_cap`. No new gate is added.
 
 ## Which autometta runs: root resolution
 
