@@ -60,6 +60,8 @@ read_field() {
 source "$script_dir/session-slug.sh"
 # shellcheck source=./alert-statuses.sh
 source "$script_dir/alert-statuses.sh"
+# shellcheck source=./repo-light.sh
+source "$script_dir/repo-light.sh"
 
 fleet_columns() {
   # Deprecated for one release: PHAT_CONTROLLER_FLEET_COLUMNS.
@@ -77,7 +79,7 @@ fleet_style_init() {
   FLEET_COLOUR=false
   # Deprecated for one release: PHAT_CONTROLLER_FLEET_STYLE.
   local fleet_style="${AUTOMETTA_FLEET_STYLE:-${PHAT_CONTROLLER_FLEET_STYLE:-auto}}"
-  if [[ -z "${NO_COLOR:-}" && "$fleet_style" != plain ]] \
+  if [[ -z "${NO_COLOR:-}" && -z "${NO_COLOUR:-}" && "$fleet_style" != plain ]] \
     && [[ "$fleet_style" == colour || "$(tput colors 2>/dev/null || printf 0)" -ge 8 ]] \
     && [[ "$(locale charmap 2>/dev/null || true)" == *UTF-8* ]]; then
     FLEET_COLOUR=true
@@ -133,9 +135,9 @@ table_rule() {
 
 row_style_prefix() {
   case "$1" in
-    failure|action) printf '%s%s' "$FLEET_BOLD" "$FLEET_RED" ;;
-    stall|limit|drift) printf '%s%s' "$FLEET_BOLD" "$FLEET_YELLOW" ;;
-    running|pass) printf '%s' "$FLEET_GREEN" ;;
+    failure|action|red) printf '%s%s' "$FLEET_BOLD" "$FLEET_RED" ;;
+    stall|limit|drift|amber) printf '%s%s' "$FLEET_BOLD" "$FLEET_YELLOW" ;;
+    running|pass|green) printf '%s' "$FLEET_GREEN" ;;
     quiet) printf '%s' "$FLEET_DIM" ;;
   esac
 }
@@ -238,137 +240,260 @@ display_time() {
   fi
 }
 
+short_duration() {
+  local seconds="${1:-0}"
+  [[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
+  if (( seconds < 60 )); then printf '%ss' "$seconds"
+  elif (( seconds < 3600 )); then printf '%sm%02ss' "$(( seconds / 60 ))" "$(( seconds % 60 ))"
+  else printf '%sh%02sm' "$(( seconds / 3600 ))" "$(( (seconds % 3600) / 60 ))"; fi
+}
+
+short_tokens() {
+  awk -v n="${1:-0}" 'BEGIN {
+    if (n >= 1000000000) { v=n/1000000000; printf (v==int(v) ? "%dB" : "%.1fB"),v }
+    else if (n >= 1000000) { v=n/1000000; printf (v==int(v) ? "%dM" : "%.1fM"),v }
+    else if (n >= 1000) { v=n/1000; printf (v==int(v) ? "%dK" : "%.1fK"),v }
+    else printf "%d", n
+  }'
+}
+
+fleet_light_mark() {
+  local light="$1"
+  if "$FLEET_COLOUR"; then
+    case "$light" in green) printf '●' ;; amber) printf '◐' ;; *) printf '○' ;; esac
+  else
+    case "$light" in green) printf 'ok' ;; amber) printf 'WARN' ;; *) printf 'FAIL' ;; esac
+  fi
+}
+
 render_fleet_once() {
   local data_path="$controller_home/dashboard/data.json"
-  # Deprecated for one release: PHAT_CONTROLLER_FLEET_STALE_SECONDS.
   local stale_seconds="${AUTOMETTA_FLEET_STALE_SECONDS:-${PHAT_CONTROLLER_FLEET_STALE_SECONDS:-600}}"
+  local now generated_epoch age generated_at totals
+  local total_enabled total_today_tokens total_today_cost total_window_spent total_window_cap
+  local rows='' repo_json repo light reason state queue window today last style
+  local input output progress stage status stamp detail
   fleet_style_init
-  local now generated_epoch age generated_at rows repo stage role family started progress status stamp detail reset
   now="$(date -u +%s)"
-  printf '%sautometta %s fleet%s\n\n' "$FLEET_BOLD" "$build_sha" "$FLEET_RESET"
+
+  printf '%sautometta %s fleet%s\n' "$FLEET_BOLD" "$build_sha" "$FLEET_RESET"
   if [[ ! -s "$data_path" ]] || ! jq -e '.generated_at and (.repos | type == "array")' "$data_path" >/dev/null 2>&1; then
-    printf 'FLEET DATA MISSING\n  Run `autometta dashboard`; an empty fleet is not assumed healthy.\n'
+    printf '\nFLEET DATA MISSING\n  Run `autometta dashboard`; an empty fleet is not assumed healthy.\n'
     return 0
   fi
 
   generated_epoch="$(jq -r 'try (.generated_at | fromdateiso8601) catch 0' "$data_path")"
-  age=$(( now - generated_epoch ))
   generated_at="$(jq -r '.generated_at' "$data_path")"
+  age=$(( now - generated_epoch ))
   printf 'Data generated: %s\n' "$(display_time "$generated_at" "$now")"
   if (( generated_epoch == 0 || age > stale_seconds )); then
-    printf '%sFLEET DATA STALE: generated %s (limit %ss)%s\n' "$FLEET_YELLOW$FLEET_BOLD" \
+    printf '%sFLEET DATA STALE: generated %s (limit %ss)%s\n' "$FLEET_RED$FLEET_BOLD" \
       "$(relative_age "$generated_at" "$now")" "$stale_seconds" "$FLEET_RESET"
   fi
-  printf '\n'
-
-  printf 'TOTALS\n'
-  local totals
-  totals="$(jq -r '
-    (.fleet_totals // {}) as $t |
-    [($t.enabled_repos // ([.repos[] | select(.enabled)] | length)),
-     ($t.today_tokens // 0), ($t.today_cost_usd_est // 0),
-     ($t.window_tokens_spent // 0), ($t.window_token_cap_total // 0)] | @tsv
-  ' "$data_path")"
-  local total_enabled total_today_tokens total_today_cost total_window_spent total_window_cap
-  IFS=$'\t' read -r total_enabled total_today_tokens total_today_cost total_window_spent total_window_cap <<<"$totals"
-  printf '  enabled: %s  today: %s tokens / $%.2f est  window: %s / %s tokens\n' \
-    "$total_enabled" "$total_today_tokens" "$total_today_cost" "$total_window_spent" "$total_window_cap"
-  printf '\n'
-
-  rows=''
-  while IFS=$'\t' read -r repo stage role family started progress; do
-    [[ -n "$repo" ]] || continue
-    rows+="running\t$repo\t$stage\t$role\t$family\t$(relative_age "$started" "$now")\t$progress"$'\n'
-  done < <(jq -r '.repos[] | select(.enabled) as $r | $r.active_agents[]? |
-    [$r.name, (.stage // "unknown"), (.role // "unknown"), (.family // "unknown"),
-     (.started_at // ""),
-     (if .transcript_tokens != null then ("tokens:" + (.transcript_tokens | tostring))
-      else ("log:" + ((.log_bytes // 0) | tostring) + "B") end)] | @tsv' "$data_path")
-  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t-\t-\t-\t-\t-\n'
-  render_table 'RUNNING' $'repo\tstage\tagent role\tfamily\telapsed\tprogress' $'left\tleft\tleft\tleft\tright\tright' "$rows"
-
-  printf '\n'; rows=''
-  while IFS=$'\t' read -r repo status stage; do
-    [[ -n "$repo" ]] || continue
-    if [[ "$status" == 0 ]]; then style=quiet; stage=empty; else style=normal; fi
-    rows+="$style\t$repo\t$status\t$stage"$'\n'
-  done < <(jq -r '.repos[] | select(.enabled) | [.name, (.queue_depth // 0),
-    ([.stages[]? | select(.status == "pending") | .id][0] // "empty")] | @tsv' "$data_path")
-  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t0\tempty\n'
-  render_table 'QUEUE' $'repo\tdepth\tnext stage' $'left\tright\tleft' "$rows"
-
-  printf '\n'; rows=''
-  while IFS=$'\t' read -r repo stage status stamp detail; do
-    [[ -n "$repo" ]] || continue
-    rows+="action\t$repo\t$stage\t$status\t$(relative_age "$stamp" "$now")\t$detail"$'\n'
-  done < <(jq -r '
-    [ .repos[] | select(.enabled) as $r |
-      (if $r.halted then {repo:$r.name, stage:"repo", status:"halted", at:($r.last_dispatch_at // null), detail:($r.halt_reason // "operator action required")} else empty end),
-      (if (($r.consecutive_failure_cap // 0) > 0 and ($r.consecutive_failures // 0) >= ($r.consecutive_failure_cap // 0)) then {repo:$r.name, stage:"repo", status:"attempt cap", at:($r.last_dispatch_at // null), detail:((($r.consecutive_failures // 0)|tostring) + "/" + (($r.consecutive_failure_cap // 0)|tostring))} else empty end),
-      ($r.stages[]? | select(.status == "awaiting" and ((.required_action // null) != null)) | {repo:$r.name, stage:.id, status:"awaiting", at:(.completed_at // .started_at), detail:(.required_action|tostring)}),
-      ($r.stages[]? | select((.integration.status // "") == "awaiting" and ((.integration.reason // "") | test("conflict"; "i"))) | {repo:$r.name, stage:.id, status:"awaiting", at:(.completed_at // .started_at), detail:(.integration.reason|tostring)}),
-      ($r.required_actions[]? | {repo:$r.name, stage:(.stage // "repo"), status:(.status // "required"), at:(.occurred_at // null), detail:(.detail // "operator action required")})
-    ] | sort_by(.at // "") | reverse[] | [.repo,.stage,.status,(.at // "-"),.detail] | @tsv' "$data_path")
-  if [[ -n "$build_warning" ]]; then rows+="drift\tautometta\trepo\tdrift\t-\t$build_warning"$'\n'; fi
-  if [[ -n "$rows" ]]; then
-    render_table 'REQUIRED ACTIONS' $'repo\tstage\tstate\tage\tdetail' $'left\tleft\tleft\tright\tleft' "$rows"
-  else
-    render_table 'REQUIRED ACTIONS' 'status' 'left' $'quiet\tno operator action required\n'
+  if jq -e '.drain.active == true' "$data_path" >/dev/null 2>&1; then
+    printf '%sDRAIN cap %s, expires %s%s\n' "$FLEET_YELLOW$FLEET_BOLD" \
+      "$(jq -r '.drain.cap' "$data_path")" "$(jq -r '.drain.expires_at' "$data_path")" "$FLEET_RESET"
   fi
+  printf '\n'
 
-  # Compatibility group marker for consumers that previously selected the
-  # old ALERTS block. Rows now live in the classified sections below.
-  printf '\nALERTS (classified)\n'
+  totals="$(jq -r '[(.fleet_totals.enabled_repos // 0),
+    (.spend.tokens_total // .fleet_totals.today_tokens // 0),
+    (.spend.cost_usd_est // .fleet_totals.today_cost_usd_est // 0),
+    (.fleet_totals.window_tokens_spent // 0),(.fleet_totals.window_token_cap_total // 0)] | @tsv' "$data_path")"
+  IFS=$'\t' read -r total_enabled total_today_tokens total_today_cost total_window_spent total_window_cap <<<"$totals"
+  printf '%sTOTALS%s\n' "$FLEET_BOLD" "$FLEET_RESET"
+  printf '  enabled: %s  today: %s tokens / $%.2f est  window: %s / %s tokens\n\n' \
+    "$total_enabled" "$total_today_tokens" "$total_today_cost" "$total_window_spent" "$total_window_cap"
 
-  local alert_statuses
-  alert_statuses="$(alert_stage_statuses_json)"
+  while IFS= read -r repo_json; do
+    [[ -n "$repo_json" ]] || continue
+    repo="$(printf '%s' "$repo_json" | jq -r '.name')"
+    IFS=$'\t' read -r light reason <<<"$(repo_light "$repo_json" "$now")"
+    state="$(printf '%s' "$repo_json" | jq -r '
+      if .state_error != null then "state unreadable"
+      elif .halted then "HALTED: " + (.halt_reason // "budget")
+      elif (.agents | length) > 0 then "run " + (.agents[0].stage_id // "unknown")
+      elif (.queue | length) > 0 then "queued " + (.queue[0].stage_id // "unknown")
+      else "idle" end')"
+    queue="$(printf '%s' "$repo_json" | jq -r '.queue | length')"
+    input="$(printf '%s' "$repo_json" | jq -r '.tokens_spent // 0')"
+    output="$(printf '%s' "$repo_json" | jq -r 'if .drain_active then .drain_cap else .token_cap_total end // 0')"
+    window="$(short_tokens "$input")/$(short_tokens "$output")"
+    today="$(short_tokens "$(printf '%s' "$repo_json" | jq -r '.spend.tokens_total // 0')")"
+    last="$(printf '%s' "$repo_json" | jq -r '.spend.last_dispatch_at // empty')"
+    [[ -n "$last" ]] && last="$(relative_age "$last" "$now")" || last=never
+    rows+="$light\t$(fleet_light_mark "$light")\t$repo\t$state\t$queue\t$window\t$today\t$last\t$reason"$'\n'
+  done < <(jq -c '.repos[] | select(.enabled)' "$data_path")
+  [[ -n "$rows" ]] || rows=$'quiet\t-\t(none)\tidle\t0\t0/0\t0\tnever\tno enabled repos\n'
+  render_table 'REPOS' $'st\trepo\tstate\tq\twindow\ttoday\tlast\trule' \
+    $'left\tleft\tleft\tright\tright\tright\tright\tleft' "$rows"
+
+  # Compatibility anchor for consumers that select the alert-bearing tail.
+  # The former union is gone; the rows below are classified by lifetime.
+  printf '\nALERTS (classified: ATTENTION and HISTORY)\n\n'; rows=''
+  while IFS=$'\t' read -r stage status; do
+    [[ -n "$stage" ]] || continue
+    printf '  %s\n' "$(fit_cell "$stage: $status" "$(( FLEET_COLUMNS - 2 ))")"
+  done < <(jq -r --argjson statuses "$(alert_stage_statuses_json)" '.repos[] | select(.enabled) |
+    .stages[]? | select(.status as $s | $statuses | index($s)) | [.id,.status] | @tsv' "$data_path")
+  while IFS= read -r detail; do
+    [[ -n "$detail" ]] || continue
+    case "$detail" in
+      *[Ss]ession\ limit*) detail='session limit' ;;
+      *[Uu]sage\ limit*) detail='usage limit' ;;
+      *429*) detail='HTTP 429' ;;
+      *) detail='provider limit' ;;
+    esac
+    printf '  %s\n' "$(fit_cell "$detail" "$(( FLEET_COLUMNS - 2 ))")"
+  done < <(jq -r '.repos[] | select(.enabled) | .alerts[]? | .line // empty' "$data_path")
+  printf '\n'
+  if (( generated_epoch == 0 || age > stale_seconds )); then
+    rows+="red\tfleet\tdata stale\t$(relative_age "$generated_at" "$now")"$'\n'
+  fi
+  if [[ -n "$build_warning" ]]; then rows+="amber\tautometta\tbuild drift\t$build_warning"$'\n'; fi
+  while IFS= read -r repo_json; do
+    [[ -n "$repo_json" ]] || continue
+    repo="$(printf '%s' "$repo_json" | jq -r '.name')"
+    IFS=$'\t' read -r light reason <<<"$(repo_light "$repo_json" "$now")"
+    [[ "$light" != green ]] || continue
+    case "$reason" in 'historic terminal failure'|'drain active') continue ;; esac
+    rows+="$light\t$repo\t$light\t$reason"$'\n'
+  done < <(jq -c '.repos[] | select(.enabled)' "$data_path")
+  while IFS=$'\t' read -r repo stage detail; do
+    [[ -n "$repo" ]] || continue
+    rows+="amber\t$repo\tamber\tprovider limit $stage: $detail"$'\n'
+  done < <(jq -r --argjson now "$now" '
+    def epoch: try (. | fromdateiso8601) catch 0;
+    .repos[] | select(.enabled) as $r | $r.alerts[]? |
+    select((.occurred_at | epoch) > 0 and ($now - (.occurred_at | epoch)) < 86400) |
+    [$r.name,(.log // "provider" | split("/")[-1]),(.line // "provider limit")] | @tsv' "$data_path")
+  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t-\tno live conditions\n'
+  render_table 'ATTENTION (live, clears when resolved)' $'repo\tlight\treason' $'left\tleft\tleft' "$rows"
+
   printf '\n'; rows=''
+  local alert_statuses history_cutoff fresh_cutoff
+  alert_statuses="$(alert_stage_statuses_json)"
+  history_cutoff=$(( now - 604800 ))
+  fresh_cutoff=$(( now - ${FLEET_FRESH_FAILURE_HOURS:-24} * 3600 ))
   while IFS=$'\t' read -r repo stage status stamp detail; do
     [[ -n "$repo" ]] || continue
-    style=failure; [[ "$status" == stalled ]] && style=stall
-    rows+="$style\t$stage\t$repo\t$status\t$(relative_age "$stamp" "$now")\t$detail"$'\n'
-  done < <(jq -r --argjson alert_statuses "$alert_statuses" '
-    [ .repos[] | select(.enabled) as $r | $r.stages[]? |
-      select(.status as $s | $alert_statuses | index($s)) |
-      {repo:$r.name, stage:.id, status:.status, at:(.completed_at // .started_at // null), detail:(.verifier_overall // "terminal stage")} ] |
-    sort_by(.at // "") | reverse[] | [.repo,.stage,.status,(.at // "-"),.detail] | @tsv' "$data_path")
-  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t-\t-\t-\tno terminal failures\n'
-  render_table 'FAILURES' $'stage\trepo\tstate\tage\tdetail' $'left\tleft\tleft\tright\tleft' "$rows"
+    style=quiet; [[ "$status" == pass ]] || style=amber
+    rows+="$style\t$repo\t$stage\t$status\t$(relative_age "$stamp" "$now")\t$detail"$'\n'
+  done < <(jq -r --argjson statuses "$alert_statuses" --argjson history "$history_cutoff" \
+    --argjson fresh "$fresh_cutoff" '
+    def epoch: try (. | fromdateiso8601) catch 0;
+    [ .repos[] | select(.enabled) as $r |
+      ($r.stages[]? |
+        (.event_at | epoch) as $at |
+        select($at >= $history or $at == 0) |
+        if (.status as $s | $statuses | index($s)) and ($at < $fresh or $at == 0) then
+          {repo:$r.name,stage:.id,status:.status,at:(.event_at // "-"),detail:(.verifier_overall // "terminal stage")}
+        elif .status == "completed" then
+          {repo:$r.name,stage:.id,status:"pass",at:.event_at,detail:"completed"}
+        else empty end),
+      ($r.alerts[]? | (.occurred_at | epoch) as $at |
+        select($at >= $history and $at < $fresh) |
+        {repo:$r.name,stage:(.log // "provider" | split("/")[-1]),status:"limit",at:.occurred_at,detail:(.line // "provider limit")})
+    ] | sort_by(.at) | reverse | .[:8][] |
+    [.repo,.stage,.status,.at,.detail] | @tsv' "$data_path")
+  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t-\t-\t-\tno history in seven days\n'
+  render_table 'HISTORY (7d, newest first, max 8)' $'repo\tstage\tevent\tage\tdetail' \
+    $'left\tleft\tleft\tright\tleft' "$rows"
 
-  printf '\n'; rows=''
+  printf '\nAGENTS\nRUNNING\n'; rows=''
+  local kind role family identity verifier elapsed budget flags log_bytes agent_light
+  while IFS=$'\t' read -r repo kind stage role family identity verifier elapsed budget flags log_bytes; do
+    [[ -n "$repo" ]] || continue
+    if [[ "$kind" == live ]]; then
+      style=running; agent_light=green
+      if [[ "$flags" == *over-budget* ]]; then style=failure; agent_light=red; fi
+      progress="$(short_duration "$elapsed")"
+      (( budget > 0 )) && progress+="/$(short_duration "$budget")"
+      progress+=" log:${log_bytes}B"
+      rows+="$style\t$(fleet_light_mark "$agent_light")\t$repo\tlive\t$stage\t$role\t$family $identity\t-\t$progress"$'\n'
+    elif [[ "$kind" == queued ]]; then
+      rows+="quiet\t-\t$repo\tnext\t$stage\tqueued\t$identity\t$verifier\t-"$'\n'
+    else
+      rows+="quiet\t-\t$repo\tempty\tempty\tidle\t-\t-\t-"$'\n'
+    fi
+  done < <(jq -r '.repos[] | select(.enabled) as $r |
+    ($r.agents[]? | [$r.name,"live",(.stage_id // "unknown"),(.role // "unknown"),
+      (.family // "unknown"),((.identity // "unknown") | split("<")[0] | rtrimstr(" ")),"-",(.elapsed_seconds // 0),(.budget_seconds // 0),
+      ((.flags // []) | join(",")),(.log_bytes // 0)]),
+    ($r.queue[]? | [$r.name,"queued",(.stage_id // "unknown"),"queued","-",
+      ((.worker // "unknown") | split("<")[0] | rtrimstr(" ")),
+      ((.verifier // "unknown") | split("<")[0] | rtrimstr(" ")),0,0,"",0]),
+    ($r | select((.agents|length)==0 and (.queue|length)==0) |
+      [$r.name,"empty","empty","idle","-","-","-",0,0,"",0]) | @tsv' "$data_path")
+  [[ -n "$rows" ]] || rows=$'quiet\t-\t(none)\t-\t-\t-\t-\t-\t-\n'
+  render_table 'LIVE AGENTS / QUEUED TARGETS' $'st\trepo\tkind\tstage\trole\tagent / worker\tverifier\telapsed/budget' \
+    $'left\tleft\tleft\tleft\tleft\tleft\tleft\tright' "$rows"
+
+  printf '\nQUEUE\n'; rows=''
+  while IFS=$'\t' read -r repo queue stage; do
+    [[ -n "$repo" ]] || continue
+    [[ "$queue" -gt 0 ]] || stage=empty
+    rows+="quiet\t$repo\t$queue\t$stage"$'\n'
+  done < <(jq -r '.repos[] | select(.enabled) |
+    [.name,(.queue|length),(.queue[0].stage_id // "empty")] | @tsv' "$data_path")
+  render_table 'PENDING STAGES' $'repo\tdepth\tnext stage' $'left\tright\tleft' "$rows"
+
+  printf '\nREQUIRED ACTIONS\n'; rows=''
+  while IFS=$'\t' read -r repo status detail; do
+    [[ -n "$repo" ]] || continue
+    rows+="action\t$repo\t$status\t$detail"$'\n'
+  done < <(jq -r '.repos[] | select(.enabled) |
+    (if .halted then [.name,"halted",(.halt_reason // "operator action required")] else empty end),
+    (if ((.consecutive_failure_cap // 0)>0 and (.consecutive_failures // 0)>=.consecutive_failure_cap)
+      then [.name,"attempt cap",((.consecutive_failures|tostring)+"/"+(.consecutive_failure_cap|tostring))] else empty end) |
+    @tsv' "$data_path")
+  [[ -n "$rows" ]] || rows=$'quiet\t(none)\tclear\tno operator action required\n'
+  render_table 'OPERATOR DECISIONS' $'repo\tstate\tdetail' $'left\tleft\tleft' "$rows"
+
+  printf '\nFAILURES\n'; rows=''
+  while IFS=$'\t' read -r repo stage status stamp; do
+    [[ -n "$repo" ]] || continue
+    rows+="amber\t$repo\t$stage\tstage\t$status\t-\t$(relative_age "$stamp" "$now")"$'\n'
+  done < <(jq -r --argjson statuses "$alert_statuses" '.repos[] | select(.enabled) as $r |
+    $r.stages[]? | select(.status as $s | $statuses | index($s)) |
+    [$r.name,.id,.status,(.event_at // "-")] | @tsv' "$data_path")
+  while IFS=$'\t' read -r repo stage role status stamp progress; do
+    [[ -n "$repo" ]] || continue
+    rows+="failure\t$repo\t$stage\t$role\t$status\t$progress\t$(relative_age "$stamp" "$now")"$'\n'
+  done < <(jq -r '.spend.failures[]? |
+    [.repo,.stage_id,.role,.result,.ts,(.tokens_lost|tostring)] | @tsv' "$data_path")
+  local lost_sum
+  lost_sum="$(jq -r '[.spend.failures[]?.tokens_lost] | add // 0' "$data_path")"
+  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t-\t-\t-\t0\t-\n'
+  rows+="action\tTOTAL LOST\t-\t-\tnon-pass\t$lost_sum\t7d"$'\n'
+  render_table 'STAGES AND NON-PASS DISPATCHES' $'repo\tstage\trole\tresult\ttokens lost\tage' \
+    $'left\tleft\tleft\tleft\tright\tright' "$rows"
+
+  printf '\nLIMITS\n'; rows=''
   while IFS=$'\t' read -r repo stage stamp detail; do
     [[ -n "$repo" ]] || continue
-    case "$detail" in
-      *[Ss]ession\ limit*) status='session limit' ;;
-      *[Uu]sage\ limit*) status='usage limit' ;;
-      *429*) status='HTTP 429' ;;
-      *) status='provider' ;;
-    esac
-    reset="$(printf '%s\n' "$detail" | sed -nE 's/.*(resets?([[:space:]]+at)?[[:space:]]+[^ ]+).*/\1/ip' | head -n1)"
-    [[ -n "$reset" ]] || reset=unknown
-    rows+="limit\t$repo\t$stage\t$status\t$(relative_age "$stamp" "$now")\t$reset\t$detail"$'\n'
-  done < <(jq -r '
-    def log_stage: (.log // "" | split("/")[-1] | sub("-(worker|verifier)(\\.attempt-[0-9]+)?\\.log$"; "")) as $id | if $id == "" then "repo" else $id end;
-    [ .repos[] | select(.enabled) as $r | $r.alerts[]? | {repo:$r.name, stage:log_stage, at:(.occurred_at // null), detail:(.line // "provider limit")} ] |
-    sort_by(.at // "") | reverse[] | [.repo,.stage,(.at // "-"),.detail] | @tsv' "$data_path")
-  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t-\t-\t-\t-\tno provider limits\n'
-  render_table 'LIMITS' $'repo\tstage\tprovider limit\tage\treset\tdetail' $'left\tleft\tleft\tright\tleft\tleft' "$rows"
+    rows+="amber\t$repo\t$stage\t$(relative_age "$stamp" "$now")\t$detail"$'\n'
+  done < <(jq -r '.repos[] | select(.enabled) as $r | $r.alerts[]? |
+    [$r.name,(.log // "provider" | split("/")[-1]),(.occurred_at // "-"),(.line // "provider limit")] | @tsv' "$data_path")
+  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t-\t-\tno provider limits\n'
+  render_table 'PROVIDER LIMITS' $'repo\tlog\tage\tdetail' $'left\tleft\tright\tleft' "$rows"
 
   printf '\n'; rows=''
-  while IFS=$'\t' read -r repo today cost window stamp; do
+  local cached productive lost cost
+  while IFS=$'\t' read -r repo role input cached output productive lost cost; do
     [[ -n "$repo" ]] || continue
-    rows+="quiet\t$repo\t$today\t\$$cost\t$window\t$(relative_age "$stamp" "$now")"$'\n'
-  done < <(jq -r '
-    def short_tokens: if . >= 1000000000 then (((. / 100000000 | round) / 10 | tostring) + "B") elif . >= 1000000 then (((. / 100000 | round) / 10 | tostring) + "M") elif . >= 1000 then (((. / 100 | round) / 10 | tostring) + "K") else tostring end;
-    .repos[] | select(.enabled) | [.name,(.today_tokens // 0 | short_tokens),((.today_cost_usd_est // 0) * 100 | round / 100),((.tokens_spent // 0 | short_tokens) + "/" + (.token_cap_total // 0 | short_tokens)),(.last_dispatch_at // "-")] | @tsv' "$data_path")
-  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t0\t$0.00\t0/0\tnever\n'
-  render_table 'REPOS' $'subscriber\ttoday tokens\ttoday cost\twindow\tlast dispatch' $'left\tright\tright\tright\tright' "$rows"
+    rows+="quiet\t$repo\t$role\t$input\t$cached\t$output\t$productive\t$lost\t\$$cost"$'\n'
+  done < <(jq -r '.spend.by_repo_role[]? |
+    [.repo,.role,.input_tokens,.cached_input_tokens,.output_tokens,
+     .productive_tokens,.lost_tokens,((.cost_usd_est * 100 | round) / 100)] | @tsv' "$data_path")
+  [[ -n "$rows" ]] || rows=$'quiet\t(none)\t-\t0\t0\t0\t0\t0\t$0\n'
+  render_table 'SPEND (today UTC)' $'repo\trole\tin\tcached\tout\tpass\tlost\tcost' \
+    $'left\tleft\tright\tright\tright\tright\tright\tright' "$rows"
 
   local overlap
-  overlap="$(jq -r '[.repos[] | select(.enabled and (.name | startswith("emergence-lab"))) | .name] | if length > 1 then join(", ") else empty end' "$data_path")"
-  if [[ -n "$overlap" ]]; then
-    printf '\nOVERLAP\n  emergence-lab subscribers enabled together: %s\n' "$overlap"
-  fi
+  overlap="$(jq -r '[.repos[] | select(.enabled and (.name | startswith("emergence-lab"))) | .name] |
+    if length > 1 then join(", ") else empty end' "$data_path")"
+  [[ -z "$overlap" ]] || printf '\nOVERLAP\n  emergence-lab subscribers enabled together: %s\n' "$overlap"
 }
 
 fleet_refresher() {

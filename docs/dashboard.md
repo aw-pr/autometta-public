@@ -16,11 +16,12 @@ autometta dashboard --open    # regenerate and open in default browser
 
 The dashboard files live at `~/.autometta/dashboard/`:
 
-- `data.json` — aggregated state from all subscribers
-- `index.html` — page entry point
-- `dashboard.js` — vanilla JS renderer
-- `dashboard.css` — dark theme
-- `vendor/chart.min.js` — Chart.js 4.4.0, vendored at install time
+- `data.json` - aggregated state from all subscribers
+- `data.js` - the same object assigned to `window.AUTOMETTA_DATA` for `file://`
+- `index.html` - page entry point
+- `dashboard.js` - vanilla JS renderer
+- `dashboard.css` - dark theme
+- `vendor/chart.min.js` - Chart.js 4.4.0, vendored at install time
 
 No external network access happens at render time. Chart.js is fetched
 once at install time (`scripts/install-homebrew-local.sh`) with a pinned
@@ -32,10 +33,9 @@ SHA256 hash; a mismatch fails the install loudly.
 
 1. Runs `scripts/aggregate-dashboard.sh`, which walks
    `~/.autometta/subscribers/*.yaml` (excluding `template.yaml`),
-   reads each repo's `state/state.yaml`, `state/budget.json`, and
-   `state/verifiers/*.json`, and emits a fresh
-   `~/.autometta/dashboard/data.json`. Read-only on adopter
-   repos.
+   reads each repo's state, agent registry, heartbeat and cost log, and emits
+   fresh `data.json` and `data.js` siblings. A broken `state.yaml` produces a
+   red `state_error` row without stopping other subscribers from rendering.
 2. Copies the static assets (`index.html`, `dashboard.js`,
    `dashboard.css`, `vendor/chart.min.js`) from the autometta install
    into `~/.autometta/dashboard/`.
@@ -56,28 +56,13 @@ needed alongside the relative age.
 
 ## Fleet pane
 
-The fleet pane reads top to bottom as an operator story:
-
-1. **TOTALS** keeps the fleet-wide spend summary.
-2. **RUNNING** lists every registered live worker and verifier, with repo,
-   stage, role, family and elapsed time. Where an active-agent registry row
-   carries `transcript_tokens`, that is the in-flight figure. Otherwise the
-   pane says `log:<bytes>B`; log size is activity evidence, not a token count.
-3. **QUEUE** lists every enabled repo, its pending depth and next stage.
-   `empty` is the ordinary idle value and is not an alert.
-4. **REQUIRED ACTIONS** separates decisions the operator must make from
-   reported failures. It includes halts, exhausted attempt caps, awaiting
-   integrations whose recorded reason names a conflict, explicit stage
-   `required_action` values, and the `required_actions` seam used by
-   queue-minder amendments. An empty section says that no operator action is
-   required.
-5. **FAILURES** contains only statuses from `scripts/alert-statuses.sh`, newest
-   first, with a relative age. In particular, `superseded` is absent.
-6. **LIMITS** contains only line-anchored provider banners found in unfinished
-   agent logs, with their age and reset time when the banner supplies one.
-7. **REPOS** closes with per-repo spend, cap and last-dispatch figures. It does
-   not repeat constant enabled/running state or queue data owned by earlier
-   sections.
+The fleet pane starts with one TOTALS line and one traffic-light row per repo.
+ATTENTION is recomputed from current conditions. HISTORY is a seven-day event
+view, newest first and capped at eight rows. AGENTS shows live registrations,
+then pending stages with their intended worker and verifier. FAILURES itemises
+non-pass cost-log rows and their token loss. SPEND splits fresh input, cached
+input and output by repo and role; its token total is the TOTALS today figure.
+An active drain is named in the header with its effective cap and expiry.
 
 All tabular sections use one pane-width-aware renderer. Cells are truncated
 with an ellipsis before a row can wrap, numeric columns are right-aligned, and
@@ -85,6 +70,48 @@ important states are emphasised. Colour-capable UTF-8 terminals use box-drawing
 borders and state colours. `NO_COLOR=1`, a non-UTF-8 locale, or a terminal
 without colour capabilities selects readable ASCII borders and plain text.
 The renderer retains per-line erase-to-end repainting in the live ticker.
+
+## Traffic-light rules
+
+Worst condition wins. `FLEET_FRESH_FAILURE_HOURS` defaults to 24.
+
+**RED** (broken, needs a person now):
+
+- `budget.json .halted == true`
+- `.consecutive_failures >= .consecutive_failure_cap`
+- any heartbeat entry with flag `over-budget`
+- any stage in the `alert-statuses.sh` set whose timestamp
+  (`completed_at`, else `started_at`, else the verifier artefact mtime) is
+  younger than `FLEET_FRESH_FAILURE_HOURS` (default 24)
+- repo's `state.yaml` unreadable or unparseable (render the row as
+  `state unreadable`, never drop it - today this case kills the aggregator)
+
+**AMBER** (degraded or noteworthy, no action forced):
+
+- `0 < consecutive_failures < cap`
+- genuine provider-limit detection in the last 24h (post card 49's banner
+  anchoring)
+- `tokens_spent / token_cap_total >= 0.85`
+- alert-status stages older than the 24h freshness bound (real, but history)
+- drain in force covering this repo
+- heartbeat `checked_at` older than 600s while stages are in flight
+
+**GREEN**: none of the above. Sub-states shown in the state column are
+`run <stage>` when work is in flight, `queued <stage>` when pending work waits,
+and `idle` when the queue is empty.
+
+With colour enabled the marks are `●`, `◐`, and `○`. With `NO_COLOR=1` or
+`NO_COLOUR=1`, they are `ok`, `WARN`, and `FAIL`, so colour is never the only
+signal.
+
+## Web view
+
+The browser renders the same lights, agents, queue, failures and spend fields
+as the fleet pane. Over HTTP it fetches `data.json`. `autometta dashboard
+--open` uses a plain `file://` URL, so `index.html` loads `data.js` first and
+the renderer uses `window.AUTOMETTA_DATA` when `fetch` is unavailable. The two
+files are emitted from one assembled object by the aggregator; `data.js` is
+not a second walker.
 
 ## Four breakdowns
 
@@ -126,16 +153,46 @@ The renderer retains per-line erase-to-end repainting in the live ticker.
       "seven_day_cost_usd_est": 12.34,
       "last_hour_tokens": 456789,
       "last_dispatch_at": "...",
-      "active_agents": [
+      "state_error": null,
+      "light": "green",
+      "light_reason": "no dashboard rule fired",
+      "drain_active": false,
+      "drain_cap": null,
+      "drain_expires_at": null,
+      "heartbeat_checked_at": "...",
+      "agents": [
         {
           "pid": 12345,
-          "stage": "49-fleet-pane",
+          "stage_id": "49-fleet-pane",
           "role": "worker",
           "family": "codex",
+          "identity": "GPT-5.6 Sol <gpt-5-6-sol@local>",
           "started_at": "...",
-          "log_bytes": 8192
+          "elapsed_seconds": 120,
+          "elapsed": 120,
+          "budget_seconds": 5400,
+          "flags": []
         }
       ],
+      "queue": [
+        {
+          "stage_id": "50-next-stage",
+          "worker": "GPT-5.6 Sol <gpt-5-6-sol@local>",
+          "verifier": "Claude Sonnet 5 <claude-sonnet-5@local>"
+        }
+      ],
+      "spend": {
+        "scope": "today_utc",
+        "input_tokens": 1000,
+        "cached_input_tokens": 8000,
+        "output_tokens": 500,
+        "tokens_total": 9500,
+        "cost_usd_est": 0.12,
+        "productive": {"tokens": 7000, "cost_usd_est": 0.08},
+        "lost": {"tokens": 2500, "cost_usd_est": 0.04},
+        "by_role": [],
+        "failures": []
+      },
       "stages": [
         {
           "id": "01-...",
@@ -153,14 +210,41 @@ The renderer retains per-line erase-to-end repainting in the live ticker.
       ]
     }
   ],
+  "drain_active": false,
+  "drain_cap": null,
+  "drain_expires_at": null,
+  "drain": {"active": false, "cap": null, "expires_at": null, "repos": []},
+  "spend": {
+    "scope": "today_utc",
+    "input_tokens": 1000,
+    "cached_input_tokens": 8000,
+    "output_tokens": 500,
+    "tokens_total": 9500,
+    "cost_usd_est": 0.12,
+    "productive": {"tokens": 7000, "cost_usd_est": 0.08},
+    "lost": {"tokens": 2500, "cost_usd_est": 0.04},
+    "by_repo_role": [],
+    "failures": [
+      {"repo": "emergence-lab", "stage_id": "48-example", "role": "worker", "result": "fail", "tokens_lost": 2500}
+    ]
+  },
   "by_model": [{"identity": "...", "tokens": 0}],
   "by_day":   [{"date": "2026-05-26", "tokens": 0}]
 }
 ```
 
 The per-stage `tokens` / `worker_tokens` / `verifier_tokens` fields are
-**additive** — older `state.yaml` files without them parse to `0` /
+**additive**: older `state.yaml` files without them parse to `0` /
 `null` and continue to render.
+
+`agents` is the live registration joined to the matching heartbeat row by
+PID. `queue` preserves `state.yaml` order and includes pending stages only.
+Per-repo `spend` and top-level `spend.by_repo_role` cover the current UTC day,
+which is why `spend.tokens_total` reconciles with `fleet_totals.today_tokens`.
+`spend.failures` uses a seven-day window and treats every result other than
+`pass` as lost. Each failure retains the three token buckets and their sum in
+`tokens_lost`. The top-level `drain` object summarises enabled repos whose
+per-repo drain fields are active.
 
 The fleet pane shortens token counts for scanning and rounds estimated USD to
 two decimal places. The exact token and cost values remain in `data.json`.
