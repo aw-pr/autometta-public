@@ -26,7 +26,11 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root: a smoke test exercises the tree it ships in, never one an env
+# var or the controller config happens to name.
+autometta_root="$(autometta_self_root "$script_dir")"
 harness="$script_dir/verifier-bake-off.sh"
 
 fail=0

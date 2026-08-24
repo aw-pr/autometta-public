@@ -3,7 +3,10 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root, not the resolved root: this acts on the tree it is part of.
+autometta_root="$(autometta_self_root "$script_dir")"
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
 log_dir="$controller_home/log"

@@ -20,6 +20,8 @@ IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
+# shellcheck source=resolve-root.sh
+source "$script_dir/resolve-root.sh"
 source "$script_dir/budget.sh"
 # shellcheck source=./models.sh
 source "$script_dir/models.sh"
@@ -136,7 +138,8 @@ main() {
 
   # Resolve auth routes via op-fetch auth-route-security pattern.
   local autometta_root
-  autometta_root="$(cd "$script_dir/.." && pwd)"
+  # Self root: op-refs.sh sits beside this script, in whichever tree it is.
+  autometta_root="$(autometta_self_root "$script_dir")"
   if [[ -f "$autometta_root/op-refs.sh" ]]; then
     # shellcheck source=/dev/null
     source "$autometta_root/op-refs.sh"

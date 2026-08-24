@@ -90,7 +90,11 @@ check "unknown effort level builds no argv" \
 # op-fetch on PATH, and read back the argv it was handed.
 # ---------------------------------------------------------------------------
 
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root: a smoke test exercises the tree it ships in, never one an env
+# var or the controller config happens to name.
+autometta_root="$(autometta_self_root "$script_dir")"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

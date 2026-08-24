@@ -4,6 +4,8 @@ IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
+# shellcheck source=resolve-root.sh
+source "$script_dir/resolve-root.sh"
 source "$script_dir/budget.sh"
 # shellcheck source=./models.sh
 source "$script_dir/models.sh"
@@ -147,7 +149,9 @@ main() {
   # for op-fetch to resolve via the service-account token. op-fetch sanitises
   # the child env (env -i with an allowlist) so any inherited OPENAI_API_KEY /
   # ANTHROPIC_API_KEY cannot redirect billing accidentally.
-  local autometta_root_local="$(cd "$script_dir/.." && pwd)"
+  local autometta_root_local
+  # Self root: op-refs.sh sits beside this script, in whichever tree it is.
+  autometta_root_local="$(autometta_self_root "$script_dir")"
   if [[ -f "$autometta_root_local/op-refs.sh" ]]; then
     # shellcheck source=/dev/null
     source "$autometta_root_local/op-refs.sh"

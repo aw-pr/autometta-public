@@ -6,7 +6,10 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root, not the resolved root: the dashboard sources it copies are assets of its own tree.
+autometta_root="$(autometta_self_root "$script_dir")"
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 dashboard_dir="$controller_home/dashboard"
 

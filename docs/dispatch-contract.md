@@ -445,6 +445,130 @@ halt reason rather than a decorative field.
   the increment will surface the `token-cap` halt reason if
   `tokens_spent >= token_cap_total`. No new gate is added.
 
+## Which autometta runs: root resolution
+
+There are two autometta trees on a working machine: the Homebrew install under
+`Cellar/autometta/<sha>/libexec`, and the git checkout it was packaged from.
+Every invocation picks one. Until card 42 each entry point picked for itself,
+and on 2026-08-23 that produced two wrong answers in a single day: a committed
+fix was live for the fleet tick while the installed build still held the old
+file, and `autometta --version` reported whichever root the caller happened to
+land on, so it could not be used to settle the question either.
+
+### The rule
+
+One rule, in `scripts/resolve-root.sh`, and nowhere else. Two functions, for
+two different questions.
+
+`autometta_resolve_root` answers "whose `scripts/` will this dispatch run?".
+First hit wins:
+
+| Precedence | Source | Typical setter |
+|---|---|---|
+| 1 | `AUTOMETTA_ROOT` in the environment | an operator, or the fleet LaunchAgent |
+| 2 | `autometta_root:` in `$PHAT_CONTROLLER_HOME/config.yaml` | `scripts/init-host.sh`, at host bootstrap |
+| 3 | the tree the running command is part of | nothing; it is the floor |
+
+Rules 1 and 2 are honoured only when they name a directory that actually holds
+a `scripts/` directory. A stale config entry pointing at a moved or deleted
+checkout falls through to the floor instead of yielding a root with no code in
+it. Rule 3 is always available, so resolution terminates without ever needing a
+hardcoded home-directory path.
+
+`autometta_self_root` answers a different question: "which tree am I part of?".
+Packaging and host bootstrap act on themselves, so `install-homebrew-local.sh`
+and `init-host.sh` use this one. An installer that honoured `AUTOMETTA_ROOT`
+would package a tree it was never pointed at.
+
+Every entry point that needs a root sources `resolve-root.sh` and calls one of
+the two. None of them restates the rule inline, so there is exactly one place
+to change it and exactly one place to read it.
+
+| Uses `autometta_resolve_root` (the effective root) | Why |
+|---|---|
+| `bin/autometta` | dispatches every subcommand into the resolved tree's `scripts/` |
+| `scripts/attach.sh` | the tmux panes run autometta scripts, and a viewer watching a different tree than the tick executes is the split itself |
+| `scripts/subscribe-repo.sh` | records `autometta_root:` in the subscriber manifest, which is the tree that will run that repo's dispatches. It used to carry its own copy of the config-then-self precedence |
+
+| Uses `autometta_self_root` (the tree it is part of) | Why |
+|---|---|
+| `scripts/install-homebrew-local.sh` | packages the checkout it lives in |
+| `scripts/init-host.sh` | writes its own path into the controller config |
+| `scripts/install-launchagent.sh` | reads its own plist template; which root the installed tick then runs is the plist's `AUTOMETTA_ROOT`, an operator decision |
+| `scripts/dashboard.sh` | copies dashboard sources out of its own tree |
+| `scripts/auth.sh`, `scripts/spawn-worker.sh`, `scripts/spawn-verifier.sh`, `scripts/spawn-verifier-panel.sh` | `op-refs.sh` sits beside them |
+| `scripts/retro-grade.sh` | cd's into its own tree and sources that tree's `op-refs.sh` |
+| `scripts/check-deps.sh` | answers whether the tree it was launched from is complete, so pointing it elsewhere would defeat the check |
+| the `*-smoke.sh` harnesses | a smoke test exercises the tree it ships in |
+
+Scripts that compute a `repo_root` for their own fixtures
+(`validate-handoff-envelope.sh`, `validate-verifier-artefacts.sh`,
+`sdk-cache-smoke.sh`, `idle-tick-smoke.sh`, `superseded-status-smoke.sh`) are
+not resolving a dispatch root and are left alone.
+
+Checkout detection compares physical paths on both sides. `git rev-parse
+--show-toplevel` reports a physical path, so a root reached through a symlinked
+parent (on macOS `/tmp` is `/private/tmp`) would otherwise compare unequal to
+its own toplevel, be called "not a checkout", and have its uncommitted edits go
+unreported. That is the same class of silent wrong answer as the original split.
+
+`scripts/autometta-vendor-check.sh` keeps its own `${AUTOMETTA_ROOT:-~/repos/autometta}`
+lookup on purpose. It runs inside a *subscriber* repo, where `scripts/resolve-root.sh`
+does not exist, and it is locating the canonical upstream checkout rather than
+resolving its own root.
+
+### Telling the truth about it
+
+`autometta --version` now names the root, the rule that chose it, the sha, and
+whether the working tree is dirty:
+
+```
+autometta 384c394
+  root:   ~/repos/autometta
+  origin: controller config ~/.phat-controller/config.yaml
+  sha:    384c394 (git checkout)
+  state:  DIRTY 1 tracked file(s) modified under scripts/
+            scripts/tick.sh
+  warning: uncommitted edits in this root run on the next tick.
+```
+
+Dirty means tracked files under `scripts/` differing from `HEAD`, staged or
+not. Untracked files are excluded: a scratch file in `scripts/` is not code a
+dispatch runs, whereas an edited tracked script is. A root that is not a git
+checkout reports its `VERSION` stamp and `state: installed build, immutable`.
+
+Detection is deliberately exact about what counts as a checkout: `git -C` searches
+upward, and the Homebrew prefix is itself a git repository, so a naive rev-parse
+inside `libexec` reports Homebrew's HEAD and calls the installed build a clean
+checkout. The root must be the top level of the working tree, not merely inside one.
+
+### The dirty-checkout exposure
+
+With the checkout as the resolved root, the working tree is production. Any
+half-finished edit to a tracked file under `scripts/` is load-bearing for every
+subscribed repo at the next tick, with no commit, no review and no verifier
+between the edit and the fleet. That is the sharper half of the split, and it is
+why the dirty state is on the face of `--version` rather than something an
+operator has to think to check.
+
+The fleet LaunchAgent currently sets `AUTOMETTA_ROOT` to the checkout, which is
+rule 1, so this exposure is live. Moving the tick onto the installed build is an
+operator decision, not a code change: it means deleting that key from
+`com.autometta.tick.fleet.plist` and accepting that a fix is live only after a
+reinstall. Nothing in the repo repoints a running fleet.
+
+### Checking the split
+
+`scripts/check-installed-build.sh` compares the two trees file by file and then
+states, from the LaunchAgent's own environment rather than from assumption,
+which root the fleet tick will run. Exit 0 when they agree, 1 on drift naming
+each differing file, 2 when either side is missing. It is also
+`autometta check-build`, and `scripts/health-check.sh` runs it on every doctor
+pass so the split is surfaced without anyone having to remember to ask. The
+doctor reports it but does not fail on it: drift is an ordinary operator state,
+and clearing it replaces files a running tick is executing, so it should be
+cleared when no dispatch is in flight.
+
 ## Reading order for a new operator
 
 1. This document.

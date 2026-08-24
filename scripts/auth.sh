@@ -17,7 +17,10 @@ IFS=$'\n\t'
 #                                      on, no key involved.
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root, not the resolved root: op-refs.sh sits beside this script in its own tree.
+autometta_root="$(autometta_self_root "$script_dir")"
 repo_root="${REPO_ROOT:-$PWD}"
 manifest="$repo_root/.autometta.local.yaml"
 

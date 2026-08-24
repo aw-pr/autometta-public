@@ -3,7 +3,10 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root, not the resolved root: it cd's into its own tree and sources that tree's op-refs.sh.
+autometta_root="$(autometta_self_root "$script_dir")"
 
 usage() {
   cat <<'USAGE'

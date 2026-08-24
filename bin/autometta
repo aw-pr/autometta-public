@@ -3,7 +3,21 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="${AUTOMETTA_ROOT:-$(cd "$script_dir/.." && pwd)}"
+
+# The resolution rule lives in scripts/resolve-root.sh and nowhere else. It is
+# sourced from the tree this launcher is physically part of, because that is
+# the only tree guaranteed to exist before a root has been resolved; the root
+# it then resolves may well be a different one.
+self_root="$(cd "$script_dir/.." && pwd)"
+resolver="$self_root/scripts/resolve-root.sh"
+if [[ ! -f "$resolver" ]]; then
+  printf 'MISSING %s\n' "$resolver" >&2
+  exit 1
+fi
+# shellcheck source=../scripts/resolve-root.sh
+. "$resolver"
+autometta_resolve_root "$self_root"
+autometta_root="$AUTOMETTA_ROOT_RESOLVED"
 
 usage() {
   cat <<'USAGE'
@@ -18,6 +32,7 @@ Usage:
   autometta detach [repo-path|--all]
   autometta tick [--repair|--reset-halt [--reset-tokens]]
   autometta check-deps
+  autometta check-build
   autometta dashboard [--open]
   autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]
@@ -52,13 +67,36 @@ case "$command_name" in
     usage
     ;;
   --version|version)
-    version_file="$autometta_root/VERSION"
-    if [[ -s "$version_file" ]]; then
-      printf 'autometta %s\n' "$(head -n 1 "$version_file" | tr -d '[:space:]')"
-    elif git -C "$autometta_root" rev-parse --short HEAD >/dev/null 2>&1; then
-      printf 'autometta %s\n' "$(git -C "$autometta_root" rev-parse --short HEAD)"
+    # A bare sha was the whole of this output until card 42, and it could not
+    # be trusted: it named whichever root the caller happened to resolve, with
+    # nothing on the line to say which one that was. A human and the fleet tick
+    # got different answers from the same command on the same day. So the root,
+    # the rule that chose it, and its working-tree state are all on the face of
+    # the output now, never inferred.
+    root_sha="$(autometta_root_sha "$autometta_root")"
+    printf 'autometta %s\n' "$root_sha"
+    printf '  root:   %s\n' "$autometta_root"
+    printf '  origin: %s\n' "$AUTOMETTA_ROOT_ORIGIN"
+    if autometta_root_is_checkout "$autometta_root"; then
+      dirty_files="$(autometta_root_dirty_scripts "$autometta_root")"
+      if [[ -n "$dirty_files" ]]; then
+        dirty_count="$(printf '%s\n' "$dirty_files" | wc -l | tr -d '[:space:]')"
+        printf '  sha:    %s (git checkout)\n' "$root_sha"
+        printf '  state:  DIRTY %s tracked file(s) modified under scripts/\n' "$dirty_count"
+        while IFS= read -r dirty_file; do
+          [[ -n "$dirty_file" ]] && printf '            %s\n' "$dirty_file"
+        done <<< "$dirty_files"
+        printf '  warning: uncommitted edits in this root run on the next tick.\n'
+      else
+        printf '  sha:    %s (git checkout)\n' "$root_sha"
+        printf '  state:  clean, no tracked scripts/ edits\n'
+      fi
+    elif [[ -s "$autometta_root/VERSION" ]]; then
+      printf '  sha:    %s (VERSION file; root is not a git checkout)\n' "$root_sha"
+      printf '  state:  installed build, immutable\n'
     else
-      printf 'autometta local\n'
+      printf '  sha:    unknown (no git checkout and no VERSION file)\n'
+      printf '  state:  unknown\n'
     fi
     ;;
   init-host)
@@ -112,6 +150,9 @@ case "$command_name" in
     ;;
   check-deps)
     run_script check-deps.sh "$@"
+    ;;
+  check-build)
+    run_script check-installed-build.sh "$@"
     ;;
   dashboard)
     run_script dashboard.sh "$@"

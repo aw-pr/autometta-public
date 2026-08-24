@@ -321,7 +321,13 @@ if [[ "$mode" == detach ]]; then
   exit 0
 fi
 
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Resolved root, not the self root: the viewer's panes run autometta scripts,
+# and a viewer reporting on a different tree than the tick executes is the
+# split card 42 closed.
+autometta_resolve_root "$(autometta_self_root "$script_dir")"
+autometta_root="$AUTOMETTA_ROOT_RESOLVED"
 autometta_root_q="$(shell_quote "$autometta_root")"
 controller_log_q="$(shell_quote "$controller_home/log")"
 repo_path_q="$(shell_quote "$repo_path")"

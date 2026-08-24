@@ -21,7 +21,11 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root: a smoke test exercises the tree it ships in, never one an env
+# var or the controller config happens to name.
+autometta_root="$(autometta_self_root "$script_dir")"
 default_manifest="$autometta_root/examples/bake-off/manifest.json"
 out_root="$autometta_root/examples/bake-off"
 budget_path="${AUTOMETTA_BAKEOFF_BUDGET_PATH:-$autometta_root/state/bake-off-budget.json}"

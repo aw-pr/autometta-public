@@ -3,7 +3,12 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root, not the resolved root: the plist template and the fallback binary are assets of
+# the tree this script is part of. Which root the installed tick then runs is
+# the plist's own AUTOMETTA_ROOT, an operator decision, not this script's.
+autometta_root="$(autometta_self_root "$script_dir")"
 default_interval=300
 
 usage() {

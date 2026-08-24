@@ -3,10 +3,10 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-default_autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
-config_file="$controller_home/config.yaml"
 
 usage() {
   printf 'Usage: %s <repo-path>\n' "$(basename "$0")" >&2
@@ -53,17 +53,12 @@ budget_file="$state_dir/budget.json"
 gitignore_file="$repo_path/.gitignore"
 manifest_file="$repo_path/.autometta.local.yaml"
 
-autometta_root="$default_autometta_root"
-if [[ -f "$config_file" ]]; then
-  configured_root="$(sed -n 's/^autometta_root:[[:space:]]*//p' "$config_file" | head -n1 || true)"
-  configured_root="${configured_root%\"}"
-  configured_root="${configured_root#\"}"
-  configured_root="${configured_root%\'}"
-  configured_root="${configured_root#\'}"
-  if [[ -n "$configured_root" ]]; then
-    autometta_root="$configured_root"
-  fi
-fi
+# The root recorded in the subscriber file is the tree that will run this
+# repo's dispatches, so it is the resolved root. This script used to carry its
+# own copy of the config-then-self precedence; it now defers to the one rule,
+# which also honours an explicit AUTOMETTA_ROOT.
+autometta_resolve_root "$(autometta_self_root "$script_dir")"
+autometta_root="$AUTOMETTA_ROOT_RESOLVED"
 
 mkdir -p "$state_dir" "$verifiers_dir" "$logs_dir"
 printf 'PASS state dirs ready %s\n' "$state_dir"

@@ -6,8 +6,12 @@ IFS=$'\n\t'
 #
 #   1. every script under scripts/ parses.
 #   2. at most one loaded launchd job runs the fleet tick.
+#   3. the installed Homebrew build and the checkout have not drifted.
 #
-# Exit 0 when all hold, 1 on the first violation.
+# Exit 0 when 1 and 2 hold, 1 on the first violation. Check 3 reports but does
+# not fail: drift between install and checkout is an ordinary operator state,
+# not a broken host, and reinstalling to clear it replaces files a running tick
+# is executing. It is surfaced here so nobody has to remember to ask.
 
 self_path="scripts/$(basename "$0")"
 
@@ -104,4 +108,20 @@ if command -v launchctl >/dev/null 2>&1 && command -v plutil >/dev/null 2>&1; th
   printf 'ok: %s loaded launchd job(s) run the fleet tick\n' "$tick_job_count"
 else
   printf 'skip: launchd tick-job check (launchctl/plutil unavailable)\n'
+fi
+
+# Which autometta runs is decided per invocation (see scripts/resolve-root.sh),
+# so the installed build and the checkout can drift without either looking
+# wrong on its own. Print the verdict on every doctor run.
+build_check="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check-installed-build.sh"
+if [[ -x "$build_check" ]]; then
+  build_report="$("$build_check" 2>&1)" && build_status=0 || build_status=$?
+  case "$build_status" in
+    0) printf 'ok: installed build matches the checkout\n' ;;
+    1) printf 'warn: installed build and checkout have drifted\n' ;;
+    *) printf 'skip: installed-build check (exit %s)\n' "$build_status" ;;
+  esac
+  printf '%s\n' "$build_report" | sed 's/^/  /'
+else
+  printf 'skip: installed-build check (%s not executable)\n' "$build_check"
 fi
