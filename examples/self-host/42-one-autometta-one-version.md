@@ -67,8 +67,10 @@ Do not read anything else unless you need to; keep your context lean.
    the checkout and reports which one the fleet tick will actually run. Exit 0
    when they agree, 1 on drift naming each differing file, 2 when either side
    is missing. Model the reporting on `scripts/autometta-vendor-check.sh`.
-4. `scripts/doctor-platforms.sh` calls it, so an ordinary doctor run surfaces
-   the split.
+4. `scripts/health-check.sh` calls it, so an ordinary doctor run surfaces
+   the split. (Amended 2026-08-24: the original named
+   `scripts/doctor-platforms.sh`, which is an mcp-hub script that does not
+   exist in this repo; `health-check.sh` is this repo's doctor surface.)
 5. `docs/dispatch-contract.md` documents the rule, the precedence, and the
    dirty-checkout exposure.
 
@@ -95,7 +97,8 @@ Do not read anything else unless you need to; keep your context lean.
    naming the file when one is perturbed. Restore anything perturbed.
 4. Its output states unambiguously which root the fleet tick will run, derived
    from the plist environment rather than assumed.
-5. `doctor-platforms.sh` reflects the verdict.
+5. `health-check.sh` reflects the verdict. (Amended 2026-08-24, as
+   deliverable 4.)
 6. `docs/dispatch-contract.md` documents rule, precedence and exposure.
 7. `bash -n` passes on every shell file touched; no file outside the
    deliverables is modified except this card.
@@ -126,3 +129,17 @@ or the live plist was modified.
 ## Family-specific notes
 
 None
+
+## Re-brief for attempt 2 (2026-08-24, after the FAIL on criteria 1, 5 and 7)
+
+Attempt 1's implementation is committed as `5cee168` (branch
+`wip/42-attempt-1`). Criteria 2, 3, 4 and 6 passed; 5 and 7 failed only
+on the wrong-repo path now amended above (`health-check.sh` was the right
+call and is now the named deliverable). Restore the WIP and close the one
+real gap, criterion 1: these entry points still resolve `autometta_root`
+themselves instead of through `scripts/resolve-root.sh` —
+`scripts/attach.sh:321-328`, `scripts/retro-grade.sh:5-6`,
+`scripts/install-launchagent.sh:5-6`, `scripts/dashboard.sh:8-10`,
+`scripts/auth.sh:19` (and grep for any sibling the verifier's list
+missed). Thread each through the one resolver, re-run the smokes, hand
+off.
