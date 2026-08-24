@@ -4,6 +4,19 @@ This is the load-bearing document for Autometta pass 1. It describes the protoco
 
 The contract is family-agnostic. The same shape works for a Claude Code worker, a Codex CLI worker, or any future CLI worker. Where a step is genuinely family-specific, it is called out under a family-specific notes heading rather than hard-coded into the protocol.
 
+## Contract version
+
+**Contract version: 2** (2026-08-24).
+
+A change to the shape of the contract is a versioned decision, so the shape carries a number and a reason. Anything that alters what the roles owe each other, what a stage card must carry, or the set of states a stage can be in, bumps it. Wording, examples and typo fixes do not.
+
+| Version | Date | What changed |
+|---|---|---|
+| 1 | up to 2026-08-23 | The seven steps, contract tests, the pass-2 stage lifecycle with `pending, in_progress, completed, failed, stalled, verifier_failed`. Unnumbered at the time; recorded here as the shape everything before card 43 was written against. |
+| 2 | 2026-08-24 | Adds the terminal `superseded` stage status: a card an operator has decided should not run, which is not a failure. See [Stage statuses](#stage-statuses). |
+
+Version 2 is additive. A `state.yaml` written against version 1 validates and ticks identically under version 2; there is no migration step.
+
 ## Why a contract, and not a framework
 
 Frameworks assume the worker is an in-process LLM call. In Autometta the worker is a CLI subprocess and the state lives on the filesystem. A contract that fits this shape needs to be prose plus templates, not code. Every step below maps to a markdown file you can read, edit, and commit; there is no runtime to install, no DSL to learn, and no service to keep alive.
@@ -206,6 +219,99 @@ The autonomous loop now exists as `phat-controller`. It is still layered on this
 - `state/budget.json`: per-repo budget and halt state.
 - `schemas/`: JSON schemas for the state and budget files.
 - `autometta status` and `autometta attach`: read-only operator views.
+
+### Stage statuses
+
+A stage in `state/state.yaml` carries one of seven statuses. The enum lives in `schemas/state.yaml.json`; this is what each one means to an operator.
+
+| Status | Terminal | Counts as a failure | Meaning |
+|---|---|---|---|
+| `pending` | no | n/a | Queued. The next tick with capacity dispatches the first one in order. |
+| `in_progress` | no | n/a | A worker or verifier owns it. `current_stage` names it. |
+| `completed` | yes | no | The verifier passed it and the orchestrator committed. |
+| `failed` | yes | yes | The dispatch itself failed: no envelope, an invalid envelope, a dead agent. |
+| `stalled` | yes | yes | The stage ran past its wall-clock budget plus grace, or its verifier never produced an artefact within the attempt cap. |
+| `verifier_failed` | yes | yes | The verifier artefact reported `overall: FAIL`. A verdict, not a casualty. |
+| `superseded` | yes | **no** | An operator decided the card should not run. |
+
+`failed` and `stalled` are infrastructure casualties, which is why `tick.sh --repair` puts them back in the queue and `verifier_failed` and `superseded` are left alone: one is a verdict that needs the card re-briefing, the other is a decision that needs no further work at all.
+
+#### `superseded`: a card that should not run, and that is not a failure
+
+`superseded` says the card has been retired. Later work overtook its acceptance criteria, the thing it asked for was deliberately reverted, or the problem stopped existing. It is terminal, and the tick will not move a stage out of it:
+
+- **Never dispatched.** Dispatch selects on `pending` alone, so a superseded stage sitting ahead of a pending one is stepped over.
+- **Never reaped.** A superseded stage that is still `current_stage` is released, not stalled: `current_stage` is cleared, no stall marker is written.
+- **Never counted.** `budget_record_failure` ignores it, so it cannot increment `consecutive_failures` and cannot contribute to a failure-cap halt.
+- **Never alerted on.** It is absent from the alert-worthy set in `scripts/alert-statuses.sh`, which is the one definition every renderer reads.
+- **Not re-queued by accident.** `scripts/requeue-stage.sh` refuses a superseded stage non-zero and names the status; `--force` is required, because re-queueing contradicts a decision someone recorded.
+
+**The reason belongs on the card, not only in the ledger.** The status says a person decided; only the card can say why. A retirement with no recorded reason is indistinguishable next month from a failure someone hid, and the ledger row alone cannot tell those apart.
+
+**Worked example: emergence-lab, 2026-08-23.** Four stages were sitting terminal in that subscriber's ledger and raising an alert on every refresh of every panel:
+
+```
+! 05-math-formula-rendering verifier_failed crit 6
+! 14-fractal-colour-cycle-pacing verifier_failed crit 4
+! 15-boids-density-motion-tuning stalled
+! 16-sandpile-larger-slower failed
+```
+
+Cards 14, 15 and 16 had been overtaken by later work, and 16's own implementation was deliberately reverted ten days after it landed. None of that is failure, but `failed`, `stalled` and `verifier_failed` were the only terminal statuses available, so the ledger recorded three failures that misstate what happened and `consecutive_failures` counted them against the halt cap. Card 05 is the one to be careful with: card 40's disposition table records it as a genuine failure to leave alone, while the operator later counted it among the retired four. One of those is out of date, and which one is a question for the card, answered on the card, before its status changes.
+
+An alert panel showing four decisions the operator has already made is the cry-wolf failure card 41 fixed for the fleet pane in another form. That is what `superseded` is for.
+
+### Retiring a card in a running subscriber
+
+The procedure below is what an operator runs in a subscriber repo whose loop is live. It changes one field, writes one reason, and confirms the alert has gone. Run it from the subscriber's repo root, one stage at a time.
+
+**1. Write the reason on the card first.** Before any status changes, add a retirement note to the stage card (`docs/stages/<stage-id>.md` in most subscribers) and commit it:
+
+```markdown
+## Retired
+
+- **Retired:** 2026-08-24 by <operator>
+- **Reason:** superseded by <what overtook it>, which landed in <commit or card>.
+- **Not a failure:** the acceptance criteria below were overtaken, not missed.
+```
+
+If the ledger and the card disagree about why a stage is terminal, as emergence-lab 05 does, settle that here. A status change made before the reason is written loses the reason.
+
+**2. Stop anything still running for that stage.** If the stage is in flight, its agent and run worktree go first, otherwise the next tick supervises work nobody wants:
+
+```sh
+pkill -F state/active-agents/<pid>.json 2>/dev/null || true   # only if one is live
+scripts/requeue-stage.sh --worktree-only . <stage-id>
+```
+
+**3. Set the status.** One field, via the same yq to jq round-trip the tick uses, so the rest of the file is untouched:
+
+```sh
+tmp="$(mktemp)"
+yq -o=json '.' state/state.yaml | jq --arg id "<stage-id>" '
+  .current_stage = (if .current_stage == $id then null else .current_stage end)
+  | (.stages[] | select(.id == $id)).status = "superseded"' | yq -P '.' > "$tmp"
+mv "$tmp" state/state.yaml
+```
+
+**4. Clear the failure it recorded, if it recorded one.** Retiring a stage that had been counted as a failure is the operator saying that failure is dealt with, exactly as a re-queue is. It does not clear a halt whose spend caps are still blown; that is `autometta tick --reset-halt`'s job and a separate decision:
+
+```sh
+jq '.consecutive_failures = 0' state/budget.json > state/budget.json.tmp
+mv state/budget.json.tmp state/budget.json
+```
+
+**5. Confirm the alert has gone.** The dashboard data is a cache, so refresh it before reading any pane, or the alert appears to persist for another refresh interval:
+
+```sh
+scripts/aggregate-dashboard.sh
+PHAT_CONTROLLER_FLEET_ONCE=true scripts/attach.sh --fleet-ticker | sed -n '/^ALERTS/,$p'
+scripts/agent-ticker.sh . --once | sed -n '/^ALERTS/,/^$/p'
+```
+
+The retired stage should appear in neither. Every other alert should still be there: a pane that went quiet altogether means the filter is wrong, not that the fleet is healthy. `scripts/superseded-status-smoke.sh` asserts both directions offline.
+
+Repeat per stage. Four retirements are four runs of this procedure, four reasons written, and one confirmation at the end.
 
 ### Canonical `halt_reason` values
 

@@ -57,9 +57,11 @@ release_repo_lock() {
 # Every stage sitting in stalled or failed is an infrastructure casualty --
 # an agent that died, an envelope that never arrived, a worktree the sandbox
 # refused to write. Repair puts them back in the queue. It does not touch
-# in_progress (a live worker owns it) or verifier_failed (that is a verdict,
+# in_progress (a live worker owns it), verifier_failed (that is a verdict,
 # not a casualty, and re-running it without re-briefing the card just buys
-# the same FAIL again).
+# the same FAIL again) or superseded (a person decided the card should not
+# run, and repairing it back into the queue would overturn that decision
+# unattended).
 #
 # The per-stage mechanics are requeue-stage.sh's, called rather than copied:
 # a stage reset has to remove the run worktree and branch, kill any live
@@ -1406,6 +1408,23 @@ _process_repo_locked() {
       budget_halt "$repo_root" "invalid-stage-id"
       return 1
     fi
+    # An operator can retire a card while it is the current stage: one whose
+    # worker is still to start, or one retired mid-flight after its agent was
+    # killed. superseded is terminal and is not a failure, so the stage is
+    # released rather than reaped -- current_stage is cleared, no stall marker
+    # is written and consecutive_failures is untouched. Without this the
+    # reaping block below would eventually stall it on wall-clock and record
+    # an infrastructure casualty for a decision a person made.
+    local current_status
+    current_status="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .status // empty')"
+    if [[ "$current_status" == "superseded" ]]; then
+      state_apply_json "$state_yaml" '.current_stage = null'
+      log "stage ${current_stage} is superseded; cleared current_stage without reaping (not a failure)"
+      budget_increment_tick "$repo_root" work
+      commit_state_branch "$repo_root"
+      return 0
+    fi
+
     local started_at worker_pid verifier_pid
     started_at="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .started_at // empty')"
     worker_pid="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .worker_pid // empty')"
@@ -1739,6 +1758,9 @@ _process_repo_locked() {
     fi
   else
     local next_stage
+    # Dispatch selects on pending alone, so a superseded stage sitting ahead
+    # of a pending one is stepped over rather than run. Terminal means
+    # terminal: no path here moves a stage out of superseded.
     next_stage="$(state_json "$state_yaml" | jq -r '.stages[] | select(.status == "pending") | .id' | head -n1)"
     if [[ -n "$next_stage" ]]; then
       tick_kind="work"

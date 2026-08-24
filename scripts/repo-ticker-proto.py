@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import signal
+import subprocess
 import sys
 import time
 from collections import deque
@@ -290,7 +291,17 @@ def read_state_stages(state_path):
     return stages
 
 
-TERMINAL_BAD = ("failed", "verifier_failed", "stalled")
+def _alert_statuses():
+    """The alert-worthy stage statuses, read from the one definition in the
+    tree (scripts/alert-statuses.sh) rather than restated here."""
+    helper = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "alert-statuses.sh")
+    out = subprocess.run(["bash", helper], capture_output=True, text=True,
+                         check=True).stdout
+    return frozenset(json.loads(out))
+
+
+TERMINAL_BAD = _alert_statuses()
 
 
 def collect_alerts(repo, stages):

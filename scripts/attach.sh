@@ -36,6 +36,8 @@ read_field() {
 
 # shellcheck source=./session-slug.sh
 source "$script_dir/session-slug.sh"
+# shellcheck source=./alert-statuses.sh
+source "$script_dir/alert-statuses.sh"
 
 render_fleet_once() {
   local data_path="$controller_home/dashboard/data.json"
@@ -100,17 +102,19 @@ render_fleet_once() {
 
   printf '\nALERTS (fleet union)\n'
   local alert_count
-  alert_count="$(jq '[.repos[] | select(.enabled) |
+  local alert_statuses
+  alert_statuses="$(alert_stage_statuses_json)"
+  alert_count="$(jq --argjson alert_statuses "$alert_statuses" '[.repos[] | select(.enabled) |
     (if .halted then 1 else 0 end),
     (if (.consecutive_failures // 0) > 0 then 1 else 0 end),
     (if ((.queue_depth // 0) == 0 and (.in_flight // 0) == 0) then 1 else 0 end),
-    ([.stages[]? | select(.status == "failed" or .status == "verifier_failed" or .status == "stalled")] | length),
+    ([.stages[]? | select(.status as $s | $alert_statuses | index($s))] | length),
     (.alerts[]? | 1)] | add // 0' "$data_path")"
   if (( alert_count == 0 )); then
     printf '  (none)\n'
   else
     printf '  %-26s %-44s %-18s %s\n' 'repo' 'stage/card' 'kind' 'detail'
-    jq -r '
+    jq -r --argjson alert_statuses "$alert_statuses" '
       def log_stage:
         (.log // "" | split("/")[-1]
          | sub("-(worker|verifier)(\\.attempt-[0-9]+)?\\.log$"; "")) as $id |
@@ -119,7 +123,7 @@ render_fleet_once() {
         (if $r.halted then {repo:$r.name, subject:"repo", kind:"halt", detail:($r.halt_reason // "unknown")} else empty end),
         (if ($r.consecutive_failures // 0) > 0 then {repo:$r.name, subject:"repo", kind:"failures", detail:((($r.consecutive_failures | tostring) + "/" + ($r.consecutive_failure_cap | tostring)))} else empty end),
         (if (($r.queue_depth // 0) == 0 and ($r.in_flight // 0) == 0) then {repo:$r.name, subject:"repo", kind:"queue", detail:"empty"} else empty end),
-        ($r.stages[]? | select(.status == "failed" or .status == "verifier_failed" or .status == "stalled") | {repo:$r.name, subject:.id, kind:"stage", detail:.status}),
+        ($r.stages[]? | select(.status as $s | $alert_statuses | index($s)) | {repo:$r.name, subject:.id, kind:"stage", detail:.status}),
         ($r.alerts[]? | {repo:$r.name, subject:log_stage, kind:"provider-limit", detail:(.line // tostring)})
       ] | sort_by(.repo, .subject, .kind, .detail)[] |
       [.repo, .subject, .kind, .detail] | @tsv' "$data_path" |

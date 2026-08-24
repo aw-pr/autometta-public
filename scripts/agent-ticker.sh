@@ -43,6 +43,11 @@ resolve_list_cards() {
 }
 list_cards_bin="$(resolve_list_cards)"
 
+# The alert-worthy stage statuses have one definition in the tree; the ALERTS
+# panel below reads it rather than spelling the list out again.
+# shellcheck source=./alert-statuses.sh
+source "$script_dir/alert-statuses.sh"
+
 # Strip one layer of surrounding quotes. subscribe-repo.sh writes quoted
 # strings; the subscriber template uses the unquoted form. Accept both, as
 # tick.sh's read_subscriber_field does.
@@ -128,10 +133,11 @@ PY
   pending_count="$(printf '%s' "$cards" | awk -F'\t' '$2 == "pending"' | grep -c . || true)"
   in_flight_count="$(printf '%s' "$cards" | awk -F'\t' '$2 == "in_flight"' | grep -c . || true)"
   enabled="$(subscriber_enabled)"
-  python3 - "$state_path" "$budget_path" "$repo_root" "$pending_count" "$in_flight_count" "$enabled" <<'PY' || true
+  python3 - "$state_path" "$budget_path" "$repo_root" "$pending_count" "$in_flight_count" "$enabled" "$(alert_stage_statuses_json)" <<'PY' || true
 import json, os, sys
 state_path, budget_path, repo_root = sys.argv[1], sys.argv[2], sys.argv[3]
 pending_count, in_flight_count, enabled = int(sys.argv[4]), int(sys.argv[5]), sys.argv[6]
+ALERT_STATUSES = frozenset(json.loads(sys.argv[7]))
 alerts = []
 
 # Empty queue on an enabled subscriber. The controller will tick this repo
@@ -167,13 +173,13 @@ try:
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("- id:"):
-            if current_id and current_status in ("failed", "verifier_failed", "stalled"):
+            if current_id and current_status in ALERT_STATUSES:
                 blocked.append((current_id, current_status))
             current_id = stripped.split(":", 1)[1].strip()
             current_status = None
         elif stripped.startswith("status:") and current_id:
             current_status = stripped.split(":", 1)[1].strip()
-    if current_id and current_status in ("failed", "verifier_failed", "stalled"):
+    if current_id and current_status in ALERT_STATUSES:
         blocked.append((current_id, current_status))
     for sid, st in blocked:
         # If verifier artefact exists, surface the first FAIL criterion
@@ -322,11 +328,15 @@ PY
 
   printf 'RECENT (last 5, max %sd old)\n' "$recent_max_age_days"
   if [[ -d "$recent_dir" ]]; then
-    python3 - "$recent_dir" "$recent_max_age_days" <<'PY' || true
+    python3 - "$recent_dir" "$recent_max_age_days" "$(alert_stage_statuses_json)" <<'PY' || true
 import json, os, sys
 from datetime import datetime, timezone
 d = sys.argv[1]
 max_age_days = float(sys.argv[2])
+# A finished run reads red on the same stage statuses the ALERTS panel treats
+# as alert-worthy, read from the one definition, plus the outcome words only a
+# run has (a stage is never "stuck", a status is never an outcome).
+ALERT_STATUSES = frozenset(json.loads(sys.argv[3]))
 now = datetime.now(timezone.utc)
 def age(ts):
     if not ts:
@@ -357,7 +367,7 @@ if not files:
     print(f"  (none in the last {max_age_days:g}d)")
 else:
     RED, RESET = "\033[31m", "\033[0m"
-    FAIL_OUTCOMES = {"fail", "failed", "verifier_failed", "stalled", "error", "stuck"}
+    FAIL_OUTCOMES = ALERT_STATUSES | {"fail", "error", "stuck"}
     for _, p in files[:5]:
         try:
             with open(p) as fh:

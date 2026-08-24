@@ -23,7 +23,13 @@
 # and reap-worktrees.sh collecting one nobody came back for -- shares this
 # one implementation rather than four copies of the same four git commands.
 #
-# Usage: requeue-stage.sh [--worktree-only] <repo-root> <stage-id>
+# --force is required to re-queue a superseded stage. superseded records an
+# operator's decision that the card should not run, so putting it back in the
+# queue contradicts a decision already made and written down; without --force
+# this script refuses non-zero and names the status. Nothing unattended passes
+# --force: tick.sh --repair never considers a superseded stage.
+#
+# Usage: requeue-stage.sh [--worktree-only] [--force] <repo-root> <stage-id>
 # Example: requeue-stage.sh ~/repos/aegis-guardrails 01-per-call-approval-broker
 set -euo pipefail
 
@@ -36,13 +42,19 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/budget.sh"
 IFS=$' \t\n'
 
-usage() { sed -n '2,27p' "$0"; exit 2; }
+usage() { sed -n '2,33p' "$0"; exit 2; }
 
 worktree_only=false
-if [ "${1:-}" = "--worktree-only" ]; then
-  worktree_only=true
-  shift
-fi
+force=false
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    --worktree-only) worktree_only=true; shift ;;
+    --force) force=true; shift ;;
+    --) shift; break ;;
+    -*) usage ;;
+    *) break ;;
+  esac
+done
 [ $# -eq 2 ] || usage
 repo_root="$(cd "$1" && pwd)"
 stage_id="$2"
@@ -80,6 +92,17 @@ budget_json="$repo_root/state/budget.json"
 yq -o=json '.' "$state_yaml" | jq -e --arg id "$stage_id" \
   '.stages[] | select(.id == $id)' >/dev/null \
   || { echo "requeue: stage '$stage_id' not found in $state_yaml" >&2; exit 1; }
+
+# Refuse to overturn a recorded human decision by accident. A superseded stage
+# was retired on purpose; re-queueing it needs the operator to say so again.
+stage_status="$(yq -o=json '.' "$state_yaml" | jq -r --arg id "$stage_id" \
+  '.stages[] | select(.id == $id) | .status // ""')"
+if [ "$stage_status" = "superseded" ] && [ "$force" = false ]; then
+  echo "requeue: $stage_id is $stage_status, which records a decision that this card should not run." >&2
+  echo "requeue: re-queueing it contradicts that decision. Pass --force if you mean it," >&2
+  echo "requeue: and say on the card why the retirement no longer holds." >&2
+  exit 4
+fi
 
 # Trap 2 (retired 2026-08-14 by worktree-per-run dispatch): a prior attempt
 # leaves worker WIP in its own ephemeral worktree/run branch, not in
