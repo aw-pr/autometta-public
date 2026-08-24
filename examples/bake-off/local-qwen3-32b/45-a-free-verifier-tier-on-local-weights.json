@@ -1,0 +1,52 @@
+{
+  "stage_id": "45-a-free-verifier-tier-on-local-weights",
+  "verifier_identity": "Bake-off candidate: local-qwen3-32b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-32b --stage 45-a-free-verifier-tier-on-local-weights",
+  "ran_at": "2026-08-24T13:55:56Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Local dispatch through --oss --local-provider=ollama with tokens used trailer",
+      "verdict": "PASS",
+      "evidence": "scripts/models.sh:204-215 codex_local_preflight ensures Ollama presence/model availability; probe transcript lines 73-82 confirm 'tokens used' trailer."
+    },
+    {
+      "id": 2,
+      "name": "AUTOMETTA_CODEX_MODE=local overrides api manifest and skips CODEX_HOME check",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh:80-85 env override takes precedence; codex_local_preflight (models.sh:197-215) skips CODEX_HOME checks."
+    },
+    {
+      "id": 3,
+      "name": "Fail closed without dispatch when ollama/model is missing",
+      "verdict": "PASS",
+      "evidence": "scripts/models.sh:197-215 codex_local_preflight explicitly returns 1 when ollama isn't serving or model is absent. No PID file written."
+    },
+    {
+      "id": 4,
+      "name": "Cost log with zero USD and correct identity attribution",
+      "verdict": "PASS",
+      "evidence": "scripts/local-route-smoke.sh:35-72 offline test confirms rate row T5 in scripts/rates.sh:45-47; mcp-hub rules (line 139-144) and agent-whoami (line 140-142) resolve identity as specified."
+    },
+    {
+      "id": 5,
+      "name": "Subscription/api(argv) unchanged from baseline",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh:107-129 existing 'subscription'/'api' mode branches unchanged from previous implementation."
+    },
+    {
+      "id": 6,
+      "name": "Offline smoke scripts pass all checks",
+      "verdict": "PASS",
+      "evidence": "scripts/local-route-smoke.sh:35-72 passes offline; existing smoke suite unaffected; sdk-cache-smoke.sh note documented."
+    },
+    {
+      "id": 7,
+      "name": "bash -n syntax-check passes all scripts",
+      "verdict": "PASS",
+      "evidence": "Modified files: scripts/auth-route.sh, models.sh, local-route-smoke.sh all pass 'bash -n' validation."
+    }
+  ],
+  "additional_findings": "Contract test gate passed: assertions digest matches. The cost-log.jsonl now contains an entry with 14,651 tokens at $0.00 estimate. Identity 'Codex GPT-OSS 120B <codex-gpt-oss-120b@local>' resolved in agent-whoami and commit-trailer construction.",
+  "overall": "PASS"
+}

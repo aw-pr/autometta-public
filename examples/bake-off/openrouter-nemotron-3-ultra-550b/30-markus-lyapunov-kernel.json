@@ -1,0 +1,46 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-ultra-550b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-ultra-550b --stage 30-markus-lyapunov-kernel",
+  "ran_at": "2026-08-24T12:21:46Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "FAIL",
+      "evidence": "The worker only delivered kernel.ts and model.ts. Required deliverables 3-6 (colormap.ts additions, kernel.test.cjs, registry.ts entry, presets.ts entry) are missing from the working tree. Running npm run verify would fail due to missing test file and incomplete implementation."
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs passes with closed-form assertions",
+      "verdict": "FAIL",
+      "evidence": "File src/sims/markus-lyapunov/kernel.test.cjs does not exist in the working tree. The worker did not create this required test file with ln(0.5), ln(2), and sequence-sensitivity assertions."
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke renders recognisable fractal",
+      "verdict": "FAIL",
+      "evidence": "Missing colormap.ts preset, registry entry, and presets.ts entry mean the sim cannot be accessed at /#/markus-lyapunov. The routing/registration plumbing is incomplete."
+    },
+    {
+      "id": 4,
+      "name": "Colour sign split with legible \u03bb=0 boundary",
+      "verdict": "FAIL",
+      "evidence": "No colormap.ts preset 'lyapunov' exists (deliverable 3). The two-channel colour mapping for amber/ice ramps is not implemented. Cannot verify visual rendering without complete integration."
+    },
+    {
+      "id": 5,
+      "name": "Sequence param visibly changes fractal shape",
+      "verdict": "FAIL",
+      "evidence": "Kernel implements sequence parameter correctly (model.ts lines 31-62, kernel.ts lines 41-48, 91-97), but without full integration (criteria 3-4) this cannot be verified in-browser."
+    },
+    {
+      "id": 6,
+      "name": "No files outside deliverable list modified",
+      "verdict": "PASS",
+      "evidence": "Only src/sims/markus-lyapunov/kernel.ts and model.ts exist as new files. No modifications to other repo files detected in the provided artefacts. The worker respected the scope constraint."
+    }
+  ],
+  "additional_findings": "Worker delivered only 2 of 6 required deliverables. The kernel.ts and model.ts implementations appear mathematically correct: model.ts implements the Lyapunov exponent formula \u03bb = (1/n) \u03a3 log|r_k\u00b7(1-2x_k)| with proper warmup/sample split, derivative clamping (MIN_DERIVATIVE=1e-30), and NaN for out-of-bounds (a,b). Kernel.ts implements SimKernel with channelCount=2, proper channel split (stability=max(0,-\u03bb), chaos=max(0,\u03bb)), ceiling=2, sequence enum with 6 options, and rotation animation. However, the critical integration pieces (colormap.ts, test file, registry, presets) are entirely missing. The stage is incomplete and cannot pass verification.",
+  "overall": "FAIL"
+}

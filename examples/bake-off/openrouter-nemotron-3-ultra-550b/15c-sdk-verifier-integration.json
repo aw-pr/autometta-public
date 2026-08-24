@@ -1,0 +1,70 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-ultra-550b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-ultra-550b --stage 15c-sdk-verifier-integration",
+  "ran_at": "2026-08-24T12:16:02Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Default cli transport works and logs correctly",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:129-147 shows resolve_claude_transport() defaults to 'cli' with provenance 'default' when no env var or manifest setting exists. Line 376 logs 'verifier-transport: cli (provenance: default|manifest)' as required. The cli branch at lines 408-413 preserves the existing claude -p route unchanged."
+    },
+    {
+      "id": 2,
+      "name": "SDK transport with subscription mode fails closed",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:361-366 implements fail-closed check: when claude_transport==sdk and auth_pairs doesn't contain ANTHROPIC_API_KEY (subscription mode), it logs 'verifier-transport: fail-closed; verifier.claude.transport=sdk requires auth.claude.mode=api' and exits 1 before any process spawn."
+    },
+    {
+      "id": 3,
+      "name": "SDK transport with api mode invokes verify-sdk.py via op-fetch",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:378-407 shows SDK branch: derives artefact_glob via derive_artefact_glob() at line 380, constructs sdk_out path at line 381, resolves advisor at line 382, and at lines 397-407 invokes 'op-fetch $auth_pairs -- python3 $sdk_script --stage-id $stage_id --card $card_path --artefact-glob $artefact_glob --out $sdk_out --model ...' with stdin redirected from /dev/null."
+    },
+    {
+      "id": 4,
+      "name": "AUTOMETTA_CLAUDE_TRANSPORT=cli env override works",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:134-136 shows env var check takes precedence over manifest. When AUTOMETTA_CLAUDE_TRANSPORT=cli is set, transport='cli' and provenance='env'. Line 376 will log 'verifier-transport: cli (provenance: env)'."
+    },
+    {
+      "id": 5,
+      "name": "Missing verify-sdk.py falls back to cli with warning",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:368-374 checks if sdk_script exists when transport is sdk. If missing, logs 'verifier-transport: warning; $sdk_script not found; falling back to cli', sets claude_transport='cli' and provenance='default', then proceeds to cli branch."
+    },
+    {
+      "id": 6,
+      "name": "register-agent.sh called with same fields for both routes",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:435-436 shows register-agent.sh called after both branches with identical arguments: repo_root, pid, 'verifier', family, verifier_identity, card_path, log_path, budget_secs, work_dir. The call is outside the transport-specific branches."
+    },
+    {
+      "id": 7,
+      "name": "Stage 14 smoke test passes under SDK route with valid artefact",
+      "verdict": "FAIL",
+      "evidence": "Worker did not provide evidence of running stage 14 verifier under SDK route and producing a schema-valid artefact with overall=PASS. No test artefacts or logs shown in deliverables. The stage card requires this smoke test as acceptance criterion #7."
+    },
+    {
+      "id": 8,
+      "name": "No regressions in stages 06-14 (spot-check stage 14)",
+      "verdict": "FAIL",
+      "evidence": "Worker did not provide artefact diffs comparing stage 14 verifier output under both routes. Stage card acceptance #8 requires spot-check by re-running stage 14's verifier under both routes and diffing artefacts; differences must be limited to wording, not overall or per-criterion status. No evidence provided."
+    },
+    {
+      "id": 9,
+      "name": ".autometta.local.yaml.example documents flag, env override, fail-closed",
+      "verdict": "FAIL",
+      "evidence": "File .autometta.local.yaml.example not shown in worker artefacts. Cannot verify it contains the required verifier.claude.transport block with comments explaining the two values, fallback, and operator opt-in step (set auth.claude.mode: api AND verifier.claude.transport: sdk together)."
+    },
+    {
+      "id": 10,
+      "name": "cd-fix at 9e282f3 not reverted",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:238-242 preserves the work_dir parameter and cd \"$work_dir\" at lines 397 and 412 for both SDK and CLI routes. The cd-fix pattern from 9e282f3 (using work_dir for agent CWD while keeping state/logs anchored to repo_root) is maintained."
+    }
+  ],
+  "additional_findings": "Worker deliverables incomplete: missing .autometta.local.yaml.example, memory/decision-sdk-verifier-integration.md, and CLAUDE.md updates. No smoke test evidence for criteria 7 and 8. Contract test gate not applicable (no contract test section in stage card).",
+  "overall": "FAIL"
+}

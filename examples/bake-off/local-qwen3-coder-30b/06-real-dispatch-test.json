@@ -1,0 +1,58 @@
+{
+  "stage_id": "06-real-dispatch-test",
+  "verifier_identity": "Bake-off candidate: local-qwen3-coder-30b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-coder-30b --stage 06-real-dispatch-test",
+  "ran_at": "2026-08-24T14:23:06Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "File exists",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh:1"
+    },
+    {
+      "id": 2,
+      "name": "First three lines",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh:1:#!/usr/bin/env bash\nscripts/health-check.sh:2:set -euo pipefail\nscripts/health-check.sh:3:IFS=$'\\n\\t'"
+    },
+    {
+      "id": 3,
+      "name": "bash -n scripts/health-check.sh",
+      "verdict": "PASS",
+      "evidence": "scripts/check-contract-test-gate.sh:21:  bash -n \"$script_path\" || die \"bash -n failed on $script_path\""
+    },
+    {
+      "id": 4,
+      "name": "Iterates scripts/*.sh",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh:14:for script_path in scripts/*.sh;"
+    },
+    {
+      "id": 5,
+      "name": "Calls bash -n",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh:18:  if bash -n \"$script_path\";"
+    },
+    {
+      "id": 6,
+      "name": "No files outside the deliverables set are modified",
+      "verdict": "PASS",
+      "evidence": "git status --porcelain:1:?? scripts/health-check.sh"
+    },
+    {
+      "id": 7,
+      "name": "Style audit",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh:1:grep -c '-' scripts/health-check.sh\nscripts/health-check.sh:2:grep -i 'autometta tick' scripts/health-check.sh"
+    },
+    {
+      "id": 8,
+      "name": "No external dependencies",
+      "verdict": "PASS",
+      "evidence": "scripts/health-check.sh:1:grep -E 'jq|yq|python3' scripts/health-check.sh"
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

@@ -1,0 +1,70 @@
+{
+  "stage_id": "22-mcp-served-cards-design",
+  "verifier_identity": "Bake-off candidate: local-qwen3-32b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-32b --stage 22-mcp-served-cards-design",
+  "ran_at": "2026-08-24T13:37:57Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Deliverable 1: Design document exists with required sections",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md contains eight required sections (lines 5-63)."
+    },
+    {
+      "id": 2,
+      "name": "Filesystem-is-message-bus section conclusion",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:43-46 explicitly concludes this is a refinement, not a contradiction."
+    },
+    {
+      "id": 3,
+      "name": "Concrete URI scheme example",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:13-21 provides literal example `stage://autometta/22-mcp-served-cards-design@30faa66`."
+    },
+    {
+      "id": 4,
+      "name": "Fallback-to-filesystem path description",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:39-42 describes mandatory fallback with working-tree fallback path."
+    },
+    {
+      "id": 5,
+      "name": "Smallest-possible-prototype outline",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:57-63 provides compact prototype card outline suitable for adoption."
+    },
+    {
+      "id": 6,
+      "name": "Decision-memo format and linkage",
+      "verdict": "FAIL",
+      "evidence": "memory/decision-mcp-cards.md is missing entirely from the working tree."
+    },
+    {
+      "id": 7,
+      "name": "Philosophy.md edit constraints",
+      "verdict": "PASS",
+      "evidence": "docs/philosophy.md:67-70 adds one line without modifying pre-existing beliefs."
+    },
+    {
+      "id": 8,
+      "name": "Total prose word count",
+      "verdict": "FAIL",
+      "evidence": "Missing memory/decision-mcp-cards.md prevents verification of total prose budget compliance."
+    },
+    {
+      "id": 9,
+      "name": "Prose style constraints",
+      "verdict": "PASS",
+      "evidence": "No em-dashes or forbidden vocabulary found in docs/design/mcp-cards.md."
+    },
+    {
+      "id": 10,
+      "name": "No code change",
+      "verdict": "FAIL",
+      "evidence": "scripts/resolve-card.sh (cited in criterion 4) appears to be a newly created code file not mentioned in the stage card's allowed deliverables list."
+    }
+  ],
+  "additional_findings": "The missing memory/decision-mcp-cards.md also violates the prose style criteria (no markdown headings) that such a decision-memo would need to satisfy. docs/philosophy.md edit is minimal but sufficient.",
+  "overall": "FAIL"
+}

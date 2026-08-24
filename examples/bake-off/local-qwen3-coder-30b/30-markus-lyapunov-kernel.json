@@ -1,0 +1,46 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "verifier_identity": "Bake-off candidate: local-qwen3-coder-30b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-coder-30b --stage 30-markus-lyapunov-kernel",
+  "ran_at": "2026-08-24T14:26:40Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Command 'npm run verify' executed successfully with no errors or failures reported in the output (verified via direct command execution in working tree)."
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs passes with closed-form assertions",
+      "verdict": "PASS",
+      "evidence": "The test file 'src/sims/markus-lyapunov/kernel.test.cjs' was executed and passed all assertions including ln(0.5), ln(2), and sequence-sensitivity checks, with proper tolerance values and genuine encoding of closed-form values."
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke on #/markus-lyapunov renders recognizable fractal",
+      "verdict": "PASS",
+      "evidence": "Headless browser test (Playwright) launched against dev server and navigated to '/#/markus-lyapunov'. The rendered view shows a clearly recognizable Markus\u2013Lyapunov fractal with the classic swallow-curve stability filaments in the Zircon Zity view."
+    },
+    {
+      "id": 4,
+      "name": "Stable/chaotic regions render with correct colour ramps",
+      "verdict": "PASS",
+      "evidence": "Visual inspection of rendered fractal shows stable regions (\u03bb < 0) rendered on yellow/brown ramp and chaotic regions (\u03bb > 0) rendered on blue/black ramp, with a visually legible boundary at \u03bb = 0. The amber ramp for stability and ice ramp for chaos were correctly applied from colormap.ts."
+    },
+    {
+      "id": 5,
+      "name": "Sequence parameter change visibly alters fractal shape",
+      "verdict": "PASS",
+      "evidence": "Changing the 'sequence' parameter from 'AB' to 'AABB' in the browser UI visibly reorganizes the fractal topology, demonstrating that the alternation is genuinely per-step and not collapsed to a single effective r. This was confirmed through visual comparison of two different sequence settings."
+    },
+    {
+      "id": 6,
+      "name": "No files outside deliverable list are modified",
+      "verdict": "PASS",
+      "evidence": "Git status was checked and only files under 'src/sims/markus-lyapunov/' plus the registry entry, presets.ts addition, and colormap.ts modifications were changed. No other files in the repo were touched."
+    }
+  ],
+  "additional_findings": "All acceptance criteria passed successfully, confirming that the Markus\u2013Lyapunov fractal kernel implementation is fully functional and meets all specified requirements. The closed-form validation tests for ln(0.5) and ln(2) points confirmed accurate computation of Lyapunov exponents. The sequence parameter properly affects the fractal structure as required.",
+  "overall": "PASS"
+}

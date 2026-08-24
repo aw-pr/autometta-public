@@ -1,0 +1,15 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "candidate": "openrouter-nemotron-3-super-120b",
+  "base_url": "https://openrouter.ai/api/v1",
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "elapsed_seconds": 76.36,
+  "request_count": 1,
+  "prompt_tokens": 15375,
+  "completion_tokens": 8192,
+  "total_tokens": 23567,
+  "parsed_ok": false,
+  "schema_ok": false,
+  "error": "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)",
+  "raw_text_len": 33183
+}

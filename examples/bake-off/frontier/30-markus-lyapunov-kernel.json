@@ -1,0 +1,46 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "verifier_identity": "Claude Fable 5 <claude-fable-5@local>",
+  "verifier_invocation": "Claude Code interactive dispatch (dispatch-contract verifier prompt, round 1 — with orchestrator scope amendment)",
+  "ran_at": "2026-08-02T14:40:00Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Green after the scope-amended presetIndex case (lyapunov=14) and matching GLSL branch: typecheck clean, 274 tests, build 12.5s. The worker's honest fail envelope correctly identified the card's contradiction: a new ColourPreset member cannot typecheck against webglRenderer.ts's exhaustive preset switch, which the card forbade touching."
+    },
+    {
+      "id": 2,
+      "name": "Closed-form Lyapunov assertions genuine and passing",
+      "verdict": "PASS",
+      "evidence": "kernel.test.cjs (31 assertions): lambda(0.5,0.5) within 0.01 of ln(0.5); lambda(4,4) within 0.05 of ln(2); channel split checks -lambda/+lambda against the same closed forms; sequence sensitivity AB vs AABB asserted (worker measured ~0.516 difference at (3.4,3.8))."
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke renders a recognisable Markus-Lyapunov fractal",
+      "verdict": "PASS",
+      "evidence": "Zircon Zity preset: classic swallow-curve stability filaments in amber over dark blue chaotic speckle, 45-47 fps, progressive refinement visible (iter 4 -> 18)."
+    },
+    {
+      "id": 4,
+      "name": "Stable amber / chaotic blue with legible lambda=0 boundary",
+      "verdict": "PASS",
+      "evidence": "Amber ramp on stability channel, ice-on-dark on chaos channel, parchment at both-zero marks the boundary. Note (not a defect): wide viewports extend the horizontal axis past a=4 where orbits diverge and both channels clamp to zero, rendering a hard parchment band at the right edge — recorded on the card as a follow-up candidate."
+    },
+    {
+      "id": 5,
+      "name": "Sequence param visibly changes the fractal's shape",
+      "verdict": "PASS",
+      "evidence": "At the identical Zircon Zity view, switching only sequence AB -> AABB reorganised the topology entirely (swallow curves -> dark basins with bright branching seams). The zoomed AABAB 'Woven boundary' preset renders a further distinct filigree structure."
+    },
+    {
+      "id": 6,
+      "name": "No files outside the deliverable list modified",
+      "verdict": "PASS",
+      "evidence": "Worker diff: src/sims/markus-lyapunov/{model,kernel,kernel.test.cjs}, registry.ts, presets.ts, colormap.ts — all deliverables. Verifier/orchestrator addition: webglRenderer.ts presetIndex case + GLSL branch under the documented scope amendment; committed together as one buildable commit (3a3fe88)."
+    }
+  ],
+  "additional_findings": "The worker's envelope was a model citizen of the contract: full implementation, independent numerical spot-checks, and a precise diagnosis of the card's scope contradiction rather than a silent workaround. Card amended for the record; future fractal-family cards should treat the exhaustive preset switch as an expected touch-point of any new ColourPreset.",
+  "overall": "PASS"
+}

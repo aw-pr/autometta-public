@@ -1,0 +1,15 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "candidate": "openrouter-nemotron-3-ultra-550b",
+  "base_url": "https://openrouter.ai/api/v1",
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "elapsed_seconds": 50.87,
+  "request_count": 1,
+  "prompt_tokens": 15379,
+  "completion_tokens": 2116,
+  "total_tokens": 17495,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 4905
+}

@@ -1,0 +1,64 @@
+{
+  "stage_id": "16-sdk-verifier-prompt-cache",
+  "verifier_identity": "Bake-off candidate: local-gpt-oss-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-gpt-oss-120b --stage 16-sdk-verifier-prompt-cache",
+  "ran_at": "2026-08-24T12:48:25Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "`python3 scripts/verify-sdk.py --help` still works post\u2011change",
+      "verdict": "PASS",
+      "evidence": "scripts/verify-sdk.py:99-103"
+    },
+    {
+      "id": 2,
+      "name": "First run of `scripts/sdk-cache-smoke.sh` (cold cache) logs `cache: write=<N>0` and `read=0`",
+      "verdict": "FAIL",
+      "evidence": "scripts/sdk-cache-smoke.sh not found in repository; cannot observe required log line."
+    },
+    {
+      "id": 3,
+      "name": "Second run within 5\u202fminutes logs `read>0` and the script exits\u202f0",
+      "verdict": "FAIL",
+      "evidence": "scripts/sdk-cache-smoke.sh not found; no execution evidence."
+    },
+    {
+      "id": 4,
+      "name": "Running the smoke test a third time after mutating `templates/verifier-prompt.md` logs `read=0` on the next call",
+      "verdict": "FAIL",
+      "evidence": "scripts/sdk-cache-smoke.sh missing; cache\u2011bust behaviour not demonstrated."
+    },
+    {
+      "id": 5,
+      "name": "The artefact written by both cached and non\u2011cached runs validates against `schemas/verifier.json`",
+      "verdict": "FAIL",
+      "evidence": "No verifier artefact files were produced in the working tree to validate against the schema."
+    },
+    {
+      "id": 6,
+      "name": "The artefact's `overall` value is identical between cached and non\u2011cached runs for stage\u202f14",
+      "verdict": "FAIL",
+      "evidence": "No artefacts for stage\u202f14 exist to compare; therefore the condition cannot be satisfied."
+    },
+    {
+      "id": 7,
+      "name": "`docs/sdk-verifier.md` Prompt caching section names the cache TTL, the cached block contents, and the cache\u2011bust boundary",
+      "verdict": "PASS",
+      "evidence": "docs/sdk-verifier.md:159-170"
+    },
+    {
+      "id": 8,
+      "name": "`memory/decision-sdk-verifier-prompt-cache.md` links to `[[decision-sdk-verifier-integration]]`",
+      "verdict": "FAIL",
+      "evidence": "memory/decision-sdk-verifier-prompt-cache.md not present or does not contain the required wikilink."
+    },
+    {
+      "id": 9,
+      "name": "No files outside the deliverables list are modified",
+      "verdict": "PASS",
+      "evidence": "git diff shows changes only to scripts/verify-sdk.py, docs/sdk-verifier.md, and (if present) the deliverable scripts/sdk\u2011cache\u2011smoke.sh and memory/decision\u2011sdk\u2011verifier\u2011prompt\u2011cache.md, all of which are listed in the Deliverables section."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "FAIL"
+}

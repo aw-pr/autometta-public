@@ -1,0 +1,58 @@
+{
+  "stage_id": "02-fractal-defaults-and-cycling",
+  "verifier_identity": "Claude Sonnet 4.6 <claude-sonnet-4-6@local>",
+  "verifier_invocation": "phat-controller dispatch (verifier pass for stage 02)",
+  "ran_at": "2026-05-26T16:49:24Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Ran `npm run verify` from repo root: 117 tests passed, 0 failed; `tsc --noEmit` clean; `vite build` produced dist/ artefacts successfully."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md unchanged",
+      "verdict": "PASS",
+      "evidence": "`git diff --stat 82dbfd0..HEAD -- docs/INTERFACE.md` returns empty; no modifications since the stage-cards baseline commit."
+    },
+    {
+      "id": 3,
+      "name": "Mandelbrot and Julia paramSchema show palette default \"inferno\"",
+      "verdict": "FAIL",
+      "evidence": "Neither kernel's paramSchema contains a palette key. src/sims/mandelbrot/kernel.ts:64-119 lists only centerX, centerY, zoom, maxIterations, palettePhase, cycleSpeed. src/sims/julia-set/kernel.ts:113-154 likewise has no palette key. Palette default is owned by the renderer in src/app/colormap.ts:138 (`mandelbrot -> preset: \"inferno\"`) and :140 (`julia-set -> preset: \"inferno\"`), not by paramSchema. The criterion as literally written cannot pass given how this codebase models palette defaults."
+    },
+    {
+      "id": 4,
+      "name": "Cycle-speed default exactly doubled in both kernels",
+      "verdict": "PASS",
+      "evidence": "`git show 61c0139` shows DEFAULT_CYCLE_SPEED for mandelbrot 0.01 -> 0.02 (src/sims/mandelbrot/kernel.ts:31) and for julia-set 0.012 -> 0.024 (src/sims/julia-set/kernel.ts:33). Both are exact doublings of the pre-stage values."
+    },
+    {
+      "id": 5,
+      "name": "Cycle-speed schema max >= 5 in both kernels",
+      "verdict": "PASS",
+      "evidence": "src/sims/mandelbrot/kernel.ts:116 has `max: 5`; src/sims/julia-set/kernel.ts:151 has `max: 5`. Both raised from the previous 0.08 in commit 61c0139."
+    },
+    {
+      "id": 6,
+      "name": "Cleared localStorage -> Inferno on first load for /#/mandelbrot and /#/julia-set",
+      "verdict": "PASS",
+      "evidence": "src/app/colormap.ts:138 returns `preset: \"inferno\"` for mandelbrot (changed from \"plasma\" in commit b7c678c); src/app/colormap.ts:140 returns `preset: \"inferno\"` for julia-set (unchanged, was already inferno). defaultColourOptionsFor is the initial-render path; no localStorage gating present in that branch. Browser smoke-test not executed (verifier is headless), but code path is deterministic for the cleared-state case."
+    },
+    {
+      "id": 7,
+      "name": "Per-slider override popover still persists to el:bounds:<slug>:cyclingSpeed",
+      "verdict": "PASS",
+      "evidence": "src/app/persistence.ts:3 retains `const BOUNDS_PREFIX = \"el:bounds\";` and :30-31 build the key as `${BOUNDS_PREFIX}:${slug}:${paramKey}`. cycleSpeed is still the schema key in both mandelbrot (kernel.ts:111) and julia-set (kernel.ts:147), so the override key resolves to `el:bounds:mandelbrot:cycleSpeed` / `el:bounds:julia-set:cycleSpeed`. Mechanism from commit 6259ee5 is untouched."
+    },
+    {
+      "id": 8,
+      "name": "No files outside the deliverables set are modified (except the stage card)",
+      "verdict": "FAIL",
+      "evidence": "Stage deliverables list: the three kernel.ts files and their .test.cjs siblings. `git show b7c678c` modifies src/app/colormap.ts:138, which is listed in the stage card as an *input* (line 26) but not a *deliverable* (lines 37-40). The orchestrator commit message explicitly flags this as a hot-patch made outside the deliverables set. (Other diffs in src/app/controls.ts, renderer.ts, simView.ts, styles.css come from unrelated commit 93db71b for a different stage and are not attributable to stage 02.)"
+    }
+  ],
+  "additional_findings": "Criteria 3 and 8 are in tension with each other given the codebase's architecture: the user-facing 'default palette = Inferno' goal is implementable only by editing src/app/colormap.ts (which is outside the deliverables set), because palette default is not modelled in paramSchema. The orchestrator hot-patch in commit b7c678c lands the user-visible behaviour but technically violates the literal acceptance criteria as written. Burning Ship was intentionally left out of the palette change (commit b7c678c message) but its cycle-speed default was doubled (0.008 -> 0.016) and max raised to 5 in commit 61c0139, consistent with the stage's 'if same controls exist, apply symmetrically' clause.",
+  "overall": "FAIL"
+}

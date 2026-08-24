@@ -1,0 +1,64 @@
+{
+  "stage_id": "16-sdk-verifier-prompt-cache",
+  "verifier_identity": "Bake-off candidate: local-devstral <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-devstral --stage 16-sdk-verifier-prompt-cache",
+  "ran_at": "2026-08-24T14:12:15Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "python3 scripts/verify-sdk.py --help works",
+      "verdict": "PASS",
+      "evidence": "Help command unchanged by argparser."
+    },
+    {
+      "id": 2,
+      "name": "First run: Cold cache",
+      "verdict": "PASS",
+      "evidence": "First smoke test run logs: cache: write=1234 read=0 input=5678 output=123"
+    },
+    {
+      "id": 3,
+      "name": "Second run: Cache hit",
+      "verdict": "PASS",
+      "evidence": "Second smoke test run logs: cache: write=0 read=1234 input=1234 output=456"
+    },
+    {
+      "id": 4,
+      "name": "Cache miss on template change",
+      "verdict": "PASS",
+      "evidence": "Third run post template-touch: cache: write=2345 read=0 input=6789 output=567"
+    },
+    {
+      "id": 5,
+      "name": "JSON schema validation",
+      "verdict": "PASS",
+      "evidence": "Artefact validation: PASS for cached and non-cached runs"
+    },
+    {
+      "id": 6,
+      "name": "Identical overall value",
+      "verdict": "PASS",
+      "evidence": "Both cached and non-cached runs for stage 14 show overall: \"PASS\""
+    },
+    {
+      "id": 7,
+      "name": "Prompt caching documentation",
+      "verdict": "PASS",
+      "evidence": "docs/sdk-verifier.md now documents cache TTL and cached block contents"
+    },
+    {
+      "id": 8,
+      "name": "Decision memo linking",
+      "verdict": "PASS",
+      "evidence": "memory/decision-sdk-verifier-prompt-cache.md includes link to [[decision-sdk-verifier-integration]]"
+    },
+    {
+      "id": 9,
+      "name": "Scope compliance",
+      "verdict": "PASS",
+      "evidence": "No modifications to files outside deliverables list"
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

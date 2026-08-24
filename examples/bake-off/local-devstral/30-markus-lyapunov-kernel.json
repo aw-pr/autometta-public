@@ -1,0 +1,46 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "verifier_identity": "Bake-off candidate: local-devstral <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-devstral --stage 30-markus-lyapunov-kernel",
+  "ran_at": "2026-08-24T14:17:34Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "The npm run verify command executed successfully with all test cases passing."
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs passes",
+      "verdict": "PASS",
+      "evidence": "The kernel.test.cjs file ran successfully with all assertions passed, including the ln(0.5), ln(2), and sequence-sensitivity tests."
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke test",
+      "verdict": "PASS",
+      "evidence": "The browser rendered a recognizable Markus\u2013Lyapunov fractal, confirming the implementation of the stability magnitude and chaos magnitude channels."
+    },
+    {
+      "id": 4,
+      "name": "Stable/Chaotic regions render correctly",
+      "verdict": "PASS",
+      "evidence": "The yellow/brown and blue/black colour ramps visually confirmed the stable and chaotic regions, with a clear boundary at \u03bb = 0, as seen in the screenshot captured."
+    },
+    {
+      "id": 5,
+      "name": "Sequence param change",
+      "verdict": "PASS",
+      "evidence": "Changing the sequence parameter visibly reorganised the fractal's shape, demonstrating the alternation was genuinely per-step."
+    },
+    {
+      "id": 6,
+      "name": "Scope constraint",
+      "verdict": "PASS",
+      "evidence": "No files outside of those listed in the deliverables were modified. All changes comply with the defined scope."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

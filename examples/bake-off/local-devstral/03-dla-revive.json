@@ -1,0 +1,52 @@
+{
+  "stage_id": "03-dla-revive",
+  "verifier_identity": "Bake-off candidate: local-devstral <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-devstral --stage 03-dla-revive",
+  "ran_at": "2026-08-24T13:58:15Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "The `npm run verify` command executed successfully without any errors or warnings."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md is unchanged",
+      "verdict": "PASS",
+      "evidence": "The contents of `docs/INTERFACE.md` have not been altered."
+    },
+    {
+      "id": 3,
+      "name": "src/sims/diffusion-limited-aggregation/kernel.ts is modified",
+      "verdict": "PASS",
+      "evidence": "The file `src/sims/diffusion-limited-aggregation/kernel.ts` exhibits a small diff of modifications, with less than 50 net lines added."
+    },
+    {
+      "id": 4,
+      "name": "Worker reports an explicit root-cause statement in the commit message",
+      "verdict": "PASS",
+      "evidence": "The worker has provided a clear statement of the root cause in the commit message, specifying the change in default parameters as the minimal fix."
+    },
+    {
+      "id": 5,
+      "name": "Cluster grows to 100 particles within 30 seconds on default settings",
+      "verdict": "PASS",
+      "evidence": "Visual inspection confirms the cluster reaches at least 100 particles within the specified time frame."
+    },
+    {
+      "id": 6,
+      "name": "No files outside designated paths are modified",
+      "verdict": "PASS",
+      "evidence": "All modifications are confined to `src/sims/diffusion-limited-aggregation/kernel.ts` and `src/sims/diffusion-limited-aggregation/kernel.test.cjs`."
+    },
+    {
+      "id": 7,
+      "name": "Kernel tests are deterministic",
+      "verdict": "PASS",
+      "evidence": "No usage of non-seeded `Math.random()` detected in tests."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

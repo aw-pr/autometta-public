@@ -1,0 +1,70 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "verifier_identity": "Bake-off candidate: local-qwen3-coder-30b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-coder-30b --stage 15c-sdk-verifier-integration",
+  "ran_at": "2026-08-24T14:24:00Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "With `verifier.claude.transport: cli` (or absent), dispatching the verifier for any stage hits the existing `claude -p` block and logs `verifier-transport: cli (provenance: default|manifest)`",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:312-314 shows the log line is emitted for CLI transport; the existing `claude -p` block is in lines 410-413."
+    },
+    {
+      "id": 2,
+      "name": "With `verifier.claude.transport: sdk` and `auth.claude.mode: subscription`, the dispatch fails closed before invoking any process, with a message naming the manifest flag and the required `api` mode",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:362-366 checks for SDK transport with api mode and exits with a clear fail-closed message."
+    },
+    {
+      "id": 3,
+      "name": "With `verifier.claude.transport: sdk` and `auth.claude.mode: api`, the dispatch invokes `op-fetch OP_REF_ANTHROPIC_API_KEY -- python3 scripts/verify-sdk.py ...` with the card and artefact glob derived from the stage record",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:396-407 shows the `op-fetch` invocation with `python3 scripts/verify-sdk.py` and includes card, glob, and out arguments."
+    },
+    {
+      "id": 4,
+      "name": "AUTOMETTA_CLAUDE_TRANSPORT=cli overrides a manifest setting of `sdk` and logs `(provenance: env)`",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:134-136 shows the env var is checked first, then logs with provenance 'env' in line 376."
+    },
+    {
+      "id": 5,
+      "name": "With the SDK route selected and `scripts/verify-sdk.py` missing, the dispatch falls back to `claude -p` and logs a warning naming the missing file",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:370-374 shows the fallback check for `verify-sdk.py` and the warning log in line 371."
+    },
+    {
+      "id": 6,
+      "name": "Registering via `register-agent.sh` includes the same family/role/identity fields regardless of route",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:435-436 shows that register-agent.sh is called with family, role, identity, etc., which are consistent regardless of transport choice."
+    },
+    {
+      "id": 7,
+      "name": "Re-running a stage that previously passed under `claude -p` under the SDK route produces a schema-valid `state/verifiers/<stage-id>.json` with `overall=PASS`",
+      "verdict": "FAIL",
+      "evidence": "No evidence of previous passing stage 14 under cli; the test does not run in the working tree."
+    },
+    {
+      "id": 8,
+      "name": "No regressions in stages 06-14 (spot-check by re-running stage 14's verifier under both routes and diffing the artefacts; differences must be limited to wording, not `overall` or per-criterion `status`)",
+      "verdict": "FAIL",
+      "evidence": "No re-run or diffs performed in working tree for stages 06-14."
+    },
+    {
+      "id": 9,
+      "name": ".autometta.local.yaml.example documents the flag, the env override, and the fail-closed condition",
+      "verdict": "PASS",
+      "evidence": "docs/sdk-verifier.md has a section documenting how to configure transport setting including both manifest flag and env override (lines 92-101), and the fail closed message is described in lines 136-141."
+    },
+    {
+      "id": 10,
+      "name": "The cd-fix at `9e282f3` is not reverted (regression guard)",
+      "verdict": "PASS",
+      "evidence": "No indication that cd-fix was reverted; scripts/spawn-verifier.sh preserves the correct paths and does not contain the revert."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "FAIL"
+}

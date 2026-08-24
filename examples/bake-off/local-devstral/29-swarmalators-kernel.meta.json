@@ -1,0 +1,15 @@
+{
+  "stage_id": "29-swarmalators-kernel",
+  "candidate": "local-devstral",
+  "base_url": "http://localhost:11434/v1",
+  "model": "devstral:latest",
+  "elapsed_seconds": 191.04,
+  "request_count": 1,
+  "prompt_tokens": 15407,
+  "completion_tokens": 1218,
+  "total_tokens": 16625,
+  "parsed_ok": true,
+  "schema_ok": false,
+  "error": "<root>: Additional properties are not allowed ('evidence', 'id', 'name', 'verdict' were unexpected)",
+  "raw_text_len": 4217
+}

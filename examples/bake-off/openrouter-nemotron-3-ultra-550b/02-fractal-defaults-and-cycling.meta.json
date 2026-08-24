@@ -1,0 +1,15 @@
+{
+  "stage_id": "02-fractal-defaults-and-cycling",
+  "candidate": "openrouter-nemotron-3-ultra-550b",
+  "base_url": "https://openrouter.ai/api/v1",
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "elapsed_seconds": 93.58,
+  "request_count": 1,
+  "prompt_tokens": 15623,
+  "completion_tokens": 3600,
+  "total_tokens": 19223,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 3796
+}

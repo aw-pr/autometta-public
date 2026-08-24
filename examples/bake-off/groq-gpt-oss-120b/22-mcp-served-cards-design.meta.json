@@ -1,0 +1,8 @@
+{
+  "stage_id": "22-mcp-served-cards-design",
+  "candidate": "groq-gpt-oss-120b",
+  "request_count": 0,
+  "parsed_ok": false,
+  "skipped": true,
+  "error": "estimated prompt ~6967 tokens leaves no room under Groq's 8000/min ceiling even at the 768-token completion floor"
+}

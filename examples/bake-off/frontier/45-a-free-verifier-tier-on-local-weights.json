@@ -1,0 +1,52 @@
+{
+  "stage_id": "45-a-free-verifier-tier-on-local-weights",
+  "verifier_identity": "GPT-5.6 Sol <gpt-5-6-sol@local>",
+  "verifier_invocation": "Codex CLI verifier dispatch",
+  "ran_at": "2026-08-24T09:36:41Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Real local verifier dispatch",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:334-357 resolves the codex route and builds the local op-fetch/codex exec argv with --oss, --local-provider=ollama, the central local model, sandbox, prompt, stdin redirect and log redirection. state/logs/45-local-route-demo-verifier.log:4-16 records a real Codex 0.149.1 read-only dispatch using model gpt-oss:120b through provider ollama; state/logs/45-local-route-demo-verifier.log:23-28 records the expected reply and the parser-compatible tokens used / 19,367 trailer. state/cost-log.jsonl:25 confirms that trailer was consumed as 19,367 real tokens."
+    },
+    {
+      "id": 2,
+      "name": "Local override and no sibling CODEX_HOME gate",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh:79-94 gives the environment override precedence over the manifest and preserves subscription as the default; scripts/local-route-smoke.sh:160-171 exercises local overriding an api manifest. scripts/spawn-verifier.sh:318-351 confines the sibling CODEX_HOME gate to a non-empty credential pair and dispatches local without it; scripts/local-route-smoke.sh:261-266 asserts the verifier's local argv and unset CODEX_HOME. Fresh execution of scripts/local-route-smoke.sh passed these assertions."
+    },
+    {
+      "id": 3,
+      "name": "Fail closed before agent launch",
+      "verdict": "PASS",
+      "evidence": "scripts/models.sh:188-215 checks for the ollama binary, a serving ollama list, and the configured pulled model with a specific error before returning failure. scripts/spawn-verifier.sh:344-351 invokes that preflight before the background launch. scripts/local-route-smoke.sh:269-292 asserts that missing ollama or an unpulled model causes no op-fetch launch, no worker_pid/verifier_pid write, and an error naming the missing piece. Fresh execution passed all assertions."
+    },
+    {
+      "id": 4,
+      "name": "Zero-cost ledger and canonical attribution",
+      "verdict": "PASS",
+      "evidence": "state/cost-log.jsonl:25 records the real local verifier as Codex GPT-OSS 120B <codex-gpt-oss-120b@local>, tier T5, auth_route local, input_tokens 19367 and cost_usd_est 0.0. scripts/rates.sh:40-59 maps GPT-OSS explicitly to T5 and scripts/rates.sh:64-73 assigns T5 zero rates. A fresh `agent-whoami --model gpt-oss:120b` returned the canonical identity. scripts/local-route-smoke.sh:338-350 checks that resolver, while scripts/local-route-smoke.sh:352-431 drives the real step-7 artefact processor against a fixture and asserts the exact Autometta-Verifier trailer; the fresh smoke run passed both checks."
+    },
+    {
+      "id": 5,
+      "name": "Existing subscription and api argv unchanged",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-worker.sh:193-208 retains the pre-existing --model branches for api and subscription alongside the new local branch. scripts/local-route-smoke.sh:295-335 builds subscription and api fixture dispatches and asserts --model rather than --oss, unset CODEX_HOME for subscription, and the sibling CODEX_HOME for api. Fresh execution passed every fixture assertion."
+    },
+    {
+      "id": 6,
+      "name": "Offline smoke suite",
+      "verdict": "PASS",
+      "evidence": "scripts/local-route-smoke.sh:434-440 makes any failed assertion non-zero. Fresh execution passed local-route-smoke.sh plus advisor-order-smoke.sh, alerts-table-smoke.sh, budget-cap-smoke.sh, cost-log-smoke.sh, effort-flags-smoke.sh, idle-tick-smoke.sh, state-branch-smoke.sh, state-writable-smoke.sh, ticker-spend-smoke.sh and usage-error-smoke.sh. scripts/sdk-cache-smoke.sh was not run because the card identifies it as requiring live API credentials."
+    },
+    {
+      "id": 7,
+      "name": "Shell syntax",
+      "verdict": "PASS",
+      "evidence": "Fresh `bash -n` checks passed for every touched shell file: scripts/auth-route.sh:1, scripts/auth.sh:1, scripts/cost-log.sh:1, scripts/local-route-smoke.sh:1, scripts/models.sh:1, scripts/rates.sh:1, scripts/spawn-verifier.sh:1 and scripts/spawn-worker.sh:1."
+    }
+  ],
+  "additional_findings": "No Contract test section is present in the stage card, so scripts/check-contract-test-gate.sh was not applicable. `git diff --check` passed. The live Ollama log contains a non-fatal model-metadata refresh warning at state/logs/45-local-route-demo-verifier.log:2, but the dispatch completed through Ollama and emitted the consumed token trailer at lines 27-28.",
+  "overall": "PASS"
+}

@@ -1,0 +1,52 @@
+{
+  "stage_id": "05-math-formula-rendering",
+  "verifier_identity": "Claude Sonnet 4.6 <claude-sonnet-4-6@local>",
+  "verifier_invocation": "phat-controller dispatch as verifier for stage 05-math-formula-rendering",
+  "ran_at": "2026-05-26T18:03:50Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Ran `npm run verify`: typecheck (tsc -p tsconfig.json + tsconfig.test.json) green; kernel tests 118/118 pass; vite production build completes in ~442ms with no errors."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md is unchanged",
+      "verdict": "PASS",
+      "evidence": "`git diff-tree --no-commit-id --name-only -r 8863280` lists only package-lock.json, package.json, src/app/simView.ts, src/app/styles.css; docs/INTERFACE.md not present."
+    },
+    {
+      "id": 3,
+      "name": "No files under src/sims/** are modified",
+      "verdict": "PASS",
+      "evidence": "Commit 8863280 file list contains zero src/sims/** paths; only src/app/simView.ts and src/app/styles.css under src/."
+    },
+    {
+      "id": 4,
+      "name": "katex appears in package.json dependencies",
+      "verdict": "PASS",
+      "evidence": "package.json:15-17 adds a `dependencies` block with `\"katex\": \"^0.16.47\"`; package-lock.json:7-9 mirrors the same entry and resolves katex@0.16.47 with commander@8.3.0."
+    },
+    {
+      "id": 5,
+      "name": "Sim routes render at least one KaTeX formula",
+      "verdict": "PASS",
+      "evidence": "src/app/simView.ts:28-46 defines FORMULAS_BY_SLUG with keys gray-scott, mandelbrot, julia-set, burning-ship, lorenz-attractor; these match the directory names under src/sims/ which are the route slugs. src/app/simView.ts:254-272 renders each formula via katex.render into div.sim-view__formula-line elements, producing `.katex` DOM. Formula content has been cross-checked against the kernels: Gray-Scott (src/sims/gray-scott/kernel.ts:143-203 uses Du, Dv, F, k with the reaction term UV^2 and feed/kill terms matching the printed PDE); Lorenz (src/sims/lorenz-attractor/kernel.ts:207-209 implements `sigma*(y-x)`, `x*(rho-z)-y`, `x*y-beta*z`, identical to the rendered ODEs); Julia (src/sims/julia-set/kernel.ts:182-183 reads `cRe`/`cIm`, matching the labelled c=cRe+i·cIm); Burning Ship (src/sims/burning-ship/kernel.ts:219-225 takes absolute values of real and imag parts before squaring, matching the rendered formula); Mandelbrot is the canonical z_{n+1}=z_n^2+c with escape |z|>2."
+    },
+    {
+      "id": 6,
+      "name": "Production build gzip size impact is reported",
+      "verdict": "FAIL",
+      "evidence": "Commit message at 8863280 (`Render formulas with KaTeX`) contains only a one-line rationale for the inline-lookup choice; it does not quote a before/after gzip delta, and no separate handoff note is committed under state/ or docs/. The criterion requires the impact to be reported. (Measured locally: post-change vite output shows dist/assets/index-*.css at 36.28 kB / gzip 10.05 kB and dist/assets/index-*.js at 326.26 kB / gzip 97.14 kB, plus KaTeX font assets shipped as separate hashed files; this measurement is mine, not the worker's, so the criterion as stated is unmet.)"
+    },
+    {
+      "id": 7,
+      "name": "No files outside the deliverables set are modified",
+      "verdict": "PASS",
+      "evidence": "`git diff-tree --no-commit-id --name-only -r 8863280` returns exactly the four deliverable paths: package.json, package-lock.json, src/app/simView.ts, src/app/styles.css. The stage card itself was not edited (allowed but not required). KaTeX CSS is imported at src/app/styles.css:1 via `@import \"katex/dist/katex.min.css\"`, satisfying deliverable 5 without a new file."
+    }
+  ],
+  "additional_findings": "Formula mathematical content matches kernel semantics in every checked case; symbol names (Du, Dv, F, k, cRe, cIm, sigma, rho, beta) line up with kernel parameter keys, not assumed mathematical conventions. Layout change in src/app/styles.css introduces a new .sim-view__title-block grid and switches .sim-view__header to align-items: flex-start; this is a presentational ripple necessary to host the formula under the title and stays within the deliverable file. Worker chose an inline object literal (FORMULAS_BY_SLUG) over a separate src/app/formulas.ts and justified it in the commit message, satisfying deliverable 4's structural-choice requirement. Only blocking gap is criterion 6: no bundle-size delta is reported in the commit or any committed handoff note.",
+  "overall": "FAIL"
+}

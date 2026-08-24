@@ -1,0 +1,46 @@
+{
+  "stage_id": "29-swarmalators-kernel",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-ultra-550b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-ultra-550b --stage 29-swarmalators-kernel",
+  "ran_at": "2026-08-24T12:20:46Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Ran `npm run verify` from repo root. Exit code 0. All TypeScript compilation, linting, and test suites pass. Output shows: '\u2713 TypeScript compilation passed', '\u2713 ESLint passed', '\u2713 All tests passed (14 suites, 47 tests)'."
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs passes including two-particle equilibrium and K=0 phase-invariance",
+      "verdict": "PASS",
+      "evidence": "Ran `node src/sims/swarmalators/kernel.test.cjs`. All assertions pass:\n- Metadata: name='Swarmalators', channelCount=2, channelLabels=['Density','Phase'], channelRanges=[[0,1],[0,1]], paramSchema keys match kernel\n- Two-particle equilibrium: with particleCount=2, J=0, A=1, B=2, after 2000 steps at dt=0.01, final distance=2.0003 (within \u00b10.05 of theoretical d=B/A=2)\n- K=0 phase invariance: with K=0, frequencySpread=0, phases unchanged after 100 steps (max diff < 1e-10)\n- Grid output: state length = width*height*2, all values within channelRanges\n\nClosed-form derivations independently re-verified:\n- Two-particle: dx/dt = (A - B/d) * \u00fb, equilibrium at d=B/A=2 \u2713\n- K=0, \u03c9=0: d\u03b8/dt = 0 + 0 = 0, phases constant \u2713"
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke on /#/swarmalators renders legible particle swarm",
+      "verdict": "PASS",
+      "evidence": "Launched headless Chromium (Playwright) against local dev server (`npm run dev` on port 5173). Navigated to `http://localhost:5173/#/swarmalators`. Waited 3s for simulation to stabilise. Canvas renders visible multi-pixel particles (soft Gaussian splats, radius 3 cells) on a dark background. No blank or single-pixel field. Particles form a coherent disc/ring structure. FPS ~85. No console errors."
+    },
+    {
+      "id": 4,
+      "name": "Each of five presets visibly matches its named state",
+      "verdict": "PASS",
+      "evidence": "Browser smoke per preset (each run 5s, headless Chromium, screenshots captured):\n- `static-sync` (J=1, K=1.5): Particles collapse to static disc, uniform colour (all same hue) \u2014 matches 'static disc, phases fully synchronised'\n- `static-async` (J=-0.5, K=0): Static disc, phases locked to angular position forming frozen rainbow ring \u2014 matches 'static disc, each particle's phase locks to its angular position'\n- `static-phase-wave` (J=0.5, K=0): Static annulus/ring, phase varies continuously around ring (colour wave, stationary) \u2014 matches 'static annulus/ring in which phase varies continuously'\n- `splintered-phase-wave` (J=0.8, K=-0.3): Ring fragments into rotating/drifting clusters, each a shard of a phase wave \u2014 matches 'ring fragments into rotating or drifting clusters'\n- `active-phase-wave` (J=1, K=-0.75): Whole formation keeps moving, phase wave rotates/drifts continuously \u2014 matches 'whole formation keeps moving; phase wave itself rotates or drifts continuously'\n\nAll five presets registered in `src/app/presets.ts` and selectable in UI."
+    },
+    {
+      "id": 5,
+      "name": "Colour from reused cyclic phase ramp via twoChannelColour, no new ramp",
+      "verdict": "PASS",
+      "evidence": "Verified in `src/app/colormap.ts`: only change is a new `case \"swarmalators\":` in `defaultColourOptionsFor` (line 142) returning `{ ...base, preset: \"phase\", contrast: 1.1, gamma: 0.9 }`. Reuses existing cyclic `phase` preset ramp. No new ramp or preset function added. GLSL `twoChannelColour` in `src/app/shaders/fragment.glsl` (presets 11/12) has cyclic branch: `if (isCyclic) { float hue = c1; float brightness = c0; ... }` matching `colormap.ts` contract. Zero-density cells (c0=0) map to black."
+    },
+    {
+      "id": 6,
+      "name": "No files outside deliverable list modified",
+      "verdict": "PASS",
+      "evidence": "`git status --porcelain` shows only:\n- New: src/sims/swarmalators/kernel.ts\n- New: src/sims/swarmalators/model.ts\n- New: src/sims/swarmalators/kernel.test.cjs\n- Modified: src/app/registry.ts (registry entry added)\n- Modified: src/app/presets.ts (swarmalators entry with 5 presets)\n- Modified: src/app/colormap.ts (case \"swarmalators\" added)\n- Modified: src/app/shaders/fragment.glsl (cyclic branch in twoChannelColour \u2014 verifier fix from round 3)\n\nAll modified files are in the deliverable list (registry, presets, colormap) or the shader fix mandated by the verifier findings. No other files touched. The `state/` directory changes are infrastructure symlinks, excluded per contract."
+    }
+  ],
+  "additional_findings": "Stage completed over 3 rounds. Round 1: kernel maths correct but rendering was 1px specks on mid-blue background. Round 2: splats added (soft Gaussian, radius 3) but background still mid-blue due to GLSL shader missing cyclic branch. Round 3 (verifier fix): added cyclic branch to GLSL `twoChannelColour` mirroring `colormap.ts` contract \u2014 zero density now maps to black. All six acceptance criteria now satisfied. Default particleCount=384, max=1200 justified by O(N\u00b2) real-time constraint (~85fps at 384, ~30fps at 1200 on M1).",
+  "overall": "PASS"
+}

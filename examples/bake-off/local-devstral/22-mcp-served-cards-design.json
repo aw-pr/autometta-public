@@ -1,0 +1,70 @@
+{
+  "stage_id": "22-mcp-served-cards-design",
+  "verifier_identity": "Bake-off candidate: local-devstral <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-devstral --stage 22-mcp-served-cards-design",
+  "ran_at": "2026-08-24T12:07:16Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Design document exists",
+      "verdict": "PASS",
+      "evidence": "File `docs/design/mcp-cards.md` exists with the required sections."
+    },
+    {
+      "id": 2,
+      "name": "Relationship to filesystem-is-the-message-bus",
+      "verdict": "PASS",
+      "evidence": "Section exists and reaches a clear conclusion (lines 45-46): 'This is a refinement, not a contradiction.'"
+    },
+    {
+      "id": 3,
+      "name": "URI scheme is concrete",
+      "verdict": "PASS",
+      "evidence": "URI scheme is clearly defined as `stage://<repo>/<stage-id>@<version>` (line 14)."
+    },
+    {
+      "id": 4,
+      "name": "Fallback-to-filesystem path",
+      "verdict": "PASS",
+      "evidence": "Fallback mechanism is described (lines 39-41), providing clear instruction for `tick.sh` patching."
+    },
+    {
+      "id": 5,
+      "name": "Smallest-possible-prototype card outline",
+      "verdict": "PASS",
+      "evidence": "Prototype card outline is concise and could be used for a future implementation card (lines 57-62)."
+    },
+    {
+      "id": 6,
+      "name": "Decision memo follows format",
+      "verdict": "FAIL",
+      "evidence": "File `memory/decision-mcp-cards.md` does not exist, which is a required deliverable."
+    },
+    {
+      "id": 7,
+      "name": "Philosophy.md edit",
+      "verdict": "PASS",
+      "evidence": "A minimal additive edit is made to `docs/philosophy.md` (lines 51 and following)."
+    },
+    {
+      "id": 8,
+      "name": "Total prose under 1500 words",
+      "verdict": "PASS",
+      "evidence": "Prose documents are within the 1500-word limit."
+    },
+    {
+      "id": 9,
+      "name": "No em dashes; no AI-tell vocabulary",
+      "verdict": "PASS",
+      "evidence": "No em dashes detected; AI-tell vocabulary (delve, leverage, seamless, robust, crucial, pivotal) is not used."
+    },
+    {
+      "id": 10,
+      "name": "No code change",
+      "verdict": "PASS",
+      "evidence": "No changes made to any scripts or bin/autometta components."
+    }
+  ],
+  "additional_findings": "A required deliverable file is missing: `memory/decision-mcp-cards.md`",
+  "overall": "FAIL"
+}
