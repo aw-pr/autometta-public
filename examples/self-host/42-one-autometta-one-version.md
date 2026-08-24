@@ -5,7 +5,7 @@
 - **Authored:** 2026-08-23, rewritten 2026-08-24
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
 - **Worker:** Claude Opus 5 <claude-opus-5@local>
-- **Verifier:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>
 - **Base branch:** dev
 - **Run branch:** autometta/42-one-autometta-one-version
 - **Worker effort:** medium
