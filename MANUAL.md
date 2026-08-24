@@ -259,7 +259,7 @@ shell is stripped rather than silently flipping you to API billing.
 
 ```
 op-refs.sh                                  # committed - placeholder op:// refs
-op-refs.local.sh.example                    # committed - template
+templates/op-refs.local.sh.tpl                    # committed - template
 ~/.config/autometta/op-refs.local.sh        # gitignored - your real op:// refs
 ```
 
@@ -270,7 +270,7 @@ subscribed repo:
 
 ```sh
 mkdir -p ~/.config/autometta
-cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
+cp templates/op-refs.local.sh.tpl ~/.config/autometta/op-refs.local.sh
 chmod 600 ~/.config/autometta/op-refs.local.sh
 # then edit it with the real op:// refs
 ```

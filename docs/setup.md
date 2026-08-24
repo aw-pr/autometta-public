@@ -181,7 +181,7 @@ Every dispatched agent (worker or verifier) runs on its OAuth subscription sessi
 2. Plant the real op:// references at `~/.config/autometta/op-refs.local.sh` (gitignored; machine-wide). Use the template:
    ```sh
    mkdir -p ~/.config/autometta
-   cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
+   cp templates/op-refs.local.sh.tpl ~/.config/autometta/op-refs.local.sh
    chmod 600 ~/.config/autometta/op-refs.local.sh
    ```
 3. **For Codex API mode** — set up a sibling `CODEX_HOME` once. Codex prefers its `auth.json` over the `OPENAI_API_KEY` env var, so an api-mode dispatch needs an isolated codex dir whose `auth.json` says `auth_mode: "apikey"`:
@@ -223,7 +223,7 @@ Local weights are a real step down in capability from a frontier verifier. Prefe
 
 ```
 op-refs.sh                                  # COMMITTED — placeholder refs, sources the override
-op-refs.local.sh.example                    # COMMITTED — template
+templates/op-refs.local.sh.tpl                    # COMMITTED — template
 ~/.config/autometta/op-refs.local.sh        # GITIGNORED — your actual op:// references
 ```
 

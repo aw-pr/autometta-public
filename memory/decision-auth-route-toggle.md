@@ -26,7 +26,7 @@ allowlist plus only the named refs the route requires.
      (`op://YOUR_VAULT/...`); searches for a local override in
      `$AUTOMETTA_LOCAL_REFS`, then `~/.config/autometta/op-refs.local.sh`
      (XDG, recommended), then `<repo-root>/op-refs.local.sh` (dev only).
-   - `op-refs.local.sh.example` — committed template documenting the
+   - `templates/op-refs.local.sh.tpl` — committed template documenting the
      XDG path as canonical.
    - `~/.config/autometta/op-refs.local.sh` — gitignored, mode 0600;
      real op:// references. The XDG location is the one place visible

@@ -243,7 +243,7 @@ Aligned to the `auth-route-security` skill — every launch goes through `op-fet
 
 ```
 op-refs.sh                                  # COMMITTED — placeholder op:// refs
-op-refs.local.sh.example                    # COMMITTED — template
+templates/op-refs.local.sh.tpl                    # COMMITTED — template
 ~/.config/autometta/op-refs.local.sh        # GITIGNORED — your real op:// references
 ```
 
@@ -251,7 +251,7 @@ op-refs.local.sh.example                    # COMMITTED — template
 
 ```sh
 mkdir -p ~/.config/autometta
-cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
+cp templates/op-refs.local.sh.tpl ~/.config/autometta/op-refs.local.sh
 chmod 600 ~/.config/autometta/op-refs.local.sh
 # Then edit ~/.config/autometta/op-refs.local.sh with the real op:// refs.
 ```

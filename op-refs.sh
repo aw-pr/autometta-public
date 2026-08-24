@@ -4,7 +4,7 @@
 #
 # Per the auth-route-security skill: no real op:// string, vault name, or
 # username appears anywhere in this committed file. Operator copies
-# op-refs.local.sh.example -> op-refs.local.sh (gitignored) and replaces
+# templates/op-refs.local.sh.tpl -> op-refs.local.sh (gitignored) and replaces
 # YOUR_VAULT / YOUR_ITEM placeholders with the real values.
 #
 # Wrappers source this file and pass the named refs to op-fetch:

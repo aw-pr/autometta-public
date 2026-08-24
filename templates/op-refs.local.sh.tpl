@@ -9,7 +9,7 @@
 # Set it up once per machine (covers every subscribed repo at once):
 #
 #   mkdir -p ~/.config/autometta
-#   cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
+#   cp templates/op-refs.local.sh.tpl ~/.config/autometta/op-refs.local.sh
 #   chmod 600 ~/.config/autometta/op-refs.local.sh
 #   $EDITOR ~/.config/autometta/op-refs.local.sh   # paste in your op:// refs
 #

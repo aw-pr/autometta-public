@@ -152,7 +152,7 @@ ref_value="${!ref_var:-}"
 if [[ -z "$ref_value" || "$ref_value" == op://YOUR_VAULT/* ]]; then
   printf 'auth-route: %s is unset or unresolved placeholder for family=%s\n' \
     "$ref_var" "$family" >&2
-  printf 'auth-route: copy op-refs.local.sh.example to op-refs.local.sh and set the real ref\n' >&2
+  printf 'auth-route: copy templates/op-refs.local.sh.tpl to op-refs.local.sh and set the real ref\n' >&2
   exit 1
 fi
 
