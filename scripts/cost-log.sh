@@ -53,8 +53,9 @@ auth_route_for_family() {
     mode="$(yq -r ".auth.${family}.mode // \"\"" "$manifest" 2>/dev/null || true)"
   fi
   case "${mode:-subscription}" in
-    api) printf 'api\n' ;;
-    *)   printf 'subscription\n' ;;
+    api)   printf 'api\n' ;;
+    local) printf 'local\n' ;;
+    *)     printf 'subscription\n' ;;
   esac
 }
 

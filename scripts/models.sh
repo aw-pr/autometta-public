@@ -16,6 +16,12 @@ AUTOMETTA_MODEL_FABLE="claude-fable-5"
 # tier, not the model that actually runs. Name the role Sol on new cards or the
 # cost-log bills a T1 run at the T2 rate.
 AUTOMETTA_MODEL_CODEX="gpt-5.6-sol"
+# The codex `local` auth route (auth.codex.mode: local) runs this Ollama model
+# id via `codex exec --oss --local-provider=ollama -m <id>` instead of the API
+# model above. One place to bump when a faster or better-pulled local model
+# becomes the default; see codex_local_preflight below for the ollama checks
+# that gate a dispatch on this id actually being pulled.
+AUTOMETTA_MODEL_CODEX_LOCAL="gpt-oss:120b"
 
 # Both CLIs take the same effort vocabulary, so one card field serves both.
 AUTOMETTA_EFFORT_LEVELS="low medium high xhigh max"
@@ -177,4 +183,33 @@ resolve_codex_sandbox() {
       printf 'workspace-write\n'
       ;;
   esac
+}
+
+# codex_local_preflight: fail closed, before spawning anything, when the
+# codex `local` auth route cannot actually serve the requested Ollama model.
+#
+# A dispatch that only discovers a missing model or a dead server after codex
+# has already negotiated with Ollama burns a worker or verifier attempt on
+# infrastructure rather than on the stage, the same cost the sibling-CODEX_HOME
+# gate exists to avoid for api mode. No daemon management here: this checks
+# and reports, it never runs `ollama serve`.
+#
+# Prints nothing on success (return 0). On failure, prints one line naming the
+# missing piece to stderr and returns 1; the caller must not spawn.
+codex_local_preflight() {
+  local model="$1"
+  if ! command -v ollama >/dev/null 2>&1; then
+    printf 'codex-local: ollama not found on PATH; install it or set auth.codex.mode to subscription/api\n' >&2
+    return 1
+  fi
+  local listing
+  if ! listing="$(ollama list 2>&1)"; then
+    printf 'codex-local: ollama is not serving locally (ollama list failed); start it with '\''ollama serve'\'' before dispatching, not from an autometta spawn script\n' >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$listing" | awk '{print $1}' | grep -qxF "$model"; then
+    printf 'codex-local: model %s is not pulled; run '\''ollama pull %s'\'' before dispatching\n' "$model" "$model" >&2
+    return 1
+  fi
+  return 0
 }

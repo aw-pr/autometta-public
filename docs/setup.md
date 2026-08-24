@@ -171,9 +171,9 @@ The hooks block (a) any commit that contains a personal-pattern string from `.pu
 
 For a deeper introduction or to retrofit a repo that pre-dates this pattern, use the `repo-publish-workflow` skill directly.
 
-## 7. Auth routes (subscription vs API key)
+## 7. Auth routes (subscription vs API key vs local)
 
-Every dispatched agent (worker or verifier) runs on either its OAuth subscription session (Claude Pro / ChatGPT plan) or its API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude). Resolver fallback (no manifest) is `subscription` for both families; the shipped `.autometta.local.yaml.example` recommends `codex: api` + `claude: subscription`. Aligned to the `auth-route-security` skill: every launch goes through `op-fetch`, which exec's the child with `env -i` + an allowlist + named refs only — so no stray API key from your parent shell can accidentally redirect billing.
+Every dispatched agent (worker or verifier) runs on its OAuth subscription session (Claude Pro / ChatGPT plan), its API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude), or, codex family only, local Ollama weights with no provider at all. Resolver fallback (no manifest) is `subscription` for both families; the shipped `.autometta.local.yaml.example` recommends `codex: api` + `claude: subscription`. Aligned to the `auth-route-security` skill: every launch goes through `op-fetch`, which exec's the child with `env -i` + an allowlist + named refs only, so no stray API key from your parent shell can accidentally redirect billing.
 
 ### One-time setup
 
@@ -194,6 +194,31 @@ Every dispatched agent (worker or verifier) runs on either its OAuth subscriptio
    Override the path globally with `AUTOMETTA_CODEX_HOME=/some/other/dir`. Verify with `cat ~/.codex-api-only/auth.json | python3 -m json.tool | head -3` — `auth_mode` must be `"apikey"`. Your main `~/.codex/auth.json` stays untouched.
 4. In the **subscribed repo** (the one whose dispatches you are routing), copy `.autometta.local.yaml.example` to `.autometta.local.yaml` and set the `auth.<family>.mode` per family.
 
+### Local weights (codex family only, `auth.codex.mode: local`)
+
+A third codex route: `codex exec --oss --local-provider=ollama -m <model>` against weights served by a local Ollama install. Zero marginal cost, no rate limits, no provider to exhaust: useful when the week's Codex API budget is gone and cross-family verification (Codex verifying Claude workers) still needs to happen without falling back to same-family verification. It is codex-family only: `auth.claude.mode: local` is refused with a clear message, since a Claude-family local route would be a different CLI and a different piece of work.
+
+One-time host setup:
+
+```sh
+ollama pull gpt-oss:120b   # the default; scripts/models.sh:AUTOMETTA_MODEL_CODEX_LOCAL
+ollama list                # confirm it shows in the NAME column
+```
+
+Then set the mode:
+
+```yaml
+auth:
+  codex:
+    mode: local
+```
+
+or override at dispatch time with `AUTOMETTA_CODEX_MODE=local`. No `OP_REF_*` and no sibling `CODEX_HOME` are needed: the spawn scripts fetch no key for this route (op-fetch still runs, so any stray `OPENAI_API_KEY` in your shell is stripped rather than silently billing the API). If `ollama` is not on `PATH`, is not serving, or the model is not pulled, the spawn fails closed before launching an agent and names the missing piece; autometta never runs `ollama serve` on your behalf.
+
+Local weights are a real step down in capability from a frontier verifier. Prefer this route for stages whose acceptance is mechanical (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria: a FAIL from a weaker verifier still blocks the merge, but a PASS is only as trustworthy as the acceptance commands it actually ran. If the default `gpt-oss:120b` proves too slow per verification (cold model load is on the order of a minute; warm dispatches are faster), `qwen3-coder:30b` is the natural second setting of the same `AUTOMETTA_MODEL_CODEX_LOCAL` knob.
+
+**Investigated but out of scope:** an OpenRouter `:free` route (DeepSeek R1, Qwen3 Coder 480B, a rotating set of roughly two dozen models) is viable as a fallback but not the default. The free tier is 20 requests/minute and 50 requests/day (1,000/day once $10 of credits have ever been bought), an agentic verifier can burn several requests per criterion, and the model list rotates without notice. Codex CLI can reach it as a custom `model_providers` entry with `OPENROUTER_API_KEY` through the existing op-fetch machinery if a future card takes this on. A genuine third CLI family (Gemini CLI's free tier) was also investigated and is further out of scope again: new spawn branch, new log format, new registry/heartbeat family value.
+
 ### Two committed files, one user-config file
 
 ```
@@ -211,9 +236,9 @@ op-refs.local.sh.example                    # COMMITTED — template
 ```yaml
 auth:
   codex:
-    mode: api          # subscription | api
+    mode: api          # subscription | api | local
   claude:
-    mode: subscription
+    mode: subscription  # subscription | api (local is codex-family only)
 ```
 
 Override at dispatch time without editing the manifest:
@@ -235,7 +260,7 @@ autometta auth check claude
 
 ### How it dispatches
 
-`scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` source `op-refs.sh`, ask `scripts/auth-route.sh <family>` for the NAME=ref pair (empty when subscription), then invoke `op-fetch <pairs> -- codex exec ...` / `op-fetch <pairs> -- claude -p ...`. In subscription mode no key is fetched but the child still gets the sanitised env. In api mode a single key is fetched and injected with nothing else from the parent shell.
+`scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` source `op-refs.sh`, ask `scripts/auth-route.sh <family>` for the NAME=ref pair (empty when subscription or codex local), then invoke `op-fetch <pairs> -- codex exec ...` / `op-fetch <pairs> -- claude -p ...`. In subscription mode no key is fetched but the child still gets the sanitised env. In api mode a single key is fetched and injected with nothing else from the parent shell. For codex, the spawn scripts additionally ask `scripts/auth-route.sh codex --print-mode` for the resolved mode word so they can pick the `--oss --local-provider=ollama -m <model>` argv when it resolves `local`.
 
 For **codex in api mode**, the spawn script also exports `CODEX_HOME=$AUTOMETTA_CODEX_HOME` (default `~/.codex-api-only`) and passes it through op-fetch via `--pass CODEX_HOME`. Without that isolation, codex prefers `~/.codex/auth.json` (`auth_mode: "chatgpt"`) and silently bills the subscription regardless of the injected `OPENAI_API_KEY`. The spawn fails closed if the sibling CODEX_HOME is missing or has the wrong `auth_mode`.
 
