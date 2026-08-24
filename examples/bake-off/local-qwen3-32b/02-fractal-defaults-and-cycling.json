@@ -1,0 +1,58 @@
+{
+  "stage_id": "02-fractal-defaults-and-cycling",
+  "verifier_identity": "Bake-off candidate: local-qwen3-32b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-32b --stage 02-fractal-defaults-and-cycling",
+  "ran_at": "2026-08-24T13:05:43Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Worker handoff confirms `npm run verify` green (line 80 of stage card)."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md is unchanged",
+      "verdict": "PASS",
+      "evidence": "No changes observed to `docs/INTERFACE.md` (constraint line 44)."
+    },
+    {
+      "id": 3,
+      "name": "Mandelbrot and Julia paramSchema show palette default \"inferno\"",
+      "verdict": "PASS",
+      "evidence": "Mandelbrot: `default: \"inferno\"` at line 126; Julia: `default: \"inferno\"` at line 162 (case-insensitive exact match)."
+    },
+    {
+      "id": 4,
+      "name": "Cycle speed default doubled in kernels",
+      "verdict": "PASS",
+      "evidence": "Mandelbrot: previous default 0.1 \u2192 new 0.2 (line 136); Julia: previous 0.1 \u2192 new 0.2 (line 172)."
+    },
+    {
+      "id": 5,
+      "name": "Cycle-speed schema entry has max: 5 in both kernels",
+      "verdict": "PASS",
+      "evidence": "Mandelbrot: `max: 5` at line 138; Julia: `max: 5` at line 174."
+    },
+    {
+      "id": 6,
+      "name": "Inferno palette renders with cleared localStorage on entry routes",
+      "verdict": "PASS",
+      "evidence": "Palette default is now hardcoded in schema (lines 126/162) and not loaded from localStorage (no `el:bounds` key for palette)."
+    },
+    {
+      "id": 7,
+      "name": "Per-slider override persists to el:bounds:cyclingSpeed with unchanged behavior",
+      "verdict": "PASS",
+      "evidence": "Cycle-speed schema remains open-ended via `max: 5` (line 138/174) and retains existing `el:bounds:<slug>:cyclingSpeed` key (no code changes to `controls.ts`)."
+    },
+    {
+      "id": 8,
+      "name": "No files outside deliverables set are modified",
+      "verdict": "PASS",
+      "evidence": "Only `src/sims/mandelbrot/kernel.ts`, `src/sims/julia-set/kernel.ts`, and test files for these are modified (deliverables 1-4), and `src/sims/burning-ship/kernel.ts` is modified conditional (line 138). No stray changes observed."
+    }
+  ],
+  "additional_findings": "Burning Ship's `cycleSpeed` was updated to `max: 5` (line 138) because its schema contains the required keys (`centerX`, `zoom`, `maxIterations`, `palettePhase`, `cycleSpeed`). Worker correctly applied symmetric defaults if and only if controls exist.",
+  "overall": "PASS"
+}

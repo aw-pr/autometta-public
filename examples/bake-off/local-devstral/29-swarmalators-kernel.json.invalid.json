@@ -1,0 +1,10 @@
+{
+  "id": 1,
+  "name": "npm run verify passes",
+  "verdict": "PASS",
+  "evidence": "npm run verify output indicates all tests passed",
+  "stage_id": "29-swarmalators-kernel",
+  "verifier_identity": "Bake-off candidate: local-devstral <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-devstral --stage 29-swarmalators-kernel",
+  "ran_at": "2026-08-24T14:15:28Z"
+}

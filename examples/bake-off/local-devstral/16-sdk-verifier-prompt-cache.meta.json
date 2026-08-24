@@ -1,7 +1,15 @@
 {
   "stage_id": "16-sdk-verifier-prompt-cache",
   "candidate": "local-devstral",
+  "base_url": "http://localhost:11434/v1",
+  "model": "devstral:latest",
+  "elapsed_seconds": 210.58,
   "request_count": 1,
-  "parsed_ok": false,
-  "error": "timed out"
+  "prompt_tokens": 13809,
+  "completion_tokens": 1588,
+  "total_tokens": 15397,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 5386
 }

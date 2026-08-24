@@ -1,0 +1,15 @@
+{
+  "stage_id": "03-dla-revive",
+  "candidate": "local-qwen3-32b",
+  "base_url": "http://localhost:11434/v1",
+  "model": "qwen3:32b",
+  "elapsed_seconds": 301.12,
+  "request_count": 1,
+  "prompt_tokens": 10309,
+  "completion_tokens": 1929,
+  "total_tokens": 12238,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 2868
+}

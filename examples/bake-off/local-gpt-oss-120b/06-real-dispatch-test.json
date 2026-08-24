@@ -1,0 +1,58 @@
+{
+  "stage_id": "06-real-dispatch-test",
+  "verifier_identity": "Bake-off candidate: local-gpt-oss-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-gpt-oss-120b --stage 06-real-dispatch-test",
+  "ran_at": "2026-08-24T12:44:54Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "File exists and non-empty",
+      "verdict": "PASS",
+      "evidence": "File scripts/health-check.sh exists with content (lines 1-107)."
+    },
+    {
+      "id": 2,
+      "name": "First three lines exact",
+      "verdict": "PASS",
+      "evidence": "Lines 1-3 of scripts/health-check.sh are exactly '#!/usr/bin/env bash', 'set -euo pipefail', \"IFS=$'\\n\\t'\"."
+    },
+    {
+      "id": 3,
+      "name": "`bash -n` syntax check",
+      "verdict": "PASS",
+      "evidence": "Command `bash -n scripts/health-check.sh` exited with status 0 (no syntax errors)."
+    },
+    {
+      "id": 4,
+      "name": "Iterates scripts/*.sh",
+      "verdict": "PASS",
+      "evidence": "Line 14 contains `for script_path in scripts/*.sh; do` showing iteration."
+    },
+    {
+      "id": 5,
+      "name": "Calls `bash -n` in body",
+      "verdict": "PASS",
+      "evidence": "Line 18 contains `if bash -n \"$script_path\"; then`."
+    },
+    {
+      "id": 6,
+      "name": "No extra files modified",
+      "verdict": "PASS",
+      "evidence": "Git status shows only scripts/health-check.sh added; no other paths outside deliverables changed."
+    },
+    {
+      "id": 7,
+      "name": "Style audit (no hyphens, no banned words)",
+      "verdict": "PASS",
+      "evidence": "Running `grep -c '-' scripts/health-check.sh` returns 0; `grep -iE 'delve|tapestry|robust|streamline|crucial|...'` returns 0."
+    },
+    {
+      "id": 8,
+      "name": "No external dependencies",
+      "verdict": "PASS",
+      "evidence": "`grep -E 'jq|yq|python3' scripts/health-check.sh` returns no matches."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

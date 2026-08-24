@@ -1,7 +1,15 @@
 {
   "stage_id": "15c-sdk-verifier-integration",
   "candidate": "local-devstral",
+  "base_url": "http://localhost:11434/v1",
+  "model": "devstral:latest",
+  "elapsed_seconds": 245.84,
   "request_count": 1,
-  "parsed_ok": false,
-  "error": "timed out"
+  "prompt_tokens": 15320,
+  "completion_tokens": 1859,
+  "total_tokens": 17179,
+  "parsed_ok": true,
+  "schema_ok": false,
+  "error": "criteria.0.verdict: 'PASS|FAIL' is not one of ['PASS', 'FAIL']",
+  "raw_text_len": 7812
 }

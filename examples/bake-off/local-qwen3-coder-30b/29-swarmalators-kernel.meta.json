@@ -1,15 +1,15 @@
 {
-  "stage_id": "15c-sdk-verifier-integration",
+  "stage_id": "29-swarmalators-kernel",
   "candidate": "local-qwen3-coder-30b",
   "base_url": "http://localhost:11434/v1",
   "model": "qwen3-coder:30b",
-  "elapsed_seconds": 51.55,
+  "elapsed_seconds": 46.6,
   "request_count": 1,
-  "prompt_tokens": 14678,
-  "completion_tokens": 1234,
-  "total_tokens": 15912,
+  "prompt_tokens": 14870,
+  "completion_tokens": 831,
+  "total_tokens": 15701,
   "parsed_ok": true,
   "schema_ok": true,
   "error": "",
-  "raw_text_len": 4319
+  "raw_text_len": 3255
 }

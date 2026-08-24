@@ -1,0 +1,15 @@
+{
+  "stage_id": "06-real-dispatch-test",
+  "candidate": "local-qwen3-32b",
+  "base_url": "http://localhost:11434/v1",
+  "model": "qwen3:32b",
+  "elapsed_seconds": 156.32,
+  "request_count": 1,
+  "prompt_tokens": 5628,
+  "completion_tokens": 1230,
+  "total_tokens": 6858,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 2129
+}

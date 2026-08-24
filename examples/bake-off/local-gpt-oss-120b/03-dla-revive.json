@@ -1,0 +1,52 @@
+{
+  "stage_id": "03-dla-revive",
+  "verifier_identity": "Bake-off candidate: local-gpt-oss-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-gpt-oss-120b --stage 03-dla-revive",
+  "ran_at": "2026-08-24T12:42:04Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "FAIL",
+      "evidence": "No evidence of a successful `npm run verify` execution in the working tree; no CI logs or test runner output are present."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md unchanged",
+      "verdict": "PASS",
+      "evidence": "`git diff --name-only` does not list `docs/INTERFACE.md`; the file was not modified."
+    },
+    {
+      "id": 3,
+      "name": "kernel.ts modified with small diff",
+      "verdict": "PASS",
+      "evidence": "File `src/sims/diffusion-limited-aggregation/kernel.ts` shows changed default constants (e.g., line 29 `DEFAULT_WALKERS_PER_STEP = 64;` previously 96, line 30 `DEFAULT_MAX_WALK_STEPS = 400;` previously 256, line 31 `DEFAULT_SPAWN_RADIUS = 0.05;` previously 0.48). No net line additions; only value changes."
+    },
+    {
+      "id": 4,
+      "name": "Root\u2011cause statement in commit message and handoff",
+      "verdict": "FAIL",
+      "evidence": "The commit message is not available in the working tree and the verifier handoff section (lines 70\u201175 of the stage card) contains no root\u2011cause description."
+    },
+    {
+      "id": 5,
+      "name": "Cluster reaches \u2265100 particles within 30\u202fs",
+      "verdict": "FAIL",
+      "evidence": "No instrumentation output, log, or visual verification evidence is present in the repository indicating particle count after 30\u202fseconds."
+    },
+    {
+      "id": 6,
+      "name": "No files outside allowed paths modified",
+      "verdict": "PASS",
+      "evidence": "`git diff --name-only` lists only `src/sims/diffusion-limited-aggregation/kernel.ts`; no other paths outside the allowed set were changed."
+    },
+    {
+      "id": 7,
+      "name": "Kernel tests remain deterministic",
+      "verdict": "PASS",
+      "evidence": "`src/sims/diffusion-limited-aggregation/kernel.test.cjs` is unchanged and contains no unseeded `Math.random()` usage; deterministic behavior is preserved."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "FAIL"
+}

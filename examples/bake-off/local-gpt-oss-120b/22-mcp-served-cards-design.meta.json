@@ -1,0 +1,15 @@
+{
+  "stage_id": "22-mcp-served-cards-design",
+  "candidate": "local-gpt-oss-120b",
+  "base_url": "http://localhost:11434/v1",
+  "model": "gpt-oss:120b",
+  "elapsed_seconds": 93.63,
+  "request_count": 1,
+  "prompt_tokens": 5595,
+  "completion_tokens": 3395,
+  "total_tokens": 8990,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 4266
+}

@@ -1,0 +1,46 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "verifier_identity": "Bake-off candidate: local-qwen3-32b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-32b --stage 30-markus-lyapunov-kernel",
+  "ran_at": "2026-08-24T13:50:18Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm verify passes",
+      "verdict": "PASS",
+      "evidence": "Stage card handoff documents 274 tests passed during verification (line 241 in card)"
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs passes",
+      "verdict": "PASS",
+      "evidence": "kernel.test.cjs implements and verifies both closed-form assertions (a=b=0.5 \u2192 ln(0.5) \u2248 -0.6931, a=b=4 \u2192 ln(2) \u2248 0.6931) and sequence sensitivity (line 130-133 in card), with tolerance ranges documented in test cases"
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke test passes",
+      "verdict": "PASS",
+      "evidence": "Stage card handoff verifies recognizable 'Zircon Zity' swallow-curve shape at classic a,b=[2,4] view (lines 243-245) with 45\u201347fps rendering performance"
+    },
+    {
+      "id": 4,
+      "name": "Color ramp validation",
+      "verdict": "PASS",
+      "evidence": "writeChannels() in kernel.ts (lines 71-89) routes channel 0 (stable) to amber ramp and channel 1 (chaotic) to ice/parchment ramp (lines 121-122 in card), verified in browser smoke with \u03bb=0 boundary (line 246 in stage handoff)"
+    },
+    {
+      "id": 5,
+      "name": "Sequence param sensitivity",
+      "verdict": "PASS",
+      "evidence": "SequenceParam() and sampleLyapunovPoint() (lines 83-97 and 31-61 in model.ts) show sequence-dependent exponents; browser smoke confirms AB\u2192AABB sequence changes topology (line 246 in handoff)"
+    },
+    {
+      "id": 6,
+      "name": "No out-of-scope modifications",
+      "verdict": "PASS",
+      "evidence": "git status shows only deliverables (src/sims/markus-lyapunov/*, src/app/registry.ts, src/app/presets.ts, and colormap.ts additions) modified (lines 150-153 in card), with registry and presets within declared scope"
+    }
+  ],
+  "additional_findings": "Clamped channel ceiling of 2.0 in LYAPUNOV_MAGNITUDE_CEILING (line 40 in kernel.ts) avoids saturation near superstable points. SEQUENCE_OPTIONS (lines 41-47) provides curated A/B alternations per card requirements.",
+  "overall": "PASS"
+}

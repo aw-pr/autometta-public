@@ -1,0 +1,70 @@
+{
+  "stage_id": "22-mcp-served-cards-design",
+  "verifier_identity": "Bake-off candidate: local-qwen3-coder-30b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-coder-30b --stage 22-mcp-served-cards-design",
+  "ran_at": "2026-08-24T14:25:10Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "docs/design/mcp-cards.md exists with the eight required sections",
+      "verdict": "PASS",
+      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:1"
+    },
+    {
+      "id": 2,
+      "name": "The 'Relationship to filesystem-is-the-message-bus' section is at least one paragraph and reaches an explicit conclusion",
+      "verdict": "PASS",
+      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:43"
+    },
+    {
+      "id": 3,
+      "name": "The URI scheme is concrete (literal example given)",
+      "verdict": "PASS",
+      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:13"
+    },
+    {
+      "id": 4,
+      "name": "The fallback-to-filesystem path is described well enough that tick.sh could be patched against the design without further specification",
+      "verdict": "PASS",
+      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:34"
+    },
+    {
+      "id": 5,
+      "name": "The 'Smallest-possible-prototype card outline' fits on one page and could be lifted into a future implementation card",
+      "verdict": "PASS",
+      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:55"
+    },
+    {
+      "id": 6,
+      "name": "memory/decision-mcp-cards.md follows the decision-memo format and links to [[decision-sweep-stage]]",
+      "verdict": "FAIL",
+      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/memory/decision-mcp-cards.md:1"
+    },
+    {
+      "id": 7,
+      "name": "docs/philosophy.md edit is at most three lines and is additive",
+      "verdict": "PASS",
+      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/philosophy.md:1"
+    },
+    {
+      "id": 8,
+      "name": "Total prose under 1500 words",
+      "verdict": "PASS",
+      "evidence": "Word count of docs/design/mcp-cards.md is 1256; memory/decision-mcp-cards.md is 249"
+    },
+    {
+      "id": 9,
+      "name": "No em dashes; no delve, leverage, seamless, robust, crucial, pivotal",
+      "verdict": "PASS",
+      "evidence": "No instances of forbidden terms found in docs/design/mcp-cards.md or memory/decision-mcp-cards.md"
+    },
+    {
+      "id": 10,
+      "name": "No code change. Every script, schema, and bin/autometta is byte-identical",
+      "verdict": "PASS",
+      "evidence": "git diff shows no changes to scripts, schemas, or binaries beyond the added files"
+    }
+  ],
+  "additional_findings": "The file memory/decision-mcp-cards.md was created but does not follow the expected decision memo format. It was missing required section headers and the link to [[decision-sweep-stage]] which is referenced in the card's acceptance criteria. The content appears to be a draft rather than a finalized decision memo.",
+  "overall": "FAIL"
+}

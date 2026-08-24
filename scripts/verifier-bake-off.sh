@@ -44,6 +44,14 @@ GROQ_DAILY_TOKEN_CAP="${AUTOMETTA_BAKEOFF_GROQ_DAILY_TOKEN_CAP:-200000}"
 OPENROUTER_MIN_INTERVAL_SECONDS="${AUTOMETTA_BAKEOFF_OPENROUTER_INTERVAL_SECONDS:-3}"
 GROQ_MIN_INTERVAL_SECONDS="${AUTOMETTA_BAKEOFF_GROQ_INTERVAL_SECONDS:-65}"
 
+# Local candidates are free and wall-clock-only constrained (no request or
+# token caps), but the caller's own default (180s) was tuned for cloud
+# providers and cut off larger local stage cards mid-generation — devstral
+# and qwen3-coder:30b both timed out on the 05/15c/16 stages at 180s despite
+# succeeding at 120-130s on smaller ones. Local runs get a longer budget;
+# cloud candidates keep the caller's 180s default (not overridden here).
+LOCAL_TIMEOUT_SECONDS="${AUTOMETTA_BAKEOFF_LOCAL_TIMEOUT_SECONDS:-420}"
+
 log_msg() { printf '%s\n' "$1" >&2; }
 
 # Candidate table: name|provider|base_url|model|api_key_env
@@ -203,19 +211,24 @@ run_one() {
     api_pairs=("${api_key_env}=${ref}")
   fi
 
+  local timeout_args=()
+  if [[ "$provider" == "local" ]]; then
+    timeout_args=(--timeout-seconds "$LOCAL_TIMEOUT_SECONDS")
+  fi
+
   local exit_code=0
   if [[ ${#api_pairs[@]} -gt 0 ]]; then
     op-fetch "${api_pairs[@]}" -- python3 "$caller" \
       --stage-id "$stage_id" --card "$repo/$card" --repo-root "$repo" \
       --artefact-glob "$deliverables" --out "$out" --meta-out "$meta_out" \
       --candidate "$candidate" --provider "$provider" --base-url "$base_url" --model "$model" \
-      --api-key-env "$api_key_env" || exit_code=$?
+      --api-key-env "$api_key_env" ${timeout_args[@]:+"${timeout_args[@]}"} || exit_code=$?
   else
     python3 "$caller" \
       --stage-id "$stage_id" --card "$repo/$card" --repo-root "$repo" \
       --artefact-glob "$deliverables" --out "$out" --meta-out "$meta_out" \
       --candidate "$candidate" --provider "$provider" --base-url "$base_url" --model "$model" \
-      --api-key-env "" || exit_code=$?
+      --api-key-env "" ${timeout_args[@]:+"${timeout_args[@]}"} || exit_code=$?
   fi
 
   if [[ "$provider" != "local" ]]; then

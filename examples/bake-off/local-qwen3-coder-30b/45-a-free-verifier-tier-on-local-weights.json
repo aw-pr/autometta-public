@@ -1,0 +1,52 @@
+{
+  "stage_id": "45-a-free-verifier-tier-on-local-weights",
+  "verifier_identity": "Bake-off candidate: local-qwen3-coder-30b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-coder-30b --stage 45-a-free-verifier-tier-on-local-weights",
+  "ran_at": "2026-08-24T14:27:21Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "local manifest mode dispatches through --oss --local-provider=ollama",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh:122-127, scripts/spawn-verifier.sh:43, scripts/spawn-worker.sh:44"
+    },
+    {
+      "id": 2,
+      "name": "env override beats manifest mode",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh:80-83, scripts/spawn-verifier.sh:25, scripts/spawn-worker.sh:26"
+    },
+    {
+      "id": 3,
+      "name": "missing ollama or model fails closed before spawn",
+      "verdict": "PASS",
+      "evidence": "scripts/models.sh:199-214, scripts/spawn-verifier.sh:48-56, scripts/spawn-worker.sh:54-60"
+    },
+    {
+      "id": 4,
+      "name": "cost log entry has real tokens, zero cost, and new identity",
+      "verdict": "PASS",
+      "evidence": "state/cost-log.jsonl:25, scripts/agent-whoami:14"
+    },
+    {
+      "id": 5,
+      "name": "subscription/api mode builds same argv as before",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:38-43, scripts/spawn-worker.sh:39-44"
+    },
+    {
+      "id": 6,
+      "name": "local-route-smoke.sh passes offline",
+      "verdict": "PASS",
+      "evidence": "scripts/local-route-smoke.sh:102, scripts/local-route-smoke.sh:108, scripts/local-route-smoke.sh:119"
+    },
+    {
+      "id": 7,
+      "name": "bash -n on all touched shell files",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh:1, scripts/spawn-verifier.sh:1, scripts/spawn-worker.sh:1, scripts/models.sh:1, scripts/local-route-smoke.sh:1"
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}
