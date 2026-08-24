@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://autometta.local/schemas/budget.json",
-  "title": "phat-controller per-repo budget file",
+  "title": "Autometta per-repo budget file",
   "description": "Per-repo failure budget for the autometta pass-2 autonomous loop. Stored at state/budget.json in the repo it governs. Read on every tick; any cap exhaustion halts the loop for this repo without retry. Per memory/decision-failure-budget-clock-tick.md, the clock-tick count is the primary safety; token and wall-clock caps are secondary belt-and-braces.",
   "type": "object",
   "additionalProperties": false,
@@ -124,7 +124,7 @@
     },
     "halt_logged_at": {
       "type": ["integer", "null"],
-      "description": "Unix epoch seconds of the last time tick.sh emitted the 'reason already recorded' log line for the current halt_reason. Used to dedupe the halt-log spam, at most once per PHAT_CONTROLLER_HALT_LOG_INTERVAL seconds (default 3600). Cleared by budget_halt so a fresh halt always logs immediately."
+      "description": "Unix epoch seconds of the last time tick.sh emitted the 'reason already recorded' log line for the current halt_reason. Used to dedupe the halt-log spam, at most once per AUTOMETTA_HALT_LOG_INTERVAL seconds (default 3600). Cleared by budget_halt so a fresh halt always logs immediately."
     },
     "halt_logged_reason": {
       "type": ["string", "null"],
@@ -132,7 +132,7 @@
     },
     "dash_active_at": {
       "type": ["integer", "null"],
-      "description": "Unix epoch seconds of the last tick where current_stage was non-null. Stamped by tick.sh's ensure_tmux_viewer, read by its idle-dash reaper to decide whether an autometta-<slug> tmux session has been idle (no in-flight stage) for more than PHAT_CONTROLLER_DASH_IDLE_HOURS (default 24). last_tick_at and tick_count advance on every tick regardless of dispatch, so state.yaml's own mtime is not a usable idle signal; this field is written only when a stage is genuinely in flight."
+      "description": "Unix epoch seconds of the last tick where current_stage was non-null. Stamped by tick.sh's ensure_tmux_viewer, read by its idle-dash reaper to decide whether an autometta-<slug> tmux session has been idle (no in-flight stage) for more than AUTOMETTA_DASH_IDLE_HOURS (default 24). last_tick_at and tick_count advance on every tick regardless of dispatch, so state.yaml's own mtime is not a usable idle signal; this field is written only when a stage is genuinely in flight."
     },
     "paused_until": {
       "type": ["integer", "null"],

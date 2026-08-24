@@ -8,14 +8,14 @@ description: >-
   warden pass", or wants an interactive session to babysit a running
   Autometta loop the way an orchestrator did by hand on 2026-08-24. Loads
   the same mandate manifest and the same closed action list
-  scripts/warden.sh uses, so a human-driven session and the scheduled pass
+  scripts/phat-controller.sh uses, so a human-driven session and the scheduled pass
   operate under one contract.
 ---
 
 # Minding the Autometta queue
 
-This skill is the interactive twin of `scripts/warden.sh`
-(`autometta warden`, `docs/phat-controller.md` section (k)). Same mandate,
+This skill is the interactive twin of `scripts/phat-controller.sh`
+(`autometta phat-controller`, `docs/tick-loop.md` section (k)). Same mandate,
 same closed action list. The difference is who is deciding: the scheduled
 pass acts alone inside the list; this skill runs inside a conversation with
 the operator, who can authorise going beyond it.
@@ -23,10 +23,10 @@ the operator, who can authorise going beyond it.
 ## Load the mandate first
 
 ```sh
-autometta warden --print-mandate
+autometta phat-controller --print-mandate
 ```
 
-This prints the resolved mandate from `$PHAT_CONTROLLER_HOME/warden-mandate.yaml`
+This prints the resolved mandate from `$AUTOMETTA_HOME/warden-mandate.yaml`
 (copied from `templates/warden-mandate.yaml.tpl` on first run if no operator
 copy exists). Read the escalation thresholds, the `repos` allow-list (empty
 means every enabled subscriber), the reporting voice, and use that voice for
@@ -72,7 +72,7 @@ whatever you report back in this session.
    wording is ambiguous, say so and ask rather than guessing.
 
 **Nothing else is in scope for this skill's unattended judgement.** The list
-above is fixed at `scripts/warden.sh` and is not extended by this skill or
+above is fixed at `scripts/phat-controller.sh` and is not extended by this skill or
 by the mandate. You may exceed it only with the operator explicitly saying
 so in this conversation -- the scheduled pass never can, and this session
 should not either without that explicit go-ahead. State when you are about

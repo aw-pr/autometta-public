@@ -28,7 +28,7 @@ and initiative does not enumerate.
 
 After this card the role is an agent seeded at configure time with a
 persona, a mandate and the repo facts it would otherwise rediscover. It
-decides. What remains of `scripts/warden.sh` is the set of verbs it calls.
+decides. What remains of `scripts/phat-controller.sh` is the set of verbs it calls.
 
 The design is committed at `docs/proposals/orchestrator-role-review.md` and
 is the specification for this card. Read it first. Where this card and the
@@ -43,8 +43,8 @@ What goes is the decision layer on top.
 
 - `docs/proposals/orchestrator-role-review.md`, the specification.
 - `examples/self-host/54-a-warden-pass-minds-the-queue.md` and everything it
-  landed: `scripts/warden.sh`, `scripts/warden-smoke.sh`,
-  `templates/warden-prompt.md`, `templates/warden-mandate.yaml.tpl`,
+  landed: `scripts/phat-controller.sh`, `scripts/warden-smoke.sh`,
+  `templates/phat-controller-prompt.md`, `templates/warden-mandate.yaml.tpl`,
   `skills/autometta-warden/SKILL.md`, the two LaunchAgent scripts.
 - `examples/self-host/56-phat-controller-is-the-minder-not-the-loop.md`, the
   rename this card depends on.
@@ -69,7 +69,7 @@ What goes is the decision layer on top.
 3. **One skill, two callers.** `skills/autometta-warden/` renamed and
    rescoped so a headless pass and an interactive session load the same
    source of truth rather than two descriptions that drift.
-4. **The verbs.** `scripts/warden.sh` reduced to callable operations with
+4. **The verbs.** `scripts/phat-controller.sh` reduced to callable operations with
    the scan-and-choose-remediation loop removed. Preserving stranded work
    to a wip branch, requeueing, detecting a stale halt, merging an awaiting
    integration and running the smokes all stay and stay tested.
@@ -107,7 +107,7 @@ What goes is the decision layer on top.
    committed default.
 3. Running setup with no answer supplied does not silently choose a spend
    authority. Show what it does instead.
-4. `scripts/warden.sh` no longer selects a remediation. Show that the verbs
+4. `scripts/phat-controller.sh` no longer selects a remediation. Show that the verbs
    remain individually callable and that the smoke still exercises them.
 5. A stalled stage fixture, worker exited with no envelope, ends with the
    work preserved on a wip branch, the marker recorded, and the stage

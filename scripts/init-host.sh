@@ -7,7 +7,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/resolve-root.sh"
 # Self root, not the resolved root: this acts on the tree it is part of.
 autometta_root="$(autometta_self_root "$script_dir")"
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+if [[ -z "${AUTOMETTA_HOME:-}" && -z "${PHAT_CONTROLLER_HOME:-}" \
+      && -e "$HOME/.phat-controller" && ! -e "$HOME/.autometta" ]]; then
+  mv "$HOME/.phat-controller" "$HOME/.autometta"
+  ln -s .autometta "$HOME/.phat-controller"
+  printf 'PASS home migrated %s -> %s (compatibility symlink retained)\n' \
+    "$HOME/.phat-controller" "$HOME/.autometta"
+fi
+controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
 log_dir="$controller_home/log"
 config_file="$controller_home/config.yaml"

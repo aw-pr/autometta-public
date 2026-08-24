@@ -56,10 +56,10 @@ Patterns are adopted, not invented. Autometta stands on:
 
 ## Decisions banked before pass 2
 
-These were the open questions when pass 1 shipped. Each has been resolved and recorded in `memory/`; the resolutions shape the phat-controller layer.
+These were the open questions when pass 1 shipped. Each has been resolved and recorded in `memory/`; the resolutions shape the tick-loop layer.
 
-- **Name of the autonomous-loop layer.** "Mayor" is a Gas Town term. We picked our own: `phat-controller`. See [`memory/decision-loop-name-phat-controller.md`](../memory/decision-loop-name-phat-controller.md).
-- **Single-tenant vs multi-project.** One cron tick services multiple project repos via a filesystem-based subscriber registry in `~/.phat-controller/subscribers/`. See [`memory/decision-single-tick-multi-repo-subscribe.md`](../memory/decision-single-tick-multi-repo-subscribe.md).
+- **Name of the autonomous-loop layer.** It is the tick loop. The former name is now reserved for the queue-minding role.
+- **Single-tenant vs multi-project.** One cron tick services multiple project repos via a filesystem-based subscriber registry in `~/.autometta/subscribers/`. See [`memory/decision-single-tick-multi-repo-subscribe.md`](../memory/decision-single-tick-multi-repo-subscribe.md).
 - **Identity drift.** `agent-whoami` resolves the current model at dispatch time; the orchestrator skill maintains the cross-family tier mapping. Stage cards record the model that was current when authored, and the loop respects that. See [`memory/decision-identity-via-orchestrator-skill.md`](../memory/decision-identity-via-orchestrator-skill.md).
 - **Verifier handoff format.** Pass 28's `result.json -> result.worker.json` rename is gone. Verifier output lands at `state/verifiers/<stage-id>.json`. See [`memory/decision-verifier-handoff-naming.md`](../memory/decision-verifier-handoff-naming.md).
 - **Failure budget.** The primary safety is a clock-tick count per repo, complemented by a token cap and a consecutive-failure cap in `state/budget.json`. See [`memory/decision-failure-budget-clock-tick.md`](../memory/decision-failure-budget-clock-tick.md).

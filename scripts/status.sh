@@ -2,7 +2,10 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
 controller_log_dir="$controller_home/log"
 status_width="${AUTOMETTA_TICKER_COLUMNS:-${COLUMNS:-$(tput cols 2>/dev/null || printf 120)}}"
@@ -190,7 +193,7 @@ main() {
     exit 1
   fi
 
-  printf 'phat-controller home: %s\n' "$controller_home"
+  printf 'autometta home: %s\n' "$controller_home"
   if [[ -d "$controller_log_dir" ]]; then
     local latest_log candidate
     latest_log=""

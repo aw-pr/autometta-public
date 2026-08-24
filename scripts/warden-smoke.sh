@@ -14,10 +14,10 @@ fixture="$(mktemp -d)"
 trap 'chmod -R u+w "$fixture" 2>/dev/null || true; rm -rf "$fixture"' EXIT
 export PHAT_CONTROLLER_HOME="$fixture/controller"
 mkdir -p "$PHAT_CONTROLLER_HOME/log" "$PHAT_CONTROLLER_HOME/subscribers"
-# warden.sh resolves its controller paths while it is sourced (same as
+# phat-controller.sh resolves its controller paths while it is sourced (same as
 # tick.sh), so the fixture root must be exported first.
-# shellcheck source=./warden.sh
-source "$script_dir/warden.sh"
+# shellcheck source=./phat-controller.sh
+source "$script_dir/phat-controller.sh"
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 assert_eq() {
@@ -204,17 +204,17 @@ assert_eq true "$(jq -r '.halted' "$r2c/state/budget.json")" "escalation halts t
 assert_eq warden-escalation "$(jq -r '.halt_reason' "$r2c/state/budget.json")" "halt reason names the warden"
 printf 'PASS twice-without-progress produced an operator escalation, not a third attempt\n'
 
-printf '== triage spend advances the hard-stop budget and carries role warden in the cost log ==\n'
+printf '== triage spend advances the hard-stop budget and carries role phat-controller in the cost log ==\n'
 rcl="$(make_repo rcl)"
 : > "$rcl/state/logs/warden-cost-log-fixture.log"
 printf 'Total tokens: 4200\n' >> "$rcl/state/logs/warden-cost-log-fixture.log"
 warden_record_triage_spend "$rcl" "72-cost-log-fixture" "Claude Sonnet 5 <claude-sonnet-5@local>" \
   "$rcl/state/logs/warden-cost-log-fixture.log" 0 5 pass
 cost_line="$(tail -n1 "$rcl/state/cost-log.jsonl")"
-assert_eq warden "$(printf '%s' "$cost_line" | jq -r '.role')" "cost-log role for the warden's triage dispatch"
+assert_eq phat-controller "$(printf '%s' "$cost_line" | jq -r '.role')" "cost-log role for the phat-controller triage dispatch"
 assert_eq 72-cost-log-fixture "$(printf '%s' "$cost_line" | jq -r '.stage_id')" "cost-log stage_id"
 assert_eq 4200 "$(jq -r '.tokens_spent' "$rcl/state/budget.json")" "warden tokens charged to the hard-stop budget"
-printf 'PASS warden triage spend is budgeted and itemised with role=warden\n'
+printf 'PASS phat-controller triage spend is budgeted and itemised with role=phat-controller\n'
 
 printf '== bounded triage dispatch honours either agent family ==\n'
 rfd="$(make_repo rfd)"

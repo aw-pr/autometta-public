@@ -14,14 +14,18 @@ State and memory that agents need across sessions live **in the repo**, not in a
 
 ## What this repo is
 
-Autometta is a **pattern library**, not a runtime. Pre-alpha. The repo contains prose (`README.md`, `docs/`), markdown templates, the `agent-orchestrator` and `autometta-setup` skills, a shared `memory/` store, and the bash scaffolding for the phat-controller loop (`scripts/`, `schemas/`, `state/`). There is no build, no test suite, and no package manifest - do not invent one.
+Autometta is a **pattern library**, not a runtime. Pre-alpha. The repo contains prose (`README.md`, `docs/`), markdown templates, the `agent-orchestrator` and `autometta-setup` skills, a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build, no test suite, and no package manifest - do not invent one.
 
 The repo extracts patterns from two prior projects (`fractals-from-the-90s` dispatch contract; `agentic-rag-kimble` pass 28-29 autonomous loop) and packages them for solo single-machine multi-agent CLI work. See `README.md` for the pitch and `docs/philosophy.md` for the long-form scope.
 
 ## Two layers, shipped in two passes
 
 1. **Dispatch contract (pass 1 - shipped):** the contract between an orchestrator and one worker for one unit of work. Stage card -> worker prompt -> sandbox boundary -> acceptance command -> verifier handoff. Human drives the orchestrator session. Deliverables live in `docs/` and `templates/`.
-2. **Autonomous loop / `phat-controller` (pass 2 - shipped):** cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, exits. Budget file is the only safety. The loop layer **sits on top of** the dispatch contract - never modify the loop in ways that bypass it. Runtime in `scripts/`, schemas in `schemas/`, per-repo state in `state/`. See `docs/phat-controller.md` for the design and `docs/setup.md` for the operator flow.
+2. **Autonomous tick loop (pass 2 - shipped):** cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, exits. Budget file is the only safety. The loop layer **sits on top of** the dispatch contract - never modify the loop in ways that bypass it. Runtime in `scripts/`, schemas in `schemas/`, per-repo state in `state/`. See `docs/tick-loop.md` for the design and `docs/setup.md` for the operator flow.
+
+The operational roles are the human or interactive orchestrator, the worker,
+the verifier, and **phat-controller**, the scheduled queue minder. The tick
+loop is the mechanism phat-controller supervises, not an agent role.
 
 Pass 2 also ships **agent observability**: a per-agent liveness registry at `state/active-agents/<pid>.json`, a heartbeat watchdog at `scripts/heartbeat.sh` that surfaces stalls / over-budget conditions to `state/heartbeat.json`, a tmux agent ticker in the third pane of the `autometta-<repo>` viewer (`scripts/agent-ticker.sh`), and a polling primitive (`scripts/watch-agent.sh`) that any orchestrator-led manual dispatch can block on to catch silent agent deaths. See `docs/observability.md`. Spend is instrumented separately: `tick.sh` appends one cost-log line per dispatched role to `state/cost-log.jsonl` (per-tier `cost_usd_est` from `scripts/rates.sh`, `cached_input_tokens` vs `input_tokens`, `cache_hit_rate`). Schema and the prompt-caching notes are in `docs/cost-log.md`.
 
@@ -98,7 +102,7 @@ The brew tap is rendered at install time; `brew update` alone is not enough. Re-
 
 ## Manual orchestrator dispatch pattern
 
-When an orchestrator session dispatches a worker or verifier directly (not via `phat-controller` cron), the canonical pattern is:
+When an orchestrator session dispatches a worker or verifier directly (not via the tick loop), the canonical pattern is:
 
 ```sh
 # Source the op:// reference table (autometta repo root)

@@ -91,13 +91,13 @@ Do not read anything else unless you need to; keep your context lean.
 
 ## Deliverables
 
-1. `scripts/warden.sh` — one pass: gather the triage picture
+1. `scripts/phat-controller.sh` — one pass: gather the triage picture
    mechanically (state, budget, verifier artefacts, integration records,
    tick log tail), decide whether any of the four remediations applies,
    and either do the mechanical ones (2, 3, 4 are deterministic given
    the picture) directly or dispatch one bounded agent for the judgement
    one (1), via the existing spawn machinery, families and auth routes.
-2. `templates/warden-prompt.md` — the checklist prompt for remediation
+2. `templates/phat-controller-prompt.md` — the checklist prompt for remediation
    1: triage taxonomy (work defect, card defect, harness artefact,
    provider refusal), the re-brief format used on cards 43 to 45, the
    PROPOSED-AMENDMENT rule, and the hard bound of one remediation per
@@ -106,10 +106,10 @@ Do not read anything else unless you need to; keep your context lean.
    non-terminal and does nothing when the ledger is quiet; wire it per
    the chosen surface with the same AbandonProcessGroup care as the
    tick.
-4. Budget: warden agent dispatches respect `state/budget.json` like any
-   role, appear in the cost log as role `warden`, and the warden makes
+4. Budget: phat-controller agent dispatches respect `state/budget.json` like any
+   role, appear in the cost log as role `phat-controller`, and the role makes
    at most one agent dispatch per pass.
-5. `docs/phat-controller.md` and `docs/dispatch-contract.md` — the role
+5. `docs/tick-loop.md` and `docs/dispatch-contract.md` — the role
    documented: what it may do (the list above verbatim), what it must
    surface instead of doing.
 6. Offline smoke: fixtures for each remediation and for at least three

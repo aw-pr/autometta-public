@@ -2,6 +2,10 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+budget_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./resolve-root.sh
+source "$budget_script_dir/resolve-root.sh"
+
 json_check() {
   python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$1"
 }
@@ -41,7 +45,7 @@ budget_write_atomic() {
 # optional, and the cap that actually binds is resolved in this order, first
 # hit wins:
 #
-#   1. an active drain      $PHAT_CONTROLLER_HOME/drain.json, while unexpired
+#   1. an active drain      $AUTOMETTA_HOME/drain.json, while unexpired
 #   2. the repo's own cap   state/budget.json .token_cap_total, when present
 #   3. the host default     token_cap_total: in the controller config.yaml
 #   4. the floor            $AUTOMETTA_TOKEN_CAP_FLOOR
@@ -68,7 +72,7 @@ AUTOMETTA_DRAIN_LIFT_CAP="${AUTOMETTA_DRAIN_LIFT_CAP:-1000000000}"
 AUTOMETTA_DRAIN_MAX_SECONDS="${AUTOMETTA_DRAIN_MAX_SECONDS:-43200}"
 
 budget_controller_home() {
-  printf '%s' "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+  autometta_controller_home
 }
 
 budget_drain_file() {
@@ -347,7 +351,7 @@ budget_spend_caps_blown() {
 # to be emitted every time, forever. A whole month of ~/.phat-controller/log
 # can be one repeated sentence, which buries every line that was worth
 # reading. Returns 0 (log it) the first time a given reason is seen, on any
-# change of reason, and again once PHAT_CONTROLLER_HALT_LOG_INTERVAL seconds
+# change of reason, and again once AUTOMETTA_HALT_LOG_INTERVAL seconds
 # (default 3600) have elapsed since the last emission for that same reason.
 # Returns 1 to suppress. Stamps halt_logged_at/halt_logged_reason on every
 # rc-0 return.
@@ -361,7 +365,8 @@ budget_should_log_halt() {
   budget_path="$(budget_file "$repo_root")"
   [[ -f "$budget_path" ]] || return 0
 
-  local interval="${PHAT_CONTROLLER_HALT_LOG_INTERVAL:-3600}"
+  # Deprecated for one release: PHAT_CONTROLLER_HALT_LOG_INTERVAL.
+  local interval="${AUTOMETTA_HALT_LOG_INTERVAL:-${PHAT_CONTROLLER_HALT_LOG_INTERVAL:-3600}}"
   local last_epoch last_reason now_epoch
   last_epoch="$(jq -r '.halt_logged_at // empty' "$budget_path")"
   last_reason="$(jq -r '.halt_logged_reason // empty' "$budget_path")"

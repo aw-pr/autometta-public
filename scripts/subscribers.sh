@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # The subscriber registry: one reader, one ordering rule.
 #
-# Source this file; do not execute it. ~/.phat-controller/subscribers holds one
+# Source this file; do not execute it. ~/.autometta/subscribers holds one
 # YAML file per subscribed repo, plus a template.yaml that is an example and
 # never a subscriber, plus any number of <slug>.yaml.disabled entries for repos
 # that have been retired without being forgotten. Anything that walks the fleet
 # -- the tick, a fleet-wide refresh -- reads it through these functions so the
 # same file means the same thing to all of them.
 
+subscribers_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./resolve-root.sh
+source "$subscribers_script_dir/resolve-root.sh"
+
 autometta_subscribers_dir() {
-  printf '%s' "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers"
+  printf '%s/subscribers' "$(autometta_controller_home)"
 }
 
 read_subscriber_field() {

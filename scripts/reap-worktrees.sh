@@ -120,7 +120,7 @@ consider() {
   # repo_root, as card 29's dispatch makes it, whose shadowed tracked files
   # git reports as deleted. A real state directory is ordinary content, and
   # excluding it wholesale hid modified tracked files from this check and let
-  # the worktree be reaped with them in it. docs/phat-controller.md promises
+  # the worktree be reaped with them in it. docs/tick-loop.md promises
   # only the symlink is forgiven, so forgive only the symlink.
   local -a dirt_pathspec=( . )
   if [[ -L "$work_dir/state" ]]; then

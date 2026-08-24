@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install the warden's own LaunchAgent, on a separate schedule from the
 # tick's (templates/launchagent.plist.tpl / scripts/install-launchagent.sh).
-# Same AbandonProcessGroup care, but one fleet-wide label. warden.sh already
+# Same AbandonProcessGroup care, but one fleet-wide label. phat-controller.sh already
 # walks every enabled subscriber, so installing one job per repo would run the
 # same fleet pass several times concurrently.
 set -euo pipefail
@@ -11,7 +11,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=resolve-root.sh
 . "$script_dir/resolve-root.sh"
 autometta_root="$(autometta_self_root "$script_dir")"
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+controller_home="$(autometta_controller_home)"
 mandate_path="${AUTOMETTA_WARDEN_MANDATE:-$controller_home/warden-mandate.yaml}"
 mandate_template="$autometta_root/templates/warden-mandate.yaml.tpl"
 default_interval=900
@@ -133,7 +133,8 @@ mkdir -p "$HOME/Library/LaunchAgents" "$log_dir"
 plist_file="$HOME/Library/LaunchAgents/${label}.plist"
 path_value="${AUTOMETTA_LAUNCHAGENT_PATH:-$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 
-replace_placeholder REPO_PATH "$repo_path" < "$repo_template" \
+replace_placeholder AUTOMETTA_HOME "$controller_home" < "$repo_template" \
+  | replace_placeholder REPO_PATH "$controller_home" \
   | replace_placeholder LABEL "$label" \
   | replace_placeholder INTERVAL_SECONDS "$interval" \
   | replace_placeholder AUTOMETTA_BIN "$autometta_bin" \

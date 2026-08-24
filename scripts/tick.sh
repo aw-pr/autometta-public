@@ -18,7 +18,7 @@ source "$script_dir/resolve-root.sh"
 # shellcheck source=./vendor-set.sh
 source "$script_dir/vendor-set.sh"
 
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
 controller_log_dir="$controller_home/log"
 
@@ -76,7 +76,7 @@ release_repo_lock() {
 # would drift, and the drift would only show up as a tick dispatching a
 # verifier at unfixed code.
 #
-# repair_attempts caps the loop at PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP
+# repair_attempts caps the loop at AUTOMETTA_REPAIR_ATTEMPT_CAP
 # (default 2). A stage that stalls twice after repair is not an
 # infrastructure casualty; it stays down for a human, and the field is the
 # audit trail that says how many goes it had.
@@ -86,7 +86,8 @@ repair_mode() {
     exit 1
   fi
 
-  local attempt_cap="${PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP:-2}"
+  # Deprecated for one release: PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP.
+  local attempt_cap="${AUTOMETTA_REPAIR_ATTEMPT_CAP:-${PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP:-2}}"
   local requeue_script="$script_dir/requeue-stage.sh"
   if [[ ! -x "$requeue_script" ]]; then
     log "repair: ${requeue_script} missing or not executable, aborting"
@@ -616,13 +617,12 @@ validate_stage_id() {
 }
 
 # The loop's own snapshot ref. A branch rather than a private ref namespace
-# because docs/phat-controller.md has named it phat-controller/state since
-# pass 2 was designed and operators look for it there. Loop-owned: never
+# because the tick loop owns its snapshots. Loop-owned: never
 # checked out, never pushed, and no operator ever commits on it.
-state_snapshot_ref="refs/heads/phat-controller/state"
+state_snapshot_ref="refs/heads/autometta/state"
 
 # commit_state_branch: snapshot the loop's state files onto
-# phat-controller/state without touching repo_root's HEAD, index or working
+# autometta/state without touching repo_root's HEAD, index or working
 # tree.
 #
 # Why plumbing rather than a checkout. The previous implementation ran
@@ -697,7 +697,7 @@ commit_state_branch() {
     body="captured: $(IFS=' '; printf '%s' "${captured[*]:-nothing}")"
     local -a commit_argv=( commit-tree "$tree" )
     [[ -n "$parent" ]] && commit_argv+=( -p "$parent" )
-    commit_argv+=( -m "phat-controller: tick state update" -m "$body" )
+    commit_argv+=( -m "autometta: tick state update" -m "$body" )
     # Author is the agent identity when the helper resolves it, per the
     # global attribution rules; committer stays whatever git is configured
     # with. A missing helper is not worth failing a tick over, so the
@@ -1329,7 +1329,7 @@ ensure_tmux_viewer() {
 # reap_idle_dash_sessions: kill autometta-<slug> tmux sessions that no
 # longer earn a live viewer — the repo is disabled, unsubscribed entirely,
 # or has had no current_stage (per dash_active_at) for more than
-# PHAT_CONTROLLER_DASH_IDLE_HOURS (default 24). An attached operator
+# AUTOMETTA_DASH_IDLE_HOURS (default 24). An attached operator
 # always wins: tmux list-clients non-empty skips the session regardless of
 # the repo's state, exactly like ensure_tmux_viewer skips spawning one for
 # an idle repo.
@@ -1337,7 +1337,8 @@ reap_idle_dash_sessions() {
   if ! command -v tmux >/dev/null 2>&1; then
     return 0
   fi
-  local idle_seconds=$(( ${PHAT_CONTROLLER_DASH_IDLE_HOURS:-24} * 3600 ))
+  # Deprecated for one release: PHAT_CONTROLLER_DASH_IDLE_HOURS.
+  local idle_seconds=$(( ${AUTOMETTA_DASH_IDLE_HOURS:-${PHAT_CONTROLLER_DASH_IDLE_HOURS:-24}} * 3600 ))
   local now_epoch
   now_epoch="$(date -u +%s)"
 
@@ -1392,12 +1393,12 @@ reap_idle_dash_sessions() {
 }
 
 # sweep_repo_retention: per-repo housekeeping run after every tick.
-# - state/recent-agents/*.json older than PHAT_CONTROLLER_RECENT_AGENT_RETENTION_DAYS
+# - state/recent-agents/*.json older than AUTOMETTA_RECENT_AGENT_RETENTION_DAYS
 #   (default 30) are deleted; this also caps what agent-ticker.sh's RECENT
 #   pane can ever show.
 # - state/logs/*.log (worker/verifier logs, the audit trail) are never
 #   deleted in v1, only gzip'd once older than
-#   PHAT_CONTROLLER_WORKER_LOG_GZIP_DAYS (default 30).
+#   AUTOMETTA_WORKER_LOG_GZIP_DAYS (default 30).
 # - run worktrees whose stage is finished with them, via reap-worktrees.sh.
 # Best-effort and silent, like run_heartbeat: housekeeping is not a gate.
 sweep_repo_retention() {
@@ -1411,7 +1412,8 @@ sweep_repo_retention() {
     log "$reap_line"
   done < <("$script_dir/reap-worktrees.sh" "$repo_root" 2>/dev/null || true)
   local recent_dir="$repo_root/state/recent-agents"
-  local recent_retention_days="${PHAT_CONTROLLER_RECENT_AGENT_RETENTION_DAYS:-30}"
+  # Deprecated for one release: PHAT_CONTROLLER_RECENT_AGENT_RETENTION_DAYS.
+  local recent_retention_days="${AUTOMETTA_RECENT_AGENT_RETENTION_DAYS:-${PHAT_CONTROLLER_RECENT_AGENT_RETENTION_DAYS:-30}}"
   if [[ -d "$recent_dir" ]]; then
     local f
     while IFS= read -r f; do
@@ -1421,7 +1423,8 @@ sweep_repo_retention() {
   fi
 
   local logs_dir="$repo_root/state/logs"
-  local gzip_days="${PHAT_CONTROLLER_WORKER_LOG_GZIP_DAYS:-30}"
+  # Deprecated for one release: PHAT_CONTROLLER_WORKER_LOG_GZIP_DAYS.
+  local gzip_days="${AUTOMETTA_WORKER_LOG_GZIP_DAYS:-${PHAT_CONTROLLER_WORKER_LOG_GZIP_DAYS:-30}}"
   if [[ -d "$logs_dir" ]] && command -v gzip >/dev/null 2>&1; then
     local lf
     while IFS= read -r lf; do
@@ -1432,12 +1435,13 @@ sweep_repo_retention() {
 }
 
 # sweep_controller_log_retention: controller-wide (not per-repo) sweep of
-# ~/.phat-controller/log/tick-YYYY-MM-DD.log files older than
-# PHAT_CONTROLLER_LOG_RETENTION_DAYS (default 14). Runs once per tick fire,
+# ~/.autometta/log/tick-YYYY-MM-DD.log files older than
+# AUTOMETTA_LOG_RETENTION_DAYS (default 14). Runs once per tick fire,
 # before the subscriber loop.
 sweep_controller_log_retention() {
   [[ -d "$controller_log_dir" ]] || return 0
-  local retention_days="${PHAT_CONTROLLER_LOG_RETENTION_DAYS:-14}"
+  # Deprecated for one release: PHAT_CONTROLLER_LOG_RETENTION_DAYS.
+  local retention_days="${AUTOMETTA_LOG_RETENTION_DAYS:-${PHAT_CONTROLLER_LOG_RETENTION_DAYS:-14}}"
   local f
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue

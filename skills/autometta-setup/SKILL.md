@@ -1,6 +1,6 @@
 ---
 name: autometta-setup
-description: Adopt the Autometta dispatch contract (pass 1) and optionally the phat-controller autonomous loop (pass 2) inside another repository. Trigger ONLY when the user explicitly asks to set up Autometta in this repo, using phrases like "set up Autometta here", "adopt the dispatch contract", "use Autometta patterns in this project", "wire phat-controller into this repo", "subscribe this repo to Autometta". Do NOT trigger inside the Autometta repo itself; do not trigger on generic multi-agent work (that is agent-orchestrator).
+description: Adopt the Autometta dispatch contract (pass 1) and optionally the autonomous tick loop (pass 2) inside another repository. Trigger ONLY when the user explicitly asks to set up Autometta in this repo, using phrases like "set up Autometta here", "adopt the dispatch contract", "use Autometta patterns in this project", "wire the tick loop into this repo", "subscribe this repo to Autometta". Do NOT trigger inside the Autometta repo itself; do not trigger on generic multi-agent work (that is agent-orchestrator).
 ---
 
 ## What this skill does
@@ -8,7 +8,7 @@ description: Adopt the Autometta dispatch contract (pass 1) and optionally the p
 Walks the operator through adopting Autometta in the current working repository. There are two passes:
 
 - **Pass 1: dispatch contract.** Stage cards, worker prompt template, verifier prompt template, cross-family verifier pattern. A human orchestrator authors a card, dispatches a worker, runs a verifier, commits. No daemon, no cron. This pass is stable and the recommended starting point.
-- **Pass 2: phat-controller autonomous loop.** A cron-driven `tick.sh` that drives pass-1 dispatches across one or more subscribed repos. Reads stage cards, spawns workers, runs verifiers, tracks budget and failure counters, halts on cap. This pass requires more setup and trust.
+- **Pass 2: autonomous tick loop.** A cron-driven `tick.sh` that drives pass-1 dispatches across one or more subscribed repos. Reads stage cards, spawns workers, runs verifiers, tracks budget and failure counters, halts on cap. This pass requires more setup and trust.
 
 Adopt pass 1 first. Add pass 2 only after at least one pass-1 cycle has run cleanly in the target repo.
 
@@ -31,7 +31,7 @@ Are you adopting Autometta in another repo?
     │   └── Unattended cron loop
     │       -> Pass 1 + Pass 2. Do pass 1 first, validate one cycle, then pass 2.
     └── Deployment choice:
-        ├── Homebrew-local CLI + local manifest (default for one-machine phat-controller)
+        ├── Homebrew-local CLI + local manifest (default for the one-machine tick loop)
         ├── Copy (simplest for one-off pass 1, owns templates locally)
         └── Submodule (portable pinned provenance, more git ceremony)
 ```
@@ -88,7 +88,7 @@ AUTOMETTA_ROOT=~/repos/autometta scripts/autometta-vendor-check.sh
 
 It takes the file set from upstream's single definition, content-hashes each file against the canonical checkout, and exits non-zero if any have drifted or gone missing, naming them. A file differing only in filled placeholders reads as `FILLED`, not drift. To clear real drift, run `autometta refresh-repo .`, which also rewrites the stamp to the new source SHA. (If you adopted by git submodule instead of copy, `git submodule status` already reports the pinned SHA and `git submodule update --remote` updates it; the stamp, this check and the refresh commands are for copy adoption.)
 
-You rarely need to remember to run it. The phat-controller tick compares each subscriber's stamp against the Autometta root it is running from and logs one warning per repo per pass when a repo is behind, naming both SHAs and the command to fix it. It is a warning only: the stage still dispatches, because taking a release is your decision.
+You rarely need to remember to run it. The tick loop compares each subscriber's stamp against the Autometta root it is running from and logs one warning per repo per pass when a repo is behind, naming both SHAs and the command to fix it. It is a warning only: the stage still dispatches, because taking a release is your decision.
 
 ### Step 2. Vendor the dispatch docs (optional but recommended)
 
@@ -143,7 +143,7 @@ That is pass 1, end to end. The first cycle takes longer than steady-state becau
 
 ## Pass 2 adoption (optional, after one clean pass-1 cycle)
 
-Pass 2 adds the phat-controller autonomous loop. Install the `autometta` CLI from the canonical checkout, register the repo as a subscriber, install a cron entry, and keep the adopter's `.autometta.local.yaml` manifest gitignored. The full operator guide lives at `docs/setup.md` in Autometta; reference it directly rather than duplicating here.
+Pass 2 adds the autonomous tick loop. Install the `autometta` CLI from the canonical checkout, register the repo as a subscriber, install a cron entry, and keep the adopter's `.autometta.local.yaml` manifest gitignored. The full operator guide lives at `docs/setup.md` in Autometta; reference it directly rather than duplicating here.
 
 Headline checklist (refer to `docs/setup.md` in Autometta for details):
 
@@ -159,7 +159,7 @@ If `state/budget.json` halts mid-run, `autometta tick --reset-halt` clears it. T
 
 ### Budget policy: the daily cap is a host decision
 
-Most adopters should not choose a token cap at all. `autometta init-host` asks for one daily `token_cap_total` and writes it to `~/.phat-controller/config.yaml`; every subscribed repo inherits it. That is the intended resting state.
+Most adopters should not choose a token cap at all. `autometta init-host` asks for one daily `token_cap_total` and writes it to `~/.autometta/config.yaml`; every subscribed repo inherits it. That is the intended resting state.
 
 - **What the daily cap is for.** Catching a runaway, not budgeting a project. It is the number that stops a loop which has started spending without producing, and nothing about a healthy run should ever approach it.
 - **Why it is a host decision.** The machine has one provider window and the caps compete for it, so a number chosen per repo is a number chosen without seeing the others. Autometta's own fleet ended up carrying 3,000,000 / 8,000,000 / 100,000,000 / 150,000,000 across five subscribers, and nothing recorded why any of them held. That spread was accumulated history, not policy.

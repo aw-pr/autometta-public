@@ -13,8 +13,8 @@ IFS=$'\n\t'
 #   <repo_root> <pid> [<label>]
 #
 # Defaults:
-#   poll interval:  PHAT_CONTROLLER_WATCH_POLL=60 seconds
-#   stall grace:    PHAT_CONTROLLER_WATCH_STALL_GRACE=120 seconds past
+#   poll interval:  AUTOMETTA_WATCH_POLL=60 seconds
+#   stall grace:    AUTOMETTA_WATCH_STALL_GRACE=120 seconds past
 #                   the heartbeat-flagged 'silent' threshold before
 #                   escalating to STUCK.
 #
@@ -38,8 +38,10 @@ if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-poll_interval="${PHAT_CONTROLLER_WATCH_POLL:-60}"
-stall_grace="${PHAT_CONTROLLER_WATCH_STALL_GRACE:-120}"
+# Deprecated for one release: PHAT_CONTROLLER_WATCH_POLL.
+poll_interval="${AUTOMETTA_WATCH_POLL:-${PHAT_CONTROLLER_WATCH_POLL:-60}}"
+# Deprecated for one release: PHAT_CONTROLLER_WATCH_STALL_GRACE.
+stall_grace="${AUTOMETTA_WATCH_STALL_GRACE:-${PHAT_CONTROLLER_WATCH_STALL_GRACE:-120}}"
 
 if [[ ! -x "$script_dir/heartbeat.sh" ]]; then
   printf 'heartbeat.sh missing at %s\n' "$script_dir/heartbeat.sh" >&2

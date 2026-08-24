@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://autometta.local/schemas/state.yaml.json",
-  "title": "phat-controller state file",
+  "title": "Autometta tick-loop state file",
   "description": "Per-repo state for the autometta pass-2 autonomous loop. Stored at state/state.yaml in the repo it describes. Written only by scripts/tick.sh; humans should treat it as read-only.",
   "type": "object",
   "additionalProperties": false,
@@ -104,7 +104,7 @@
             "type": "integer",
             "minimum": 0,
             "default": 0,
-            "description": "Count of times `tick.sh --repair` has requeued this stage from stalled/failed back to pending. Capped at PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP (default 2): a stage that stalls twice after repair stays down for the operator. Absent or missing is treated as 0."
+            "description": "Count of times `tick.sh --repair` has requeued this stage from stalled/failed back to pending. Capped at AUTOMETTA_REPAIR_ATTEMPT_CAP (default 2): a stage that stalls twice after repair stays down for the operator. Absent or missing is treated as 0."
           },
           "worker_envelope": {
             "type": ["string", "null"],

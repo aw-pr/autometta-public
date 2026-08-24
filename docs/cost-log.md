@@ -46,7 +46,7 @@ One JSON object per line. All fields are always present.
 | `ts` | string | UTC ISO8601 timestamp when the line was written (role reap time, not dispatch time). |
 | `repo` | string | Subscriber repo basename. |
 | `stage_id` | string | The stage this role served. |
-| `role` | string | `worker`, `verifier`, or `warden` (the warden's one triage dispatch per pass; see `docs/phat-controller.md` section (k)). |
+| `role` | string | `worker`, `verifier`, or `phat-controller` (the queue minder's one triage dispatch per pass; see `docs/tick-loop.md` section (k)). |
 | `identity` | string | The full agent identity string from the stage card / state. |
 | `tier` | string | Capability tier derived from the identity (`T0`, `T1`, `T2`, `T4`, `T5`), matching the agent-orchestrator tier table. Drives the rate row. |
 | `auth_route` | string | `subscription`, `api`, or `local` (codex only), resolved the same way as the dispatch (env override, then `.autometta.local.yaml`, then subscription default). |
@@ -67,7 +67,7 @@ worker then a verifier produces two lines. A verifier that is re-dispatched
 `result: "aborted"` for the failed attempt, then a further line for the
 attempt that succeeds.
 
-The warden writes a third role only for remediation 1, its one bounded triage
+The phat-controller writes a third role only for remediation 1, its one bounded triage
 agent. That line is appended synchronously when the triage returns, while the
 same parsed tokens are also charged to `state/budget.json`; the itemised cost
 log never replaces the hard-stop ledger. Mechanical warden remediations write

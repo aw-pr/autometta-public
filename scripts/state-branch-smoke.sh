@@ -200,7 +200,7 @@ check "every commit made during 40 snapshots landed on dev" "$(eq "" "$stray")"
 check "repo_root is still on dev afterwards" \
   "$(eq dev "$(git -C "$live" rev-parse --abbrev-ref HEAD)")"
 check "the snapshot ref advanced while that happened" \
-  "$(git -C "$live" rev-parse -q --verify phat-controller/state >/dev/null && printf 'ok\n' || printf 'no snapshot ref\n')"
+  "$(git -C "$live" rev-parse -q --verify autometta/state >/dev/null && printf 'ok\n' || printf 'no snapshot ref\n')"
 
 # ---------------------------------------------------------------------------
 printf '== 3. HEAD, index, working tree and reflog are untouched ==\n' >&2
@@ -232,15 +232,15 @@ printf '== 4. what the snapshot captures, and what it does not ==\n' >&2
 check "state.yaml really is gitignored in the fixture, as in every subscriber" \
   "$(git -C "$quiet" check-ignore -q state/state.yaml && printf 'ok\n' || printf 'not ignored\n')"
 check "the snapshot holds state.yaml anyway" \
-  "$(eq "$(cat "$quiet/state/state.yaml")" "$(git -C "$quiet" show phat-controller/state:state/state.yaml 2>/dev/null || printf 'absent')")"
+  "$(eq "$(cat "$quiet/state/state.yaml")" "$(git -C "$quiet" show autometta/state:state/state.yaml 2>/dev/null || printf 'absent')")"
 check "the snapshot holds budget.json" \
-  "$(eq "$(cat "$quiet/state/budget.json")" "$(git -C "$quiet" show phat-controller/state:state/budget.json 2>/dev/null || printf 'absent')")"
+  "$(eq "$(cat "$quiet/state/budget.json")" "$(git -C "$quiet" show autometta/state:state/budget.json 2>/dev/null || printf 'absent')")"
 check "the snapshot does not hold worker logs" \
-  "$(git -C "$quiet" ls-tree -r --name-only phat-controller/state | grep -q '^state/logs/' && printf 'logs captured\n' || printf 'ok\n')"
+  "$(git -C "$quiet" ls-tree -r --name-only autometta/state | grep -q '^state/logs/' && printf 'logs captured\n' || printf 'ok\n')"
 check "the commit body names what was captured" \
-  "$(git -C "$quiet" log -1 --format=%b phat-controller/state | grep -q 'captured: state/state.yaml' && printf 'ok\n' || printf 'no captured: line\n')"
+  "$(git -C "$quiet" log -1 --format=%b autometta/state | grep -q 'captured: state/state.yaml' && printf 'ok\n' || printf 'no captured: line\n')"
 
-snapshot_count() { git -C "$1" rev-list --count phat-controller/state; }
+snapshot_count() { git -C "$1" rev-list --count autometta/state; }
 before_count="$(snapshot_count "$quiet")"
 commit_state_branch "$quiet"
 check "an unchanged state does not add a commit" \
@@ -295,9 +295,9 @@ check "repo_root's HEAD still names the same branch after a full tick" \
 check "repo_root's HEAD still points at the same commit" \
   "$(eq "$tick_before_head" "$(git -C "$ticked" rev-parse HEAD)")"
 check "the tick's state.yaml reached the snapshot ref" \
-  "$(eq "$(cat "$ticked/state/state.yaml")" "$(git -C "$ticked" show phat-controller/state:state/state.yaml 2>/dev/null || printf 'absent')")"
+  "$(eq "$(cat "$ticked/state/state.yaml")" "$(git -C "$ticked" show autometta/state:state/state.yaml 2>/dev/null || printf 'absent')")"
 check "so did its budget.json" \
-  "$(eq "$(cat "$ticked/state/budget.json")" "$(git -C "$ticked" show phat-controller/state:state/budget.json 2>/dev/null || printf 'absent')")"
+  "$(eq "$(cat "$ticked/state/budget.json")" "$(git -C "$ticked" show autometta/state:state/budget.json 2>/dev/null || printf 'absent')")"
 # Not unset: tick.sh's log() defaults to $HOME/.phat-controller, and a tee
 # failure there is fatal under set -e, so unsetting made the later sections
 # depend on the operator's home being writable. They failed in a sandboxed

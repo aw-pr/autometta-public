@@ -16,7 +16,7 @@
   <key>StartInterval</key>
   <integer>{{INTERVAL_SECONDS}}</integer>
   <key>WorkingDirectory</key>
-  <string>{{REPO_PATH}}</string>
+  <string>{{AUTOMETTA_HOME}}</string>
   <key>StandardOutPath</key>
   <string>{{LOG_DIR}}/warden-launchagent.out.log</string>
   <key>StandardErrorPath</key>

@@ -5,7 +5,7 @@ IFS=$'\n\t'
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=resolve-root.sh
 . "$script_dir/resolve-root.sh"
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
 
 usage() {
@@ -126,7 +126,7 @@ else
 state/logs/
 .autometta.local.yaml
 EOF_GITIGNORE
-  printf 'PASS gitignore created with phat-controller local entries\n'
+  printf 'PASS gitignore created with Autometta local entries\n'
 fi
 
 if [[ -f "$manifest_file" ]]; then

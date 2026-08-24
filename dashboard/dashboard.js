@@ -1,4 +1,4 @@
-// dashboard.js — vanilla JS renderer for ~/.phat-controller/dashboard/.
+// dashboard.js — vanilla JS renderer for ~/.autometta/dashboard/.
 // Fetches data.json (same-directory) and draws four Chart.js charts.
 
 (function () {

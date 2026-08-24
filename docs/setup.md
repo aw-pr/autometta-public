@@ -43,7 +43,7 @@ Initialise the host controller home once per machine:
 autometta init-host
 ```
 
-This creates `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}` with:
+This creates `${AUTOMETTA_HOME:-$HOME/.autometta}` with:
 
 - `subscribers/`
 - `log/`
@@ -53,6 +53,12 @@ This creates `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}` with:
 `config.yaml` records the installed Autometta root as `autometta_root`. For a
 checkout run, that is the source checkout; for the Homebrew-local install, that
 is the packaged install root. The script is idempotent and safe to re-run.
+
+On an existing host, the first run moves `~/.phat-controller` to
+`~/.autometta` when the new home does not yet exist, then leaves the relative
+symlink `~/.phat-controller -> .autometta` for one release. `AUTOMETTA_HOME`
+overrides the home. `PHAT_CONTROLLER_HOME` remains a deprecated fallback for
+the same compatibility window.
 
 ## 3. Per-repo subscription
 
@@ -68,7 +74,7 @@ Example:
 autometta init .
 ```
 
-This creates repo-local state under `state/` and a subscriber file under `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers/`.
+This creates repo-local state under `state/` and a subscriber file under `${AUTOMETTA_HOME:-$HOME/.autometta}/subscribers/`.
 It also creates a gitignored `.autometta.local.yaml` manifest that points back
 to the installed Autometta root. If `tmux` is installed, it also starts a
 detached read-only viewer named `autometta-<project-name>`.
@@ -93,6 +99,12 @@ that template if you need a different interval or log layout, then re-run:
 autometta install-launchagent <path-to-repo>
 ```
 
+After upgrading from the former home name, wait for a queue gap and rerun
+`autometta install-launchagent <path-to-repo>` once for each subscribed repo.
+This is the only manual migration step: it reloads the plist with
+`~/.autometta` as its working directory. Do not reload it while a worker or
+verifier is in flight.
+
 The installed plist is written to `~/Library/LaunchAgents/` and is not committed.
 It runs `autometta tick` in the user's Aqua session so CLI credentials stored in
 the login keychain are available to workers and verifiers.
@@ -101,7 +113,7 @@ Non-macOS hosts keep the cron heartbeat model. Sample cron entry to run every 5
 minutes:
 
 ```sh
-*/5 * * * * autometta tick >> "$HOME/.phat-controller/log/cron.log" 2>&1
+*/5 * * * * autometta tick >> "$HOME/.autometta/log/cron.log" 2>&1
 ```
 
 Migration from the old global cron sample:
@@ -124,8 +136,8 @@ launchctl list | grep com.autometta.tick.<repo-name>
 Check host files:
 
 ```sh
-ls -la "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
-ls -la "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers"
+ls -la "${AUTOMETTA_HOME:-$HOME/.autometta}"
+ls -la "${AUTOMETTA_HOME:-$HOME/.autometta}/subscribers"
 ```
 
 Check repo state files:
@@ -288,13 +300,13 @@ Remove one subscriber:
 
 ```sh
 autometta uninstall-launchagent <path-to-repo>
-rm "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers/<repo-slug>.yaml"
+rm "${AUTOMETTA_HOME:-$HOME/.autometta}/subscribers/<repo-slug>.yaml"
 ```
 
 Remove the whole host setup:
 
 ```sh
-rm -rf "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+rm -rf "${AUTOMETTA_HOME:-$HOME/.autometta}"
 ```
 
 Optional repo cleanup:

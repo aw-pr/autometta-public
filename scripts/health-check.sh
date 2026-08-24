@@ -28,7 +28,7 @@ for script_path in scripts/*.sh; do
 done
 
 # `autometta tick` takes no repo argument: it iterates every enabled
-# subscriber in ~/.phat-controller/subscribers. So a second tick job does not
+# subscriber in ~/.autometta/subscribers. So a second tick job does not
 # tick a second repo, it ticks the whole fleet a second time, and every
 # subscriber reaches its cap in a fraction of the intended window. The three
 # per-repo jobs the fleet plist replaced tripled the rate and left the fleet

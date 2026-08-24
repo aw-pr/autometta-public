@@ -1,6 +1,6 @@
 # Observability
 
-`phat-controller` needs an operator surface that answers four questions quickly:
+The tick loop needs an operator surface that answers four questions quickly:
 
 1. Which repos are subscribed?
 2. Which stage is active?
@@ -24,11 +24,11 @@ does not supervise workers, retry stages, or create another controller loop.
   moved here by the heartbeat watchdog when the process exits.
 - `state/heartbeat.json`: latest watchdog report (per-agent flags for
   `silent` log mtime, `over-budget`, etc.).
-- `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/log/tick-YYYY-MM-DD.log`:
+- `${AUTOMETTA_HOME:-$HOME/.autometta}/log/tick-YYYY-MM-DD.log`:
   controller-level tick log.
-- `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers/*.yaml`:
+- `${AUTOMETTA_HOME:-$HOME/.autometta}/subscribers/*.yaml`:
   subscribed repos.
-- `phat-controller/state`: git branch containing committed state snapshots.
+- `autometta/state`: git branch containing committed state snapshots.
 
 `state.yaml` remains the source of truth. Logs are evidence, not state.
 
@@ -63,7 +63,7 @@ autometta attach <repo-path>
 The per-repo tmux viewer has three panes: the left pane prints a status snapshot, the
 top-right pane tails the latest controller log, and the bottom-right pane
 runs the **agent ticker** (`scripts/agent-ticker.sh`). The ticker refreshes
-every five seconds (override with `PHAT_CONTROLLER_TICKER_INTERVAL`) and
+every five seconds (override with `AUTOMETTA_TICKER_INTERVAL`) and
 shows these sections:
 
 - `ALERTS`: shown only when something needs attention. Budget halts,
@@ -72,7 +72,7 @@ shows these sections:
 - `SPEND`: current-window tokens against the cap, today's and seven-day USD
   estimates at list prices, today's mean cache-hit rate, and tokens burned in
   the last hour. It reads at most the final
-  `PHAT_CONTROLLER_COST_LOG_TAIL_ROWS` rows (default 5,000), so refresh cost is
+  `AUTOMETTA_COST_LOG_TAIL_ROWS` rows (default 5,000), so refresh cost is
   bounded as the append-only ledger grows. Token figures remain the primary
   signal on subscription routes.
 - `ACTIVE`: each agent currently in flight, with flags from the heartbeat
@@ -89,7 +89,7 @@ shows these sections:
   whole log at once (`docs/lessons.md` gotcha 6), so the panel says the log
   is empty rather than leaving a blank that reads as a stalled worker.
 - `RECENT`: the last five completed agents with their outcomes, dropping
-  anything older than `PHAT_CONTROLLER_RECENT_MAX_AGE_DAYS` (default 7)
+  anything older than `AUTOMETTA_RECENT_MAX_AGE_DAYS` (default 7)
   first. `ACTIVE` and `SCHEDULED` were already time-scoped; `RECENT` was
   the outlier, and a repo idle for months showed two-month-old runs as
   though they were current.
@@ -130,7 +130,7 @@ subscriber, and the log pane filters the shared tick log to lines naming
 that repo's path.
 
 `autometta-autometta` is the fleet viewer. Its default `fleet` window renders
-only `${PHAT_CONTROLLER_HOME}/dashboard/data.json`, which is produced by the
+only `${AUTOMETTA_HOME}/dashboard/data.json`, which is produced by the
 existing dashboard aggregator. It shows every enabled subscriber, halt reason,
 queue depth, today's tokens and estimated cost, shortened window spend, last
 dispatch and fleet totals. The alert union is a stable table with repo,
@@ -140,10 +140,10 @@ source text or commit subjects about rate limits from becoming provider-limit
 alerts.
 
 A separate tmux background job runs the existing dashboard aggregator every
-`PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL` seconds (default 120). The ticker
+`AUTOMETTA_FLEET_REFRESH_INTERVAL` seconds (default 120). The ticker
 continues to read only `data.json`, so there is still one fleet walker. It
 prints the snapshot's exact generation time and age. A missing snapshot or one
-older than `PHAT_CONTROLLER_FLEET_STALE_SECONDS` (default 600) is labelled
+older than `AUTOMETTA_FLEET_STALE_SECONDS` (default 600) is labelled
 missing or stale rather than healthy. The `repo` window preserves autometta's
 own per-repo view. Interactive `autometta attach` refreshes its viewer so
 long-running ticker loops pick up script changes; `autometta detach --all`
@@ -167,7 +167,7 @@ explicitly.
 `scripts/heartbeat.sh` is invoked once per repo per tick. It walks the
 active-agents registry and writes `state/heartbeat.json` with one entry per
 agent, flagged for log-mtime staleness (default threshold 300 seconds;
-override with `PHAT_CONTROLLER_HEARTBEAT_STALL`) and budget overrun. The
+override with `AUTOMETTA_HEARTBEAT_STALL`) and budget overrun. The
 `silent` flag is only applied to agents whose family streams its log; for
 the `claude` family, `claude -p` emits its entire log at completion and is
 legitimately silent for the whole run, so only `over-budget` is a stuck
@@ -185,7 +185,7 @@ reflects the process.
 
 The heartbeat writes findings to a file; somebody has to read it. For
 orchestrator-led manual dispatches (a `codex exec` or `claude -p`
-launched directly from an interactive session, outside the `phat-controller`
+launched directly from an interactive session, outside the tick loop
 loop), `scripts/watch-agent.sh` blocks until the dispatched agent terminates
 or stalls past a grace window. Use it after registering the agent:
 
@@ -199,8 +199,8 @@ scripts/register-agent.sh "$repo" "$pid" worker codex \
 scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 ```
 
-Defaults: poll every 60s (`PHAT_CONTROLLER_WATCH_POLL`), escalate to STUCK
-120s after the heartbeat first flags `silent` (`PHAT_CONTROLLER_WATCH_STALL_GRACE`).
+Defaults: poll every 60s (`AUTOMETTA_WATCH_POLL`), escalate to STUCK
+120s after the heartbeat first flags `silent` (`AUTOMETTA_WATCH_STALL_GRACE`).
 Exit codes: `0` clean exit, `2` STUCK, `3` bad input. The watcher itself
 never kills the agent — it returns a non-zero exit so the caller can
 decide.
@@ -227,7 +227,7 @@ runs *after* the tick's dispatch decision, so a stage that goes pending to
 tick late. `reap_idle_dash_sessions` then kills any `autometta-<slug>`
 session whose subscriber is disabled, whose slug matches no subscriber at
 all, or whose `dash_active_at` is older than
-`PHAT_CONTROLLER_DASH_IDLE_HOURS` (default 24). An operator who is actually
+`AUTOMETTA_DASH_IDLE_HOURS` (default 24). An operator who is actually
 attached always wins: a session with `tmux list-clients` output is never
 reaped. `last_tick_at` and `tick_count` advance on every tick regardless of
 dispatch, which is why `state.yaml`'s mtime cannot serve as the idle signal
@@ -243,9 +243,9 @@ cannot account for.
 
 | What | Default | Override |
 |---|---|---|
-| `~/.phat-controller/log/tick-*.log` deleted | 14 days | `PHAT_CONTROLLER_LOG_RETENTION_DAYS` |
-| `state/recent-agents/*.json` deleted | 30 days | `PHAT_CONTROLLER_RECENT_AGENT_RETENTION_DAYS` |
-| `state/logs/*.log` gzipped, never deleted | 30 days | `PHAT_CONTROLLER_WORKER_LOG_GZIP_DAYS` |
+| `~/.autometta/log/tick-*.log` deleted | 14 days | `AUTOMETTA_LOG_RETENTION_DAYS` |
+| `state/recent-agents/*.json` deleted | 30 days | `AUTOMETTA_RECENT_AGENT_RETENTION_DAYS` |
+| `state/logs/*.log` gzipped, never deleted | 30 days | `AUTOMETTA_WORKER_LOG_GZIP_DAYS` |
 
 Worker and verifier logs are the audit trail, so they are compressed rather
 than removed. One consequence worth knowing: `budget_account_tokens_from_log`

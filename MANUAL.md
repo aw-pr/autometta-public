@@ -30,7 +30,7 @@ to verifier handoff to commit. Driven by a human in an orchestrator session.
   `templates/verifier-prompt.md`, `templates/orchestrator-checklist.md`.
 - Design: `docs/dispatch-contract.md`. Gate model: `docs/verification.md`.
 
-### Layer 2 - Autonomous loop (phat-controller, pass 2)
+### Layer 2 - Autonomous tick loop (pass 2)
 
 A cron or launchd driven tick that reads `state/state.yaml`, dispatches one
 worker and/or verifier, writes the next state, and exits. The budget file is
@@ -42,14 +42,14 @@ the only safety: a hard stop on bounded spend, with no retries or backoff.
   (`../<repo>-run-<stage>`) that no stage still needs, after every tick.
   Run it by hand with `--dry-run` to see what it would do.
 - Schemas: `schemas/state.yaml.json`, `schemas/budget.json`.
-- Design: `docs/phat-controller.md`. Operator setup: `docs/setup.md`.
+- Design: `docs/tick-loop.md`. Operator setup: `docs/setup.md`.
 
 The tick never moves `repo_root`'s HEAD. It snapshots state onto the
-`phat-controller/state` ref with git plumbing rather than checking that
+`autometta/state` ref with git plumbing rather than checking that
 branch out, and it fast-forwards a base branch by moving the ref rather than
 checking base out. Both used to run `git checkout` in the shared tree, which
 put an operator commit on the wrong branch on 2026-08-23. See
-`docs/phat-controller.md` section (j); `scripts/state-branch-smoke.sh` is the
+`docs/tick-loop.md` section (j); `scripts/state-branch-smoke.sh` is the
 offline proof, and it replays the race rather than arguing about it.
 
 The loop sits on top of the dispatch contract and never bypasses it. You can
@@ -105,14 +105,14 @@ to one backing script.
 | Command | What it does |
 |---|---|
 | `autometta --version` | Print the installed version (from `VERSION`, falling back to the git short SHA). |
-| `autometta init-host` | One-time host setup: create the controller home (`~/.phat-controller` by default) and its subdirectories. |
+| `autometta init-host` | One-time host setup: create the Autometta home (`~/.autometta` by default) and its subdirectories. |
 | `autometta init [repo-path]` | Subscribe a repo and prepare it: runs `init-host`, subscribes the repo, and ensures a tmux viewer. Defaults to the current directory. Then review and commit the generated `.gitignore`, `state/state.yaml`, `state/budget.json`. |
 | `autometta subscribe [repo-path]` | Subscribe a repo to the controller without the full init flow. Defaults to the current directory. |
 | `autometta add-stage <repo-path> <stage-card-path>` | Append a stage to a subscribed repo's `state.yaml` from a stage card. |
 | `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Any stage whose run branch is still waiting to be merged into its base branch gets an `awaiting integration` line under the repo's row, naming the branch to merge. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. `scripts/status.sh --repo <path>` narrows the table to one subscriber; the tmux status pane uses it so an attached dash shows the repo you attached to. |
 | `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`): status ticker, work pane, and agent ticker. An interactive attach replaces an existing viewer so ticker script changes take effect. `--dry-run` prints what it would do. `--ensure` (used internally by `init`) creates the session only if absent. The `autometta-autometta` session opens on the fleet summary; its `repo` window retains the control-plane repo view and a separate background job refreshes fleet `data.json` every 120 seconds. Orphaned viewers whose subscriber is disabled or gone are reported. |
 | `autometta detach [repo-path\|--all]` | Remove one tmux viewer, defaulting to the current repo, or tear down every `autometta-*` viewer with `--all`. Other tmux sessions are never touched. |
-| `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one controller tick across subscribers: read state, dispatch one worker and/or verifier, write next state, snapshot state onto `phat-controller/state`, sweep retention and stale run worktrees, exit. It never changes the branch checked out in a subscriber's own checkout. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` requeues every stalled or failed stage across all enabled subscribers, via the same reset `scripts/requeue-stage.sh` performs by hand; it leaves `in_progress` and `verifier_failed` alone, refuses a stage whose card no longer resolves (`stall_marker: card_missing`), skips a repo still over a spend cap, and stops at `repair_attempts` 2 per stage (`PHAT_CONTROLLER_REPAIR_ATTEMPT_CAP`). |
+| `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one tick across subscribers: read state, dispatch one worker and/or verifier, write next state, snapshot state onto `autometta/state`, sweep retention and stale run worktrees, exit. It never changes the branch checked out in a subscriber's own checkout. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` requeues every stalled or failed stage across all enabled subscribers, via the same reset `scripts/requeue-stage.sh` performs by hand; it leaves `in_progress` and `verifier_failed` alone, refuses a stage whose card no longer resolves (`stall_marker: card_missing`), skips a repo still over a spend cap, and stops at `repair_attempts` 2 per stage (`AUTOMETTA_REPAIR_ATTEMPT_CAP`). |
 | `autometta check-deps` | Verify required tooling is present (bash, git, jq, yq, tmux, the CLI families, op-fetch, etc.). |
 | `autometta dashboard [--open]` | Regenerate the static dashboard under the controller home; `--open` opens it in the default browser. |
 | `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
@@ -123,8 +123,12 @@ to one backing script.
 
 Notes:
 
-- The controller home is `$PHAT_CONTROLLER_HOME` (default `~/.phat-controller`).
+- The Autometta home is `$AUTOMETTA_HOME` (default `~/.autometta`). The old
+  `$PHAT_CONTROLLER_HOME` spelling is a deprecated one-release fallback.
   Subscribers live in `<home>/subscribers/*.yaml`; tick logs in `<home>/log/`.
+- After the one-time home migration, rerun `autometta install-launchagent
+  <repo>` at a queue gap so the installed plist adopts the new working
+  directory.
 - `tick` halts the loop (writes `budget.json.halted = true`) on any cap or
   blocking condition rather than retrying. See section 4 for halt reasons.
 
@@ -239,7 +243,7 @@ command says so, rather than unlatching the only safety for one tick and
 letting you find out afterwards.
 
 There is no retry, no exponential backoff, and no circuit breaker by design.
-See `docs/phat-controller.md` for the full FSM and token accounting.
+See `docs/tick-loop.md` for the full FSM and token accounting.
 
 ---
 
@@ -353,8 +357,8 @@ without further coupling.
   scripts/watch-agent.sh <repo_root> <pid> [label]
   ```
   Exit 0 = clean, 2 = STUCK (silent past the grace window), 3 = bad input.
-  Tunable via `PHAT_CONTROLLER_WATCH_POLL` (default 60s) and
-  `PHAT_CONTROLLER_WATCH_STALL_GRACE` (default 120s).
+  Tunable via `AUTOMETTA_WATCH_POLL` (default 60s) and
+  `AUTOMETTA_WATCH_STALL_GRACE` (default 120s).
 
 - **Viewer**: `autometta attach <repo>` opens the tmux session with a status
   ticker, a work pane, and the agent ticker (`scripts/agent-ticker.sh`). The
@@ -380,7 +384,7 @@ without further coupling.
   Fleet, status and agent headers name the running `autometta <sha>`; a
   mismatch between the installed command and checkout HEAD is shown as build
   drift and rechecked at most once a minute.
-  Override the refresh interval with `PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL`.
+  Override the refresh interval with `AUTOMETTA_FLEET_REFRESH_INTERVAL`.
   The control-plane repo's original three-pane view remains in the `repo`
   window.
 
@@ -459,7 +463,7 @@ For the dated session log and the current backlog, see `HANDOFF.md` and
 | Design philosophy, scope, non-goals | `docs/philosophy.md` |
 | Dispatch contract (the seven steps) | `docs/dispatch-contract.md` |
 | Verification / gate model | `docs/verification.md` |
-| Autonomous loop design (FSM, accounting) | `docs/phat-controller.md` |
+| Autonomous loop design (FSM, accounting) | `docs/tick-loop.md` |
 | Operator setup, cron, auth section 7 | `docs/setup.md` |
 | Observability model | `docs/observability.md` |
 | SDK verifier route + prompt caching | `docs/sdk-verifier.md` |

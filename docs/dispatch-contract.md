@@ -112,7 +112,7 @@ The orchestrator identity is read from the stage card's `Orchestrator` metadata 
 - `integration.state: merged`. Base had not moved, the run branch was fast-forwarded into it, and the run worktree was removed. Nothing outstanding.
 - `integration.state: awaiting`. Base had moved. The run branch is pushed to `origin` (the record's `pushed` field says whether that worked) and it, and its worktree, are left standing for a person to merge. `autometta status` prints an `awaiting integration` line for the stage until the merge happens, and `scripts/reap-worktrees.sh` will not remove the worktree while it stands; once the run branch is contained in base, the next sweep closes the record out and collects the worktree.
 
-Neither path checks a branch out in the shared checkout at `repo_root`. See `docs/phat-controller.md` section (j).
+Neither path checks a branch out in the shared checkout at `repo_root`. See `docs/tick-loop.md` section (j).
 
 This concentrates the commit decision at the one point where the verifier verdict is known. A worker that self-committed before the verifier ran would land its diff with an unknown verifier identity (the cross-family co-author trailer would be missing on every commit) and would force a `git revert` whenever the verifier later said FAIL. See [[memory/decision-orchestrator-commits-on-verifier-pass]] for the full rationale and rejected alternatives.
 
@@ -212,10 +212,10 @@ The dispatch contract is for one stage. Anything that spans stages is out of sco
 
 ## Pass-2 layer
 
-The autonomous loop now exists as `phat-controller`. It is still layered on this contract:
+The autonomous tick loop is layered on this contract:
 
 - `autometta tick`: one cron-safe pass-2 tick.
-- `autometta warden`: one cron-safe pass that triages the queue and performs at most one of a closed set of remediations; see `docs/phat-controller.md` section (k).
+- `autometta phat-controller`: one cron-safe queue-minding pass that performs at most one of a closed set of remediations; see `docs/tick-loop.md` section (k).
 - `state/state.yaml`: per-repo queue state.
 - `state/budget.json`: per-repo budget and halt state.
 - `schemas/`: JSON schemas for the state and budget files.
@@ -306,7 +306,7 @@ mv state/budget.json.tmp state/budget.json
 
 ```sh
 scripts/aggregate-dashboard.sh
-PHAT_CONTROLLER_FLEET_ONCE=true scripts/attach.sh --fleet-ticker | sed -n '/^ALERTS/,$p'
+AUTOMETTA_FLEET_ONCE=true scripts/attach.sh --fleet-ticker | sed -n '/^ALERTS/,$p'
 scripts/agent-ticker.sh . --once | sed -n '/^ALERTS/,/^$/p'
 ```
 
@@ -361,7 +361,7 @@ mid-window; it holds until the window rolls.
 
 The rc-2 log line is rate-limited rather than emitted every tick.
 `budget_should_log_halt` (`scripts/budget.sh`) allows one line per
-`halt_reason` per `PHAT_CONTROLLER_HALT_LOG_INTERVAL` seconds (default
+`halt_reason` per `AUTOMETTA_HALT_LOG_INTERVAL` seconds (default
 3600), always logs immediately on a change of reason, and stamps
 `halt_logged_at` / `halt_logged_reason` in the budget file. It decides
 what is written to the log and nothing else — it never clears a halt.
@@ -401,7 +401,7 @@ the ephemeral worktree and `autometta/<stage>` branch, prints the preserved
 SHA, and leaves every `wip/` ref standing. Those refs are per-attempt and are
 not garbage-collected automatically.
 
-The warden (`scripts/warden.sh`, `docs/phat-controller.md` section (k)) can
+The phat-controller (`scripts/phat-controller.sh`, `docs/tick-loop.md` section (k)) can
 perform this re-brief-and-requeue step unattended: it dispatches one bounded
 triage agent that reads the verifier artefact and the `wip_commit` diff,
 judges whether the FAIL is a work defect or a card defect, and either
@@ -454,7 +454,7 @@ the loop mid-window.
 ### Which token cap binds: host default, repo override, drain
 
 The daily token cap is a host decision. It is written once by
-`scripts/init-host.sh` into `~/.phat-controller/config.yaml` as
+`scripts/init-host.sh` into `~/.autometta/config.yaml` as
 `token_cap_total`, and every subscribed repo inherits it. A repo sets its own
 `token_cap_total` in `state/budget.json` only where it genuinely differs.
 
@@ -464,7 +464,7 @@ First hit wins:
 
 | Order | Source | Where |
 |---|---|---|
-| 1 | An active drain | `~/.phat-controller/drain.json`, while unexpired |
+| 1 | An active drain | `~/.autometta/drain.json`, while unexpired |
 | 2 | The repo's own cap | `state/budget.json` `token_cap_total`, when present |
 | 3 | The host default | `token_cap_total:` in the controller `config.yaml` |
 | 4 | The floor | `AUTOMETTA_TOKEN_CAP_FLOOR`, 20,000,000 by default |
@@ -585,7 +585,7 @@ First hit wins:
 | Precedence | Source | Typical setter |
 |---|---|---|
 | 1 | `AUTOMETTA_ROOT` in the environment | an operator, or the fleet LaunchAgent |
-| 2 | `autometta_root:` in `$PHAT_CONTROLLER_HOME/config.yaml` | `scripts/init-host.sh`, at host bootstrap |
+| 2 | `autometta_root:` in `$AUTOMETTA_HOME/config.yaml` | `scripts/init-host.sh`, at host bootstrap |
 | 3 | the tree the running command is part of | nothing; it is the floor |
 
 Rules 1 and 2 are honoured only when they name a directory that actually holds
@@ -644,7 +644,7 @@ whether the working tree is dirty:
 ```
 autometta 384c394
   root:   ~/repos/autometta
-  origin: controller config ~/.phat-controller/config.yaml
+  origin: controller config ~/.autometta/config.yaml
   sha:    384c394 (git checkout)
   state:  DIRTY 1 tracked file(s) modified under scripts/
             scripts/tick.sh

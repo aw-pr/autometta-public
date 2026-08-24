@@ -5,7 +5,7 @@ control flow card 54 shipped; the mechanism it shipped is kept.
 
 ## What card 54 built, and why it is the wrong shape
 
-`scripts/warden.sh` is a script that occasionally asks an agent for a
+`scripts/phat-controller.sh` is a script that occasionally asks an agent for a
 verdict. It enumerates four remediations in bash, scans for two stage
 statuses, and dispatches an agent for exactly one narrow judgement: which
 kind of FAIL is this. The script decides and acts.
@@ -18,7 +18,7 @@ Two things fell out of that shape on the evening it landed:
   cap. They cannot say what the role is for.
 - The blocker that actually happened was not on the list. Stage 54's first
   attempt went `stalled` with `worker_envelope_missing_after_exit`. The only
-  occurrence of the string "stalled" in `warden.sh` is inside the word
+  occurrence of the string "stalled" in `phat-controller.sh` is inside the word
   "installed". Preserving the stranded work, correcting the `state` symlink
   the worker left behind, re-briefing, requeueing, and re-pairing the stage
   away from a spent subscription were all outside its mandate. On that
@@ -35,7 +35,7 @@ occasionally calls an agent.
 
 The role is seeded at configure time with a persona, a mandate, and the
 repo facts it would otherwise rediscover. It decides. What remains of
-`warden.sh` becomes its verbs: preserve stranded work to a wip branch,
+`phat-controller.sh` becomes its verbs: preserve stranded work to a wip branch,
 requeue, detect a stale halt, merge an awaiting integration, run the
 smokes. Those are tested and worth keeping. The scan-and-choose-remediation
 loop on top of them goes.
@@ -121,7 +121,7 @@ afterwards would mean reconstructing intent from effects.
 2. **The skill**, one source of truth loaded by both a headless pass and an
    interactive session. `skills/autometta-warden/` is most of this already,
    renamed and rescoped.
-3. **The verbs**, what remains of `scripts/warden.sh` once the decision
+3. **The verbs**, what remains of `scripts/phat-controller.sh` once the decision
    layer moves into the agent.
 
 ## Disposition of card 54

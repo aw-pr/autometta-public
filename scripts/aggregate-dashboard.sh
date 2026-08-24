@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # aggregate-dashboard.sh — walk subscribers, read each repo's state, emit
-# ~/.phat-controller/dashboard/data.json with the schema defined in the
+# ~/.autometta/dashboard/data.json with the schema defined in the
 # stage-11 card. Read-only on adopter repos. bash 3.2 compatible.
 set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
 dashboard_dir="$controller_home/dashboard"
 data_json="$dashboard_dir/data.json"

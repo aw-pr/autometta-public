@@ -4,7 +4,7 @@ Autometta should be easy to update across adopter repos without turning the
 project into a packaged runtime. The default deployment model is:
 
 1. Keep one canonical Autometta checkout on the machine.
-2. Initialise `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}` from that checkout.
+2. Initialise `${AUTOMETTA_HOME:-$HOME/.autometta}` from that checkout.
 3. Subscribe adopter repos to that host controller.
 4. Keep repo-local stage cards and `state/`.
 5. Resolve shared scripts, templates, and docs from the canonical checkout.

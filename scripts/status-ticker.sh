@@ -32,10 +32,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
-refresh_interval="${PHAT_CONTROLLER_STATUS_TICKER_INTERVAL:-5}"
-completed_limit="${PHAT_CONTROLLER_COMPLETED_LIMIT:-8}"
+# Deprecated for one release: PHAT_CONTROLLER_STATUS_TICKER_INTERVAL.
+refresh_interval="${AUTOMETTA_STATUS_TICKER_INTERVAL:-${PHAT_CONTROLLER_STATUS_TICKER_INTERVAL:-5}}"
+# Deprecated for one release: PHAT_CONTROLLER_COMPLETED_LIMIT.
+completed_limit="${AUTOMETTA_COMPLETED_LIMIT:-${PHAT_CONTROLLER_COMPLETED_LIMIT:-8}}"
 build_checked_at=0
 build_sha="unknown"
 installed_sha="unknown"

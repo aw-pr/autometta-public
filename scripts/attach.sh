@@ -3,7 +3,9 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
 build_checked_at=0
 build_sha="unknown"
@@ -60,7 +62,8 @@ source "$script_dir/session-slug.sh"
 source "$script_dir/alert-statuses.sh"
 
 fleet_columns() {
-  local columns="${PHAT_CONTROLLER_FLEET_COLUMNS:-}"
+  # Deprecated for one release: PHAT_CONTROLLER_FLEET_COLUMNS.
+  local columns="${AUTOMETTA_FLEET_COLUMNS:-${PHAT_CONTROLLER_FLEET_COLUMNS:-}}"
   if [[ -z "$columns" ]]; then
     columns="$(tput cols 2>/dev/null || printf 80)"
   fi
@@ -72,8 +75,10 @@ fleet_columns() {
 fleet_style_init() {
   FLEET_COLUMNS="$(fleet_columns)"
   FLEET_COLOUR=false
-  if [[ -z "${NO_COLOR:-}" && "${PHAT_CONTROLLER_FLEET_STYLE:-auto}" != plain ]] \
-    && [[ "${PHAT_CONTROLLER_FLEET_STYLE:-auto}" == colour || "$(tput colors 2>/dev/null || printf 0)" -ge 8 ]] \
+  # Deprecated for one release: PHAT_CONTROLLER_FLEET_STYLE.
+  local fleet_style="${AUTOMETTA_FLEET_STYLE:-${PHAT_CONTROLLER_FLEET_STYLE:-auto}}"
+  if [[ -z "${NO_COLOR:-}" && "$fleet_style" != plain ]] \
+    && [[ "$fleet_style" == colour || "$(tput colors 2>/dev/null || printf 0)" -ge 8 ]] \
     && [[ "$(locale charmap 2>/dev/null || true)" == *UTF-8* ]]; then
     FLEET_COLOUR=true
   fi
@@ -225,7 +230,8 @@ PY
 display_time() {
   local stamp="${1:-}" now="$2" age
   age="$(relative_age "$stamp" "$now")"
-  if [[ "${PHAT_CONTROLLER_FLEET_ABSOLUTE_TIME:-false}" == true && -n "$stamp" && "$stamp" != null ]]; then
+  # Deprecated for one release: PHAT_CONTROLLER_FLEET_ABSOLUTE_TIME.
+  if [[ "${AUTOMETTA_FLEET_ABSOLUTE_TIME:-${PHAT_CONTROLLER_FLEET_ABSOLUTE_TIME:-false}}" == true && -n "$stamp" && "$stamp" != null ]]; then
     printf '%s (%s)' "$age" "$stamp"
   else
     printf '%s' "$age"
@@ -234,7 +240,8 @@ display_time() {
 
 render_fleet_once() {
   local data_path="$controller_home/dashboard/data.json"
-  local stale_seconds="${PHAT_CONTROLLER_FLEET_STALE_SECONDS:-600}"
+  # Deprecated for one release: PHAT_CONTROLLER_FLEET_STALE_SECONDS.
+  local stale_seconds="${AUTOMETTA_FLEET_STALE_SECONDS:-${PHAT_CONTROLLER_FLEET_STALE_SECONDS:-600}}"
   fleet_style_init
   local now generated_epoch age generated_at rows repo stage role family started progress status stamp detail reset
   now="$(date -u +%s)"
@@ -365,8 +372,9 @@ render_fleet_once() {
 }
 
 fleet_refresher() {
-  local interval="${PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL:-120}"
-  local session="${PHAT_CONTROLLER_FLEET_SESSION:-}"
+  # Deprecated for one release: PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL and PHAT_CONTROLLER_FLEET_SESSION.
+  local interval="${AUTOMETTA_FLEET_REFRESH_INTERVAL:-${PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL:-120}}"
+  local session="${AUTOMETTA_FLEET_SESSION:-${PHAT_CONTROLLER_FLEET_SESSION:-}}"
   trap 'exit 0' INT TERM
   while true; do
     if [[ -n "$session" ]] && ! tmux has-session -t "$session" 2>/dev/null; then
@@ -378,8 +386,9 @@ fleet_refresher() {
 }
 
 fleet_ticker() {
-  local interval="${PHAT_CONTROLLER_STATUS_TICKER_INTERVAL:-5}"
-  if [[ "${PHAT_CONTROLLER_FLEET_ONCE:-false}" == true ]]; then
+  # Deprecated for one release: PHAT_CONTROLLER_STATUS_TICKER_INTERVAL and PHAT_CONTROLLER_FLEET_ONCE.
+  local interval="${AUTOMETTA_STATUS_TICKER_INTERVAL:-${PHAT_CONTROLLER_STATUS_TICKER_INTERVAL:-5}}"
+  if [[ "${AUTOMETTA_FLEET_ONCE:-${PHAT_CONTROLLER_FLEET_ONCE:-false}}" == true ]]; then
     refresh_build_status
     render_fleet_once
     return 0
@@ -510,7 +519,8 @@ fi
 repo_path="$(resolve_path "$repo_path")"
 repo_slug="$(session_slug "$repo_path")"
 [[ -n "$repo_slug" ]] || repo_slug=repo
-session_name="${PHAT_CONTROLLER_TMUX_SESSION:-autometta-$repo_slug}"
+# Deprecated for one release: PHAT_CONTROLLER_TMUX_SESSION.
+session_name="${AUTOMETTA_TMUX_SESSION:-${PHAT_CONTROLLER_TMUX_SESSION:-autometta-$repo_slug}}"
 
 if [[ "$mode" == detach ]]; then
   if tmux has-session -t "$session_name" 2>/dev/null; then
@@ -537,7 +547,7 @@ log_cmd="mkdir -p $controller_log_q; latest=''; for candidate in $controller_log
 ticker_cmd="cd $autometta_root_q && scripts/agent-ticker.sh $repo_path_q"
 fleet_cmd="cd $autometta_root_q && scripts/attach.sh --fleet-ticker"
 session_name_q="$(shell_quote "$session_name")"
-fleet_refresh_cmd="cd $autometta_root_q && PHAT_CONTROLLER_FLEET_SESSION=$session_name_q scripts/attach.sh --fleet-refresh"
+fleet_refresh_cmd="cd $autometta_root_q && AUTOMETTA_FLEET_SESSION=$session_name_q scripts/attach.sh --fleet-refresh"
 
 report_orphans
 

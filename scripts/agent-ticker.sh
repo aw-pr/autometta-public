@@ -8,7 +8,7 @@ IFS=$'\n\t'
 # Args:
 #   <repo_root> [--once]
 #
-# Without --once, loops forever refreshing every $PHAT_CONTROLLER_TICKER_INTERVAL
+# Without --once, loops forever refreshing every $AUTOMETTA_TICKER_INTERVAL
 # seconds (default 5). Quits cleanly on SIGINT/SIGTERM.
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
@@ -23,8 +23,12 @@ if [[ "${2:-}" == "--once" ]]; then
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-refresh_interval="${PHAT_CONTROLLER_TICKER_INTERVAL:-5}"
-cost_log_tail_rows="${PHAT_CONTROLLER_COST_LOG_TAIL_ROWS:-5000}"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Deprecated for one release: PHAT_CONTROLLER_TICKER_INTERVAL.
+refresh_interval="${AUTOMETTA_TICKER_INTERVAL:-${PHAT_CONTROLLER_TICKER_INTERVAL:-5}}"
+# Deprecated for one release: PHAT_CONTROLLER_COST_LOG_TAIL_ROWS.
+cost_log_tail_rows="${AUTOMETTA_COST_LOG_TAIL_ROWS:-${PHAT_CONTROLLER_COST_LOG_TAIL_ROWS:-5000}}"
 build_checked_at=0
 build_sha="unknown"
 installed_sha="unknown"
@@ -82,7 +86,8 @@ unquote_field() {
 # where the controller is actually meant to be dispatching. Prints
 # true | false | unknown.
 subscriber_enabled() {
-  local controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+  local controller_home
+  controller_home="$(autometta_controller_home)"
   local resolved f rp
   resolved="$(cd "$repo_root" 2>/dev/null && pwd || printf '%s' "$repo_root")"
   for f in "$controller_home"/subscribers/*.yaml; do
@@ -434,7 +439,8 @@ PY
   fi
   printf '\n'
 
-  local recent_max_age_days="${PHAT_CONTROLLER_RECENT_MAX_AGE_DAYS:-7}"
+  # Deprecated for one release: PHAT_CONTROLLER_RECENT_MAX_AGE_DAYS.
+  local recent_max_age_days="${AUTOMETTA_RECENT_MAX_AGE_DAYS:-${PHAT_CONTROLLER_RECENT_MAX_AGE_DAYS:-7}}"
   # Live worker-log tail: when a stage is actually in_progress, show the
   # tail of its worker log directly in this pane so the operator does not
   # have to go hunting for the log path while a worker is running.

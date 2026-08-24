@@ -1,13 +1,13 @@
 # Committed template for the warden's mandate manifest. Copied verbatim to
-# $PHAT_CONTROLLER_HOME/warden-mandate.yaml (gitignored, operator-owned) the
-# first time scripts/warden.sh runs and no operator copy exists yet. Editing
+# $AUTOMETTA_HOME/warden-mandate.yaml (gitignored, operator-owned) the
+# first time scripts/phat-controller.sh runs and no operator copy exists yet. Editing
 # the operator copy changes warden behaviour at the next pass with no code
 # edit; editing this template only changes what a *fresh* controller home
 # starts from.
 #
 # This file tunes THRESHOLDS AND CADENCE ONLY. The four actions the warden
-# may take are fixed in scripts/warden.sh and are not configurable here or
-# from the rendered prompt -- see docs/phat-controller.md "The warden role"
+# may take are fixed in scripts/phat-controller.sh and are not configurable here or
+# from the rendered prompt -- see docs/tick-loop.md "The phat-controller role"
 # and examples/self-host/54-a-warden-pass-minds-the-queue.md, "What the
 # warden may do". Adding a fifth action is a card, never an edit to this
 # file.
@@ -32,7 +32,7 @@ escalation:
   # the budget file's caps", checked mechanically rather than guessed. This
   # flag exists so an operator can turn triage dispatch off entirely (an
   # overnight run on a metered account, say) without touching
-  # scripts/warden.sh.
+  # scripts/phat-controller.sh.
   triage_dispatch_enabled: true
   # Auth routes listed here count as metered. They may run only while the
   # repo's normal budget gate is open, unless allow_within_budget is false,

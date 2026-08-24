@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/warden.sh -- one phat-controller pass: triage the queue and
+# scripts/phat-controller.sh -- one phat-controller pass: triage the queue and
 # perform at most one of four enumerated remediations, then exit.
 #
 # Cron plus tick, same discipline as scripts/tick.sh: this is not a daemon.
@@ -11,7 +11,7 @@
 #
 # The allowed-actions list is closed and hard-coded here -- not in the
 # prompt rendered for remediation 1, and not in the mandate manifest
-# (templates/warden-mandate.yaml.tpl / $PHAT_CONTROLLER_HOME/warden-mandate.yaml):
+# (templates/warden-mandate.yaml.tpl / $AUTOMETTA_HOME/warden-mandate.yaml):
 #
 #   1. requeue a verifier_failed stage after triage (the only remediation
 #      that dispatches an agent and spends tokens)
@@ -20,7 +20,7 @@
 #   4. queue the next PLAN.md card whose stated gate is satisfied, when the
 #      queue is empty
 #
-# Anything else is out of bounds by construction. See docs/phat-controller.md
+# Anything else is out of bounds by construction. See docs/tick-loop.md
 # "The warden role" and examples/self-host/54-a-warden-pass-minds-the-queue.md.
 set -euo pipefail
 IFS=$'\n\t'
@@ -38,11 +38,11 @@ source "$script_dir/tick.sh"
 # shellcheck source=./models.sh
 source "$script_dir/models.sh"
 
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+controller_home="$(autometta_controller_home)"
 warden_log_dir="$controller_home/log"
 warden_mandate_path="${AUTOMETTA_WARDEN_MANDATE:-$controller_home/warden-mandate.yaml}"
 warden_mandate_template="$script_dir/../templates/warden-mandate.yaml.tpl"
-warden_prompt_template="$script_dir/../templates/warden-prompt.md"
+warden_prompt_template="$script_dir/../templates/phat-controller-prompt.md"
 
 # Override tick.sh's log() (writes to tick-<date>.log) so every warden line
 # lands in its own file. An operator reading warden-*.log must not have to
@@ -84,7 +84,7 @@ warden_mandate_ensure() {
   fi
   mkdir -p "$(dirname "$warden_mandate_path")"
   cp "$warden_mandate_template" "$warden_mandate_path"
-  log "warden: mandate copied to ${warden_mandate_path} from the template; edit it to tune thresholds and cadence (never authority -- the action list lives in scripts/warden.sh)"
+  log "phat-controller: mandate copied to ${warden_mandate_path} from the template; edit it to tune thresholds and cadence (never authority -- the action list lives in scripts/phat-controller.sh)"
 }
 
 warden_mandate_get() {
@@ -516,8 +516,8 @@ warden_render_triage_prompt() {
 warden_record_triage_spend() {
   local repo_root="$1" stage_id="$2" identity="$3" dispatch_log="$4"
   local started_epoch="$5" wall="$6" result="$7"
-  budget_account_tokens_from_dispatch "$repo_root" "$dispatch_log" "warden" "$repo_root" "$started_epoch" || true
-  costlog_append "$repo_root" "$stage_id" warden "$identity" "$dispatch_log" "$wall" "$result" \
+  budget_account_tokens_from_dispatch "$repo_root" "$dispatch_log" "phat-controller" "$repo_root" "$started_epoch" || true
+  costlog_append "$repo_root" "$stage_id" phat-controller "$identity" "$dispatch_log" "$wall" "$result" \
     "$repo_root" "$started_epoch" || true
 }
 
@@ -993,14 +993,14 @@ warden_pass() {
 
 usage() {
   cat <<'USAGE'
-Usage: warden.sh [--print-mandate]
+Usage: phat-controller.sh [--print-mandate]
 
 One phat-controller pass: triage the queue across every enabled subscriber
 and perform at most one of four enumerated remediations (requeue a
 verifier_failed stage after triage; merge a conflict-free awaiting
 integration; clear a provably stale pause or halt; queue the next gated
-PLAN.md card when the queue is empty). See docs/phat-controller.md
-"The warden role".
+PLAN.md card when the queue is empty). See docs/tick-loop.md
+"The phat-controller role".
 USAGE
 }
 

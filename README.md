@@ -52,7 +52,7 @@ Not a framework. Not a runtime. Not a hosted service. A set of contracts, templa
 
 Pre-alpha. Pass 1 is shipped and proven; pass 2 is shipped, including the unattended macOS launchd path (see "Feature status" below).
 
-Pass 1 (dispatch contract) and pass 2 (phat-controller autonomous loop) have both been self-hosted end to end against this repo through stage 6. The macOS launchd path that lets the loop run unattended was verified on 2026-05-29: a claude worker dispatched by a real LaunchAgent tick survives the tick process exiting and runs to completion (the `disown` + `AbandonProcessGroup` fix, see `docs/lessons.md` gotcha 9).
+Pass 1 (dispatch contract) and pass 2 (the autonomous tick loop) have both been self-hosted end to end against this repo through stage 6. The macOS launchd path that lets the loop run unattended was verified on 2026-05-29: a claude worker dispatched by a real LaunchAgent tick survives the tick process exiting and runs to completion (the `disown` + `AbandonProcessGroup` fix, see `docs/lessons.md` gotcha 9).
 
 The first end-to-end benchmark (BENCH-005) drove the dispatch contract against a multi-stage Swift refactor in two parallel orchestrator lanes. Both escalated at the 2-loop budget. Codex went 12/20 then 18/20 on the FLAP-rate acceptance command; Claude Opus stayed pinned at 20/20 across both loops. The pass condition (0 FLAP) was not met by either lane, but the cross-family asymmetry is the interesting finding: Codex got closer then regressed, Claude was stuck at maximum throughout. See `[examples/benchmarks/bench-005/](./examples/benchmarks/bench-005/)` for the lane summaries and escalation notes. A green benchmark on a non-trivial backlog remains the next milestone.
 
@@ -137,7 +137,7 @@ autometta/
 │   ├── dispatch-contract.md  # pass 1 - the contract
 │   ├── verification.md       # pass 1 - the gate model
 │   ├── lessons.md            # hard-won failure modes
-│   ├── phat-controller.md    # pass 2 - the autonomous loop design
+│   ├── tick-loop.md          # pass 2 - the autonomous loop design
 │   ├── setup.md              # pass 2 - operator setup guide
 │   ├── deployment.md         # central install, manifests, submodule escape hatch
 │   ├── observability.md      # status and attachable viewer model
@@ -172,7 +172,7 @@ autometta/
 3. `docs/lessons.md` - the headless gotchas that will bite you on day one.
 4. `templates/stage-card.md` and `templates/worker-prompt.md` - copy these, fill them in.
 5. `docs/verification.md` - how to gate the worker's output.
-6. `docs/phat-controller.md` and `docs/setup.md` - when you want to put the dispatch contract under cron. `docs/setup.md` section 7 covers auth-route configuration (subscription vs API key).
+6. `docs/tick-loop.md` and `docs/setup.md` - when you want to put the dispatch contract under cron. `docs/setup.md` section 7 covers auth-route configuration (subscription vs API key).
 7. `docs/deployment.md` and `docs/observability.md` - when you want to adopt it across repos and watch the loop.
 
 ## Your first dispatch (five minutes)

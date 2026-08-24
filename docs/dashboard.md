@@ -14,7 +14,7 @@ autometta dashboard           # regenerate only
 autometta dashboard --open    # regenerate and open in default browser
 ```
 
-The dashboard files live at `~/.phat-controller/dashboard/`:
+The dashboard files live at `~/.autometta/dashboard/`:
 
 - `data.json` — aggregated state from all subscribers
 - `index.html` — page entry point
@@ -31,14 +31,14 @@ SHA256 hash; a mismatch fails the install loudly.
 `scripts/dashboard.sh`:
 
 1. Runs `scripts/aggregate-dashboard.sh`, which walks
-   `~/.phat-controller/subscribers/*.yaml` (excluding `template.yaml`),
+   `~/.autometta/subscribers/*.yaml` (excluding `template.yaml`),
    reads each repo's `state/state.yaml`, `state/budget.json`, and
    `state/verifiers/*.json`, and emits a fresh
-   `~/.phat-controller/dashboard/data.json`. Read-only on adopter
+   `~/.autometta/dashboard/data.json`. Read-only on adopter
    repos.
 2. Copies the static assets (`index.html`, `dashboard.js`,
    `dashboard.css`, `vendor/chart.min.js`) from the autometta install
-   into `~/.phat-controller/dashboard/`.
+   into `~/.autometta/dashboard/`.
 3. With `--open`, launches the local file via `open` (macOS) or
    `xdg-open` (linux).
 
@@ -48,10 +48,10 @@ in `data.json`; the tick itself does not walk the fleet.
 
 `autometta attach /path/to/autometta` starts one background refresh job in the
 tmux session. Override its 120-second interval with
-`PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL`. The fleet pane prints the exact
+`AUTOMETTA_FLEET_REFRESH_INTERVAL`. The fleet pane prints the exact
 `generated_at` age, and retains the stale warning after
-`PHAT_CONTROLLER_FLEET_STALE_SECONDS` (default 600). Set
-`PHAT_CONTROLLER_FLEET_ABSOLUTE_TIME=true` when the absolute ISO timestamp is
+`AUTOMETTA_FLEET_STALE_SECONDS` (default 600). Set
+`AUTOMETTA_FLEET_ABSOLUTE_TIME=true` when the absolute ISO timestamp is
 needed alongside the relative age.
 
 ## Fleet pane

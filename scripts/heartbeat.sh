@@ -18,7 +18,8 @@ repo_root="$1"
 active_dir="$repo_root/state/active-agents"
 recent_dir="$repo_root/state/recent-agents"
 heartbeat_path="$repo_root/state/heartbeat.json"
-stall_seconds="${PHAT_CONTROLLER_HEARTBEAT_STALL:-300}"
+# Deprecated for one release: PHAT_CONTROLLER_HEARTBEAT_STALL.
+stall_seconds="${AUTOMETTA_HEARTBEAT_STALL:-${PHAT_CONTROLLER_HEARTBEAT_STALL:-300}}"
 
 mkdir -p "$active_dir" "$recent_dir"
 

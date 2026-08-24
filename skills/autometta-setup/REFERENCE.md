@@ -54,7 +54,7 @@ Fractals tracks its work plans under `docs/cards/` historically (check the actua
 
 This is a refactor card. Cross-family verification is the default. Pair: Codex worker (refactor work) with Claude Sonnet verifier (greppable criteria). Same pattern as Autometta stage 5c.
 
-### Dispatch (without phat-controller scripts vendored)
+### Dispatch (without tick-loop scripts vendored)
 
 The orchestrator (Claude Code session opened in `fractals-from-the-90s`) reads `templates/worker-prompt.md`, substitutes placeholders, and dispatches:
 

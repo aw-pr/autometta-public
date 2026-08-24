@@ -16,7 +16,7 @@
 #     The EFFECTIVE root: the tree whose scripts/ a dispatch will execute.
 #     Precedence, first hit wins:
 #       1. $AUTOMETTA_ROOT          explicit operator or LaunchAgent override
-#       2. controller config        autometta_root: in $PHAT_CONTROLLER_HOME/config.yaml
+#       2. controller config        autometta_root: in $AUTOMETTA_HOME/config.yaml
 #       3. the install's own tree   the libexec (or checkout) the caller sits in
 #
 # Rule 3 is the floor, so resolution always terminates and never needs a
@@ -32,7 +32,17 @@
 # Callers print the origin; nothing branches on it.
 
 autometta_controller_home() {
-  printf '%s' "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+  if [[ -n "${AUTOMETTA_HOME:-}" ]]; then
+    printf '%s' "$AUTOMETTA_HOME"
+  elif [[ -n "${PHAT_CONTROLLER_HOME:-}" ]]; then
+    # Deprecated for one release: use AUTOMETTA_HOME.
+    printf '%s' "$PHAT_CONTROLLER_HOME"
+  elif [[ -e "$HOME/.autometta" || ! -e "$HOME/.phat-controller" ]]; then
+    printf '%s' "$HOME/.autometta"
+  else
+    # Accept an unmigrated host until init-host.sh moves it.
+    printf '%s' "$HOME/.phat-controller"
+  fi
 }
 
 # A candidate is a usable root only if it holds the scripts/ directory every
