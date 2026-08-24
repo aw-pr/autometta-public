@@ -129,3 +129,47 @@ contradictions from deliverable 5.
 ## Family-specific notes
 
 None
+
+## Re-brief (attempt 2, 2026-08-25)
+
+Attempt 1 is preserved as one commit `a13a1c0` on branch
+`wip/51-docs-catch-up-with-the-free-verifier-pattern-attempt-1`. Restore it
+rather than starting over: criteria 1 and 4 passed, and most of what
+criteria 2, 3 and 5 asked for is already written. Three specific defects
+remain, all of them prose that contradicts the code it describes.
+
+1. **Criterion 2, the fresh-machine path is incomplete.** `docs/setup.md`
+   gives `ollama pull` and `ollama list` but never installs Ollama or
+   starts its server, while the same section states that an absent or
+   non-serving Ollama makes the spawn fail and that Autometta never starts
+   it. A genuinely fresh machine cannot complete the local path from that
+   section alone. Add the install and start steps, and say plainly whose
+   job it is to keep the server running.
+
+2. **Criteria 3 and 5, `MANUAL.md` claims every local role becomes T5 and
+   zero cost.** It does not. `scripts/cost-log.sh` derives the tier from
+   the stage identity, `scripts/tick.sh` passes that identity through
+   unchanged, and `auth_route` is a separate field. The one real log line
+   cited proves only the special case where the identity is already
+   `Codex GPT-OSS`. Correct the claim to describe what actually determines
+   the tier, and pick an example that demonstrates the general rule rather
+   than the special case.
+
+3. **Criteria 3 and 5, `MANUAL.md` conflates transport with billing.** It
+   calls `verifier-transport: cli|sdk` the Claude route resolution.
+   `scripts/spawn-verifier.sh` resolves transport separately from billing
+   mode and permits both subscription and api through the CLI path, so
+   that log line cannot tell you a running Claude verifier's route. Say
+   what does resolve the route, and what the transport line actually
+   means.
+
+The failure is one shape repeated: a doc asserting a tidy rule the code
+does not implement. Where the code is right and the prose is wrong, fix the
+prose. Where the code genuinely surprises, say so plainly rather than
+smoothing it over, and cite the file and line so the next reader can check.
+
+Note that stage 56 landed between the two attempts and renamed
+phat-controller from the tick loop to the queue-minding role, so line
+numbers in the verifier's evidence may have moved and some surrounding
+prose may already read differently. Verify each citation against the
+current tree before editing.
