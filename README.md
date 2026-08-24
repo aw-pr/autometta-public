@@ -239,15 +239,21 @@ The local route is zero marginal cost with no rate limits, at the price of real 
 
 Aligned to the `auth-route-security` skill — every launch goes through `op-fetch`, which exec's the child via `env -i` plus an allowlist plus only the named refs. Subscription mode still goes through `op-fetch`, so any stray `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` in your parent shell is **stripped** rather than silently flipping you to API billing.
 
-### Three files
+### Three files, one of them live
 
 ```
-op-refs.sh                                  # COMMITTED — placeholder op:// refs
-templates/op-refs.local.sh.tpl                    # COMMITTED — template
-~/.config/autometta/op-refs.local.sh        # GITIGNORED — your real op:// references
+op-refs.sh                            # COMMITTED   — placeholders + resolution logic
+templates/op-refs.local.sh.tpl        # COMMITTED   — copy-me skeleton, never sourced in place
+~/.config/autometta/op-refs.local.sh  # LIVE        — real op:// refs, gitignored, mode 0600
 ```
 
-`op-refs.sh` carries placeholders like `op://YOUR_VAULT/openai-api-key/credential`. Plant your real values at `~/.config/autometta/op-refs.local.sh`:
+Only the third file ever holds a real reference. The other two ship in the repo and stay placeholder-only forever:
+
+- **`op-refs.sh`** (repo root, committed) declares the `OP_REF_*` names with `op://YOUR_VAULT/...` placeholders, then sources the first local override it finds. It is the resolution logic, not the store; never edit real values into it.
+- **`templates/op-refs.local.sh.tpl`** (committed) is the skeleton you copy to create the live file. It is never sourced where it sits.
+- **`~/.config/autometta/op-refs.local.sh`** (`$XDG_CONFIG_HOME/autometta/op-refs.local.sh`) is the one live file: gitignored, outside the repo, mode 0600, holding your real `op://` references (references, not keys). Per-machine by design: it never travels via git, clones, or the public mirror.
+
+Create it once per machine:
 
 ```sh
 mkdir -p ~/.config/autometta
@@ -256,9 +262,13 @@ chmod 600 ~/.config/autometta/op-refs.local.sh
 # Then edit ~/.config/autometta/op-refs.local.sh with the real op:// refs.
 ```
 
+`op-refs.sh` searches for the override in order, first existing file wins: `$AUTOMETTA_LOCAL_REFS` (explicit override), then the XDG path above, then `op-refs.local.sh` next to `op-refs.sh` itself (dev checkout only; not visible to the brew install).
+
 **Why XDG rather than in-repo?** Two reasons. (1) The brew-installed CLI runs from a Cellar snapshot at `/opt/homebrew/Cellar/autometta/<sha>/libexec/` — it cannot see files inside your dev checkout. XDG is the one location both can read. (2) A single set of credentials is shared across every subscribed repo on the machine; XDG avoids duplicating them per-repo. `autometta auth status` always prints which file it actually loaded so you can verify the path in effect.
 
-Resolution order: `$AUTOMETTA_LOCAL_REFS` env var, then `~/.config/autometta/op-refs.local.sh`, then `<repo>/op-refs.local.sh` (dev only — not visible to the brew install).
+The keys themselves live only in 1Password. The live file names them; `op-fetch` resolves the named refs at dispatch time via the service-account token at `~/.config/op/service-account.env` and injects them into the child env only; nothing lands on disk or in the parent shell. Any missing piece (no `op-fetch`, unset `OP_REF_*`, unresolved `YOUR_VAULT` placeholder) fails closed before a token is spent. Subscription mode needs no refs at all.
+
+The free verification routes (card 46) add `OP_REF_OPENROUTER_API_KEY` and `OP_REF_GROQ_API_KEY` alongside the paid refs. Each caller names only its own ref to `op-fetch`, so the paid keys are structurally absent from a free route's child env.
 
 ### Per-repo mode toggle
 
@@ -309,7 +319,7 @@ The spawn scripts and the manual dispatch pattern both export `CODEX_HOME=$AUTOM
 
 ### What does NOT work
 
-- Putting raw keys in `.autometta.local.yaml`. Only the mode goes there; refs go in `op-refs.local.sh`.
+- Putting raw keys in `.autometta.local.yaml`. Only the mode goes there; refs go in `~/.config/autometta/op-refs.local.sh`.
 - Putting the SA token or any API key in a committed file. The publish-guard's pre-commit hook catches common patterns; `op-refs.local.sh`, `.env.local`, `*.local` are gitignored.
 - Auto-injecting keys into the macOS LaunchAgent plist. The LaunchAgent invokes `op-fetch` at tick time; the SA token comes from `~/.config/op/service-account.env`. Keys never land in the plist.
 
