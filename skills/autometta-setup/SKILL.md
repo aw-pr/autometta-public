@@ -51,31 +51,32 @@ The dispatch-contract files travel together: the worker prompt, the verifier pro
 - `scripts/check-contract-test-gate.sh` — enforces the frozen contract-test assertions that the verifier prompt and the stage-card template refer to. Vendor it whenever you vendor the templates, or those references dangle (the verifier is told to run a script that is not there).
 - `scripts/autometta-vendor-check.sh` — reports when any vendored file has drifted from upstream.
 
-into the target repo, then write a provenance stamp so freshness can be checked later:
+Do not copy those files by hand, and do not write the stamp by hand. One command vendors the set and writes the provenance stamp:
 
 ```sh
-# from the target repo root
-src=~/repos/autometta          # adjust if Autometta lives elsewhere
-mkdir -p templates scripts
-cp "$src"/templates/{worker-prompt,verifier-prompt,orchestrator-checklist,stage-card}.md templates/
-cp "$src"/scripts/{check-contract-test-gate,autometta-vendor-check}.sh scripts/
-chmod +x scripts/check-contract-test-gate.sh scripts/autometta-vendor-check.sh
-
-# provenance stamp: records the source SHA and the vendored file set
-{
-  echo "# Autometta vendor stamp. Refresh by re-running this vendor step."
-  echo "source_repo: autometta"
-  echo "vendored_from: $(git -C "$src" rev-parse --short HEAD)"
-  echo "vendored_at: $(date +%Y-%m-%d)"
-  for f in templates/worker-prompt.md templates/verifier-prompt.md \
-           templates/orchestrator-checklist.md templates/stage-card.md \
-           scripts/check-contract-test-gate.sh scripts/autometta-vendor-check.sh; do
-    echo "file: $f"
-  done
-} > .autometta-vendor
+autometta refresh-repo <target-repo-path> --adopt
 ```
 
-Commit `.autometta-vendor` alongside the vendored files; it is provenance, not runtime state, so it belongs in version control.
+`--adopt` is for a repo that has never held the contract. After that, the same command without the flag is how the repo takes every later release. The file list it works from lives in one place upstream (`scripts/vendor-set.sh`); a hand-typed copy of it in this skill would be a fourth list to keep in step with the other three, which is the drift the single definition exists to end.
+
+Review the result and commit it in the target repo. The refresh leaves its changes unstaged deliberately: Autometta pushes files, and the commit is yours to make. Commit `.autometta-vendor` alongside the vendored files; it is provenance, not runtime state, so it belongs in version control.
+
+### Step 1a. A subscriber is refreshed, never hand-edited
+
+Once a repo holds the contract, treat the vendored files as read-only downstream. Work on them happens in Autometta and arrives by a push:
+
+```sh
+autometta refresh-repo <repo-path> --dry-run   # what would change here
+autometta refresh-repo <repo-path>             # take the release
+autometta refresh-all-repos --dry-run          # what would change fleet-wide
+autometta refresh-all-repos                    # push to every enabled subscriber
+```
+
+The one edit you *are* meant to make downstream is filling a template's `<<placeholder>>` slots. That is the template working as designed, and a refresh preserves such a file byte for byte, reporting it as `FILLED` rather than overwriting it. Any other local edit reads as `DRIFT`, and a refresh replaces it: an edit made downstream reaches nobody, so it is lost work by construction. Change it in Autometta and push it out.
+
+A refresh also refuses to write into a repo with uncommitted changes on a vendored path, naming the path, and skips a repo with a stage in flight. Neither is an error to work around; both mean "not now".
+
+Full surface, including the stamp format and what each refusal looks like, is in `docs/dispatch-contract.md` under "Pushing a release to the subscribers".
 
 ### Step 1b. Check vendored freshness later
 
@@ -85,7 +86,9 @@ After any `git pull` of the Autometta source, or as a pre-flight before an orche
 AUTOMETTA_ROOT=~/repos/autometta scripts/autometta-vendor-check.sh
 ```
 
-It content-hashes every file listed in `.autometta-vendor` against the canonical checkout and exits non-zero if any have drifted, naming them. To refresh, re-run the Step 1 vendor block, which also rewrites the stamp to the new source SHA. (If you adopted by git submodule instead of copy, `git submodule status` already reports the pinned SHA and `git submodule update --remote` updates it; the stamp and this check are for copy adoption.)
+It takes the file set from upstream's single definition, content-hashes each file against the canonical checkout, and exits non-zero if any have drifted or gone missing, naming them. A file differing only in filled placeholders reads as `FILLED`, not drift. To clear real drift, run `autometta refresh-repo .`, which also rewrites the stamp to the new source SHA. (If you adopted by git submodule instead of copy, `git submodule status` already reports the pinned SHA and `git submodule update --remote` updates it; the stamp, this check and the refresh commands are for copy adoption.)
+
+You rarely need to remember to run it. The phat-controller tick compares each subscriber's stamp against the Autometta root it is running from and logs one warning per repo per pass when a repo is behind, naming both SHAs and the command to fix it. It is a warning only: the stage still dispatches, because taking a release is your decision.
 
 ### Step 2. Vendor the dispatch docs (optional but recommended)
 

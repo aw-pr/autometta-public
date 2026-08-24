@@ -639,6 +639,111 @@ doctor reports it but does not fail on it: drift is an ordinary operator state,
 and clearing it replaces files a running tick is executing, so it should be
 cleared when no dispatch is in flight.
 
+## Pushing a release to the subscribers
+
+Work happens in autometta. A subscriber holds a vendored copy of the contract,
+and until card 48 there was no way to push an update to it: the copy was made
+once by hand from the `autometta-setup` skill, and thereafter it could only
+drift. Nothing said when a subscriber was behind either. emergence-lab's stamp
+read `vendored_from: 496c7cc` while autometta's HEAD had moved on. It happened
+to still match, and nothing would have reported it either way.
+
+### The vendored set
+
+Six files travel to every subscriber: the four templates in `templates/`, plus
+`scripts/check-contract-test-gate.sh` and `scripts/autometta-vendor-check.sh`.
+
+The list itself lives in `scripts/vendor-set.sh` and nowhere else. The push
+reads it to know what to copy and the freshness check reads it to know what to
+compare, so the two cannot come to different views of what is vendored. Adding
+a file to the set is one edit there followed by a fleet push.
+
+The freshness check takes the set from upstream rather than from the
+subscriber's own stamp, deliberately. A stamp records the set as it stood when
+that copy was made, so a file added upstream since would never be looked at,
+and the check would call a repo current that was in fact missing part of the
+contract. A file the stamp lists that upstream has since retired is reported as
+`RETIRED` and is not drift.
+
+### The stamp
+
+`.autometta-vendor` at the subscriber's root is provenance, and it is committed
+there alongside the files it describes:
+
+```
+# Autometta vendor stamp. Refresh with: autometta refresh-repo .
+source_repo: autometta
+vendored_from: 26213a5
+vendored_at: 2026-08-24
+file: templates/worker-prompt.md
+...
+```
+
+`vendored_from` is the short sha of the autometta root the copy came from, as
+that root reports it: a checkout's `HEAD`, an installed build's `VERSION`. It
+is written by the refresh and by nothing else, so a stamp that names a sha is a
+claim the refresh made rather than a note somebody left.
+
+### The two commands
+
+```sh
+autometta refresh-repo <repo-path> [--dry-run] [--adopt]
+autometta refresh-all-repos [--dry-run]
+```
+
+`refresh-repo` re-vendors the set into one subscriber and rewrites its stamp.
+`refresh-all-repos` does the same across every enabled subscriber in the
+registry, in weight order, through the same code path, so a fleet push and a
+single push cannot behave differently. `--dry-run` reports exactly what would
+change and writes nothing. `--adopt` vendors a repo that has never held the
+contract before, which is how a first adoption is done; a fleet push never
+adopts, it only refreshes what has already opted in.
+
+Neither command commits. Changes are left unstaged in the subscriber for its
+operator to review: autometta pushes files, and a commit in somebody else's
+repository is not autometta's to make.
+
+### What a refresh refuses
+
+The refusals are the substance of the feature. Writing into other repositories
+is the most destructive thing autometta does, and each of these is a way it
+could destroy something quietly.
+
+| Condition | Verdict |
+|---|---|
+| A template whose `<<placeholder>>` slots have been filled downstream | `FILLED`, preserved byte for byte, never overwritten |
+| Uncommitted changes on a vendored path, staged, unstaged or untracked | `REFUSE`, naming the path |
+| A stage `in_progress`, a live agent, or a tick holding the repo lock | `SKIP`, naming what is running |
+| `repo_path` not on disk, or not a git repository | `SKIP` |
+| The autometta source repository itself, including through a run worktree | `SKIP` |
+| No stamp, and `--adopt` not passed | `SKIP`, saying how to adopt |
+| Subscriber disabled, or a `.yaml.disabled` registry entry | `SKIP`, named in the run's summary |
+
+A filled placeholder is the template working as designed, so it is the one
+thing a push must never clobber; `scripts/vendor-set.sh` holds the single
+implementation of that test, shared by the push and the check. Everything
+skipped is named with its reason. A fleet command that quietly omitted the
+retired entries and the repo with a worker in flight would read as "covered
+everything" when it had covered two of nine.
+
+`scripts/refresh-smoke.sh` drives every case above against a disposable
+controller home and four throwaway repos under `$TMPDIR`, and writes nothing
+outside it.
+
+### The staleness warning
+
+The tick warns, once per repo per pass, when a subscriber's stamp lags the sha
+of the autometta root the tick is running from:
+
+```
+stale vendor: /path/to/repo holds the contract from 496c7cc, autometta is at 26213a5; run: autometta refresh-repo /path/to/repo
+```
+
+It is a warning and only a warning. The stage still dispatches. Taking a
+release is the operator's decision, and a tick that refused to work until
+someone ran a refresh would turn a housekeeping note into an outage. A
+subscriber with a current stamp, or with no stamp at all, says nothing.
+
 ## Reading order for a new operator
 
 1. This document.

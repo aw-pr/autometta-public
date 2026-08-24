@@ -11,6 +11,12 @@ source "$script_dir/cost-log.sh"
 source "$script_dir/usage-limit.sh"
 # shellcheck source=./session-slug.sh
 source "$script_dir/session-slug.sh"
+# shellcheck source=./subscribers.sh
+source "$script_dir/subscribers.sh"
+# shellcheck source=./resolve-root.sh
+source "$script_dir/resolve-root.sh"
+# shellcheck source=./vendor-set.sh
+source "$script_dir/vendor-set.sh"
 
 controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
 subscribers_dir="$controller_home/subscribers"
@@ -235,30 +241,9 @@ reset_halts_mode() {
   exit 0
 }
 
-read_subscriber_field() {
-  local file_path="$1"
-  local key="$2"
-  local raw
-  raw="$(sed -n "s/^${key}:[[:space:]]*//p" "$file_path" | head -n1)"
-  # Strip surrounding double or single quotes if present. subscribe-repo.sh
-  # writes quoted strings; the template uses unquoted form. Accept both.
-  raw="${raw%\"}"
-  raw="${raw#\"}"
-  raw="${raw%\'}"
-  raw="${raw#\'}"
-  printf '%s' "$raw"
-}
-
-sort_subscribers() {
-  for file in "$subscribers_dir"/*.yaml; do
-    [[ -e "$file" ]] || continue
-    # Skip the example template; only real subscribers are processed.
-    [[ "$(basename "$file")" == "template.yaml" ]] && continue
-    local weight
-    weight="$(read_subscriber_field "$file" "weight")"
-    printf '%s\t%s\n' "${weight:-9999}" "$file"
-  done | sort -n | cut -f2-
-}
+# read_subscriber_field and sort_subscribers now live in scripts/subscribers.sh,
+# sourced above, so a fleet refresh walks the registry by exactly the rules this
+# tick walks it by.
 
 manifest_patterns() {
   local repo_root="$1"
@@ -1145,6 +1130,7 @@ process_repo() {
     return 0
   fi
   run_heartbeat "$repo_root"
+  warn_if_vendor_stale "$repo_root" || true
   local rc=0
   _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
   # Runs after the tick's own dispatch decision, not before: a stage that
@@ -1155,6 +1141,50 @@ process_repo() {
   sweep_repo_retention "$repo_root"
   release_repo_lock "$repo_root"
   return $rc
+}
+
+# Vendor staleness: a subscriber holding an older copy of the contract than the
+# autometta this tick runs from is dispatching against templates that are not
+# the ones being maintained, and nothing said so. emergence-lab sat on
+# `vendored_from: 496c7cc` while the source had moved on; it happened to still
+# match and nothing would have reported it either way.
+#
+# It is a warning and only ever a warning. A stale copy still dispatches: the
+# operator decides when to take a release, and a tick that refused to work
+# until someone ran a refresh would turn a housekeeping note into an outage.
+#
+# Once per repo per pass. process_repo is called once per subscriber per tick
+# fire, so the guard below is belt and braces -- it is what makes "once per
+# pass" a property of the code rather than of the caller.
+vendor_staleness_warned=""
+autometta_sha_this_pass=""
+
+warn_if_vendor_stale() {
+  local repo_root="$1"
+  local stamp="$repo_root/$autometta_vendor_stamp_name"
+  [[ -f "$stamp" ]] || return 0
+
+  case "$vendor_staleness_warned" in
+    *"|${repo_root}|"*) return 0 ;;
+  esac
+  vendor_staleness_warned="${vendor_staleness_warned}|${repo_root}|"
+
+  local vendored_from
+  vendored_from="$(autometta_vendor_stamp_field "$stamp" vendored_from)"
+  vendored_from="$(printf '%s' "$vendored_from" | tr -d '[:space:]')"
+  [[ -n "$vendored_from" ]] || return 0
+
+  if [[ -z "$autometta_sha_this_pass" ]]; then
+    autometta_resolve_root "$(autometta_self_root "$script_dir")"
+    autometta_sha_this_pass="$(autometta_root_sha "$AUTOMETTA_ROOT_RESOLVED")"
+  fi
+  # A root that cannot name its own sha has no opinion about anyone else's.
+  [[ -n "$autometta_sha_this_pass" && "$autometta_sha_this_pass" != "unknown" ]] || return 0
+
+  if [[ "$vendored_from" != "$autometta_sha_this_pass" ]]; then
+    log "stale vendor: ${repo_root} holds the contract from ${vendored_from}, autometta is at ${autometta_sha_this_pass}; run: autometta refresh-repo ${repo_root}"
+  fi
+  return 0
 }
 
 # Best-effort: walk the per-agent liveness registry and surface stalls /

@@ -26,6 +26,8 @@ Usage:
   autometta init-host
   autometta init [repo-path]
   autometta subscribe [repo-path]
+  autometta refresh-repo <repo-path> [--dry-run] [--adopt]
+  autometta refresh-all-repos [--dry-run]
   autometta add-stage <repo-path> <stage-card-path>
   autometta status
   autometta attach [repo-path] [--dry-run]
@@ -124,6 +126,16 @@ case "$command_name" in
       exit 1
     fi
     run_script subscribe-repo.sh "$repo_path"
+    ;;
+  refresh-repo)
+    if [[ $# -lt 1 ]]; then
+      printf 'usage: autometta refresh-repo <repo-path> [--dry-run] [--adopt]\n' >&2
+      exit 1
+    fi
+    run_script refresh-repo.sh "$@"
+    ;;
+  refresh-all-repos)
+    run_script refresh-all-repos.sh "$@"
     ;;
   add-stage)
     if [[ $# -ne 2 ]]; then
