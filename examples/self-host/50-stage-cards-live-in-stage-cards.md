@@ -3,7 +3,7 @@
 ## Metadata
 
 - **Authored:** 2026-08-24
-- **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
+- **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
 - **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
 - **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>
 - **Base branch:** dev
