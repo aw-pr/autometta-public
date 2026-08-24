@@ -186,8 +186,16 @@ Two findings inside that probe are load-bearing:
    before launching an agent, with a message naming the missing piece;
    nothing is written to `verifier_pid` and no attempt is burned.
 4. A local dispatch appears in `state/cost-log.jsonl` with real token
-   counts, `cost_usd_est` of 0, and the new identity; `git log` shows the
-   commit attributed to that identity via the normal trailer machinery.
+   counts, `cost_usd_est` of 0, and the new identity; and the attribution
+   machinery demonstrably renders that identity: `agent-whoami` (or the
+   repo's resolver) returns the canonical string, and the commit-trailer
+   construction from `docs/dispatch-contract.md` step 7 renders it into
+   `Autometta-Verifier` against a fixture. (Amended 2026-08-24, attempt 2:
+   the original wording required an already-visible attributed commit,
+   which the card 07 contract only creates after a PASS artefact, so it
+   could not be satisfied from inside verification. The first live
+   attributed commit is expected from the first real local verification
+   after this card lands.)
 5. A subscription-mode and an api-mode fixture dispatch build exactly the
    argv they build today.
 6. `scripts/local-route-smoke.sh` passes offline, and every existing
@@ -256,3 +264,17 @@ passes, then close the one gap:
   `agent-whoami` case are committed in mcp-hub (`86218a6`) and synced to
   the platform rules files, so attribution resolves without leaving this
   repo.
+
+## Re-brief for attempt 3 (2026-08-24, after Sol's FAIL on criterion 4's attribution half)
+
+Attempt 2 passed everything except the attribution half of criterion 4,
+which was unsatisfiable as worded and has been amended above; Sol's own
+artefact says the FAIL stood "solely because criterion 4 literally
+requires an already-visible attributed commit". Do not redo the work: the
+attempt-2 implementation is committed as `a6c81f1` (branch
+`wip/45-attempt-2`), and the ledger half already passed against it
+(`state/cost-log.jsonl` line 25). Restore that WIP, re-run
+`scripts/local-route-smoke.sh`, and add only the amended criterion's
+demonstration: `agent-whoami` resolving the local identity, and the step-7
+trailer construction rendering it into `Autometta-Verifier` against a
+fixture. Nothing else changed.
