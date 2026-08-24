@@ -49,8 +49,42 @@ in `data.json`; the tick itself does not walk the fleet.
 `autometta attach /path/to/autometta` starts one background refresh job in the
 tmux session. Override its 120-second interval with
 `PHAT_CONTROLLER_FLEET_REFRESH_INTERVAL`. The fleet pane prints the exact
-`generated_at` timestamp and its age, and retains the stale warning after
-`PHAT_CONTROLLER_FLEET_STALE_SECONDS` (default 600).
+`generated_at` age, and retains the stale warning after
+`PHAT_CONTROLLER_FLEET_STALE_SECONDS` (default 600). Set
+`PHAT_CONTROLLER_FLEET_ABSOLUTE_TIME=true` when the absolute ISO timestamp is
+needed alongside the relative age.
+
+## Fleet pane
+
+The fleet pane reads top to bottom as an operator story:
+
+1. **TOTALS** keeps the fleet-wide spend summary.
+2. **RUNNING** lists every registered live worker and verifier, with repo,
+   stage, role, family and elapsed time. Where an active-agent registry row
+   carries `transcript_tokens`, that is the in-flight figure. Otherwise the
+   pane says `log:<bytes>B`; log size is activity evidence, not a token count.
+3. **QUEUE** lists every enabled repo, its pending depth and next stage.
+   `empty` is the ordinary idle value and is not an alert.
+4. **REQUIRED ACTIONS** separates decisions the operator must make from
+   reported failures. It includes halts, exhausted attempt caps, awaiting
+   integrations whose recorded reason names a conflict, explicit stage
+   `required_action` values, and the `required_actions` seam used by
+   queue-minder amendments. An empty section says that no operator action is
+   required.
+5. **FAILURES** contains only statuses from `scripts/alert-statuses.sh`, newest
+   first, with a relative age. In particular, `superseded` is absent.
+6. **LIMITS** contains only line-anchored provider banners found in unfinished
+   agent logs, with their age and reset time when the banner supplies one.
+7. **REPOS** closes with per-repo spend, cap and last-dispatch figures. It does
+   not repeat constant enabled/running state or queue data owned by earlier
+   sections.
+
+All tabular sections use one pane-width-aware renderer. Cells are truncated
+with an ellipsis before a row can wrap, numeric columns are right-aligned, and
+important states are emphasised. Colour-capable UTF-8 terminals use box-drawing
+borders and state colours. `NO_COLOR=1`, a non-UTF-8 locale, or a terminal
+without colour capabilities selects readable ASCII borders and plain text.
+The renderer retains per-line erase-to-end repainting in the live ticker.
 
 ## Four breakdowns
 
@@ -92,6 +126,16 @@ tmux session. Override its 120-second interval with
       "seven_day_cost_usd_est": 12.34,
       "last_hour_tokens": 456789,
       "last_dispatch_at": "...",
+      "active_agents": [
+        {
+          "pid": 12345,
+          "stage": "49-fleet-pane",
+          "role": "worker",
+          "family": "codex",
+          "started_at": "...",
+          "log_bytes": 8192
+        }
+      ],
       "stages": [
         {
           "id": "01-...",

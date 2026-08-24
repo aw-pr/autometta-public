@@ -80,6 +80,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   state_yaml="$repo_path/state/state.yaml"
   budget_path="$repo_path/state/budget.json"
   cost_log_path="$repo_path/state/cost-log.jsonl"
+  active_agents_dir="$repo_path/state/active-agents"
 
   tokens_spent=0
   token_cap_total=0
@@ -132,7 +133,9 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
           worker_tokens: (.worker_tokens // null),
           verifier_tokens: (.verifier_tokens // null),
           commit: (.commit // null),
-          verifier_artefact: (.verifier_artefact // null)
+          verifier_artefact: (.verifier_artefact // null),
+          integration: (.integration // null),
+          required_action: (.required_action // null)
         } ]')"
 
     # Read each verifier artefact for the .overall field and merge into
@@ -173,8 +176,42 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   if [[ -x "$script_dir/scan-usage-limits.sh" ]]; then
     alerts_json="$("$script_dir/scan-usage-limits.sh" "$repo_path" 2>/dev/null \
       | jq -R -s -c 'split("\n") | map(select(length > 0))
-          | map(split("\t") | {log: .[0], line: (.[1] // "")})' \
+          | map(split("\t") | {log: .[0], line: (.[1] // ""), occurred_at: (.[2] // null)})' \
       || printf '[]')"
+  fi
+
+  # Live-agent rows are collected by the existing subscriber walk. The fleet
+  # renderer reads only data.json and never reaches back into adopter repos.
+  active_agents_json='[]'
+  if [[ -d "$active_agents_dir" ]]; then
+    active_agents_file="$(mktemp)"
+    printf '[]\n' > "$active_agents_file"
+    for agent_file in "$active_agents_dir"/*.json; do
+      [[ -f "$agent_file" ]] || continue
+      agent_pid="$(jq -r '.pid // 0' "$agent_file" 2>/dev/null || printf 0)"
+      [[ "$agent_pid" =~ ^[0-9]+$ ]] || continue
+      kill -0 "$agent_pid" 2>/dev/null || continue
+      agent_log="$(jq -r '.log_path // empty' "$agent_file" 2>/dev/null || true)"
+      agent_log_bytes=0
+      if [[ -n "$agent_log" && -f "$agent_log" ]]; then
+        agent_log_bytes="$(wc -c < "$agent_log" | tr -d ' ')"
+      fi
+      agent_stage="$(jq -r '.stage_id // empty' "$agent_file" 2>/dev/null || true)"
+      if [[ -z "$agent_stage" ]]; then
+        agent_card="$(jq -r '.card_path // empty' "$agent_file" 2>/dev/null || true)"
+        agent_stage="$(basename "${agent_card:-unknown}" .md)"
+      fi
+      agent_entry="$(jq -c \
+        --arg stage "$agent_stage" \
+        --argjson log_bytes "${agent_log_bytes:-0}" \
+        '. + {stage: $stage, log_bytes: $log_bytes}' "$agent_file" 2>/dev/null || true)"
+      [[ -n "$agent_entry" ]] || continue
+      jq --argjson row "$agent_entry" '. + [$row]' "$active_agents_file" \
+        > "${active_agents_file}.tmp"
+      mv "${active_agents_file}.tmp" "$active_agents_file"
+    done
+    active_agents_json="$(cat "$active_agents_file")"
+    rm -f "$active_agents_file"
   fi
 
   # Append this repo to the repos array.
@@ -190,6 +227,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson consecutive_failure_cap "${consecutive_failure_cap:-0}" \
     --argjson stages "$stages_json" \
     --argjson alerts "$alerts_json" \
+    --argjson active_agents "$active_agents_json" \
     --argjson cost_rollup "$cost_rollup" \
     '. + [{
        name: $name,
@@ -204,6 +242,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
        queue_depth: ([$stages[] | select(.status == "pending")] | length),
        in_flight: ([$stages[] | select(.status == "in_progress")] | length),
        alerts: $alerts,
+       active_agents: $active_agents,
        stages: $stages
      } + $cost_rollup]' "$repos_array_file" > "${repos_array_file}.tmp"
   mv "${repos_array_file}.tmp" "$repos_array_file"
