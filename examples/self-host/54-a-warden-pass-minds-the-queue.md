@@ -1,4 +1,4 @@
-# Stage card 54: a warden pass minds the queue
+# Stage card 54: a phat-controller pass minds the queue
 
 ## Metadata
 
@@ -28,7 +28,7 @@ interactive orchestrator session did all of it on a 15-minute check
 cadence. That cadence and checklist worked; the framework should own
 them.
 
-Add a **warden pass**: a scheduled, bounded orchestrator-role agent
+Add a **phat-controller pass** (working name warden while card 56 vacates the name): a scheduled, bounded orchestrator-role agent
 dispatch that triages the queue and performs a small, enumerated set of
 remediations. It is cron plus tick, not a daemon; one pass reads state,
 makes at most one remediation, writes state, exits.

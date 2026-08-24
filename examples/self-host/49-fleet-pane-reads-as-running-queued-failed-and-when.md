@@ -52,6 +52,33 @@ Reported by the operator with a screenshot of `autometta-autometta`, window
 Restructure the pane so a human reads it top to bottom as a story: what is
 happening now, what is waiting, what went wrong and when, what it costs.
 
+Second screenshot, 2026-08-24 12:13Z, adds the presentation asks and one
+landed fix to keep:
+
+6. **Colour and emphasis.** The pane is monochrome, so a failure and a
+   healthy row carry equal weight. Colour-code state: red for failures,
+   halts and required actions, yellow for stalls, limits and drift,
+   green for running and pass, dim for the quiet rows. Use `tput`
+   capabilities with a plain-text fallback when the terminal offers no
+   colour or `NO_COLOR` is set; the smoke asserts both renderings.
+7. **Human-readable times.** Absolute ISO stamps ("2026-08-24T12:05:59Z
+   (79s ago)") become relative first, absolute on demand: "79s ago",
+   "3m", "10d". The age column from deliverable 4 uses the same
+   vocabulary everywhere; one formatter, not per-panel copies.
+8. **REQUIRED ACTIONS section**, above FAILURES: the rows that need a
+   human, distinct from the rows that merely report. Initially: halts,
+   attempt-cap exhaustion, `awaiting` integrations with conflicts, and
+   PROPOSED-AMENDMENT markers once the queue-minder role (card 54)
+   lands. Empty section renders as one quiet line, not omitted, so its
+   absence is never ambiguous.
+9. **Keep the tail-erase repaint.** The interleaved double-frame in the
+   screenshot (REPOS printed over agentic-rag-kimble as
+   "REPOSntic-rag-kimble") was home-and-repaint without per-line erase;
+   fixed in `04b6dec` by suffixing every rendered line with
+   erase-to-end-of-line. The restructured renderer must preserve that
+   behaviour, and the no-wrap criterion catches the line-overrun half of
+   the same screenshot.
+
 ## Inputs (read these in your own context)
 
 - `scripts/attach.sh` — `render_fleet_once`, the whole pane.
@@ -138,6 +165,12 @@ Do not read anything else unless you need to; keep your context lean.
    and is not run: say so.
 7. `bash -n` passes on every shell file touched; no file outside the
    deliverables is modified except this card.
+8. With colour available, a failure row, a stalled row and a running row
+   render in visibly distinct colours; with `NO_COLOR=1` the same frame
+   is plain text and still readable. Both captured.
+9. REQUIRED ACTIONS renders its rows above FAILURES, and renders its
+   one-line quiet form when empty. Times render relative everywhere,
+   from one formatter.
 
 ## Contract test
 
