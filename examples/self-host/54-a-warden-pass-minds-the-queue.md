@@ -33,6 +33,17 @@ dispatch that triages the queue and performs a small, enumerated set of
 remediations. It is cron plus tick, not a daemon; one pass reads state,
 makes at most one remediation, writes state, exits.
 
+The operator's mandate, 2026-08-24, is the design brief: given cards
+with acceptance criteria, a run should go straight through unattended,
+with environment glitches and card glitches cleared by the warden
+rather than a human. The human is escalated to for exactly two things:
+**repeated failure** (a stage exhausting its attempt cap, or the same
+remediation firing twice for one stage without progress) and **metered
+spend** (any action that would draw on a paid account beyond the budget
+file's caps, or a provider signalling payment where none was expected).
+Everything else the warden either fixes from its list or surfaces and
+waits.
+
 ## What the warden may do (the whole list)
 
 1. **Requeue a `verifier_failed` stage** after triage: read the verifier
@@ -138,6 +149,10 @@ Do not read anything else unless you need to; keep your context lean.
    with the gate met: queued.
 6. Two passes in a row with two remediations available perform one each,
    in a stated priority order.
+8. Escalation fixture: the same remediation applying twice to one stage
+   without the stage advancing produces an operator escalation (a loud
+   log line and a ticker-visible alert), not a third attempt at the
+   remediation.
 7. All smokes pass with assertions demonstrated able to fail; `bash -n`
   on every touched shell file.
 
