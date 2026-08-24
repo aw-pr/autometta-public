@@ -336,3 +336,34 @@ ask 4 is about making frames cheaper, not dearer.
 - Criterion 7 excludes `sdk-cache-smoke.sh` deliberately: it needs
   `ANTHROPIC_API_KEY` and this repo bills on the subscription route. Cards 39
   and 41 both burned a verifier attempt on that wording before it was fixed.
+
+## Re-brief for attempt 2 (2026-08-24, after the frame-flap FAIL on criterion 4)
+
+Attempt 1 passed criteria 1 to 3 and 5 to 8; the artefact at
+`state/verifiers/44-repo-pane-fits-its-pane-and-refreshes-without-tearing.json`
+holds the evidence and, unusually, the exact fix. The implementation is
+committed as `94c5df1` (branch `wip/44-attempt-1`). Restore it and make
+three changes, nothing else:
+
+1. **The regression.** `scripts/agent-ticker.sh:350-351`: when the
+   incremental read from the persisted offset yields no complete new line
+   (the transcript did not grow this frame), `transcript_tokens()` must
+   return the persisted running total from the registry, with found
+   semantics, not `None`. Today the pane flaps between the true figure and
+   `unavailable` every quiet frame, and shows `unavailable` for the whole
+   of any long tool call, which is the exact defect the notes above warned
+   the prototype had.
+2. **The cap.** The ACTIVE panel is limited to 3 display lines at any pane
+   height (`scripts/agent-ticker.sh:619, 634`); make the limit
+   height-aware so a tall pane shows every live agent, and the
+   criterion-4 demonstration can show both families in one frame.
+3. **The inert asserts.** On this machine's `/bin/bash` 3.2.57 a failing
+   `[[ ]]` compound does not trigger `set -e`, so every bare `[[ ]]`
+   assertion in `scripts/ticker-fit-smoke.sh` is a no-op and the smoke
+   printed PASS over a failing renderer. Rewrite its assertions so they
+   can fail (an explicit fail helper or `grep -q` pipelines), and assert
+   the codex and unavailable rows in a frame tall enough to show them.
+   The same inert pattern exists in card 41's `alerts-table-smoke.sh`,
+   which you were told to imitate; fixing that file and adding the
+   lessons-entry for the gotcha is NOT this card's scope and is tracked
+   separately.
