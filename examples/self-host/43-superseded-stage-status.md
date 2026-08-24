@@ -151,7 +151,10 @@ Do not read anything else unless you need to; keep your context lean.
    standing.
 10. `bash -n` passes on every shell file touched; `npm run verify` or the repo's
    own gate passes if one applies; no file outside the deliverables is modified
-   except this card.
+   except this card. The `state` symlink and the `state/handoffs/` deletions it
+   implies are the worktree dispatch's own substitution, present in every run
+   worktree before the worker starts, and are not worker changes. (Amended
+   2026-08-24 after attempt 1 failed solely on this false positive.)
 
 ## Contract test
 
@@ -184,3 +187,12 @@ evidence from criterion 5. State the old and new contract version.
 ## Family-specific notes
 
 None
+
+## Re-brief for attempt 2 (2026-08-24, after the criterion 10 false positive)
+
+Attempt 1 passed criteria 1 to 9; the artefact at
+`state/verifiers/43-superseded-stage-status.json` holds the evidence. The
+whole implementation is committed as `296bff1` (branch `wip/43-attempt-1`).
+Restore it, re-run `scripts/superseded-status-smoke.sh`, and hand off. No
+functional change is asked for; criterion 10 above now states that the
+dispatch's own `state` substitution is not in scope.
