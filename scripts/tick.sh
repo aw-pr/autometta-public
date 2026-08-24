@@ -824,6 +824,18 @@ ensure_run_worktree() {
   # minutes to every worktree in every repo, node or not.
   if [[ -d "$repo_root/node_modules" && ! -e "$work_dir/node_modules" ]]; then
     ln -s "../$(basename "$repo_root")/node_modules" "$work_dir/node_modules"
+    # A repo that ignores "node_modules/" does not ignore this, because the
+    # trailing slash matches a directory and what we just made is a symlink.
+    # emergence-lab's stage-57 worker duly committed it, putting a link that
+    # dangles in every clone onto the base branch. Exclude it per worktree so
+    # no subscriber has to fix its own .gitignore for an artefact we created.
+    local exclude_file
+    exclude_file="$(git -C "$work_dir" rev-parse --git-path info/exclude 2>/dev/null)"
+    if [[ -n "$exclude_file" ]]; then
+      mkdir -p "$(dirname "$exclude_file")"
+      grep -qxF '/node_modules' "$exclude_file" 2>/dev/null \
+        || printf '/node_modules\n' >>"$exclude_file"
+    fi
   fi
   printf '%s\n' "$work_dir"
 }
