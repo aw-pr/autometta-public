@@ -33,6 +33,8 @@ weights before betting overnight runs on any of them.
 |---|---|---|---|---|
 | `gpt-oss:120b` | local Ollama, proven by card 45's probe | 120B MoE | $0 | none; ~66s cold load, fits 96GB |
 | `qwen3-coder:30b` | local Ollama, already pulled | 30B | $0 | none; the fast local option |
+| `qwen3:32b` | local Ollama, already pulled | 32B | $0 | none; the general sibling of the coder, added 2026-08-24 so the coding-tune-against-general-tune question gets a direct answer |
+| `devstral` | local Ollama, `ollama pull devstral` first | 24B | $0 | none; Mistral's agentic-coding tune, the fastest candidate on the machine, added 2026-08-24 |
 | `qwen/qwen3-coder:free` | OpenRouter | 480B-A35B MoE, 1M context | $0 | 20 req/min; 50 req/day, 1,000/day after a one-time $10 credit purchase |
 | DeepSeek R1 (`:free`) | OpenRouter | 671B MoE | $0 | same free-tier caps; list rotates without notice |
 | `gpt-oss-120b` on Groq | Groq free tier | 120B MoE | $0 | 30 req/min, 1,000 req/day, 8K tokens/min, 200K tokens/day; first ceiling hit returns 429 |
@@ -209,3 +211,11 @@ it against the recorded frontier verdict. Report per candidate:
 - The Groq-hosted `gpt-oss-120b` against local `gpt-oss:120b` is the
   controlled pair: report it as its own comparison line, since it
   isolates serving from model quality.
+- The `codex --oss` path speaks gpt-oss's native tool format; the other
+  local candidates (`qwen3-coder:30b`, `qwen3:32b`, `devstral`) go through
+  Ollama's compatibility layer and may lose tool-calling fidelity in
+  exactly the loop a CLI verifier depends on. If one of them fails or
+  flails through the CLI route, fall back to the single-shot caller
+  against Ollama's own OpenAI-compatible endpoint and record which route
+  each candidate's scores came from. A candidate that only works
+  single-shot is a finding, not a failure of the harness.
