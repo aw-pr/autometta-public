@@ -12,6 +12,9 @@ IFS=$'\n\t'
 #                     subscription -> "subscription (no key fetch)"
 #                     api          -> resolves the ref via op-fetch --print
 #                                      and reports PASS with redacted credential.
+#                     local        -> codex only; runs the same ollama/model
+#                                      preflight the spawn scripts fail closed
+#                                      on, no key involved.
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 autometta_root="$(cd "$script_dir/.." && pwd)"
@@ -120,6 +123,8 @@ cmd_status() {
     local ref_status
     if [[ "$mode" == "subscription" ]]; then
       ref_status="-"
+    elif [[ "$mode" == "local" ]]; then
+      ref_status="- (no key; run 'autometta auth check $family' to verify ollama)"
     else
       local ref_var
       ref_var="$(ref_var_for "$family")"
@@ -153,6 +158,22 @@ cmd_check() {
 
   if [[ "$mode" == "subscription" ]]; then
     printf 'subscription  %s  (no key fetch; op-fetch will sanitise env)\n' "$family"
+    return 0
+  fi
+
+  if [[ "$mode" == "local" ]]; then
+    if [[ "$family" != "codex" ]]; then
+      printf 'FAIL          %s  local is refused; the local route is codex-family only\n' "$family" >&2
+      exit 1
+    fi
+    # shellcheck source=./models.sh
+    source "$script_dir/models.sh"
+    local preflight_msg
+    if ! preflight_msg="$(codex_local_preflight "$AUTOMETTA_MODEL_CODEX_LOCAL" 2>&1)"; then
+      printf 'FAIL          %s  %s\n' "$family" "$preflight_msg" >&2
+      exit 1
+    fi
+    printf 'PASS          %s  local -> ollama serving %s (no key fetch)\n' "$family" "$AUTOMETTA_MODEL_CODEX_LOCAL"
     return 0
   fi
 

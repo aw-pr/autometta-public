@@ -167,7 +167,10 @@ main() {
   # OPENAI_API_KEY env var; without this isolation, an OPENAI_API_KEY pair
   # passed via op-fetch is silently overridden by the chatgpt-mode auth at
   # ~/.codex/auth.json and the dispatch still bills the subscription. See
-  # docs/lessons.md gotcha #8.
+  # docs/lessons.md gotcha #8. auth_pairs is empty for both subscription and
+  # local, so this gate naturally never fires on the local route without a
+  # separate check: local needs no key, and demanding one here would fail a
+  # route whose whole point is that it needs no key.
   local codex_home_override=""
   if [[ "$family" == "codex" && -n "$auth_pairs" ]]; then
     codex_home_override="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}"
@@ -179,12 +182,29 @@ main() {
     fi
   fi
 
+  local codex_mode=""
+  if [[ "$family" == "codex" ]]; then
+    if ! codex_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" codex --print-mode)"; then
+      log_msg "auth-route mode resolution failed for family=codex"
+      exit 1
+    fi
+  fi
+
   case "$family" in
     codex)
-      # shellcheck disable=SC2086
-      if [[ -n "$codex_home_override" ]]; then
+      if [[ "$codex_mode" == "local" ]]; then
+        # Fail closed before spawn: a dispatch that dies after model
+        # negotiation with Ollama burns a worker attempt on infrastructure.
+        if ! codex_local_preflight "$AUTOMETTA_MODEL_CODEX_LOCAL"; then
+          exit 1
+        fi
+        # shellcheck disable=SC2086
+        op-fetch $auth_pairs -- codex exec --oss --local-provider=ollama -m "$AUTOMETTA_MODEL_CODEX_LOCAL" -C "$work_dir" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+      elif [[ -n "$codex_home_override" ]]; then
+        # shellcheck disable=SC2086
         CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       else
+        # shellcheck disable=SC2086
         op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;

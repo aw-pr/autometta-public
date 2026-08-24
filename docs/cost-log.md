@@ -48,8 +48,8 @@ One JSON object per line. All fields are always present.
 | `stage_id` | string | The stage this role served. |
 | `role` | string | `worker` or `verifier`. |
 | `identity` | string | The full agent identity string from the stage card / state. |
-| `tier` | string | Capability tier derived from the identity (`T1`, `T2`, `T4`), matching the agent-orchestrator tier table. Drives the rate row. |
-| `auth_route` | string | `subscription` or `api`, resolved the same way as the dispatch (env override, then `.autometta.local.yaml`, then subscription default). |
+| `tier` | string | Capability tier derived from the identity (`T0`, `T1`, `T2`, `T4`, `T5`), matching the agent-orchestrator tier table. Drives the rate row. |
+| `auth_route` | string | `subscription`, `api`, or `local` (codex only), resolved the same way as the dispatch (env override, then `.autometta.local.yaml`, then subscription default). |
 | `input_tokens` | int | Fresh (non-cached) input tokens. Cache-creation (write) tokens are folded in here, see below. |
 | `cached_input_tokens` | int | Input tokens served from the prompt cache (the cache-read count). |
 | `output_tokens` | int | Generated output tokens. |
@@ -123,12 +123,19 @@ prices move. Rates are USD per one million tokens.
 | T1 | Opus, GPT-5.6 Sol | 15.00 | 1.50 | 75.00 |
 | T2 | Sonnet, GPT-5.6 Terra | 3.00 | 0.30 | 15.00 |
 | T4 | Haiku, GPT-5.6 Luna | 1.00 | 0.10 | 5.00 |
+| T5 | Codex GPT-OSS 120B (local Ollama) | 0.00 | 0.00 | 0.00 |
 
 T0 is the opt-in Claude Fable 5 tier, a step above Opus and the only tier above
 T1. It is dispatched per card only: no existing identity resolves to it, so a
 stage runs Fable solely when its card names a `*Fable*` worker or verifier. The
 label was previously a placeholder for the orchestrator's own main session,
 which is not a dispatched role and is not costed here.
+
+T5 is the codex `local` auth route: real tokens still get counted (the token
+cap still bounds attention and wall-clock), only the USD estimate is zero. An
+unrecognised local identity would otherwise fall through to the T2 default and
+cost a free dispatch at the $3/M workhorse rate, so T5 is an explicit row
+rather than an accident of the fallback.
 
 `cost_usd_est = (input_tokens * input_rate + cached_input_tokens * cached_rate
 + output_tokens * output_rate) / 1e6`.

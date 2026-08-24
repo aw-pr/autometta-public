@@ -231,9 +231,11 @@ pinned to the old Cellar version. Re-source the shell or restart the
 session after `install-homebrew-local.sh` to pick up new scripts
 (`heartbeat`, `watch-agent`, `agent-ticker`, `install-launchagent`, etc.).
 
-## Billing routes (subscription vs API key)
+## Billing routes (subscription vs API key vs local)
 
-Every dispatched worker or verifier runs on either an OAuth subscription session (Claude Pro / ChatGPT plan) or an API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude). Resolver fallback (no manifest) is `subscription` for both; the shipped template recommends `codex: api` + `claude: subscription`. Flip per repo or per dispatch.
+Every dispatched worker or verifier runs on an OAuth subscription session (Claude Pro / ChatGPT plan), an API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude), or, codex family only, local Ollama weights with no provider at all (`auth.codex.mode: local`, `codex exec --oss --local-provider=ollama`). Resolver fallback (no manifest) is `subscription` for both; the shipped template recommends `codex: api` + `claude: subscription`. Flip per repo or per dispatch.
+
+The local route is zero marginal cost with no rate limits, at the price of real weights: prefer it for stages with mechanical acceptance (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria. One-time host setup is `ollama pull gpt-oss:120b` (the default; see `scripts/models.sh:AUTOMETTA_MODEL_CODEX_LOCAL`) and a confirming `ollama list`. No `OP_REF_*` and no sibling `CODEX_HOME` are needed; if `ollama` is not installed, not serving, or the model is not pulled, the spawn fails closed before launching an agent, and autometta never runs `ollama serve` for you. `auth.claude.mode: local` is refused: a Claude-family local route would be a different CLI and a different card. Full detail, including the investigated-but-out-of-scope OpenRouter free-tier fallback, is in `docs/setup.md` section 7.
 
 Aligned to the `auth-route-security` skill — every launch goes through `op-fetch`, which exec's the child via `env -i` plus an allowlist plus only the named refs. Subscription mode still goes through `op-fetch`, so any stray `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` in your parent shell is **stripped** rather than silently flipping you to API billing.
 
@@ -265,9 +267,9 @@ Resolution order: `$AUTOMETTA_LOCAL_REFS` env var, then `~/.config/autometta/op-
 ```yaml
 auth:
   codex:
-    mode: api          # subscription | api
+    mode: api          # subscription | api | local
   claude:
-    mode: subscription
+    mode: subscription  # subscription | api (local is codex-family only)
 ```
 
 Dispatch-time override beats the manifest:
@@ -301,7 +303,7 @@ The spawn scripts and the manual dispatch pattern both export `CODEX_HOME=$AUTOM
 
 ### How it dispatches (for agents picking this up cold)
 
-- `scripts/auth-route.sh <family>` — emits the `NAME=$OP_REF_NAME` pair for op-fetch (or nothing for subscription).
+- `scripts/auth-route.sh <family>` emits the `NAME=$OP_REF_NAME` pair for op-fetch (or nothing for subscription or codex's local route). `scripts/auth-route.sh codex --print-mode` prints just the resolved mode word, which the spawn scripts use to pick the `--oss --local-provider=ollama` argv over the api/subscription one.
 - `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` — source `op-refs.sh`, call `auth-route.sh`, then `op-fetch <pairs> -- codex exec ...` or `op-fetch <pairs> -- claude -p ...`. For codex+api they prepend `CODEX_HOME=...` and `--pass CODEX_HOME`.
 - `op-fetch` (typically at `~/Scripts/op-fetch`) — resolves refs via the 1Password service-account token from `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`), then exec's the child with `env -i` + allowlist + named keys only. No biometric prompt; works under cron and the macOS LaunchAgent.
 
