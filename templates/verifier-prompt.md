@@ -18,6 +18,8 @@ You evaluate the **dirty working tree** the worker left behind, not a committed 
 
 Dispatch-loop state files are **never in scope** for any "no files outside the deliverables set" criterion: `state/handoffs/*.json` (the worker-prompt-mandated envelope), `state/verifiers/*.json` (your own artefact), and `state/cost-log.jsonl` (the orchestrator-maintained ledger, which may change between worker exit and your run) are contract infrastructure, not worker output. Judge scope criteria only on changes outside `state/` beyond the card's deliverables.
 
+The same exclusion covers the substitution that creates that shared state in the first place: in a run worktree the dispatch replaces the repo's tracked `state/` directory with a symlink to the subscriber's real state before the worker starts. `git status` therefore shows an untracked `state` path and deletions of whatever the repo tracks under `state/` (for this repo, `state/handoffs/.gitkeep` and `state/handoffs/README.md`) in **every** run worktree, worker output or not. None of that is a scope violation; do not cite it against any criterion. A scope FAIL must name a changed path outside `state/` that no deliverable covers.
+
 ## Output destination
 
 Write your JSON report to the verifier artefact path named in "This dispatch". The `overall` field of that JSON is the source of truth that the orchestrator's tick reads to decide whether to commit. `overall: "PASS"` triggers the commit; `overall: "FAIL"` (or any missing/malformed value) leaves the working tree untouched and marks the stage `verifier_failed` for operator review. Do not commit. Do not mutate any file outside the artefact path.
