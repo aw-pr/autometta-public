@@ -384,9 +384,18 @@ On PASS, `tick.sh` commits the worker's non-state changes on the run branch
 inside the worktree, then fast-forwards the base branch to it if the base
 hasn't moved; if the base has moved, it pushes the run branch to `origin`
 instead and appends a note to `HANDOFF.md`, leaving branch and worktree
-standing for manual integration. On FAIL, both are always left standing for
-operator review — `scripts/requeue-stage.sh` / the `autometta-requeue`
-skill remove them before a re-dispatch.
+standing for manual integration. On verifier FAIL, `tick.sh` automatically
+commits the non-state diff on the run branch with the worker as author, pins
+the commit at `wip/<stage>-attempt-<n>`, and records that ref and SHA as
+`wip_branch` and `wip_commit` in the stage record. A clean worktree has
+nothing to preserve. A preservation error is loud but non-fatal: the tick
+leaves the worktree standing and completes the FAIL transition.
+
+Before re-dispatch, amend the card with the prior FAIL evidence and cite the
+stage record's `wip_commit` in the re-brief. `scripts/requeue-stage.sh` removes
+the ephemeral worktree and `autometta/<stage>` branch, prints the preserved
+SHA, and leaves every `wip/` ref standing. Those refs are per-attempt and are
+not garbage-collected automatically.
 
 ### Budget window auto-reset
 

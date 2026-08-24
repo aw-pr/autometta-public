@@ -39,7 +39,7 @@
           "status": {
             "type": "string",
             "enum": ["pending", "in_progress", "completed", "failed", "stalled", "verifier_failed", "superseded"],
-            "description": "Stage lifecycle status. Transitions: pending -> in_progress -> completed | failed | stalled | verifier_failed; pending -> superseded by operator decision. failed, stalled, and verifier_failed are terminal until a human re-briefs. verifier_failed means the verifier artefact reported overall=FAIL (or was malformed and treated as FAIL); the worker's working-tree changes have NOT been committed, and the operator decides whether to amend the stage card and re-run or revert. superseded is terminal and is NOT a failure: it records an operator decision that the card should not run, because later work overtook its acceptance criteria or its implementation was deliberately reverted. The tick never dispatches it, never reaps it as stalled and never leaves it on its own; it does not increment consecutive_failures and cannot contribute to a failure-cap halt; and it raises no alert in any renderer. The reason belongs on the stage card itself -- a retirement with no recorded reason is indistinguishable next month from a failure someone hid."
+            "description": "Stage lifecycle status. Transitions: pending -> in_progress -> completed | failed | stalled | verifier_failed; pending -> superseded by operator decision. failed, stalled, and verifier_failed are terminal until a human re-briefs. verifier_failed means the verifier artefact reported overall=FAIL (or was malformed and treated as FAIL); when possible the tick commits the worker diff and pins it on the stage record's wip_branch before the operator decides whether to amend the stage card and re-run or revert. superseded is terminal and is NOT a failure: it records an operator decision that the card should not run, because later work overtook its acceptance criteria or its implementation was deliberately reverted. The tick never dispatches it, never reaps it as stalled and never leaves it on its own; it does not increment consecutive_failures and cannot contribute to a failure-cap halt; and it raises no alert in any renderer. The reason belongs on the stage card itself -- a retirement with no recorded reason is indistinguishable next month from a failure someone hid."
           },
           "worker": {
             "type": "string",
@@ -63,6 +63,16 @@
             "type": ["string", "null"],
             "pattern": "^[0-9a-f]{7,40}$",
             "description": "Git commit SHA of the stage's atomic commit. Null until step 7 of the dispatch contract executes."
+          },
+          "wip_commit": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{7,40}$",
+            "description": "Commit SHA of the latest verifier-FAILed attempt preserved automatically by tick.sh. Retained across requeue so the next card re-brief can cite it."
+          },
+          "wip_branch": {
+            "type": ["string", "null"],
+            "pattern": "^wip/[0-9]{2}[a-z]*-[a-z0-9-]+-attempt-[1-9][0-9]*$",
+            "description": "Append-only local branch pinning wip_commit for the latest verifier-FAILed attempt. Requeue and retention never delete wip refs."
           },
           "worker_pid": {
             "type": ["integer", "null"],

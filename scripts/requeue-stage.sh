@@ -106,10 +106,17 @@ fi
 
 # Trap 2 (retired 2026-08-14 by worktree-per-run dispatch): a prior attempt
 # leaves worker WIP in its own ephemeral worktree/run branch, not in
-# repo_root, so repo_root's tree is never a re-queue blocker. Remove that
-# worktree and run branch so the next tick cuts a fresh one; the WIP inside
-# is simply discarded (the verifier already FAILed it, or it stalled).
+# repo_root, so repo_root's tree is never a re-queue blocker. A verifier FAIL
+# pins that WIP under wip/<stage>-attempt-<n> before this removal. This script
+# removes only the exact autometta/<stage> run branch and never a wip/ ref.
+preserved_sha="$(yq -o=json '.' "$state_yaml" | jq -r --arg id "$stage_id" \
+  '.stages[] | select(.id == $id) | .wip_commit // empty')"
+preserved_branch="$(yq -o=json '.' "$state_yaml" | jq -r --arg id "$stage_id" \
+  '.stages[] | select(.id == $id) | .wip_branch // empty')"
 remove_worktree_and_branch
+if [ -n "$preserved_sha" ]; then
+  echo "requeue: preserved ${stage_id} attempt at ${preserved_sha} (${preserved_branch:-wip ref})"
+fi
 
 # Kill any live agent working this stage, then drop its registration.
 for agent_file in "$repo_root"/state/active-agents/*.json; do

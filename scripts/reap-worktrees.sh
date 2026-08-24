@@ -11,9 +11,9 @@
 # What this will not do, in order of how much it would cost to get wrong:
 #
 #   1. A stage that is in_progress owns its worktree. Never touched.
-#   2. A worktree holding uncommitted work is reported, never removed. On a
-#      verifier FAIL the worker's diff is uncommitted by design and is the
-#      whole of what the operator inspects. The one exception is the known
+#   2. A worktree holding uncommitted work is reported, never removed. A
+#      verifier FAIL is committed and pinned automatically before it becomes
+#      collectable. The one exception is the known
 #      state/ symlink artefact -- dispatch replaces the tracked state/ dir
 #      with a symlink to the shared one, which shows up as two deletions and
 #      one untracked path in every run worktree -- so the check excludes the
@@ -96,7 +96,7 @@ consider() {
   stage_id="${stage_id#${repo_name}-run-}"
   validate_stage_id "$stage_id" || { say "${work_dir}: not a stage-shaped run worktree, left standing"; return 0; }
 
-  local status integration_state base_branch run_branch
+  local status integration_state base_branch run_branch wip_branch wip_commit preserved=false
   status="$(stage_field "$stage_id" status)"
   if [[ -z "$status" ]]; then
     say "${stage_id}: no such stage in state.yaml, left standing (${work_dir})"
@@ -104,6 +104,13 @@ consider() {
   fi
   if [[ "$status" == "in_progress" || "$stage_id" == "$current_stage" ]]; then
     return 0
+  fi
+
+  wip_branch="$(stage_field "$stage_id" wip_branch)"
+  wip_commit="$(stage_field "$stage_id" wip_commit)"
+  if [[ -n "$wip_branch" && -n "$wip_commit" ]] \
+     && [[ "$(git -C "$repo_root" rev-parse -q --verify "refs/heads/${wip_branch}" 2>/dev/null || true)" == "$wip_commit" ]]; then
+    preserved=true
   fi
 
   # A status that cannot be read is not a clean status. Report rather than
@@ -148,14 +155,18 @@ consider() {
       return 0
     fi
     if ! git -C "$repo_root" merge-base --is-ancestor "$run_tip" "$base_tip" 2>/dev/null; then
-      if [[ "$integration_state" != "awaiting" ]]; then
-        $dry_run || record_stage_integration "$state_yaml" "$stage_id" \
-          "$(integration_record awaiting "$base_branch" "$run_branch" "$run_tip" "")"
-        say "${stage_id}: ${run_branch} is not on ${base_branch}; recorded as awaiting integration"
+      if $preserved && [[ "$run_tip" == "$wip_commit" ]]; then
+        say "${stage_id}: ${run_branch} is pinned at ${wip_commit} on ${wip_branch}; safe to reap"
       else
-        say "${stage_id}: still awaiting integration into ${base_branch} (${run_branch})"
+        if [[ "$integration_state" != "awaiting" ]]; then
+          $dry_run || record_stage_integration "$state_yaml" "$stage_id" \
+            "$(integration_record awaiting "$base_branch" "$run_branch" "$run_tip" "")"
+          say "${stage_id}: ${run_branch} is not on ${base_branch}; recorded as awaiting integration"
+        else
+          say "${stage_id}: still awaiting integration into ${base_branch} (${run_branch})"
+        fi
+        return 0
       fi
-      return 0
     fi
     if [[ "$integration_state" == "awaiting" ]]; then
       $dry_run || record_stage_integration "$state_yaml" "$stage_id" \
