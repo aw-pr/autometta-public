@@ -30,6 +30,13 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Cap resolution consults the live controller home (host default, drain
+# mode), so an active drain on the real host would unblow every fixture
+# cap here. Pin the controller home to an empty sandbox first.
+PHAT_CONTROLLER_HOME="$(mktemp -d)"
+export PHAT_CONTROLLER_HOME
+
 # shellcheck source=./budget.sh
 source "$script_dir/budget.sh"
 

@@ -376,3 +376,26 @@ Step 5 of `templates/verifier-prompt.md` (`7c7f22b`, 2026-08-22) makes the metho
 The authoring rule those two support: **before writing a criterion, name the seat that will judge it and the command that produces its evidence.** A criterion whose evidence has no command behind it is a manual gate wearing an acceptance criterion, and a manual gate belongs to the operator, not to the retry cap. Where the repo already has a harness, the card points at it by path, because a verifier that has to invent the method will sometimes invent one that does not work in its seat.
 
 Where a criterion has already failed this way, the fix is a re-brief that names the method and leaves the claim alone, not a requeue and not a softened criterion. The worked example is `docs/incidents/2026-08-16-emergence-lab-five-broken-stages.md`, which carries the four verdicts and the re-brief that followed them.
+
+## Headless gotcha 17: a reset time just past is not tomorrow
+
+### One-sentence summary
+A provider banner gives a reset clock but no date, so resolving every clock that is earlier than `now` as tomorrow can turn a reset that happened seconds ago into a 24-hour pause.
+
+### Incident origin
+On 2026-08-24 a Claude worker for stage 46 was refused at 12:06 local with `You've hit your session limit · resets 12:10pm (Europe/London)`. The tick reaped the process seconds after that clock and recorded:
+
+```text
+2026-08-24T11:10:02Z stage 46-verifier-bake-off-local-against-cloud-free worker was refused by the provider, not failed: You've hit your session limit · resets 12:10pm (Europe/London)
+2026-08-24T11:10:02Z   stage left untouched; dispatch paused until 2026-08-25 12:10 BST
+```
+
+The refusal handling was correct: it burned no attempt and left the worktree standing. The date inference was not. At 12:10:02 BST, the parser constructed today's 12:10, found it two seconds earlier than `now`, added one day, and parked an unattended repo for roughly 25 hours after the refusal.
+
+### Failure mode if ignored
+A healthy self-resuming pause can sleep through the next working window. The stage remains pending and looks safely preserved, but no tick dispatches it until the incorrectly inferred date. A malformed provider clock has the same shape and can impose a day-long pause even though the real session window is five hours.
+
+### Mitigation
+`usage_limit_reset_epoch` treats a reset in the previous 15 minutes as already elapsed, including when the clock crossed midnight. It returns the current epoch, so `budget_pause_active` clears the elapsed pause on the next tick and redispatches the untouched stage. A reset still ahead keeps today's date. Older clocks retain the previous next-day interpretation, but the resulting target is capped at six hours from `now`, above the five-hour provider window. An unparseable clock keeps the existing one-hour fallback, also below the cap.
+
+`scripts/usage-error-smoke.sh` fixes the clock offline and covers two minutes past, two minutes ahead, midnight crossing, the exact incident timestamp, and a nonsense clock. The general rule: when a provider supplies a wall-clock time without a date, near-boundary arithmetic must distinguish "just elapsed" from "next occurrence", and every inferred wait needs a bound tied to the real window it represents.

@@ -30,6 +30,13 @@ USAGE_LIMIT_PATTERN='session[ _-]limit|usage[ _-]limit|limit reached|hit your .{
 # discussed one. Applied after USAGE_LIMIT_PATTERN, never instead of it.
 USAGE_LIMIT_EXCLUDE='scan-usage-limits|usage-limit\.sh|USAGE_LIMIT_|usage_limit_|--usage-limit'
 
+# A reset named shortly before the refusal was parsed has already happened.
+USAGE_LIMIT_RESET_GRACE_SECONDS=900
+
+# Provider session windows are five hours. Even a bad date inference must not
+# park dispatch for longer than one complete window plus margin.
+USAGE_LIMIT_MAX_PAUSE_SECONDS=21600
+
 # usage_limit_hit <log_path> [completion_signal]
 # Exit 0 and print the first matching line when the log carries a refusal.
 # Exit 1 otherwise (including a missing log or a completed role). Provider
@@ -48,23 +55,27 @@ usage_limit_hit() {
   printf '%s\n' "$hit"
 }
 
-# usage_limit_reset_epoch <refusal_line>
+# usage_limit_reset_epoch <refusal_line> [now_epoch]
 # Print the epoch second at which the provider says the window resets, parsed
 # from a trailing "resets 1:10pm" / "resets at 13:10" / "resets 1pm". Prints
 # nothing when the line carries no reset time, which the caller should treat
 # as "unknown, back off by a default".
 #
-# The clock is wall-clock local time and carries no date, so a time that has
-# already passed today is read as tomorrow.
+# The optional clock is an offline-fixture seam; production callers omit it.
 usage_limit_reset_epoch() {
   local line="${1:-}"
+  local now_epoch="${2:-}"
   [[ -n "$line" ]] || return 0
-  python3 - "$line" <<'PY'
+  python3 - "$line" "$now_epoch" \
+    "$USAGE_LIMIT_RESET_GRACE_SECONDS" "$USAGE_LIMIT_MAX_PAUSE_SECONDS" <<'PY'
 import datetime as dt
 import re
 import sys
 
 line = sys.argv[1]
+now_epoch = sys.argv[2]
+grace_seconds = int(sys.argv[3])
+max_pause_seconds = int(sys.argv[4])
 m = re.search(
     r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?",
     line,
@@ -85,10 +96,22 @@ elif meridiem == "am" and hour == 12:
 if not (0 <= hour <= 23 and 0 <= minute <= 59):
     sys.exit(0)
 
-now = dt.datetime.now()
+try:
+    now = dt.datetime.fromtimestamp(int(now_epoch)) if now_epoch else dt.datetime.now()
+except (OverflowError, ValueError):
+    sys.exit(0)
+
 target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+# A reset just passed, including just across midnight, means the window is
+# already open. Older times retain the existing next-day inference, but every
+# inferred wait is capped so a bad date can cost at most one provider window.
+most_recent = target if target <= now else target - dt.timedelta(days=1)
+if 0 <= (now - most_recent).total_seconds() <= grace_seconds:
+    print(int(now.timestamp()))
+    sys.exit(0)
 if target <= now:
     target += dt.timedelta(days=1)
+target = min(target, now + dt.timedelta(seconds=max_pause_seconds))
 print(int(target.timestamp()))
 PY
 }
