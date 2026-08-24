@@ -3,18 +3,20 @@
 ## Metadata
 
 - **Authored:** 2026-08-24
-- **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
-- **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>
+- **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/54-a-warden-pass-minds-the-queue
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Pairing rationale:** this adds an agent role to the control plane,
-  the most consequential change a card here can make; Claude designs and
-  writes it, Codex verifies at high effort against fixtures where the
-  warden must refuse to act.
+  the most consequential change a card here can make. Attempt 1 paired it
+  the other way round and lost the worker to a drained Claude subscription
+  at 24.9M tokens, so attempt 2 flips the families: Codex restores and
+  finishes the preserved work on the ChatGPT quota, Claude verifies at high
+  effort against fixtures where the warden must refuse to act.
 
 ## Objective
 
@@ -201,3 +203,40 @@ and the warden's one-pass bound demonstrated.
 ## Family-specific notes
 
 None
+
+## Re-brief (attempt 2, 2026-08-24)
+
+Attempt 1 did not fail verification: the worker exited without writing a
+handoff envelope, so the tick marked the stage `stalled`
+(`worker_envelope_missing_after_exit`) and left the run worktree standing.
+It had spent 24.9M tokens and its log was empty, which is the shape of a
+session that ran out of quota mid-write rather than one that finished.
+
+The work it had done is real and substantial. It is preserved as one commit
+`b7f3584` on branch `wip/54-a-warden-pass-minds-the-queue-attempt-1`:
+`scripts/warden.sh` (839 lines), `scripts/warden-smoke.sh`,
+`scripts/install-launchagent-warden.sh`,
+`scripts/uninstall-launchagent-warden.sh`, `skills/autometta-warden/`,
+`templates/warden-prompt.md`, `templates/warden-mandate.yaml.tpl`,
+`templates/launchagent-warden.plist.tpl`, plus edits to `bin/autometta`,
+`docs/phat-controller.md`, `docs/dispatch-contract.md`, `docs/cost-log.md`.
+None of it has been checked against the acceptance criteria.
+
+One defect was corrected by the orchestrator before pinning: attempt 1
+replaced the run worktree's `state/` directory with a symlink to
+`../autometta/state`, which deleted the tracked `state/handoffs/.gitkeep`
+and `state/handoffs/README.md` and pointed every write in the run tree at
+the live controller state. That symlink is gone from the preserved commit.
+**Do not recreate it.** The run worktree's `state/` is its own; a warden
+that needs to read live controller state reads it by path at run time, it
+does not relink the tree.
+
+Do, in order:
+
+1. Restore `b7f3584` onto the fresh run branch. It is one commit holding
+   the whole implementation; do not re-derive it.
+2. Walk every acceptance criterion above against the restored tree and
+   close whatever is not yet met. Assume nothing is proven.
+3. Run the contract test and the smoke as the criteria require.
+4. Write the handoff envelope. Attempt 1's whole loss was that it did not.
+   Write it as soon as the criteria pass, before any tidying.
