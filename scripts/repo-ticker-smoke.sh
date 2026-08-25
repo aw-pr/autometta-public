@@ -260,6 +260,8 @@ check "160 columns renders without error and keeps the long stage id intact" \
   "$([[ "$frame160" == *"$long_queue_id_1"* ]] && printf ok || printf 'missing at 160')"
 check "the 80 and 119 column captures actually differ (allocation responds to width)" \
   "$([[ "$frame80" != "$frame119" ]] && printf ok || printf 'identical at both widths')"
+check "the 119 and 160 column captures actually differ (allocation keeps responding past natural id width)" \
+  "$([[ "$frame119" != "$frame160" ]] && printf ok || printf 'identical at 119 and 160')"
 
 # A dedicated fixture for the stated drop order in NOW: over budget (long
 # "OVER BUDGET ..." text), verifying (so an attempt count is shown), and

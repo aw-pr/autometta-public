@@ -24,6 +24,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/budget.sh"
 # shellcheck source=repo-light.sh
 . "$script_dir/repo-light.sh"
+# shellcheck source=alert-statuses.sh
+. "$script_dir/alert-statuses.sh"
+alert_statuses_json="$(alert_stage_statuses_json)"
 
 repo_filter=""
 while [[ $# -gt 0 ]]; do
@@ -264,6 +267,15 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   queue_json="$(printf '%s' "$stages_json" | jq -c '[.[] | select(.status == "pending") |
     {stage_id:.id, worker:(.worker // null), verifier:(.verifier // null)}]')"
 
+  # Stages done/outstanding/escalated for the repo ticker's NEXT counts line:
+  # an aggregate over the full stages list, so it belongs here and not in the
+  # renderer (scripts/lib/repo-ticker-render.py:9, card 63 criterion 9).
+  queue_counts_json="$(printf '%s' "$stages_json" | jq -c --argjson alert "$alert_statuses_json" '{
+    done: ([.[] | select(.status == "completed")] | length),
+    outstanding: ([.[] | select(.status != "completed" and .status != "superseded")] | length),
+    escalated: ([.[] | select(.status as $s | $alert | index($s) != null)] | length)
+  }')"
+
   quota='{"read_at":null,"families":{"claude":{"family":"claude","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]},"codex":{"family":"codex","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]}}}'
   if [[ -f "$quota_path" ]]; then
     quota="$(jq -c '
@@ -328,7 +340,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson paused_until "$paused_until" --argjson paused_reason "$paused_reason" \
     --argjson last_tick_at "$last_tick_at" --argjson verifier_attempt_cap 3 \
     --argjson stages "$stages_json" --argjson alerts "$alerts_json" --argjson agents "$agents_json" \
-    --argjson queue "$queue_json" --argjson spend "$spend" --argjson quota "$quota" --argjson state_error "$state_error" \
+    --argjson queue "$queue_json" --argjson queue_counts "$queue_counts_json" \
+    --argjson spend "$spend" --argjson quota "$quota" --argjson state_error "$state_error" \
     --argjson heartbeat_checked_at "$heartbeat_checked_at" --argjson drain_active "$drain_active" \
     --argjson drain_cap "$drain_cap" --argjson drain_expires_at "$drain_expires_at" '
     {name:$name, repo_path:$repo_path, enabled:$enabled, tokens_spent:$tokens_spent,
@@ -340,7 +353,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      state_error:$state_error, heartbeat_checked_at:$heartbeat_checked_at,
      drain_active:$drain_active, drain_cap:$drain_cap, drain_expires_at:$drain_expires_at,
      queue_depth:($queue|length), in_flight:([$stages[] | select(.status == "in_progress")] | length),
-     alerts:$alerts, agents:$agents, active_agents:$agents, queue:$queue, stages:$stages, spend:$spend, quota:$quota,
+     alerts:$alerts, agents:$agents, active_agents:$agents, queue:$queue, queue_counts:$queue_counts,
+     stages:$stages, spend:$spend, quota:$quota,
      today_tokens:$spend.tokens_total, today_cost_usd_est:$spend.cost_usd_est,
      seven_day_cost_usd_est:$spend.seven_day_cost_usd_est,
      last_hour_tokens:$spend.last_hour_tokens, last_dispatch_at:$spend.last_dispatch_at}')"

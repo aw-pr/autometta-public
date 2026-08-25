@@ -9,6 +9,18 @@ cost-log.jsonl, budget.json or a transcript directly -- every figure here
 is already in the payload, so there is exactly one place any of them could
 be computed wrong.
 
+Aggregation boundary (criterion 9): a figure derived by iterating or
+grouping over multiple payload records (a count, a sum, a group-by) is an
+aggregate and belongs in aggregate-dashboard.sh, so this file never does
+that -- see queue_counts in render_next. A figure derived by arithmetic on
+scalars the payload already carries (a percentage of two counters, "now"
+minus a timestamp, a threshold comparison) is presentation, not a new fact
+about the fleet, and stays here -- see the elapsed/budget and cap
+percentages and the freshness age below. The freshness age specifically
+cannot move: it is "now" relative to a fixed timestamp, and "now" is only
+meaningful at render time, one 5s-refresh reading behind the moment the
+aggregator ran.
+
 Usage: repo-ticker-render.py <repo_root> <width> <height> <interval> <freshness_threshold>
 """
 import calendar
@@ -239,10 +251,13 @@ def render_now(payload, width):
 # ------------------------------------------------------------------ NEXT
 
 def render_next(payload, width):
-    stages = payload.get("stages") or []
-    done = sum(1 for s in stages if s.get("status") == "completed")
-    outstanding = sum(1 for s in stages if s.get("status") not in ("completed", "superseded"))
-    escalated = sum(1 for s in stages if s.get("status") in ALERT_STAGE_STATUSES)
+    # done/outstanding/escalated are aggregates over the full stages list --
+    # scripts/aggregate-dashboard.sh computes them once (queue_counts) so
+    # this stays presentation-only, per the aggregation boundary above.
+    counts = payload.get("queue_counts") or {}
+    done = counts.get("done", 0)
+    outstanding = counts.get("outstanding", 0)
+    escalated = counts.get("escalated", 0)
 
     lines = [BOLD("NEXT")]
     lines.append("  %s" % fit(
@@ -253,10 +268,15 @@ def render_next(payload, width):
     if not queue:
         return lines
 
-    stage_natural = max([len(i.get("stage_id") or "?") for i in queue] + [16])
+    # No "max" on stage: capping it at the widest queued id made 119 and 160
+    # allocate identically once that id fit (card 63 criterion 8 FAIL,
+    # attempt 1). "stage" is the last visible field on the row (no detail
+    # column competing for the remainder, unlike render_escalations), so a
+    # weighted column can take its full share and keep responding to the
+    # window past the point content alone would need.
     widths, _dropped = allocate_columns(width - 2, [
         {"name": "family", "min": 8, "weight": 0, "droppable": True, "drop_rank": 1},
-        {"name": "stage", "min": 16, "weight": 1, "max": stage_natural},
+        {"name": "stage", "min": 16, "weight": 1},
     ])
     for item in queue:
         stage_id = item.get("stage_id") or "?"
@@ -292,6 +312,9 @@ def render_escalations(payload, width, now):
     lines = [BOLD("ESCALATIONS")]
     status_natural = max(len(r[0]) for r in rows)
     id_natural = max(len(r[1]) for r in rows)
+    # Unlike render_next, "id" here shares its row with an optional detail
+    # (the wip pin) that needs whatever width "id" does not use, so it keeps
+    # its cap at the natural id width rather than consuming the remainder.
     widths, _dropped = allocate_columns(width - 2, [
         {"name": "status", "min": status_natural, "weight": 0},
         {"name": "id", "min": 16, "weight": 1, "max": id_natural},
