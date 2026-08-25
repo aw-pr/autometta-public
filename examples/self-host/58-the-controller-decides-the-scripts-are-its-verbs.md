@@ -10,7 +10,7 @@
 - **Run branch:** autometta/58-the-controller-decides-the-scripts-are-its-verbs
 - **Worker effort:** high
 - **Verifier effort:** high
-- **Verifier panel:** true
+- **Verifier panel:** false
 - **Gate:** after 56. That card frees the name phat-controller from the tick
   loop, and this card gives the name to the role.
 - **Pairing rationale:** the deliverable is mostly prose that another agent
@@ -191,3 +191,16 @@ Do, in order:
 3. Run the contract test and the smoke as the criteria require.
 4. Write the handoff envelope. Attempt 1's entire loss was that it did not.
    Write it as soon as the criteria pass, before any tidying.
+
+### Correction to the re-brief above (2026-08-25, orchestrator)
+
+The paragraph above telling you not to recreate the `state` symlink is
+**wrong** and should be ignored. The symlink is deliberate: `tick.sh`'s
+`ensure_run_worktree` creates it for every run worktree, and
+`templates/verifier-prompt.md` documents it as expected. The orchestrator
+mistook it for a worker's mistake twice, removed it, and thereby caused the
+very failures it was reading as worker stalls.
+
+Nothing in this card requires you to touch it either way. Leave the
+worktree's `state` symlink exactly as the dispatch created it. Card 62
+owns making that symlink's absence impossible to ignore.
