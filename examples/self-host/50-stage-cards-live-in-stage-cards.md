@@ -148,3 +148,44 @@ empty when the move landed.
 ## Family-specific notes
 
 None
+
+## Re-brief, attempt 2 (2026-08-25)
+
+Attempt 1 was verified by a Claude verifier and returned **FAIL on 1 of 7
+criteria**. Six passed, including every substantive one: the new
+`stage-cards/` fixture resolves and lists, both legacy fixtures behave exactly
+as before, the operator manifest finds stage 50's own card at its new path,
+and `git log --follow` crosses the move. The work is preserved at `3e206b0` on
+`wip/50-stage-cards-live-in-stage-cards-attempt-1`.
+
+**The entire remaining job is one comment.**
+
+The failing criterion asks that every legacy-fallback code site carry a
+one-line comment marking it as legacy. The verifier checked all 40 residual
+`examples/self-host` hits across 32 files and justified 39 of them: historical
+incident docs and lessons, bake-off artefacts, the moved cards' own frozen
+prose, and five code sites that already carry the comment
+(`scripts/tick.sh:315` and `:352`, `scripts/list-cards.sh:65` and `:117`,
+`scripts/aggregate-dashboard.sh:115`). `bin/autometta:256` was judged
+acceptable on a shared comment two lines above its block.
+
+The one gap is **`scripts/retro-grade-batch.py`, in `card_for_stage`**. It
+resolves through the same three-tier order as `tick.sh` and `list-cards.sh`,
+and it carries no legacy marker anywhere near it; the verifier grepped the
+whole file for "legacy" and found nothing.
+
+Add the one-line comment there, in the same words the other five sites use, so
+the file matches its siblings. Change nothing else.
+
+**Do not restructure, re-run the move, or revisit the six passing criteria.**
+Restore the preserved tree from `3e206b0` (restore the files, do not
+cherry-pick the preservation commit) and produce one commit as any other stage
+does.
+
+**One judgement to record rather than act on.** The verifier noted that the
+bake-off artefacts under `examples/bake-off/` were left alone as historical
+records, which is right, but that the card's historical-docs list names only
+`docs/incidents/`, `docs/lessons.md` and `memory/`. It called that an
+interpretive extension rather than a violation. If the card is ever revised,
+add `examples/bake-off/` to that list explicitly. Do not change the card as
+part of this attempt.
