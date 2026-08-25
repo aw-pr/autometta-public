@@ -389,6 +389,98 @@ about the loop.
 
 ---
 
+## 12. "Start from the preserved commit" puts a FAIL message in the trunk
+
+**What happened.** Stage 63's attempt-2 re-brief told the worker to start from
+the preserved commit `ece565c` rather than rebuild. It did exactly that: it
+cherry-picked the preservation commit onto its run branch, made its two fixes
+on top, and the stage landed. The fast-forward then carried **both** commits
+onto dev.
+
+So `a11d798` is now permanent history on the trunk, and its subject line reads:
+
+```
+wip(63-one-ticker-per-repo-that-fits-its-pane): attempt 1, verifier FAIL:
+criterion 8 responsive columns and untruncated 119-column stage ids: The
+119-column capture kept the long stage ids intact and the 80-column ...
+```
+
+A commit announcing a verifier FAIL, for work that passed, in a repo whose
+convention is one atomic stage commit per stage with a written headline.
+
+**What it is not.** Author and trailers are correct: `Claude Sonnet 5
+<claude-sonnet-5@local>`, committer `anthonylwest`, vendor trailer present.
+This is **not** the 2026-08-25 incident where a preserving watcher raced the
+tick and put an unattributed `wip` commit on dev. The attribution is right;
+the message and the granularity are wrong.
+
+**Whose fault.** The re-brief's. "Start from the preserved commit" is an
+instruction about provenance, and the worker read it as an instruction about
+git mechanics, which is a fair reading. Nothing in the loop is broken.
+
+**The wording that avoids it.** Ask for the preserved **tree**, not the
+preserved commit: restore the files (`git checkout <sha> -- .`, or cherry-pick
+with `--no-commit`) and let the stage produce **one** commit as every other
+stage does. The provenance still belongs in the handoff envelope and the card,
+where it is prose rather than history.
+
+**Not fixed retroactively.** Squashing it would rewrite a dev that is already
+pushed, and a non-fast-forward push is a human decision that a tidier log does
+not justify. It stands.
+
+**It did not recur.** Stage 61's re-brief carried the same "start from it"
+phrasing and was already dispatched when this was noticed, so it was left
+alone rather than amended mid-flight (gotcha 2, the card-sync race). Its
+worker restored the preserved work **without** carrying the preservation
+commit forward, and dev took one clean stage commit. So the phrasing is a
+hazard rather than a guarantee: one worker read it as git mechanics, another
+read it as provenance. That is exactly the kind of instruction worth making
+unambiguous, because both readings are reasonable and only one of them is
+visible afterwards.
+
+**Fix:** none needed in code. A re-brief wording rule, and it belongs in
+whatever template or skill governs re-briefs.
+
+---
+
+## 13. A re-brief only saves money when the work left is small
+
+**What happened.** Two stages were re-briefed onto preserved work on the same
+day, with the same instruction to start from what existed rather than rebuild.
+The results went in opposite directions.
+
+| Stage | Attempt 1 worker | Attempt 2 worker | Change |
+|---|---|---|---|
+| 63 | 45,758,708 | 6,596,878 | 7x cheaper |
+| 61 | 16,244,090 | 30,705,010 | 1.9x dearer |
+
+**Why the difference, and it is not worker quality.** 63's re-brief asked for
+two narrow fixes on finished code: move three counts into the aggregator, and
+uncap one column. Nearly all of attempt 1 was reusable, so nearly all of its
+cost was saved.
+
+61's re-brief asked for a structural change. The record had to become something
+the controller writes rather than something a log is mined for, and the smoke
+had to grow a scripted stand-in to drive a real pass. Most of attempt 1's smoke
+was the thing being replaced, so there was little to reuse and the second
+attempt did more work than the first.
+
+**The lesson.** "Start from the preserved work" is an instruction about
+provenance, not a cost control. When a re-brief changes the shape of the
+solution rather than correcting details of it, expect attempt 2 to cost as much
+as attempt 1 or more, and budget for it. A stage that has failed once is not
+automatically cheaper the second time.
+
+**Where it bit.** These two re-runs were 37.3M of the day's 145.5M. Combined
+with 63's 45.7M first attempt, the three of them are more than half the daily
+cap on one card's worth of delivered work.
+
+**Fix:** none. A planning lesson rather than a defect. It pairs with entry 10:
+the loop can neither warn about an outlier nor estimate what a re-brief will
+cost.
+
+---
+
 ## Open holes, collected
 
 Entries above with no card, in the order I would write them:
@@ -407,6 +499,8 @@ Entries above with no card, in the order I would write them:
    the daily cap and nothing said so until it was over.
 7. Cards asking for evidence the offline harness cannot produce (entry 11).
    Six criteria across two stages, one cause.
+8. Re-brief wording that puts preservation commits in the trunk (entry 12).
+   A documentation fix, not a code one.
 
 ## What went right, recorded on purpose
 
