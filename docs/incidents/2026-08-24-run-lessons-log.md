@@ -521,6 +521,45 @@ than "cap".
 
 ---
 
+## 15. The alarm has been stuck on since May
+
+**What happened.** An hour after stage 63 landed a new repo ticker, its
+FRESHNESS panel read `last tick 2115h13m ago -- STALE (threshold 20m00s)`. The
+tick had run four minutes earlier.
+
+![the repo ticker reporting a tick 88 days old, minutes after a real tick](images/2026-08-25-repo-ticker-freshness-stuck.png)
+
+`state/state.yaml` carries `last_tick_at: "2026-05-29T09:21:18Z"` and
+`tick_count: 0`. **Nothing writes either field.** Every reference in the tree
+is a test fixture setting the value by hand, except one comment at
+`scripts/tick.sh:1495` which asserts that `tick_count/last_tick_at update every
+tick regardless of whether a stage is running`. That comment has been wrong
+since May and reads authoritatively enough to stop anyone checking.
+
+**The renderer is innocent.** `repo-ticker-render.py:368` reads the field,
+`aggregate-dashboard.sh:188` copies it from state, and both do the right thing
+with the value they are given.
+
+**Why it is worse than a wrong number.** FRESHNESS exists to say the loop has
+stopped. It is stuck in the "stopped" position, so it cried STALE all day while
+the loop ran perfectly, and it will cry STALE in exactly the same words on the
+day the loop genuinely dies. An alarm that is always on is not an alarm.
+
+**How it passed a verifier yesterday.** Card 63's criterion 7 asked for
+freshness in both states and got them, because the smoke sets `last_tick_at` in
+four of its own fixtures. The renderer was proved against fixture input and the
+input itself was never checked. This is entry 11 again, found the day after
+entry 11 was written, in the work that was landing while it was written.
+
+**The general lesson, sharper than entry 11's.** A test that supplies the value
+it is testing proves the consumer and says nothing about the producer. When the
+field crosses a process boundary, at least one assertion has to start from the
+real producer. Card 65's smoke drives a real tick for exactly this reason.
+
+**Fix:** card 65.
+
+---
+
 ## Open holes, collected
 
 Entries above with no card, in the order I would write them:
@@ -541,6 +580,18 @@ Entries above with no card, in the order I would write them:
    Six criteria across two stages, one cause.
 8. Re-brief wording that puts preservation commits in the trunk (entry 12).
    A documentation fix, not a code one.
+
+Cards now cover three of these: 65 (entry 15, the stuck heartbeat), 66 (the
+fleet view's unbounded failures table, seen below), and 67 (entry 10, no
+outlier warning).
+
+![the fleet ticker's failures table running off the pane](images/2026-08-25-fleet-ticker-unbounded-failures.png)
+
+The fleet view still renders every non-pass dispatch across every subscriber
+back to 90 days, which is what card 63's criterion 10 removed from the repo
+view. Its top half is worth keeping:
+
+![the fleet ticker's totals and repos tables](images/2026-08-25-fleet-ticker-totals-and-repos.png)
 
 ## What went right, recorded on purpose
 
