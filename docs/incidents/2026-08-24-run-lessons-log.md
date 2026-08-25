@@ -481,6 +481,46 @@ cost.
 
 ---
 
+## 14. The cap is a dispatch gate, so it is a soft ceiling
+
+**What happened.** The run finished the day at **151,606,873 tokens against a
+`token_cap_total` of 150,000,000**, and for several minutes after crossing it
+`halted` still read `false`.
+
+**That is not the cap failing.** `budget_gate_dispatch` runs *before* a
+dispatch, never during one. A stage that is already running is not metered
+against the cap until it finishes and the next dispatch is considered. So the
+cap does not bound spend, it bounds *starting new work*, and the overshoot is
+bounded by whatever the largest single dispatch happens to cost. On this repo
+that could have been 45M, as stage 63's first attempt was.
+
+The repo duly halted on `token-cap` at the following tick, once something next
+tried to dispatch. Everything worked as written. The written behaviour is just
+weaker than the name "cap" suggests.
+
+**Related but different from the 2026-08-16 incident**
+(`docs/incidents/2026-08-16-budget-cap-did-not-stop-dispatch.md`), where the
+check was in the wrong place and produced a latch that several things could
+unlatch. Here the check is in the right place and the latch holds. The gap is
+that no check exists between dispatches.
+
+**This halt will self-heal, unlike the previous night's.** `window_started_at`
+is stamped `2026-08-25` and the repo is halted, so tomorrow's first tick
+satisfies both of `budget_ensure_window`'s conditions (stored window is not
+today, and the budget is halted) and zeroes the counters. The 24-hour trap in
+entry 3 needed a drain spanning the boundary to suppress that, and no drain is
+open. Lifetime spend now reads 382,554,291.
+
+**Worth knowing when planning a window.** Budget for the cap **plus one large
+dispatch**, not the cap. A resting cap of 150M with a 45M outlier in the queue
+is really a 195M worst case.
+
+**Fix:** none. Arguably correct as designed, and the honest fix is
+documentation rather than code: say "no new work starts past this line" rather
+than "cap".
+
+---
+
 ## Open holes, collected
 
 Entries above with no card, in the order I would write them:
