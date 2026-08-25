@@ -254,6 +254,48 @@ fast-forward.
 
 ---
 
+## 9. Nothing prunes what a landed stage leaves behind
+
+**What happened.** `reap-worktrees.sh` tears down a run *worktree* once its
+branch is contained in the base. Nothing tears down the *branch*, and nothing
+tears down the preserved-attempt branches at all. They accumulate silently for
+as long as the repo runs.
+
+**Measured on 2026-08-25, after 58 landed**, with the queue idle and every
+stage below either completed or superseded:
+
+- 6 remote run branches (`origin/autometta/40, 41, 43, 45, 46, 58`), every one
+  of them either fully contained in dev or, in 58's case, an orphan left by the
+  rebase. Pure duplicates of commits that had already landed.
+- 11 local `wip/*` branches across 7 completed stages, 42 to 58. Unlike the run
+  branches these hold **unique commits** that exist nowhere else: preserved
+  work from attempts that failed before a later attempt succeeded.
+- 17 local branches in total, of which 4 are load-bearing (`dev`, `publish`,
+  `autometta/state`, `phat-controller/state`).
+
+**Why it matters more than tidiness.** The two categories look identical in
+`git branch` and are not remotely alike. Deleting a run branch whose stage has
+landed loses nothing. Deleting a `wip/*` branch destroys the only copy of that
+attempt's work. An operator clearing up on a Friday afternoon cannot tell them
+apart by name, and the safe-looking bulk delete is the destructive one.
+
+**How they accumulate faster than you would expect.** Entry 7 is the mechanism:
+an integration the reaper cannot recognise leaves the worktree standing *and*
+the branch behind, and the tick logs `still awaiting integration` for ever
+while both sit there. Every rebase, squash or cherry-pick integration adds one
+worktree and one branch that nothing will ever collect.
+
+**The rule worth keeping.** A branch containing only commits reachable from the
+base branch is disposable. A branch containing unique commits is evidence, and
+it needs a decision rather than a sweep. Whatever eventually automates this must
+sort on containment, not on name.
+
+**Fix:** none. Open hole. Card-shaped, and it should be the same card as
+entry 7, because the reason the litter is not collected is the reason the
+integration is not recognised.
+
+---
+
 ## Open holes, collected
 
 Entries above with no card, in the order I would write them:
@@ -266,6 +308,8 @@ Entries above with no card, in the order I would write them:
 3. Panel mode: the api-mode requirement and the superseded roster (entry 6).
 4. State that must agree and nothing checking it, `current_stage` first
    (entry 5).
+5. Nothing prunes a landed stage's branches or an unrecognised integration's
+   worktree (entry 9). Same card as 2, most likely.
 
 ## What went right, recorded on purpose
 
