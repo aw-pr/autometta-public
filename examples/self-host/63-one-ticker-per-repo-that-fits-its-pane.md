@@ -188,3 +188,60 @@ caveat, and the smoke sweep result.
 ## Family-specific notes
 
 None
+
+## Re-brief, attempt 2 (2026-08-25)
+
+Attempt 1 was verified by GPT-5.6 Sol and returned **FAIL on 2 of 11
+criteria**. The other nine passed. **The work is good and it is preserved at
+`ece565c` on `wip/63-one-ticker-per-repo-that-fits-its-pane-attempt-1`:
+1252 insertions across 9 files, including `scripts/lib/repo-ticker-render.py`,
+`scripts/repo-ticker.sh`, `scripts/failures-history.sh` and
+`scripts/repo-ticker-smoke.sh`.**
+
+**Start from that commit. Do not re-derive it.** Attempt 1 cost 45.7M tokens,
+roughly twenty-five times a normal worker on this repo, and almost all of that
+was building the renderer that already exists. Your job is two focused fixes on
+top of preserved work, not a rebuild.
+
+### Fix 1: criterion 9, the renderer recomputes aggregates
+
+`render_next` derives `done`, `outstanding` and `escalated` by iterating
+`payload["stages"]` (`scripts/lib/repo-ticker-render.py:241-250`), and
+`scripts/aggregate-dashboard.sh` emits none of those three figures. The card
+asks the renderer to read only aggregated figures, and counts are aggregates.
+
+Move them into `aggregate-dashboard.sh` so they arrive in the payload already
+computed, and have the renderer print them. The verifier also cited the
+elapsed percentage (`:170-181`), the cap percentage (`:328-333`) and the
+freshness age (`:344-356`). Decide explicitly whether each is an aggregate
+that belongs in the aggregator or presentation arithmetic that belongs in the
+renderer, implement that decision consistently, and **state the rule you
+applied in your handoff envelope**. A criterion that says "no figure is
+recomputed" needs a stated boundary, or the next verifier will draw it
+somewhere else.
+
+### Fix 2: criterion 8, allocation does not differ at 119 and 160
+
+`allocate_columns` caps the growing stage column at `stage_natural`
+(`scripts/lib/repo-ticker-render.py:256-266`), so once the widest stage id
+fits, 119 and 160 columns allocate identically. The criterion asks for the
+same view at 80, 119 and 160 with **differing allocations**, and
+`scripts/repo-ticker-smoke.sh:256-262` only asserts that 80 differs from 119
+while capturing 160 at `:147-148` without asserting on it.
+
+Make the allocation genuinely differ across all three widths, and have the
+smoke assert it at all three rather than at two.
+
+**If you believe the cap is the better design**, and there is a real argument
+that a column should not grow past its content, then do not silently keep it
+and fail a third time. Implement the criterion as written, and say in your
+handoff envelope that you think the criterion should change and why. Amending
+an acceptance criterion after a FAIL is the orchestrator's decision, not
+yours, but a worker that spots a wrong criterion should say so rather than
+quietly disagree with it.
+
+### Everything else
+
+The nine passing criteria stay passed. Do not restructure what already works,
+do not touch `templates/verifier-prompt.md`, and keep the locale and TERM
+pinning that card 49 established.
