@@ -1478,7 +1478,11 @@ warn_if_vendor_stale() {
 run_heartbeat() {
   local repo_root="$1"
   if [[ -x "$script_dir/heartbeat.sh" ]]; then
-    "$script_dir/heartbeat.sh" "$repo_root" >/dev/null 2>&1 || true
+    local heartbeat_output
+    heartbeat_output="$("$script_dir/heartbeat.sh" "$repo_root" 2>&1 || true)"
+    while IFS= read -r heartbeat_line; do
+      [[ -n "$heartbeat_line" ]] && log "heartbeat: $heartbeat_line"
+    done <<<"$heartbeat_output"
   fi
 }
 

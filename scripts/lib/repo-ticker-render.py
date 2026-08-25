@@ -306,6 +306,17 @@ def render_escalations(payload, width, now):
         detail = ("wip:%s" % wip) if wip else None
         rows.append((status, stage.get("id") or "?", detail))
 
+    for agent in payload.get("agents") or []:
+        outlier = agent.get("token_outlier") or {}
+        if "token-outlier" not in (agent.get("flags") or []) or not outlier:
+            continue
+        live_tokens = outlier.get("live_total_tokens") or 0
+        multiple = outlier.get("multiple") or 0
+        role = outlier.get("role") or agent.get("role") or "agent"
+        detail = "%s · %.1fx %s median" % (
+            short_tokens(live_tokens), float(multiple), role)
+        rows.append(("OUTLIER", agent.get("stage_id") or "?", detail))
+
     if not rows:
         return []
 

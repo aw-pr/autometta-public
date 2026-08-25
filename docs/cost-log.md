@@ -182,6 +182,42 @@ jq -c 'select((.usage_status // "legacy") != "recorded")' state/cost-log.jsonl
 jq -r 'select(.role=="verifier") | "\(.stage_id) hit=\(.cache_hit_rate)"' state/cost-log.jsonl
 ```
 
+### Live outlier baseline
+
+The heartbeat uses the last ten comparable rows for each role and takes their
+median `total_tokens`. Worker and verifier rows never share a baseline. A row
+is comparable only when `usage_status` is `recorded` or `total_only` and
+`total_tokens` is a non-negative integer. Unknown usage and null totals are
+excluded rather than converted to zero.
+
+At least five comparable rows are required. Two or three observations are too
+easy to mistake for a stable local norm, so a new repo remains silent until it
+has five. Once the baseline exists, a live dispatch at ten times the median is
+flagged by `scripts/heartbeat.sh`. Both values are deliberately conservative
+defaults and can be adjusted with `AUTOMETTA_OUTLIER_BASELINE_WINDOW`,
+`AUTOMETTA_OUTLIER_MIN_SAMPLES` and `AUTOMETTA_OUTLIER_MULTIPLE`.
+
+This command shows the same per-role, last-ten median against a repo's real
+ledger:
+
+```sh
+jq -s '
+  map(select(
+    (.usage_status == "recorded" or .usage_status == "total_only") and
+    (.total_tokens | type) == "number"
+  ))
+  | group_by(.role)
+  | map(.[-10:] | sort_by(.total_tokens) |
+      {role: .[0].role, comparable_rows: length,
+       median_tokens: (if length % 2 == 1 then .[length / 2 | floor].total_tokens
+         else ((.[length / 2 - 1].total_tokens + .[length / 2].total_tokens) / 2)
+         end)})
+' state/cost-log.jsonl
+```
+
+The comparison is an observation only. It does not alter the budget, stop the
+agent or refuse another dispatch.
+
 ## Verifying the producer
 
 `scripts/cost-log-smoke.sh` exercises the producer offline (no API spend, no
@@ -190,6 +226,11 @@ result on a repeated-prefix loop: a cold run with `cache_hit_rate` 0 followed
 by a warm run with a non-zero hit rate and a strictly lower `cost_usd_est` for
 the same token shape. The live end-to-end cache check that actually calls the
 Anthropic API is `scripts/sdk-cache-smoke.sh`.
+
+`scripts/outlier-warning-smoke.sh` replays the 2026-08-25 sequence with
+ordinary worker rows followed by a live 45,758,708-token transcript. It also
+checks cold-start silence, unknown and null-total exclusion, natural process
+completion, the repo ticker warning and the tick-log route.
 
 ## Prompt caching (Phase 2)
 

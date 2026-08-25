@@ -23,7 +23,8 @@ does not supervise workers, retry stages, or create another controller loop.
 - `state/recent-agents/<pid>-<stage-id>.json`: completed agent runs,
   moved here by the heartbeat watchdog when the process exits.
 - `state/heartbeat.json`: latest watchdog report (per-agent flags for
-  `silent` log mtime, `over-budget`, etc.).
+  `silent` log mtime, `over-budget` and `token-outlier`, plus the recent
+  per-role token baselines).
 - `state/quota-window.json`: the tick's latest sanitised provider-window
   reading. It carries only source, fetch time and window labels, utilisation
   and reset times. It never carries a publisher payload or credential.
@@ -92,13 +93,14 @@ It answers one question, "do I need to intervene?", in five sections:
 - `NEXT`: a counts line (stages done, outstanding, and how many of those are
   escalated), then the next few queued stages with the family that will
   work each.
-- `ESCALATIONS`: only what is waiting on a human right now — a halt or pause
+- `ESCALATIONS`: only what is waiting on a human right now: a halt or pause
   with its reason, and any stage sitting in `stalled` or `verifier_failed`
   (not `failed`; see `scripts/alert-statuses.sh`, the one definition every
   renderer in the tree shares) with its preserved `wip_branch` pin. A
-  re-queued stage is back to `pending` and so is correctly absent. The whole
-  section, header included, renders nothing when there is nothing
-  outstanding.
+  re-queued stage is back to `pending` and so is correctly absent. A live
+  `token-outlier` heartbeat flag also appears here with the current token
+  figure and its multiple of that role's median. The whole section, header
+  included, renders nothing when there is nothing outstanding.
 - `SPEND AND LOSS`: tokens and estimated cost spent today, lost today
   (non-pass dispatch spend), lost over the last seven days, and the
   resolved cap (drain, this repo's own, or the host default) with percent
@@ -208,7 +210,8 @@ explicitly.
 `scripts/heartbeat.sh` is invoked once per repo per tick. It walks the
 active-agents registry and writes `state/heartbeat.json` with one entry per
 agent, flagged for log-mtime staleness (default threshold 300 seconds;
-override with `AUTOMETTA_HEARTBEAT_STALL`) and budget overrun. The
+override with `AUTOMETTA_HEARTBEAT_STALL`), budget overrun and unusual live
+token spend. The
 `silent` flag is only applied to agents whose family streams its log; for
 the `claude` family, `claude -p` emits its entire log at completion and is
 legitimately silent for the whole run, so only `over-budget` is a stuck
@@ -217,6 +220,15 @@ worker / verifier pairing: codex-worker / claude-verifier and the reverse
 both get accurate stuck-detection without false positives. Dead
 processes are moved to `state/recent-agents/` with `outcome: exited`. The
 watchdog never kills; it surfaces.
+
+For token spend, the heartbeat reads the running family transcript once at
+the heartbeat cadence. It compares the live total with the median of the last
+ten comparable cost-log rows for the same role. At least five rows are needed
+and the default warning point is ten times the median. `usage_status: unknown`
+and null totals do not enter the baseline. The report carries the baseline,
+sample size, live figure and multiple, while the warning is written to the
+controller tick log and shown in the repo ticker's `ESCALATIONS` section. It
+does not change state-machine status, budget state or process liveness.
 
 The heartbeat surface answers the "is this stuck?" question that
 `state.yaml` does not — `state.yaml` reflects the FSM, the heartbeat

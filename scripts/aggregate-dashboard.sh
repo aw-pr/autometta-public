@@ -171,6 +171,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     heartbeat_json="$(jq -c '.' "$heartbeat_path" 2>/dev/null || printf '{}')"
   fi
   heartbeat_checked_at="$(printf '%s' "$heartbeat_json" | jq -c '.checked_at // null')"
+  heartbeat_baselines="$(printf '%s' "$heartbeat_json" | jq -c '.baselines // {}')"
+  heartbeat_outlier_policy="$(printf '%s' "$heartbeat_json" | jq -c '.outlier_policy // {}')"
 
   stages_json='[]'; state_error=null; last_tick_at=null
   if [[ ! -r "$state_yaml" ]]; then
@@ -242,7 +244,12 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
         $reg + {
           stage_id: ($reg.stage_id // ($reg.card_path // "unknown" | split("/")[-1] | sub("\\.md$"; ""))),
           elapsed_seconds: ($live.elapsed_seconds // ($now - (($reg.started_at // "") | epoch))),
-          flags: ($live.flags // []), log_bytes:$log_bytes, alive:true
+          flags: ($live.flags // []),
+          live_total_tokens: ($live.live_total_tokens // null),
+          baseline_median_tokens: ($live.baseline_median_tokens // null),
+          baseline_sample_size: ($live.baseline_sample_size // null),
+          token_outlier: ($live.token_outlier // null),
+          log_bytes:$log_bytes, alive:true
         }')"
       agent="$(printf '%s' "$agent" | jq -c '. + {elapsed:.elapsed_seconds}')"
       jq --argjson row "$agent" '. + [$row]' "$agents_file" > "${agents_file}.next"
@@ -270,11 +277,15 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   # Stages done/outstanding/escalated for the repo ticker's NEXT counts line:
   # an aggregate over the full stages list, so it belongs here and not in the
   # renderer (scripts/lib/repo-ticker-render.py:9, card 63 criterion 9).
-  queue_counts_json="$(printf '%s' "$stages_json" | jq -c --argjson alert "$alert_statuses_json" '{
-    done: ([.[] | select(.status == "completed")] | length),
-    outstanding: ([.[] | select(.status != "completed" and .status != "superseded")] | length),
-    escalated: ([.[] | select(.status as $s | $alert | index($s) != null)] | length)
-  }')"
+  queue_counts_json="$(printf '%s' "$stages_json" | jq -c \
+    --argjson alert "$alert_statuses_json" --argjson live "$agents_json" '
+    ([.[] | select(.status != "completed" and .status != "superseded") | .id] | unique) as $outstanding |
+    (([.[] | select(.status as $s | $alert | index($s) != null) | .id] +
+      [$live[] | select((.flags // []) | index("token-outlier")) | .stage_id]) | unique) as $escalated |
+    {done: ([.[] | select(.status == "completed")] | length),
+     outstanding: ($outstanding | length),
+     escalated: ([$escalated[] | select(. as $id | $outstanding | index($id))] | length)}
+  ')"
 
   quota='{"read_at":null,"families":{"claude":{"family":"claude","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]},"codex":{"family":"codex","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]}}}'
   if [[ -f "$quota_path" ]]; then
@@ -343,6 +354,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson queue "$queue_json" --argjson queue_counts "$queue_counts_json" \
     --argjson spend "$spend" --argjson quota "$quota" --argjson state_error "$state_error" \
     --argjson heartbeat_checked_at "$heartbeat_checked_at" --argjson drain_active "$drain_active" \
+    --argjson heartbeat_baselines "$heartbeat_baselines" \
+    --argjson heartbeat_outlier_policy "$heartbeat_outlier_policy" \
     --argjson drain_cap "$drain_cap" --argjson drain_expires_at "$drain_expires_at" '
     {name:$name, repo_path:$repo_path, enabled:$enabled, tokens_spent:$tokens_spent,
      token_cap_total:$token_cap_total, effective_token_cap:$effective_token_cap, cap_source:$cap_source,
@@ -351,6 +364,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      paused_until:$paused_until, paused_reason:$paused_reason,
      last_tick_at:$last_tick_at, verifier_attempt_cap:$verifier_attempt_cap,
      state_error:$state_error, heartbeat_checked_at:$heartbeat_checked_at,
+     heartbeat_baselines:$heartbeat_baselines, heartbeat_outlier_policy:$heartbeat_outlier_policy,
      drain_active:$drain_active, drain_cap:$drain_cap, drain_expires_at:$drain_expires_at,
      queue_depth:($queue|length), in_flight:([$stages[] | select(.status == "in_progress")] | length),
      alerts:$alerts, agents:$agents, active_agents:$agents, queue:$queue, queue_counts:$queue_counts,
