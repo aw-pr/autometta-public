@@ -11,7 +11,8 @@
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Gate:** none
+- **Prerequisites:** none. This card is gated by nothing and blocks cards 66
+  and 67, both of which declare `stage-completed: 65-...`.
 - **Pairing rationale:** a two-field write in bash whose whole value is that
   it is observed from outside, verified by the other family reading a real
   tick's output rather than a fixture's.

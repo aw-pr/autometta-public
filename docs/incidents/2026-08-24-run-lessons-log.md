@@ -560,6 +560,42 @@ real producer. Card 65's smoke drives a real tick for exactly this reason.
 
 ---
 
+## 16. The gate parser has no spelling for "no gate"
+
+**What happened.** Card 65 was refused at queue time, hours after card 64
+landed:
+
+```
+refusing unparseable Gate line: - **Gate:** none
+```
+
+Correct behaviour, and card 64 asked for it in as many words: a `Gate:` line
+that is present and does not parse is refused at queue time rather than at
+dispatch. The parser accepts `queue-empty` and `stage-completed: <full-id>`,
+and "no gate" is expressed by **omitting the line**.
+
+**The trap is that "none" is the obvious thing to write.** Cards 62 and 64
+both spell it `- **Gate:** none`, in prose, and both queued fine because they
+predate the parser. Anyone copying an existing card as a template inherits a
+line that is now refused, and the refusal names the line but not the remedy.
+
+**Why it mattered more than a refused card.** Cards 66 and 67 both declare
+`stage-completed: 65-...`. With 65 refused, they sat pending behind a
+prerequisite that was **absent from the queue entirely**, which the tick
+reports differently from an unmet one. Two queued cards were unreachable
+because a third failed to queue, and nothing tied those facts together.
+
+**Fixed by** replacing 65's line with a `Prerequisites:` bullet, which does not
+match the parser's `^- \*\*Gate` pattern.
+
+**Worth doing properly:** accept `none` as an explicit no-gate, and have the
+refusal message say how to spell what the author meant. A fail-closed guard
+that does not name the remedy sends people to the source.
+
+**Fix:** none yet. Small, and it belongs with whatever revises card 64's work.
+
+---
+
 ## Open holes, collected
 
 Entries above with no card, in the order I would write them:
