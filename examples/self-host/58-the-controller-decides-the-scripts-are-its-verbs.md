@@ -157,3 +157,37 @@ order they were written.
 ## Family-specific notes
 
 None
+
+## Re-brief (attempt 2, 2026-08-25)
+
+Attempt 1 did not fail verification. The worker exited without writing a
+handoff envelope and the run was left standing; the tick never got to
+dispatch a verifier. It had done most of the work.
+
+That work is preserved as one commit `51a67ca` on branch
+`wip/58-the-controller-decides-the-scripts-are-its-verbs-attempt-1`: 2054
+insertions carrying the whole warden to phat-controller rename, plus the
+three new pieces this card asked for, `scripts/render-controller-seed.sh`,
+`templates/phat-controller-seed.md.tpl` and
+`schemas/decision-journal.json`. **Restore it. Do not re-derive it.**
+
+One defect was corrected by the orchestrator before pinning, and it is the
+second time this exact thing has happened on this repo (card 54 attempt 1
+did it too, under a different family and tier). The attempt replaced the
+run worktree's `state/` directory with a symlink to `../autometta/state`,
+which deleted the tracked `state/handoffs/.gitkeep` and
+`state/handoffs/README.md` and pointed every write in the run tree at the
+live controller state. The symlink is gone from the preserved commit.
+**Do not recreate it.** The run worktree's `state/` is its own. A
+controller that needs to read live controller state reads it by path at run
+time; it never relinks the tree it is working in.
+
+Do, in order:
+
+1. Restore `51a67ca` onto the fresh run branch.
+2. Walk every acceptance criterion above against the restored tree and
+   close whatever is not yet met. Assume nothing is proven: no verifier has
+   seen any of this.
+3. Run the contract test and the smoke as the criteria require.
+4. Write the handoff envelope. Attempt 1's entire loss was that it did not.
+   Write it as soon as the criteria pass, before any tidying.

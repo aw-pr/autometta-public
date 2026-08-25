@@ -4,8 +4,8 @@
 
 - **Authored:** 2026-08-24
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/51-docs-catch-up-with-the-free-verifier-pattern
 - **Worker effort:** medium
@@ -173,3 +173,26 @@ phat-controller from the tick loop to the queue-minding role, so line
 numbers in the verifier's evidence may have moved and some surrounding
 prose may already read differently. Verify each citation against the
 current tree before editing.
+
+## Re-brief (attempt 3, 2026-08-25)
+
+Attempt 2 stalled the same way attempt 1's successor did: the worker exited
+without writing a handoff envelope. Two identical stalls on one card, both
+with a Claude Sonnet worker, is a pattern rather than luck, so attempt 3
+changes the variable and dispatches a Codex worker with a Claude verifier.
+Nothing about the work is believed to be at fault.
+
+Attempt 2's work is preserved as one commit `58f893e` on branch
+`wip/51-docs-catch-up-with-the-free-verifier-pattern-attempt-2`: 186
+insertions across `MANUAL.md`, `README.md`, `docs/setup.md` and
+`skills/autometta-setup/SKILL.md`. Restore it and read it before writing
+anything new. It was never verified, so treat it as a strong draft rather
+than as correct.
+
+The three defects named in the attempt-2 re-brief above still stand as the
+work to finish. They have not been checked against attempt 2's diff, so
+begin by establishing which of them that diff already closes, then close
+the rest.
+
+Write the handoff envelope as soon as the criteria pass, before any
+tidying. Two attempts have now been lost at exactly that step.
