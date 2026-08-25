@@ -371,6 +371,9 @@ def render_freshness(payload, now, threshold):
     if epoch is None:
         lines.append("  " + RED("no tick recorded for this repo"))
         return lines
+    if epoch <= 0:
+        lines.append("  never ticked")
+        return lines
     age = max(0, now - epoch)
     text = "last tick %s ago" % short_secs(age)
     if age > threshold:

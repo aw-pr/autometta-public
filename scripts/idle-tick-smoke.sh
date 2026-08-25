@@ -33,6 +33,8 @@
 #   5. --reset-halt does not silently clear real spend, and says so.
 #   6. health-check.sh fails on a second loaded launchd tick job and passes
 #      on one.
+#   7. A real tick stamps last_tick_at and increments tick_count even when a
+#      subscriber is halted, gated, empty, or restored by the integrity guard.
 #
 # Exit 0 on all-pass, 1 on any assertion failure.
 set -euo pipefail
@@ -263,6 +265,158 @@ PLIST
 else
   printf '  SKIP: plutil unavailable\n' >&2
 fi
+
+# ---------------------------------------------------------------------------
+printf '\n== 7. the real tick stamps every no-dispatch path ==\n' >&2
+
+real_controller="$PHAT_CONTROLLER_HOME"
+mkdir -p "$real_controller/subscribers"
+old_tick_at="2000-01-01T00:00:00Z"
+
+write_real_budget() {
+  local dir="$1" halted="$2" reason="$3"
+  cat > "$dir/state/budget.json" <<JSON
+{
+  "version": 1,
+  "token_cap_total": 1000000,
+  "tokens_spent": 0,
+  "wall_clock_cap_seconds": 86400,
+  "wall_clock_elapsed_seconds": 0,
+  "clock_tick_cap": 400,
+  "clock_ticks_used": 0,
+  "consecutive_failure_cap": 3,
+  "consecutive_failures": 0,
+  "halted": $halted,
+  "halt_reason": $reason,
+  "window_started_at": "$(date -u +%F)"
+}
+JSON
+}
+
+subscribe_real_repo() {
+  local name="$1" dir="$2"
+  printf 'repo_path: "%s"\nenabled: true\nweight: 1\n' "$dir" \
+    > "$real_controller/subscribers/$name.yaml"
+}
+
+halted_tick_dir="$tmp_root/real-halted"
+mkdir -p "$halted_tick_dir/state"
+cat > "$halted_tick_dir/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+last_tick_at: "$old_tick_at"
+tick_count: 7
+clock_tick_budget_remaining: 400
+stages: []
+YAML
+write_real_budget "$halted_tick_dir" true '"token-cap"'
+subscribe_real_repo halted "$halted_tick_dir"
+
+gated_tick_dir="$tmp_root/real-gated"
+mkdir -p "$gated_tick_dir/state"
+cat > "$gated_tick_dir/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+last_tick_at: "$old_tick_at"
+tick_count: 7
+clock_tick_budget_remaining: 400
+stages:
+  - id: 65-gated
+    status: pending
+    gate:
+      type: stage_completed
+      stage_id: 64-absent
+YAML
+write_real_budget "$gated_tick_dir" false null
+subscribe_real_repo gated "$gated_tick_dir"
+
+empty_tick_dir="$tmp_root/real-empty"
+mkdir -p "$empty_tick_dir/state"
+cat > "$empty_tick_dir/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+last_tick_at: "$old_tick_at"
+tick_count: 7
+clock_tick_budget_remaining: 400
+stages: []
+YAML
+write_real_budget "$empty_tick_dir" false null
+subscribe_real_repo empty "$empty_tick_dir"
+
+integrity_tick_dir="$tmp_root/real-integrity"
+mkdir -p "$integrity_tick_dir/state"
+printf 'not: [valid\n' > "$integrity_tick_dir/state/state.yaml"
+cat > "$integrity_tick_dir/state/state.yaml.bak" <<YAML
+version: 1
+current_stage: null
+last_tick_at: "$old_tick_at"
+tick_count: 7
+clock_tick_budget_remaining: 400
+stages:
+  - id: 64-complete
+    status: completed
+YAML
+write_real_budget "$integrity_tick_dir" false null
+subscribe_real_repo integrity "$integrity_tick_dir"
+
+printf '  before: halted=%s/%s gated=%s/%s empty=%s/%s integrity=%s/%s\n' \
+  "$(yq -r '.last_tick_at' "$halted_tick_dir/state/state.yaml")" \
+  "$(yq -r '.tick_count' "$halted_tick_dir/state/state.yaml")" \
+  "$(yq -r '.last_tick_at' "$gated_tick_dir/state/state.yaml")" \
+  "$(yq -r '.tick_count' "$gated_tick_dir/state/state.yaml")" \
+  "$(yq -r '.last_tick_at' "$empty_tick_dir/state/state.yaml")" \
+  "$(yq -r '.tick_count' "$empty_tick_dir/state/state.yaml")" \
+  "$old_tick_at" 7 >&2
+
+real_tick_rc=0
+( cd "$repo_root" && "$script_dir/tick.sh" >/dev/null ) || real_tick_rc=$?
+check "the real tick entrypoint exits cleanly" "$(eq 0 "$real_tick_rc")"
+
+check_real_stamp() {
+  local label="$1" dir="$2" expected_stages="$3"
+  local after_at after_count stages_after backup_stages
+  after_at="$(yq -r '.last_tick_at' "$dir/state/state.yaml" 2>/dev/null || true)"
+  after_count="$(yq -r '.tick_count' "$dir/state/state.yaml" 2>/dev/null || true)"
+  stages_after="$(yq -r '.stages | length' "$dir/state/state.yaml" 2>/dev/null || true)"
+  backup_stages="$(yq -r '.stages | length' "$dir/state/state.yaml.bak" 2>/dev/null || true)"
+  printf '  after %s: last_tick_at=%s tick_count=%s stages=%s backup_stages=%s\n' \
+    "$label" "$after_at" "$after_count" "$stages_after" "$backup_stages" >&2
+  check "$label advances last_tick_at" \
+    "$([[ -n "$after_at" && "$after_at" != "$old_tick_at" ]] && printf ok || printf unchanged)"
+  check "$label increments tick_count once" "$(eq 8 "$after_count")"
+  check "$label preserves the stage count" "$(eq "$expected_stages" "$stages_after")"
+  check "$label leaves a valid, consistent backup" "$(eq "$expected_stages" "$backup_stages")"
+}
+
+check_real_stamp "halted" "$halted_tick_dir" 0
+check_real_stamp "gated" "$gated_tick_dir" 1
+check_real_stamp "empty queue" "$empty_tick_dir" 0
+check_real_stamp "integrity restore" "$integrity_tick_dir" 1
+
+fresh_frame="$(PHAT_CONTROLLER_HOME="$real_controller" NO_COLOR=1 \
+  AUTOMETTA_TICKER_COLUMNS=119 AUTOMETTA_TICKER_ROWS=40 \
+  "$script_dir/repo-ticker.sh" "$empty_tick_dir" --once)"
+check "the ticker reports a true fresh age after the real tick" \
+  "$([[ "$fresh_frame" == *"last tick"* && "$fresh_frame" != *STALE* ]] && printf ok || printf stale)"
+
+never_tick_dir="$tmp_root/never-ticked"
+mkdir -p "$never_tick_dir/state"
+cat > "$never_tick_dir/state/state.yaml" <<'YAML'
+version: 1
+current_stage: null
+last_tick_at: "1970-01-01T00:00:00Z"
+tick_count: 0
+clock_tick_budget_remaining: 400
+stages: []
+YAML
+write_real_budget "$never_tick_dir" false null
+: > "$never_tick_dir/state/cost-log.jsonl"
+subscribe_real_repo never "$never_tick_dir"
+never_frame="$(PHAT_CONTROLLER_HOME="$real_controller" NO_COLOR=1 \
+  AUTOMETTA_TICKER_COLUMNS=119 AUTOMETTA_TICKER_ROWS=40 \
+  "$script_dir/repo-ticker.sh" "$never_tick_dir" --once)"
+check "an epoch-seeded subscriber reads never ticked, not decades stale" \
+  "$([[ "$never_frame" == *"never ticked"* && "$never_frame" != *STALE* ]] && printf ok || printf wrong)"
 
 printf '\n' >&2
 if (( fail == 0 )); then

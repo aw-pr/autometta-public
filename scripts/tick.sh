@@ -1491,9 +1491,8 @@ run_heartbeat() {
 # enabled repo on every tick, so repos halted for weeks kept their dash
 # session alive forever. dash_active_at is stamped in budget.json each
 # time this fires with a live stage, so reap_idle_dash_sessions has a
-# durable "last actually active" signal independent of how often
-# state.yaml itself gets touched (tick_count/last_tick_at update every
-# tick regardless of whether a stage is running).
+# durable "last actually active" signal distinct from the loop heartbeat:
+# tick_count and last_tick_at record every tick, including idle ticks.
 ensure_tmux_viewer() {
   local repo_root="$1"
   if ! command -v tmux >/dev/null 2>&1; then
@@ -1646,6 +1645,38 @@ _process_repo_locked() {
     return 1
   fi
 
+  # State-integrity guard: never dispatch against a corrupt/empty state.yaml.
+  # state.yaml is gitignored with no remote copy, so if it has been truncated
+  # we auto-restore the rolling .bak written by state_apply_json; failing
+  # that, halt loudly rather than proceed against (or re-initialise over)
+  # lost stage history. This runs before the heartbeat stamp so a restored
+  # state records this tick through the normal guarded writer.
+  local state_restored=false
+  if [[ ! -s "$state_yaml" ]] || ! state_json "$state_yaml" 2>/dev/null \
+       | jq -e 'type == "object" and (.stages | type == "array")' >/dev/null 2>&1; then
+    if [[ -s "${state_yaml}.bak" ]] && state_json "${state_yaml}.bak" 2>/dev/null \
+         | jq -e 'type == "object" and (.stages | type == "array")' >/dev/null 2>&1; then
+      cp -p "${state_yaml}.bak" "$state_yaml"
+      state_restored=true
+      log "state-integrity: ${state_yaml} was corrupt/empty; restored from .bak"
+    else
+      budget_halt "$repo_root" "state-corrupt"
+      log "state-integrity: ${state_yaml} corrupt/empty and no valid .bak; halted (manual recovery required)"
+      return 0
+    fi
+  fi
+
+  # The repo heartbeat means the loop ran, not that it dispatched. Stamp it
+  # before budget, pause, gate and empty-queue paths can return, using the
+  # single guarded state writer that also maintains state.yaml.bak.
+  state_apply_json "$state_yaml" \
+    '.last_tick_at = $now | .tick_count = ((.tick_count // 0) + 1)' \
+    --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ "$state_restored" == "true" ]]; then
+    log "state-integrity: heartbeat stamped after recovery; stopping this tick before queue work"
+    return 0
+  fi
+
   # The reader ran once for this tick fire. Persist only its sanitised result
   # for the dashboard surfaces; no publisher payload or credential field can
   # cross this seam.
@@ -1703,24 +1734,6 @@ _process_repo_locked() {
       return 1
       ;;
   esac
-
-  # State-integrity guard: never dispatch against a corrupt/empty state.yaml.
-  # state.yaml is gitignored with no remote copy, so if it has been truncated
-  # we auto-restore the rolling .bak written by state_apply_json; failing
-  # that, halt loudly rather than proceed against (or re-initialise over)
-  # lost stage history.
-  if [[ ! -s "$state_yaml" ]] || ! state_json "$state_yaml" 2>/dev/null \
-       | jq -e 'type == "object" and (.stages | type == "array")' >/dev/null 2>&1; then
-    if [[ -s "${state_yaml}.bak" ]] && state_json "${state_yaml}.bak" 2>/dev/null \
-         | jq -e 'type == "object" and (.stages | type == "array")' >/dev/null 2>&1; then
-      cp -p "${state_yaml}.bak" "$state_yaml"
-      log "state-integrity: ${state_yaml} was corrupt/empty; restored from .bak"
-    else
-      budget_halt "$repo_root" "state-corrupt"
-      log "state-integrity: ${state_yaml} corrupt/empty and no valid .bak; halted (manual recovery required)"
-      return 0
-    fi
-  fi
 
   # Work versus idle polling (card 37). A tick charges clock_ticks_used only
   # when it supervises a stage in flight or dispatches a queued one; a tick
