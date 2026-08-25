@@ -189,3 +189,24 @@ records, which is right, but that the card's historical-docs list names only
 interpretive extension rather than a violation. If the card is ever revised,
 add `examples/bake-off/` to that list explicitly. Do not change the card as
 part of this attempt.
+
+## Re-brief (attempt 3, 2026-08-25)
+
+Attempt 2 did exactly what its re-brief asked and still failed criterion 6,
+because the brief had drifted from the base branch: cards 65 to 68 landed
+under `examples/self-host/` after attempt 1 was preserved, so the residue
+scan now finds a live, unmigrated card (`66-the-fleet-view-fits-its-pane-too.md`)
+that is neither a legacy-fallback site nor a named historical document. The
+worker's restraint was correct; the instruction was stale.
+
+Restore the preserved tree from `b073cb4` (restore the files, not the
+commit), then additionally `git mv` the four cards that landed since:
+
+    git mv examples/self-host/65-*.md examples/self-host/66-*.md \
+           examples/self-host/67-*.md examples/self-host/68-*.md stage-cards/
+
+Nothing else. Do not edit any card's prose: once inside `stage-cards/`, card
+66's own `examples/self-host` reference at line 95 falls under the frozen
+prose exemption the verifier already applies to the other 31 cards. Do not
+revisit the six passing criteria, including the retro-grade-batch.py comment
+attempt 2 already added. Produce one commit as any other stage does.

@@ -155,3 +155,21 @@ log, and the pid-checked consumption evidence.
 ## Family-specific notes
 
 None
+
+## Re-brief (attempt 2, 2026-08-25)
+
+Attempt 1 passed eight of ten and is preserved on its wip branch; restore
+that tree. The mechanism is right. Two corrections:
+
+1. **Criterion 8: the claims check comes first.** `pipeline_try_dispatch_tail`
+   (`tick.sh:829-863`) evaluates the tail's dispatch gate and logs
+   `pipeline pair ... refused` (line 854) before reaching the claims-empty
+   check at line 862. A repo with no claims must produce a tick log with no
+   pairing decisions in it at all, refusals included: hoist the claims-empty
+   test to the top of the function so a claims-free repo never enters the
+   pairing code path far enough to say anything.
+2. **Contract test, second half.** The serial rerun with claims removed must
+   actually assert the tick log is free of pairing lines, not merely run.
+   Diff the fixture's serial log against a pre-change baseline or grep-assert
+   the absence of every pipeline log marker; either way the assertion must be
+   able to fail.
