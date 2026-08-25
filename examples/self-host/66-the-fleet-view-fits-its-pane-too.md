@@ -4,8 +4,8 @@
 
 - **Authored:** 2026-08-25
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
-- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
+- **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/66-the-fleet-view-fits-its-pane-too
 - **Worker effort:** high
@@ -296,3 +296,12 @@ Two corrections remain:
    name that is absent without a recorded whole-column drop is a FAIL. An
    assertion helper that cannot fail is not an assertion; this sentence is
    now part of the criterion.
+
+### Operator note on the attempt-4 pairing (2026-08-25, 18:12)
+
+The operator redirected the seats before the flipped pairing ran its
+course: presentation work goes to the premium tier. GPT-5.6 Sol takes the
+worker seat and Claude Fable 5 verifies. The attempt-4 re-brief above is
+unchanged and is the whole brief; the Terra dispatch it named was stopped
+seven minutes in and its partial tree was not preserved (the attempt-3 wip
+branch remains the restore point).
