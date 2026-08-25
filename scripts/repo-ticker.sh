@@ -56,8 +56,11 @@ fi
 
 printf '\033[?25l\033[2J'
 trap 'printf "\033[?25h\n"; exit 0' INT TERM EXIT
+# Every line ends with erase-to-end-of-line, or a shorter line leaves the
+# previous frame's tail showing through (the fleet pane's 04b6dec bug).
 while true; do
   frame="$(render_once)"
-  printf '\033[H%s\033[J' "$frame"
+  frame="${frame//$'\n'/$'\033[K'$'\n'}"
+  printf '\033[H%s\033[K\033[J' "$frame"
   sleep "$refresh_interval"
 done
