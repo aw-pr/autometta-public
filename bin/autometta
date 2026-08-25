@@ -37,7 +37,10 @@ Usage:
                                             # rebrief | propose-amendment |
                                             # requeue | stale-halt |
                                             # merge-awaiting | smokes | push |
-                                            # queue-card | escalate | journal
+                                            # queue-card | escalate | journal |
+                                            # inbox | inbox-reply | inbox-refuse |
+                                            # transcript-for-decision |
+                                            # prune-transcripts
   autometta phat-controller --print-mandate | --print-seed
   autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]
   autometta warden ...                      # deprecated alias for one release

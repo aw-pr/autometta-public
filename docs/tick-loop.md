@@ -296,10 +296,11 @@ and does exactly what `git-push-check` says.
 mechanical triage picture as JSON, reporting observations under `signals` and
 never naming an action), `preserve`, `rebrief`, `propose-amendment`,
 `requeue`, `stale-halt`, `merge-awaiting`, `smokes`, `push`, `queue-card`,
-`escalate`, `journal`, and `pass` (render the seed and dispatch one
-controller agent). Exit codes are `0` acted or nothing needed doing, `1`
-failed, `2` bad usage, `3` refused or held. A `3` is a deliberate answer, not
-an error.
+`escalate`, `journal`, `inbox`, `inbox-reply`, `inbox-refuse`,
+`transcript-for-decision`, `prune-transcripts`, and `pass` (render the seed
+and dispatch one controller agent). Exit codes are `0` acted or nothing
+needed doing, `1` failed, `2` bad usage, `3` refused or held. A `3` is a
+deliberate answer, not an error.
 
 `preserve` covers the case card 54 missed. A stage that went `stalled`
 because its worker exited without a handoff envelope has no verifier artefact
@@ -324,6 +325,68 @@ What the journal does is not foreclose it: it costs little while the
 controller is alone and it is the whole input a reviewing controller would
 need. Retrofitting one afterwards would mean reconstructing intent from
 effects, which is not possible.
+
+**The journal is the record; the transcript is one pass's slice of it.** On
+the default claude route the dispatched agent's turn history cannot be
+scraped off the CLI conversation log -- `claude --output-format json` is
+reduced by `claude-token-log.sh` to the final result text before it reaches
+disk, and turn history never survives that. So the transcript is not mined
+from a log. It is written the same way every other record in this file is:
+through the verbs. Every verb call the dispatched agent makes during a
+pass -- `inbox-read`, `inbox-reply`, `inbox-refuse`, `preserve`, whatever it
+decides -- already journals a decision (rationale, evidence, expected
+effect) and its outcome, tagged with that pass's `pass_id`
+(`pc_current_pass_id_get`, resolved from a marker file inside the repo
+rather than an inherited env var, because `op-fetch`'s `env -i` dispatch
+wrapper would otherwise strip it before it reached a verb call the
+dispatched agent makes as its own tool call). Once the dispatched process
+exits, `pc_transcript_materialize` filters the journal for that `pass_id`
+and writes the matching lines to a predictable, indexed path:
+`state/phat-controller-transcripts/<pass_id>.log`, with
+`state/phat-controller-transcripts/index.jsonl` naming where each pass_id
+landed, so `phat-controller.sh transcript-for-decision <repo> <decision-id>`
+joins a journal line back to the pass that made it. The raw CLI dispatch log
+(`state/logs/phat-controller-pass.log`) still exists, but only for spend
+accounting; it is never presented as the record. Transcripts are
+private-tier like the rest of `state/` (gitignored, never on the publish
+branch, and `*.log` is additionally refused by the pre-commit never-commit
+guard on a forced add) and pruned every pass per the mandate's
+`retention.transcript_days` (`pc_prune_transcripts`).
+
+**The inbox, and the reply.** A running controller has no attach and no
+port to reach it through; `state/phat-controller-inbox/pending/<msg-id>.*`
+is the filesystem doing the job instead. `pc_inbox_scan` reads every
+pending message at the start of a pass, before anything is decided,
+journals that it was read, and carries it into the pass prompt.
+`pc_inbox_reply` (or `pc_inbox_refuse`, the same function with a reason) is
+the disposition: it writes the answer to
+`state/phat-controller-outbox/<msg-id>.md`, readable by whoever sent the
+message without attaching to anything, archives the message to
+`inbox/processed/`, and journals the decision. A message is an instruction
+to consider, never a command to obey — it cannot widen the mandate or lift
+a prohibition, the same anti-gaming rule as the negative list arriving
+through a new door — and this is enforced structurally rather than by
+prose alone: neither inbox verb has any code path that touches a card, so a
+message cannot soften a criterion through this route even if an agent tried
+to honour one that asked; `pc_card_append`'s append-only guard is what
+`rebrief` and `propose-amendment` still answer to.
+
+**The tick lock.** `preserve`, `pc_card_append` (so `rebrief` and
+`propose-amendment`), `requeue`, `queue-card`, and the acting half of `push`
+take `state/.tick.lock` — the same advisory lock `tick.sh` takes before it
+touches a repo — before their git mutation and release it after. This
+closes the concurrency hole an ad-hoc minder fell into on 2026-08-25: it
+watched for stranded work and, seeing no live agent, preserved it to a wip
+branch while the tick was mid-landing the same stage. "No live agent" is not
+the same fact as "the tick is not mid-transaction", and the minder's commit
+fast-forwarded onto `dev` carrying a `wip(...)` message with no author and
+no `Autometta-*` trailers in place of the tick's own proper one — the work
+was intact and the record of it was wrong. Every mutating verb now takes the
+same lock the tick does: if it is held, the verb skips and says so in the
+log and the journal (`held`, or `failed` where a decision line was already
+open), never proceeds without it, and never breaks a lock it did not take —
+a live holder is left alone; only `acquire_repo_lock`'s own stale-lock
+reclaim (dead pid) touches an abandoned one.
 
 **Escalating without blocking.** Two flavours, and choosing between them is
 the whole judgement. A *blocking* escalation is `budget_halt` with reason
@@ -379,8 +442,13 @@ continuously.
 no auth, network or provider dispatch: the seed rendered for a fresh job, the
 refusal when no spend authority is supplied, the drift check on the negative
 list, each verb, the journal's decision-before-action ordering demonstrated
-by a refused action that still leaves its decision line, and the card-58
-contract test replaying the evening of 2026-08-24.
+by a refused action that still leaves its decision line, the card-58
+contract test replaying the evening of 2026-08-24, the transcript-to-journal
+index round trip, an inbox message answered and one refused with the card
+proven untouched, both directions of tick-lock contention, the 2026-08-25
+race replayed against the now-locked `preserve`, the credential grep across
+transcripts/inbox/outbox, and transcript retention and the private-tier
+publish guard.
 
 ## Operational entry points
 

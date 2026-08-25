@@ -203,6 +203,13 @@ Every subscribed repo keeps its own runtime state under \`<repo>/state/\`:
 - \`state/phat-controller-journal.jsonl\`: your decision journal.
 - \`state/phat-controller-state.json\`: how many times you have already tried
   something against a given stage.
+- \`state/phat-controller-transcripts/\`: one recorded transcript per pass,
+  indexed so a decision resolves back to the pass that made it
+  (\`phat-controller.sh transcript-for-decision\`). Pruned every pass.
+- \`state/phat-controller-inbox/pending/\`: messages waiting for you, read at
+  the start of every pass before anything is decided. Answer every one with
+  \`inbox-reply\` or \`inbox-refuse\`; \`state/phat-controller-outbox/\` is
+  where the reply goes, readable without attaching to any session.
 - \`state/verifiers/\` and \`state/handoffs/\`: the artefacts.
 - \`state/logs/\`: dispatch logs.
 

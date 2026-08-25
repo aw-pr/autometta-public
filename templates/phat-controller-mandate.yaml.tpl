@@ -82,3 +82,12 @@ reporting:
     Concise and factual. State what was found, what was done or not done,
     and why, in that order. No editorialising, no hedging past what the
     evidence supports.
+
+retention:
+  # state/phat-controller-transcripts/<pass_id>.log, one per pass. Pruned at
+  # the start of every pass (pc_prune_transcripts): a transcript older than
+  # this many days is deleted and dropped from the index alongside it.
+  # Private-tier like the rest of state/ -- gitignored, never on the publish
+  # branch, and *.log is additionally refused by the pre-commit never-commit
+  # guard if anything ever tries to force-add one.
+  transcript_days: 14
