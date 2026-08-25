@@ -72,8 +72,7 @@ version: 1
 autometta_root: /path/to/autometta
 state_dir: state
 stage_card_globs:
-  - docs/stages/*.md
-  - examples/self-host/*.md
+  - stage-cards/*.md
 templates_mode: upstream
 ```
 

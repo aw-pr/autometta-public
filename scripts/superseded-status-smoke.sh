@@ -117,9 +117,9 @@ printf '== 2. a tick steps over the superseded stage and dispatches the pending 
 make_repo() {
   local name="$1" ledger="$2"
   local dir="$tmp_root/$name"
-  mkdir -p "$dir/state/handoffs" "$dir/state/verifiers" "$dir/state/logs" "$dir/docs/stages"
+  mkdir -p "$dir/state/handoffs" "$dir/state/verifiers" "$dir/state/logs" "$dir/stage-cards"
   for stage in 14-retired-by-later-work 15-still-queued; do
-    cat > "$dir/docs/stages/$stage.md" <<CARD
+    cat > "$dir/stage-cards/$stage.md" <<CARD
 # Stage card: $stage
 
 ## Metadata

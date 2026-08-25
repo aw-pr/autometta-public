@@ -183,12 +183,12 @@ The fastest way to see what this is.
 2. In the target project, open an orchestrator session in Claude Code (or Codex CLI; the orchestrator role is family-agnostic).
 3. Copy three files into the target repo:
   ```sh
-   mkdir -p docs/stages
-   cp <Autometta>/templates/stage-card.md docs/stages/01-my-first-stage.md
+   mkdir -p stage-cards
+   cp <Autometta>/templates/stage-card.md stage-cards/01-my-first-stage.md
    cp <Autometta>/templates/worker-prompt.md /tmp/worker-prompt.md
    cp <Autometta>/templates/orchestrator-checklist.md /tmp/checklist.md
   ```
-4. Fill in `docs/stages/01-my-first-stage.md` - one objective, one deliverable, one acceptance command. Walk through the orchestrator checklist in `/tmp/checklist.md` as you go.
+4. Fill in `stage-cards/01-my-first-stage.md` - one objective, one deliverable, one acceptance command. Walk through the orchestrator checklist in `/tmp/checklist.md` as you go.
 5. Dispatch a worker from the orchestrator session. Read it the stage card path. The worker writes code; you run the acceptance command yourself; if it passes, fire a verifier (a different model family) to audit the change. Commit on green.
 
 That is pass 1. No `scripts/`, no `tick.sh`, no cron. Read `docs/dispatch-contract.md` for the full seven-step protocol; read `docs/lessons.md` for the headless gotchas before your second dispatch.

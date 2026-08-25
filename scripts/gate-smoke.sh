@@ -87,6 +87,7 @@ CARD
 make_repo() {
   local name="$1" ledger="$2"
   local repo="$tmp_root/$name"
+  # Legacy layout is intentional: the pre-fix replay predates stage-cards/.
   mkdir -p "$repo/state/handoffs" "$repo/state/verifiers" "$repo/state/logs" "$repo/docs/stages"
   write_card "$repo" 50-stage-cards-live-in-stage-cards
   write_card "$repo" 58-the-controller-decides-the-scripts-are-its-verbs

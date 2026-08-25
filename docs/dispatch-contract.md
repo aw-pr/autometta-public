@@ -37,7 +37,7 @@ The protocol runs in this order. Each step has one owner and one deliverable. If
 
 ### Step 1: Stage card authoring
 
-The orchestrator authors a stage card from `templates/stage-card.md` and writes it to a path that will survive the dispatch. In Autometta, cards for the self-host plan live in `examples/self-host/`; in your own repo they can live anywhere stable.
+The orchestrator authors a stage card from `templates/stage-card.md` and writes it to a path that will survive the dispatch. Stage cards live in `stage-cards/` at the repository root in Autometta and its subscribers.
 
 The card is the brief. It names the worker, names the verifier, lists inputs, lists deliverables, lists constraints, lists acceptance criteria, lists what is out of scope, and states a wall-clock budget. Anything the worker needs to know that is not in the card is a contract violation.
 
@@ -137,7 +137,7 @@ This three-way split is stronger than worker-writes-and-verifier-checks, because
 The assertions live between two markers in the test file. The BEGIN marker names the card it belongs to:
 
 ```
-# AUTOMETTA-CONTRACT-BEGIN card=examples/self-host/NN-foo.md
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/NN-foo.md
 assert double(2) == 4
 # AUTOMETTA-CONTRACT-END
 ```
@@ -266,7 +266,7 @@ An alert panel showing four decisions the operator has already made is the cry-w
 
 The procedure below is what an operator runs in a subscriber repo whose loop is live. It changes one field, writes one reason, and confirms the alert has gone. Run it from the subscriber's repo root, one stage at a time.
 
-**1. Write the reason on the card first.** Before any status changes, add a retirement note to the stage card (`docs/stages/<stage-id>.md` in most subscribers) and commit it:
+**1. Write the reason on the card first.** Before any status changes, add a retirement note to the stage card (`stage-cards/<stage-id>.md`) and commit it:
 
 ```markdown
 ## Retired
@@ -802,4 +802,4 @@ subscriber with a current stamp, or with no stamp at all, says nothing.
 5. `docs/lessons.md` (stage 1): the gotchas in more detail, with incident notes from the source projects.
 6. `docs/verification.md` (stage 1): the gate model, in more detail than the acceptance section here.
 7. `docs/setup.md`, `docs/deployment.md`, and `docs/observability.md`: pass-2 operator flow.
-8. `examples/self-host/`: real stage cards used to build Autometta itself.
+8. `stage-cards/`: real stage cards used to build Autometta itself.

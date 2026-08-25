@@ -14,7 +14,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 
 stage_id="${1:-14-auth-route-toggle}"
-card="${2:-$repo_root/examples/self-host/14-auth-route-toggle.md}"
+card="${2:-$repo_root/stage-cards/14-auth-route-toggle.md}"
 artefact_glob="${3:-scripts/auth-route.sh,scripts/spawn-worker.sh,scripts/spawn-verifier.sh}"
 
 if [[ ! -f "$card" ]]; then

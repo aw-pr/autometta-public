@@ -74,7 +74,7 @@ printf 'PASS absent, malformed and stale snapshots are three explicit unknowns\n
 # ahead. The historical run started a worker; this gate must hold it instead.
 write_claude 2033-05-18T03:30:00Z
 repo="$fixture/replay-repo"
-mkdir -p "$repo/state" "$repo/docs/stages"
+mkdir -p "$repo/state" "$repo/stage-cards"
 git -C "$fixture" init -q -b dev replay-repo
 cat > "$repo/state/state.yaml" <<'YAML'
 version: 1

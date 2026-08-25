@@ -144,12 +144,12 @@ No `scripts/`, no `tick.sh`, no cron. This is the dispatch contract by hand.
    Codex CLI; the orchestrator role is family-agnostic).
 3. Copy three templates into the target repo:
    ```sh
-   mkdir -p docs/stages
-   cp <Autometta>/templates/stage-card.md docs/stages/01-my-first-stage.md
+   mkdir -p stage-cards
+   cp <Autometta>/templates/stage-card.md stage-cards/01-my-first-stage.md
    cp <Autometta>/templates/worker-prompt.md /tmp/worker-prompt.md
    cp <Autometta>/templates/orchestrator-checklist.md /tmp/checklist.md
    ```
-4. Fill in `docs/stages/01-my-first-stage.md`: one objective, one deliverable,
+4. Fill in `stage-cards/01-my-first-stage.md`: one objective, one deliverable,
    one acceptance command. Walk the checklist in `/tmp/checklist.md` as you go.
 5. Dispatch a worker from the orchestrator session and give it the stage card
    path. The worker writes code; you run the acceptance command yourself; if it
@@ -179,7 +179,7 @@ autometta attach /path/to/target-repo
 Author your stage cards and queue them:
 
 ```sh
-autometta add-stage /path/to/target-repo docs/stages/02-next-stage.md
+autometta add-stage /path/to/target-repo stage-cards/02-next-stage.md
 ```
 
 Put the tick under a heartbeat. On macOS, prefer the LaunchAgent (it has
@@ -514,7 +514,7 @@ These are the failure modes that will bite you. Full write-up in
   and runs to completion. See `docs/lessons.md` gotcha 9.
 
 For the dated session log and the current backlog, see `HANDOFF.md` and
-`examples/self-host/PLAN.md`.
+`stage-cards/PLAN.md`.
 
 ---
 

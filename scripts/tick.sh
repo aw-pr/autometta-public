@@ -308,7 +308,10 @@ manifest_patterns() {
   elif [[ -f "$repo_root/.autometta.local.yaml" ]]; then
     yq -r '.stage_card_globs[]? // empty' "$repo_root/.autometta.local.yaml" 2>/dev/null || true
   fi
+  printf '%s\n' 'stage-cards/*.md'
+  # Legacy fallback for subscribers that used the former common layout.
   printf '%s\n' 'docs/stages/*.md'
+  # Legacy fallback for Autometta's former self-host layout.
   printf '%s\n' 'examples/self-host/*.md'
 }
 
@@ -335,7 +338,21 @@ stage_card_for_id() {
   done < <(manifest_patterns "$repo_root" "$manifest_path")
 
   if [[ -z "$card" ]]; then
-    for candidate in "$repo_root/docs/stages/${stage_id}.md" "$repo_root/docs/stages"/*"${stage_id}"*.md "$repo_root/examples/self-host/${stage_id}.md" "$repo_root/examples/self-host"/*"${stage_id}"*.md; do
+    local -a fallback_candidates=(
+      "$repo_root/stage-cards/${stage_id}.md" \
+      "$repo_root/stage-cards"/*"${stage_id}"*.md
+    )
+    # Legacy fallback for subscribers that used the former common layout.
+    fallback_candidates+=(
+      "$repo_root/docs/stages/${stage_id}.md" \
+      "$repo_root/docs/stages"/*"${stage_id}"*.md
+    )
+    # Legacy fallback for Autometta's former self-host layout.
+    fallback_candidates+=(
+      "$repo_root/examples/self-host/${stage_id}.md" \
+      "$repo_root/examples/self-host"/*"${stage_id}"*.md
+    )
+    for candidate in "${fallback_candidates[@]}"; do
       if [[ -f "$candidate" ]]; then
         card="$candidate"
         break

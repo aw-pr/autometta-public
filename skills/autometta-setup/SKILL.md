@@ -103,11 +103,13 @@ If the target repo already has a `docs/` directory with conflicting filenames, p
 
 ### Step 3. Author the first stage card
 
-Copy `templates/stage-card.md` to a per-repo location and fill it in. Convention used in Autometta is `examples/self-host/<stage-id>.md`; in an adopter repo the natural location is wherever the project tracks its work plans. For first-card guidance:
+Copy `templates/stage-card.md` to `stage-cards/<stage-id>.md` and fill it in. `stage-cards/` is the canonical home in Autometta and every adopter. For first-card guidance:
 
 - Keep deliverables small and concrete (one file or two files maximum).
 - Acceptance criteria must be greppable. The verifier is not creative.
 - Stage card itself is exempt from "no files outside deliverables" criteria; the card lives outside the deliverable set by design (banked in `memory/feedback-acceptance-criterion-stage-card-exemption.md` in Autometta).
+
+Existing subscribers can migrate when convenient: run `git mv docs/stages stage-cards`, edit `stage_card_globs` to contain `stage-cards/*.md`, and commit the move. The legacy globs keep working, so migration is unhurried.
 
 ### Step 4. Dispatch the first worker
 

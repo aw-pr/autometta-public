@@ -137,8 +137,7 @@ version: 1
 autometta_root: "$autometta_root"
 state_dir: state
 stage_card_globs:
-  - docs/stages/*.md
-  - examples/self-host/*.md
+  - stage-cards/*.md
 templates_mode: upstream
 YAML
   printf 'PASS manifest created %s\n' "$manifest_file"

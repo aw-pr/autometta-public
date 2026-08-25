@@ -58,7 +58,10 @@ if [[ -n "$manifest_path" ]] && command -v yq >/dev/null 2>&1; then
     [[ -n "$line" ]] && patterns+=("$line")
   done < <(yq -r '.stage_card_globs[]? // empty' "$manifest_path" 2>/dev/null || true)
 fi
+patterns+=("stage-cards/*.md")
+# Legacy fallback for subscribers that used the former common layout.
 patterns+=("docs/stages/*.md")
+# Legacy fallback for Autometta's former self-host layout.
 patterns+=("examples/self-host/*.md")
 
 # The controller's queue: "<stage-id> <status>" per line. yq is the normal
@@ -108,7 +111,11 @@ state_status() {
 }
 
 # Fallback done set, for cards state.yaml has never recorded.
-plan_path="$repo_root/examples/self-host/PLAN.md"
+plan_path="$repo_root/stage-cards/PLAN.md"
+if [[ ! -f "$plan_path" ]]; then
+  # Legacy fallback for Autometta's former self-host layout.
+  plan_path="$repo_root/examples/self-host/PLAN.md"
+fi
 done_ids=""
 if [[ -f "$plan_path" ]]; then
   done_ids="$(grep -E '\| done \|' "$plan_path" 2>/dev/null \

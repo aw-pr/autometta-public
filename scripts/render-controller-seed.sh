@@ -226,7 +226,7 @@ else
     claude_mode="$(REPO_ROOT="$repo_path" "$script_dir/auth-route.sh" claude --print-mode 2>/dev/null || printf 'unresolved')"
     default_branch="$(git -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null || printf 'unknown')"
     card_globs="$(yq -r '.stage_card_globs[]?' "$repo_path/.autometta.local.yaml" 2>/dev/null | paste -sd ', ' - || true)"
-    [[ -n "$card_globs" ]] || card_globs="docs/stages/*.md (the default)"
+    [[ -n "$card_globs" ]] || card_globs="stage-cards/*.md (the default)"
     facts="$facts
 ### \`$repo_path\`
 

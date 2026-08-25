@@ -113,6 +113,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     while IFS= read -r g; do [[ -n "$g" ]] && card_globs+=("$g"); done \
       < <(yq -r '.stage_card_globs[]? // empty' "$manifest_path" 2>/dev/null || true)
   fi
+  card_globs+=("stage-cards/*.md")
+  # Legacy fallbacks for subscribers that have not migrated their cards yet.
   card_globs+=("docs/stages/*.md" "examples/self-host/*.md")
 
   find_card_for_stage() {

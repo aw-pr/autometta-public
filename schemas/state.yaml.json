@@ -70,7 +70,7 @@
           "id": {
             "type": "string",
             "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
-            "description": "Stage id; convention is NN[a-z*]-kebab-slug matching the card filename in examples/self-host/ or wherever cards live for this repo. Optional lowercase letters between the NN prefix and the first dash allow sub-stages like 05a, 05b, 05c."
+            "description": "Stage id; convention is NN[a-z*]-kebab-slug matching the card filename in stage-cards/. Optional lowercase letters between the NN prefix and the first dash allow sub-stages like 05a, 05b, 05c."
           },
           "status": {
             "type": "string",

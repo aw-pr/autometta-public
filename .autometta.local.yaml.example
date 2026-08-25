@@ -11,8 +11,7 @@ version: 1
 state_dir: state
 
 stage_card_globs:
-  - docs/stages/*.md
-  - examples/self-host/*.md
+  - stage-cards/*.md
 
 templates_mode: upstream
 

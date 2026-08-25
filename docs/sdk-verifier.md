@@ -12,7 +12,7 @@ python3 scripts/verify-sdk.py --help
 op-fetch ANTHROPIC_API_KEY="$OP_REF_ANTHROPIC_API_KEY" -- \
   python3 scripts/verify-sdk.py \
     --stage-id 14-auth-route-toggle \
-    --card examples/self-host/14-auth-route-toggle.md \
+    --card stage-cards/14-auth-route-toggle.md \
     --artefact-glob 'scripts/auth*.sh' \
     --out state/verifiers/14-auth-route-toggle.json \
     --effort high
@@ -33,7 +33,7 @@ The output envelope intentionally matches the existing verifier artefact shape:
 {
   "stage_id": "14-auth-route-toggle",
   "verifier_identity": "Claude Agent SDK verifier <claude-agent-sdk@local>",
-  "verifier_invocation": "scripts/verify-sdk.py --stage-id 14-auth-route-toggle --card examples/self-host/14-auth-route-toggle.md --artefact-glob <redacted> --out state/verifiers/14-auth-route-toggle.json",
+  "verifier_invocation": "scripts/verify-sdk.py --stage-id 14-auth-route-toggle --card stage-cards/14-auth-route-toggle.md --artefact-glob <redacted> --out state/verifiers/14-auth-route-toggle.json",
   "ran_at": "2026-05-27T12:00:00Z",
   "criteria": [
     {

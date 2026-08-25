@@ -248,9 +248,11 @@ case "$command_name" in
     repo_path_arg="${2:-.}"
     shift $#
     # Find the card for the given stage-id using the stage_card_globs from
-    # .autometta.local.yaml, falling back to examples/self-host/ convention.
+    # .autometta.local.yaml, falling back to the canonical and legacy homes.
     card_file=""
     for pattern in \
+      "${repo_path_arg}/stage-cards/${stage_id_arg}.md" \
+      "${repo_path_arg}/docs/stages/${stage_id_arg}.md" \
       "${repo_path_arg}/examples/self-host/${stage_id_arg}.md" \
       "${repo_path_arg}/examples/**/${stage_id_arg}.md" \
       "${repo_path_arg}/${stage_id_arg}.md"; do

@@ -34,7 +34,7 @@
 # therefore survives an action that fails, which is the point: the journal is
 # the record of intent, and it is the whole input a second reviewing
 # controller would need later. See docs/tick-loop.md "The phat-controller
-# role" and examples/self-host/58-the-controller-decides-the-scripts-are-its-verbs.md.
+# role" and stage-cards/58-the-controller-decides-the-scripts-are-its-verbs.md.
 set -euo pipefail
 IFS=$'\n\t'
 

@@ -45,7 +45,7 @@ printf '%s\n' "{\"stages\":[{\"id\":\"old-failure\",\"status\":\"verifier_failed
 printf '{"stages":[]}\n' > "$fixture/clean/state/state.yaml"
 printf 'stages:\n  - id: broken\n    status: [\n' > "$fixture/broken/state/state.yaml"
 
-printf '%s\n' "{\"pid\":$$,\"role\":\"worker\",\"family\":\"codex\",\"identity\":\"GPT-5.6 Sol <gpt-5-6-sol@local>\",\"card_path\":\"docs/stages/active-42.md\",\"log_path\":\"$fixture/cap/state/logs/active.log\",\"budget_seconds\":5400,\"started_at\":\"$started\"}" \
+printf '%s\n' "{\"pid\":$$,\"role\":\"worker\",\"family\":\"codex\",\"identity\":\"GPT-5.6 Sol <gpt-5-6-sol@local>\",\"card_path\":\"stage-cards/active-42.md\",\"log_path\":\"$fixture/cap/state/logs/active.log\",\"budget_seconds\":5400,\"started_at\":\"$started\"}" \
   > "$fixture/cap/state/active-agents/$$.json"
 printf '%s\n' "{\"checked_at\":\"$today\",\"entries\":[{\"pid\":$$,\"elapsed_seconds\":90,\"flags\":[]}]}" \
   > "$fixture/cap/state/heartbeat.json"

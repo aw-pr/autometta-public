@@ -362,7 +362,7 @@ fi
 attribution_home="$tmp/controller-home"
 mkdir -p "$attribution_home/subscribers" "$attribution_home/log"
 attr_repo="$tmp/attribution-repo"
-mkdir -p "$attr_repo/state/handoffs" "$attr_repo/state/verifiers" "$attr_repo/examples/self-host"
+mkdir -p "$attr_repo/state/handoffs" "$attr_repo/state/verifiers" "$attr_repo/stage-cards"
 (
   cd "$attr_repo"
   git init -q -b dev .
@@ -376,7 +376,7 @@ mkdir -p "$attr_repo/state/handoffs" "$attr_repo/state/verifiers" "$attr_repo/ex
   git commit -qm seed
 ) >/dev/null
 
-cat >"$attr_repo/examples/self-host/60-attribution-fixture.md" <<CARD
+cat >"$attr_repo/stage-cards/60-attribution-fixture.md" <<CARD
 # Stage card 60-attribution-fixture: prove the trailer renders the local identity
 
 ## Metadata

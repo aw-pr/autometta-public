@@ -4,7 +4,7 @@ Design-only. No code ships with this document. Implementation, if pursued, is a 
 
 ## Problem statement
 
-Stage cards live on disk at `examples/self-host/*.md` (or the repo's configured globs). The dispatch contract assumes the worker can read the card by path, and `tick.sh` resolves that path with `stage_card_for_id`. This is fine on one machine. The moment autometta runs across two machines, three questions appear that the filesystem cannot answer on its own: which copy of a card is canonical, how is a stale copy detected, and how is a mid-flight edit propagated to a worker that has already read the path. MCP is the documented tool integration boundary for autometta. Serving cards as MCP resources, rather than as raw file paths, gives one named endpoint that answers those three questions while git stays the store of record.
+Stage cards live on disk at `stage-cards/*.md` (or the repo's configured globs). The dispatch contract assumes the worker can read the card by path, and `tick.sh` resolves that path with `stage_card_for_id`. This is fine on one machine. The moment autometta runs across two machines, three questions appear that the filesystem cannot answer on its own: which copy of a card is canonical, how is a stale copy detected, and how is a mid-flight edit propagated to a worker that has already read the path. MCP is the documented tool integration boundary for autometta. Serving cards as MCP resources, rather than as raw file paths, gives one named endpoint that answers those three questions while git stays the store of record.
 
 ## URI scheme
 
@@ -56,7 +56,7 @@ Opt-in per repo, no big-bang, mirroring how card 14 added per-family auth modes 
 
 **Stage NN-mcp-cards-proto** (single machine, read-only):
 
-- **Objective:** a local MCP server that exposes this repo's `examples/self-host/*.md` as `stage://` resources, plus `scripts/resolve-card.sh` with mandatory filesystem fallback, behind `cards.transport: mcp`.
+- **Objective:** a local MCP server that exposes this repo's `stage-cards/*.md` as `stage://` resources, plus `scripts/resolve-card.sh` with mandatory filesystem fallback, behind `cards.transport: mcp`.
 - **Deliverables:** `scripts/mcp-card-server` (read-only, no card framework dependency without justification per constraints); `scripts/resolve-card.sh`; a one-line `tick.sh` change swapping `stage_card_for_id` for `resolve-card.sh`; `.autometta.local.yaml.example` gains a `cards.transport` key; `docs/setup.md` note.
 - **Acceptance:** `resolve-card.sh` returns the same card bytes with the server up and with it killed (fallback proven); a pinned `stage://...@<sha>` read matches `git show <sha>:<path>`; an unknown URI falls back rather than stalling; no existing repo behaviour changes with the key unset.
 - **Out of scope for the prototype:** remote transport, auth, multi-machine sync, `resources/list` pagination.

@@ -79,7 +79,7 @@ JSON
 make_repo() {
   local name="$1"
   local repo="$fixture/$name"
-  mkdir -p "$repo/state/verifiers" "$repo/state/handoffs" "$repo/state/logs" "$repo/examples/self-host"
+  mkdir -p "$repo/state/verifiers" "$repo/state/handoffs" "$repo/state/logs" "$repo/stage-cards"
   (
     cd "$repo"
     git init -q -b dev
@@ -249,7 +249,7 @@ printf '== criteria 5 and 9, and the card-58 contract test: the evening of 2026-
 # criterion.
 rct="$(make_repo rct)"
 stage_ct=54-a-warden-pass-minds-the-queue
-card_ct="$rct/examples/self-host/${stage_ct}.md"
+card_ct="$rct/stage-cards/${stage_ct}.md"
 cat > "$card_ct" <<'CARD'
 # Stage card 54: a phat-controller pass minds the queue
 
@@ -272,7 +272,7 @@ Add a scheduled pass that minds the queue.
 
 - **Worker wall-clock:** 120 minutes
 CARD
-( cd "$rct" && git add examples/self-host && git commit -qm "add card ${stage_ct}" )
+( cd "$rct" && git add stage-cards && git commit -qm "add card ${stage_ct}" )
 card_before="$(cat "$card_ct")"
 criteria_before="$(awk '/^## Acceptance criteria/,/^## Budget/' "$card_ct")"
 
@@ -321,8 +321,8 @@ card_after="$(cat "$card_ct")"
 assert_contains "$card_after" "$ct_sha" "the re-brief cites the preserved commit"
 assert_eq "$criteria_before" "$(awk '/^## Acceptance criteria/,/^## Budget/' "$card_ct")" "not one acceptance criterion moved"
 assert_eq "$card_before" "${card_after:0:${#card_before}}" "the card was appended to and never rewritten"
-[[ -z "$(git -C "$rct" status --porcelain -- "examples/self-host/${stage_ct}.md")" ]] || fail "the re-brief was left uncommitted"
-assert_eq "$PC_GIT_IDENTITY" "$(git -C "$rct" log -1 --format='%an <%ae>' -- "examples/self-host/${stage_ct}.md")" "the re-brief commit is attributed to the role"
+[[ -z "$(git -C "$rct" status --porcelain -- "stage-cards/${stage_ct}.md")" ]] || fail "the re-brief was left uncommitted"
+assert_eq "$PC_GIT_IDENTITY" "$(git -C "$rct" log -1 --format='%an <%ae>' -- "stage-cards/${stage_ct}.md")" "the re-brief commit is attributed to the role"
 printf 'PASS stalled stage re-briefed citing the preserved commit and requeued, no criterion touched\n'
 
 printf '   -- the diff proving no acceptance criterion moved --\n'
@@ -406,7 +406,7 @@ printf 'PASS a refused action still leaves the decision that led to it\n'
 printf '== criterion 7: a FAIL resting on the card wording proposes and changes no criterion ==\n'
 rcd="$(make_repo rcd)"
 stage_cd=82-card-defect
-card_cd="$rcd/examples/self-host/${stage_cd}.md"
+card_cd="$rcd/stage-cards/${stage_cd}.md"
 cat > "$card_cd" <<'CARD'
 # Stage card 82: card defect fixture
 
@@ -423,7 +423,7 @@ cat > "$card_cd" <<'CARD'
 
 - **Worker wall-clock:** 30 minutes
 CARD
-( cd "$rcd" && git add examples/self-host && git commit -qm "add card ${stage_cd}" )
+( cd "$rcd" && git add stage-cards && git commit -qm "add card ${stage_cd}" )
 cat > "$rcd/state/state.yaml" <<YAML
 version: 1
 current_stage: null
@@ -647,7 +647,7 @@ version: 1
 current_stage: null
 stages: []
 YAML
-qc_card="$rqc/examples/self-host/87-queue-fixture.md"
+qc_card="$rqc/stage-cards/87-queue-fixture.md"
 cat > "$qc_card" <<'CARD'
 # Stage card 87: queue fixture
 
@@ -659,7 +659,7 @@ CARD
 pc_queue_card "$rqc" "$qc_card" >/dev/null 2>&1 || fail "queue-card did not queue an existing card"
 assert_eq 87-queue-fixture "$(yq -r '.stages[0].id' "$rqc/state/state.yaml")" "the card was queued"
 qc_rc=0
-pc_queue_card "$rqc" "$rqc/examples/self-host/88-absent.md" >/dev/null 2>&1 || qc_rc=$?
+pc_queue_card "$rqc" "$rqc/stage-cards/88-absent.md" >/dev/null 2>&1 || qc_rc=$?
 assert_eq 3 "$qc_rc" "a card that is not there is a refusal"
 assert_eq 1 "$(yq -r '.stages | length' "$rqc/state/state.yaml")" "nothing was queued for the absent card"
 printf 'PASS queue-card adds a stage and refuses an absent one\n'
