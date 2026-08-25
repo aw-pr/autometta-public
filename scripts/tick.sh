@@ -1481,7 +1481,13 @@ run_heartbeat() {
     local heartbeat_output
     heartbeat_output="$("$script_dir/heartbeat.sh" "$repo_root" 2>&1 || true)"
     while IFS= read -r heartbeat_line; do
-      [[ -n "$heartbeat_line" ]] && log "heartbeat: $heartbeat_line"
+      # `if`, not `[[ ]] &&`: on empty output the herestring still feeds one
+      # empty line, and a guard-list returning 1 as the loop's last body
+      # command becomes the loop's own status, run_heartbeat's return value,
+      # and under set -e the death of the whole fleet tick.
+      if [[ -n "$heartbeat_line" ]]; then
+        log "heartbeat: $heartbeat_line"
+      fi
     done <<<"$heartbeat_output"
   fi
 }
