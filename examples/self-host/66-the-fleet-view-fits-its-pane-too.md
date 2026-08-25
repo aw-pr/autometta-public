@@ -192,3 +192,38 @@ with its reason.
 ## Family-specific notes
 
 None
+
+## Re-brief (attempt 2, 2026-08-25)
+
+Attempt 1 is preserved on `wip/66-the-fleet-view-fits-its-pane-too-attempt-1`.
+**Restore that branch's tree and correct the four findings below in place.**
+Five of nine criteria passed; the shape of the solution is right and is not
+in question. Do not re-derive it (a re-brief that reshapes the solution has
+cost double before; one that corrects details has cost a seventh).
+
+The verifier's findings, each with its pointer:
+
+1. **Criterion 3, fixture states.** The fixture fleet never contains the
+   literal halted, stalled and over-cap trio: `fleet-ticker-smoke.sh:55-75`
+   builds halted and paused, `96-123` only an in-progress stage with an
+   over-budget agent, and the assertions at `168-181` substitute
+   paused/vendor-stale/over-budget for the trio the criterion names. Build
+   the three named states and assert on them.
+2. **Criterion 4, stage column truncation.** At 119 columns the ESCALATIONS
+   stage cell truncates (`...-one` renders as `...-thi`):
+   `lib/fleet-ticker-render.py:240-262` allocates the stage column below its
+   natural width and the `pad()` at `lib/repo-ticker-render.py:164-166`
+   slices silently. The smoke check at `fleet-ticker-smoke.sh:185-193` is a
+   false positive because it greps the whole frame, where the id also
+   appears in REPOS state text; assert on the stage column itself.
+3. **Criterion 6, recomputed aggregate.** `lib/fleet-ticker-render.py:132-141`
+   recomputes queue depth as `len(repo.queue)` while
+   `aggregate-dashboard.sh:349-380` already emits `queue_depth`. Read the
+   aggregate. Extend the smoke past file-open checks so a recomputation of
+   this kind fails it.
+4. **Criterion 9, clarified.** "Column edge" means the start offset of each
+   column, whether or not a drawn rule exists; space-separated columns are an
+   acceptable design and are judged the same way. The smoke must assert every
+   column's offset, per table, at 80, 119 and 160, on the fleet page and the
+   repo-scoped page. Today it checks two columns at one width
+   (`fleet-ticker-smoke.sh:234-262`).
