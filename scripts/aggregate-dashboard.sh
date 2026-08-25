@@ -1,5 +1,19 @@
 #!/usr/bin/env bash
 # aggregate-dashboard.sh: the sole subscriber walker for fleet displays.
+#
+# Usage: aggregate-dashboard.sh [--repo <repo-path>]
+#
+# Without --repo: walks every subscriber and writes the fleet-wide
+# dashboard/data.json and data.js, as before.
+#
+# With --repo: walks only that one subscriber, prints its repo object (the
+# same shape as one element of the fleet's .repos[]) to stdout, and writes
+# nothing. This is the sole data source for scripts/repo-ticker.sh -- one
+# walker, so a per-repo renderer never re-derives a figure the walker already
+# computed. It also enriches the matched repo's live agents with an
+# incrementally-read transcript token total (ported from agent-ticker.sh's
+# ACTIVE panel), which the fleet-wide pass skips as too expensive to run
+# every 120s across five repos.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -10,6 +24,25 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$script_dir/budget.sh"
 # shellcheck source=repo-light.sh
 . "$script_dir/repo-light.sh"
+
+repo_filter=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      [[ $# -ge 2 ]] || { printf 'usage: %s [--repo <repo-path>]\n' "$(basename "$0")" >&2; exit 1; }
+      repo_filter="$2"
+      shift 2
+      ;;
+    *)
+      printf 'usage: %s [--repo <repo-path>]\n' "$(basename "$0")" >&2
+      exit 1
+      ;;
+  esac
+done
+repo_filter_resolved=""
+if [[ -n "$repo_filter" ]]; then
+  repo_filter_resolved="$(cd "$repo_filter" 2>/dev/null && pwd -P || printf '%s' "$repo_filter")"
+fi
 
 controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
@@ -64,6 +97,11 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   name="$(basename "$subscriber_file" .yaml)"
   [[ -n "$repo_path" ]] || continue
 
+  if [[ -n "$repo_filter" ]]; then
+    repo_path_resolved="$(cd "$repo_path" 2>/dev/null && pwd -P || printf '%s' "$repo_path")"
+    [[ "$repo_path_resolved" == "$repo_filter_resolved" || "$repo_path" == "$repo_filter" ]] || continue
+  fi
+
   card_globs=()
   if [[ -n "$manifest_path" && -f "$manifest_path" ]]; then
     while IFS= read -r g; do [[ -n "$g" ]] && card_globs+=("$g"); done \
@@ -99,6 +137,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
 
   tokens_spent=0; token_cap_total=0; halted=false; halt_reason=null
   consecutive_failures=0; consecutive_failure_cap=0
+  paused_until=null; paused_reason=null
   if [[ -f "$budget_path" ]] && budget_json="$(jq -c '.' "$budget_path" 2>/dev/null)"; then
     tokens_spent="$(printf '%s' "$budget_json" | jq -r '.tokens_spent // 0')"
     token_cap_total="$(printf '%s' "$budget_json" | jq -r '.token_cap_total // 0')"
@@ -106,7 +145,14 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     halt_reason="$(printf '%s' "$budget_json" | jq -c '.halt_reason // null')"
     consecutive_failures="$(printf '%s' "$budget_json" | jq -r '.consecutive_failures // 0')"
     consecutive_failure_cap="$(printf '%s' "$budget_json" | jq -r '.consecutive_failure_cap // 0')"
+    paused_until="$(printf '%s' "$budget_json" | jq -c '.paused_until // null')"
+    paused_reason="$(printf '%s' "$budget_json" | jq -c '.paused_reason // null')"
   fi
+  # Resolved cap (drain > repo cap > host default > floor) and which rule
+  # won, so the ticker's CAP row never shows a resting number while a drain
+  # or host default is actually what binds.
+  effective_token_cap="$(budget_effective_token_cap "$repo_path" 2>/dev/null || printf '%s' "$token_cap_total")"
+  cap_source="$(budget_cap_source "$repo_path" 2>/dev/null || printf 'host-default')"
 
   drain_active=false; drain_cap=null; drain_expires_at=null
   if active_cap="$(budget_drain_active "$repo_path" 2>/dev/null)" && [[ -n "$active_cap" ]]; then
@@ -123,7 +169,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   fi
   heartbeat_checked_at="$(printf '%s' "$heartbeat_json" | jq -c '.checked_at // null')"
 
-  stages_json='[]'; state_error=null
+  stages_json='[]'; state_error=null; last_tick_at=null
   if [[ ! -r "$state_yaml" ]]; then
     state_error='"state.yaml unreadable"'
   elif state_doc="$(state_yaml_to_json "$state_yaml" 2>/dev/null)" \
@@ -132,8 +178,11 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       started_at:(.started_at // null), completed_at:(.completed_at // null), tokens:(.tokens // 0),
       worker_tokens:(.worker_tokens // null), verifier_tokens:(.verifier_tokens // null),
       commit:(.commit // null), verifier_artefact:(.verifier_artefact // null),
-      integration:(.integration // null), required_action:(.required_action // null)
+      integration:(.integration // null), required_action:(.required_action // null),
+      verifier_attempts:(.verifier_attempts // 0), wip_branch:(.wip_branch // null),
+      wip_commit:(.wip_commit // null), stall_marker:(.stall_marker // null)
     }]')"; then
+    last_tick_at="$(printf '%s' "$state_doc" | jq -c '.last_tick_at // null')"
     merged_file="$(new_tmp)"; printf '[]\n' > "$merged_file"
     while IFS= read -r stage_entry; do
       [[ -n "$stage_entry" ]] || continue
@@ -198,6 +247,20 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     done
   fi
   agents_json="$(jq -c '.' "$agents_file")"
+
+  # Live transcript token totals, --repo mode only: reading the harness
+  # transcript for every live agent across five repos every 5s is the cost
+  # the fleet-wide pass cannot afford (see docs/lessons.md gotcha 14 for why
+  # the read has to be incremental at all), but a single-repo ticker refresh
+  # can. Offsets are cached in the same active-agents registry file
+  # scripts/agent-ticker.sh already used for this, so the two never disagree
+  # about how much of a transcript has been consumed.
+  if [[ -n "$repo_filter" && "$agents_json" != "[]" ]]; then
+    agents_json="$(python3 "$script_dir/lib/transcript-tokens.py" "$active_agents_dir" \
+      "${AUTOMETTA_CLAUDE_PROJECTS:-$HOME/.claude/projects}" \
+      "${AUTOMETTA_CODEX_SESSIONS:-$HOME/.codex/sessions}" <<<"$agents_json" 2>/dev/null || printf '%s' "$agents_json")"
+  fi
+
   queue_json="$(printf '%s' "$stages_json" | jq -c '[.[] | select(.status == "pending") |
     {stage_id:.id, worker:(.worker // null), verifier:(.verifier // null)}]')"
 
@@ -210,7 +273,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     ' "$quota_path" 2>/dev/null || printf '%s' "$quota")"
   fi
 
-  spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"by_role":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0}'
+  spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0}'
   if [[ -f "$cost_log_path" ]]; then
     spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" '
       def epoch: try (.ts | fromdateiso8601) catch 0;
@@ -226,12 +289,20 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       [$all[] | select(epoch >= $today)] as $rows |
       [$rows[] | select((.result // "") == "pass")] as $pass |
       [$rows[] | select((.result // "") != "pass")] as $lost |
+      [$all[] | select(epoch >= ($today - 518400))] as $week_rows |
+      [$week_rows[] | select((.result // "") != "pass")] as $lost_week |
       (totals($rows)) as $t |
       {scope:"today_utc", input_tokens:$t.input_tokens,
        cached_input_tokens:$t.cached_input_tokens, output_tokens:$t.output_tokens,
        tokens_total:$t.tokens, cost_usd_est:$t.cost_usd_est,
        productive:(totals($pass) | {tokens, cost_usd_est}),
        lost:(totals($lost) | {tokens, cost_usd_est}),
+       lost_seven_day:(totals($lost_week) | {tokens, cost_usd_est}),
+       openai_zero_output_caveat: (any($week_rows[]?;
+         ((.identity // "") | test("gpt|codex"; "i")) and
+         ((.usage_status // "recorded") == "recorded") and
+         (((.input_tokens // 0) + (.cached_input_tokens // 0)) > 0) and
+         ((.output_tokens // 0) == 0))),
        by_role: ([$rows | group_by(.role)[] | . as $role_rows |
          (totals($role_rows)) + {role:($role_rows[0].role // "unknown"),
            productive_tokens:([$role_rows[] | select((.result // "") == "pass") | tok] | add // 0),
@@ -250,16 +321,22 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --arg name "$name" --arg repo_path "$repo_path" \
     --argjson enabled "$([[ "$enabled" == true ]] && printf true || printf false)" \
     --argjson tokens_spent "${tokens_spent:-0}" --argjson token_cap_total "${token_cap_total:-0}" \
+    --argjson effective_token_cap "${effective_token_cap:-0}" --arg cap_source "${cap_source:-host-default}" \
     --argjson halted "$([[ "$halted" == true ]] && printf true || printf false)" \
     --argjson halt_reason "$halt_reason" --argjson consecutive_failures "${consecutive_failures:-0}" \
     --argjson consecutive_failure_cap "${consecutive_failure_cap:-0}" \
+    --argjson paused_until "$paused_until" --argjson paused_reason "$paused_reason" \
+    --argjson last_tick_at "$last_tick_at" --argjson verifier_attempt_cap 3 \
     --argjson stages "$stages_json" --argjson alerts "$alerts_json" --argjson agents "$agents_json" \
     --argjson queue "$queue_json" --argjson spend "$spend" --argjson quota "$quota" --argjson state_error "$state_error" \
     --argjson heartbeat_checked_at "$heartbeat_checked_at" --argjson drain_active "$drain_active" \
     --argjson drain_cap "$drain_cap" --argjson drain_expires_at "$drain_expires_at" '
     {name:$name, repo_path:$repo_path, enabled:$enabled, tokens_spent:$tokens_spent,
-     token_cap_total:$token_cap_total, halted:$halted, halt_reason:$halt_reason,
+     token_cap_total:$token_cap_total, effective_token_cap:$effective_token_cap, cap_source:$cap_source,
+     halted:$halted, halt_reason:$halt_reason,
      consecutive_failures:$consecutive_failures, consecutive_failure_cap:$consecutive_failure_cap,
+     paused_until:$paused_until, paused_reason:$paused_reason,
+     last_tick_at:$last_tick_at, verifier_attempt_cap:$verifier_attempt_cap,
      state_error:$state_error, heartbeat_checked_at:$heartbeat_checked_at,
      drain_active:$drain_active, drain_cap:$drain_cap, drain_expires_at:$drain_expires_at,
      queue_depth:($queue|length), in_flight:([$stages[] | select(.status == "in_progress")] | length),
@@ -272,7 +349,17 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     '. + {light:$light, light_reason:$reason}')"
   jq --argjson row "$repo_row" '. + [$row]' "$repos_array_file" > "${repos_array_file}.next"
   mv "${repos_array_file}.next" "$repos_array_file"
+
+  if [[ -n "$repo_filter" ]]; then
+    printf '%s\n' "$repo_row"
+    exit 0
+  fi
 done
+
+if [[ -n "$repo_filter" ]]; then
+  printf 'aggregate-dashboard.sh: no enabled subscriber matches --repo %s\n' "$repo_filter" >&2
+  exit 1
+fi
 
 repos_json="$(jq -c '.' "$repos_array_file")"
 by_model_json="$(printf '%s' "$repos_json" | jq -c '[.[].stages[]? |

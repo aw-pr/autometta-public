@@ -667,9 +667,14 @@ autometta_root="$AUTOMETTA_ROOT_RESOLVED"
 autometta_root_q="$(shell_quote "$autometta_root")"
 controller_log_q="$(shell_quote "$controller_home/log")"
 repo_path_q="$(shell_quote "$repo_path")"
-status_cmd="cd $autometta_root_q && scripts/status-ticker.sh --repo $repo_path_q"
 log_cmd="mkdir -p $controller_log_q; latest=''; for candidate in $controller_log_q/tick-*.log; do [ -e \"\$candidate\" ] || continue; latest=\"\$candidate\"; done; printf 'Project: $repo_slug\nRepo: $repo_path\n\n'; if [ -n \"\$latest\" ]; then printf '(showing only lines mentioning this repo; waiting for the first one)\\n'; tail -f \"\$latest\" | grep --line-buffered -F $repo_path_q; else printf 'No tick log yet in $controller_home/log\n'; exec \"\${SHELL:-/bin/sh}\"; fi"
-ticker_cmd="cd $autometta_root_q && scripts/agent-ticker.sh $repo_path_q"
+# The repo window is one process, one pane: scripts/repo-ticker.sh (card 63).
+# It used to share the window with a log pane and a separate status pane,
+# splitting the terminal into quarters and truncating every column to
+# whatever fraction of 119 the right-hand column happened to get. The log
+# tail is still one keystroke away (`tmux next-window` / autometta attach's
+# "log" window), it just no longer eats the ticker's width to sit beside it.
+ticker_cmd="cd $autometta_root_q && scripts/repo-ticker.sh $repo_path_q"
 fleet_cmd="cd $autometta_root_q && scripts/attach.sh --fleet-ticker"
 session_name_q="$(shell_quote "$session_name")"
 fleet_refresh_cmd="cd $autometta_root_q && AUTOMETTA_FLEET_SESSION=$session_name_q scripts/attach.sh --fleet-refresh"
@@ -679,7 +684,7 @@ report_orphans
 if "$dry_run"; then
   printf 'tmux session: %s\nrepo: %s\n' "$session_name" "$repo_path"
   if [[ "$repo_slug" == autometta ]]; then printf 'default window: fleet (%s)\nsecond window: repo\n' "$fleet_cmd"; fi
-  printf 'status pane: %s\nlog pane: %s\nticker pane: %s\n' "$status_cmd" "$log_cmd" "$ticker_cmd"
+  printf 'repo window (full pane): %s\nlog window: %s\n' "$ticker_cmd" "$log_cmd"
   exit 0
 fi
 
@@ -699,15 +704,13 @@ if ! tmux has-session -t "$session_name" 2>/dev/null; then
     "$script_dir/aggregate-dashboard.sh" >/dev/null 2>&1 || true
     tmux new-session -d -s "$session_name" -n fleet "$fleet_cmd"
     tmux run-shell -b -t "$session_name" "$fleet_refresh_cmd"
-    tmux new-window -d -t "$session_name" -n repo "$status_cmd"
-    tmux split-window -h -t "$session_name":repo "$log_cmd"
-    tmux split-window -v -t "$session_name":repo.1 "$ticker_cmd"
+    tmux new-window -d -t "$session_name" -n repo "$ticker_cmd"
+    tmux new-window -d -t "$session_name" -n log "$log_cmd"
     tmux select-window -t "$session_name":fleet
   else
-    tmux new-session -d -s "$session_name" "$status_cmd"
-    tmux split-window -h -t "$session_name" "$log_cmd"
-    tmux split-window -v -t "$session_name":0.1 "$ticker_cmd"
-    tmux select-pane -t "$session_name":0.0
+    tmux new-session -d -s "$session_name" -n repo "$ticker_cmd"
+    tmux new-window -d -t "$session_name" -n log "$log_cmd"
+    tmux select-window -t "$session_name":repo
   fi
   printf 'PASS tmux viewer created %s\n' "$session_name"
 elif "$ensure_only"; then

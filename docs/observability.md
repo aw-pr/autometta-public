@@ -63,54 +63,70 @@ Open or create the viewer manually:
 autometta attach <repo-path>
 ```
 
-The per-repo tmux viewer has three panes: the left pane prints a status snapshot, the
-top-right pane tails the latest controller log, and the bottom-right pane
-runs the **agent ticker** (`scripts/agent-ticker.sh`). The ticker refreshes
-every five seconds (override with `AUTOMETTA_TICKER_INTERVAL`) and
-shows these sections:
+The per-repo tmux viewer has two windows. The `repo` window is one pane, one
+process, one repo: **the repo ticker** (`scripts/repo-ticker.sh`, card 63),
+which owns the whole window rather than sharing it with a status pane and a
+log pane the way it used to. That older three-pane layout squeezed the ticker
+into whatever fraction of the terminal the right-hand column happened to get
+— a 119-column pane routinely truncated a stage id to roughly 40 columns —
+and it mixed a status table, a log tail and an agent ticker that could not
+see each other's space. The `log` window (`tmux next-window`, or `autometta
+attach <repo>` then switch windows) still tails the latest controller log
+filtered to lines naming the attached repo's path; it is one keystroke away
+rather than a quarter of the screen next to the ticker.
 
-- `ALERTS`: shown only when something needs attention. Budget halts,
-  consecutive failures, stages in a terminal-failure state, and an **empty
-  queue on an enabled subscriber** (zero pending and nothing in flight).
-- `SPEND`: current-window tokens against the cap, today's and seven-day USD
-  estimates at list prices, today's mean cache-hit rate, and tokens burned in
-  the last hour. The same panel shows each family's most-used provider window
-  and reset time, or an explicit unknown reason. It reads at most the final
-  `AUTOMETTA_COST_LOG_TAIL_ROWS` rows (default 5,000), so refresh cost is
-  bounded as the append-only ledger grows. Token figures remain the primary
-  signal on subscription routes.
-- `ACTIVE`: each agent currently in flight, with flags from the heartbeat
-  watchdog (`fresh` / `silent` / `over-budget`) and an in-flight token total
-  from that agent's harness transcript. Claude message usage is summed
-  incrementally from a persisted byte offset; Codex uses the latest cumulative
-  `total_token_usage`. A transcript that has not appeared says `waiting`, and
-  a genuine miss says `unavailable`; an empty Claude log never becomes a
-  misleading zero.
-- `LIVE`: only while a stage is genuinely `in_progress` — the last eight
-  lines of `state/logs/<stage>-worker.log`, so the running worker's output
-  is in the pane rather than behind a path the operator has to go and find.
-  A `claude -p` worker writes nothing until it exits and then emits the
-  whole log at once (`docs/lessons.md` gotcha 6), so the panel says the log
-  is empty rather than leaving a blank that reads as a stalled worker.
-- `RECENT`: the last five completed agents with their outcomes, dropping
-  anything older than `AUTOMETTA_RECENT_MAX_AGE_DAYS` (default 7)
-  first. `ACTIVE` and `SCHEDULED` were already time-scoped; `RECENT` was
-  the outlier, and a repo idle for months showed two-month-old runs as
-  though they were current.
-- `SCHEDULED`: queue depth as a number, pending and in flight, followed by
-  the stages themselves, from `scripts/list-cards.sh`.
+The repo ticker reads exactly one source: `scripts/aggregate-dashboard.sh
+--repo <path>`, re-run on every refresh (every five seconds, override with
+`AUTOMETTA_TICKER_INTERVAL`) so the figures are as fresh as the render and
+scoped to that one subscriber — no other repo's data can appear in the frame.
+It answers one question, "do I need to intervene?", in five sections:
 
-The ticker measures its terminal on every frame. At 39 columns by 15 rows it
-keeps alerts and active agents first, folds lower-priority panels, and names
-every hidden count. It builds the complete frame before one cursor-home write,
-so refresh does not expose a cleared or half-drawn pane. The status ticker uses
-the same repaint rule and switches `status.sh` to a compact two-line repo row
-below 80 columns; direct full-width `autometta status` output is unchanged.
+- `NOW`: the live stage, in full — stage id, phase (`worker running` /
+  `verifying` / `landing` while a passed stage awaits integration), the
+  acting family and identity, elapsed against the card's declared
+  wall-clock budget, tokens spent on the stage so far, and, while verifying,
+  the attempt count against the cap. Elapsed against budget is real time
+  spent, not work done, and never clamps at 99% or 100% — a stage past its
+  budget reads `OVER BUDGET` with the true percentage. When nothing is
+  live, it reads `idle`.
+- `NEXT`: a counts line (stages done, outstanding, and how many of those are
+  escalated), then the next few queued stages with the family that will
+  work each.
+- `ESCALATIONS`: only what is waiting on a human right now — a halt or pause
+  with its reason, and any stage sitting in `stalled` or `verifier_failed`
+  (not `failed`; see `scripts/alert-statuses.sh`, the one definition every
+  renderer in the tree shares) with its preserved `wip_branch` pin. A
+  re-queued stage is back to `pending` and so is correctly absent. The whole
+  section, header included, renders nothing when there is nothing
+  outstanding.
+- `SPEND AND LOSS`: tokens and estimated cost spent today, lost today
+  (non-pass dispatch spend), lost over the last seven days, and the
+  resolved cap (drain, this repo's own, or the host default) with percent
+  used. Carries a caveat when a codex/GPT dispatch in the last seven days
+  recorded `output_tokens: 0` against non-zero input — the currency figure
+  for those rows undercounts until card 59 lands.
+- `FRESHNESS`: how long since the last tick, plainly, and loud
+  (`AUTOMETTA_TICK_FRESHNESS_THRESHOLD`, default 1200s) past the threshold.
 
-All three viewer headers include `autometta <sha>`. Installed-build drift is
-checked at start-up and no more than once a minute. Until the installed-build
-authority helper ships, the viewer labels its fallback comparison of
-`autometta --version` with the checkout HEAD.
+Column widths are allocated the way lazygit does: each declares a minimum and
+a share of the remainder, and columns marked droppable drop lowest-priority
+first when the width will not hold them all — never truncation by the
+terminal, never a fixed 40-column guess. The itemised failures list moved out
+of the live pane entirely: `scripts/failures-history.sh <repo-path>`
+(`autometta failures <repo-path>`) prints every terminal-status stage and
+every non-pass dispatch on demand, reading the same one aggregated JSON so it
+never disagrees with the ticker's SPEND AND LOSS totals.
+
+`scripts/agent-ticker.sh` and `scripts/status-ticker.sh` (the ALERTS / SPEND /
+ACTIVE / LIVE / RECENT / SCHEDULED ticker and the status-plus-COMPLETED pane
+they replace) still exist and are still exercised by their own smoke tests,
+but neither is wired into `autometta attach` any longer. Their `SPEND` panel
+is the one place that still shows each family's most-used provider window and
+reset time, or an explicit unknown reason.
+
+Both windows are scoped to the attached repo: `aggregate-dashboard.sh --repo`
+walks only that one subscriber, and the log window filters the shared tick
+log to lines naming that repo's path.
 
 `list-cards.sh` treats `state/state.yaml` as authoritative for every card it
 records, because that is the file the controller dispatches from. `PLAN.md`
@@ -118,20 +134,6 @@ and `state/recent-agents/` are consulted only for cards `state.yaml` has never
 seen. A card on disk that has never been queued is labelled `unqueued`, which
 is deliberately not the same word as `pending`: it is a real and useful
 category, but it is not queue depth.
-
-The distinction is what the panel got wrong. It used to classify a card as
-done only from `examples/self-host/PLAN.md`, which is autometta's own file and
-exists in no other subscriber, so every card in a subscriber's `docs/stages/`
-read `pending` forever. On 2026-08-23 the ticker showed `emergence-lab` with
-sixteen pending stages against a `state.yaml` recording 31 completed, 3
-verifier-failed, 2 stalled and not one pending: an empty queue displayed as a
-full one, while the overnight windows came up dead. Queue depth is therefore
-printed as a number whether or not it is zero, and zero raises an alert.
-
-Both panes on the left and top-right are scoped to the attached repo:
-`scripts/status.sh --repo <path>` narrows the status table to one
-subscriber, and the log pane filters the shared tick log to lines naming
-that repo's path.
 
 `autometta-autometta` is the fleet viewer. Its default `fleet` window renders
 only `${AUTOMETTA_HOME}/dashboard/data.json`, which is produced by the

@@ -47,6 +47,7 @@ Usage:
   autometta check-deps
   autometta check-build
   autometta dashboard [--open]
+  autometta failures <repo-path> [--json]
   autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]
   autometta uninstall-launchagent <repo-path>
@@ -227,6 +228,13 @@ case "$command_name" in
     ;;
   auth)
     run_script auth.sh "$@"
+    ;;
+  failures)
+    if [[ $# -lt 1 ]]; then
+      printf 'usage: autometta failures <repo-path> [--json]\n' >&2
+      exit 1
+    fi
+    run_script failures-history.sh "$@"
     ;;
   panel)
     if [[ $# -lt 1 ]]; then
