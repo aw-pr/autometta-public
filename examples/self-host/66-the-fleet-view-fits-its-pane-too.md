@@ -50,6 +50,40 @@ ticker. The rows are also badly truncated at their most useful columns:
 already decided that for one repo and shipped `scripts/failures-history.sh`.
 This card applies the same decision one level up.
 
+## Operator feedback (2026-08-25, pre-dispatch)
+
+The operator reviewed the live fleet window while stage 65 ran and settled
+this card's open window question before dispatch. Three findings, three
+captures:
+
+1. **The information is good; the fleet scope is not.** "I rarely if ever
+   will want a fleet view." The viewer session is already per-repo
+   (`autometta-<repo>`), yet its window 0 renders every subscriber. Window 0
+   becomes the same page scoped to that session's repo. The fleet-wide page
+   survives as a deliberately reached view (another window or a flag), not
+   the landing view.
+
+   ![the fleet window, full page, fleet-wide in a per-repo session](../../docs/incidents/images/2026-08-25-fleet-window-full-page.png)
+
+2. **The REPOS table does not belong on the repo-scoped page.** Its row for
+   the session's own repo is the page's whole subject; the other rows are
+   the fleet view's business. TOTALS stays, scoped to the one repo.
+
+3. **Role, result and identity columns are unreadable.** `sta…`, `ver…`,
+   `verif…`, `Codex GPT-5.6…`, `Claude …`: these are short enumerations
+   (`worker`, `verifier`, `stalled`, `verifier_failed`) and full agent
+   identities, and they are the columns an operator reads first. They render
+   whole; the ellipsis budget belongs to trailing detail columns only.
+
+   ![role and result columns truncated to uselessness](../../docs/incidents/images/2026-08-25-failures-truncated-columns.png)
+
+4. **Column edges drift out of line.** Vertical rules in the REPOS table do
+   not line up between header and body; the page reads as broken even where
+   the figures are right. Likely a width-accounting defect (wide glyphs,
+   colour codes, or padding counted inconsistently).
+
+   ![REPOS table with misaligned column edges](../../docs/incidents/images/2026-08-25-repos-table-misaligned.png)
+
 ## Inputs (read these in your own context)
 
 - `scripts/attach.sh`, the `--fleet-ticker` mode and `fleet_cmd` at line 678.
@@ -74,15 +108,25 @@ This card applies the same decision one level up.
    against the cap that binds, and outstanding escalations. A row nobody acts
    on does not earn its line.
 4. **Columns resize with the terminal and stop truncating the identifying
-   column.** A stage id or repo name cut to `50-stage-cards-live-i…` fails the
-   only job that column has. Card 63 settled the rule: the id column grows
-   with the remainder, a column with a trailing detail field keeps its cap.
+   columns.** A stage id or repo name cut to `50-stage-cards-live-i…` fails
+   the only job that column has, and the same holds for `role`, `result`,
+   `agent / worker` and `verifier`: enumerations and identities render whole.
+   Card 63 settled the rule: the id column grows with the remainder, a column
+   with a trailing detail field keeps its cap. Ellipsis is legal only in
+   detail columns.
 5. **One process draws the fleet page**, as card 63 established for the repo
    page, reading aggregated figures rather than recomputing them.
-6. **Say which window an operator should land on.** If the repo view is the
-   better default, make it window 0 and say why in your handoff envelope. Do
-   not change the window order silently.
-7. **A smoke in the shape of `scripts/repo-ticker-smoke.sh`**, with locale and
+6. **Window 0 of the per-repo viewer is the repo-scoped page.** The operator
+   has answered this card's window question (see the feedback section): the
+   page's sections render scoped to the session's repo, with no REPOS table.
+   The fleet-wide page stays reachable on purpose (another window or a flag)
+   and is never the landing view. Justify the layout in your handoff
+   envelope, not the choice.
+7. **Column edges align.** Every table's vertical rules line up between
+   header and body rows at every supported width. Find and fix the
+   width-accounting defect in the third capture rather than papering over it
+   per table.
+8. **A smoke in the shape of `scripts/repo-ticker-smoke.sh`**, with locale and
    TERM pinned as card 49 established, asserting the fit at both widths on a
    fixture fleet.
 
@@ -103,20 +147,29 @@ This card applies the same decision one level up.
    covers the fleet. Show the command's output.
 3. Every repo that is halted, stalled or over cap is visible on the live page
    with its reason. Show a fleet containing all three.
-4. No identifying column is truncated at 119 columns: repo names and stage ids
-   render whole. Show the capture.
+4. No identifying or enumeration column is truncated at 119 columns: repo
+   names, stage ids, `role`, `result` and agent identities render whole.
+   Show the capture.
 5. Allocation differs at 80, 119 and 160, per card 63's settled rule.
 6. The renderer recomputes no aggregate, applying card 63's stated boundary.
 7. The smoke passes with locale and TERM pinned, and fails on the pre-fix
    tree.
-8. The chosen default window is implemented and justified in the envelope.
+8. Window 0 of the per-repo viewer renders the page scoped to the session's
+   repo with no REPOS table, and the fleet-wide page is still reachable.
+   Show both, and say in the envelope how the fleet page is reached.
+9. Column edges align in every table at 80, 119 and 160: each vertical rule
+   sits at one offset from header to last body row. The smoke asserts it on
+   the fixture fleet.
 
 ## Contract test
 
 Render the current fleet, six subscribers with one halted on `token-cap`, one
 paused, and two holding a stale vendor contract, into an 80-column pane and a
 119-column pane. Neither may scroll, and the halted repo and its reason must
-be visible without scrolling in both.
+be visible without scrolling in both. Then render the repo-scoped page for
+the halted subscriber at both widths: no REPOS table, the halt and its reason
+visible, every role, result and identity column whole, and every column edge
+aligned.
 
 ## Out of scope
 
@@ -126,7 +179,7 @@ be visible without scrolling in both.
 
 ## Budget
 
-- **Worker wall-clock:** 90 minutes
+- **Worker wall-clock:** 120 minutes
 - **Verifier wall-clock:** 45 minutes
 
 ## Verifier handoff
