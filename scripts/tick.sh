@@ -380,18 +380,24 @@ halt_dispatch_configuration_fault() {
   local repo_root="$1"
   local stage_id="$2"
   local role="$3"
+  local return_reserved_attempt="${4:-true}"
   local state_yaml="$repo_root/state/state.yaml"
 
   if [[ "$role" == "verifier" ]]; then
     # Attempts are reserved immediately before spawn. Return this one because
-    # argument parsing failed before verification began.
+    # verification never began. A pre-spawn assertion passes false because no
+    # attempt has been reserved yet.
     state_apply_json "$state_yaml" \
-      '(.stages[] | select(.id == $id)).verifier_attempts = ([((.stages[] | select(.id == $id) | .verifier_attempts // 0) - 1), 0] | max)
+      '(.stages[] | select(.id == $id)).verifier_attempts =
+         (if $return_attempt
+          then ([((.stages[] | select(.id == $id) | .verifier_attempts // 0) - 1), 0] | max)
+          else ((.stages[] | select(.id == $id) | .verifier_attempts // 0))
+          end)
        | (.stages[] | select(.id == $id)).verifier_pid = null
        | (.stages[] | select(.id == $id)).status = "stalled"
        | (.stages[] | select(.id == $id)).stall_marker = ("dispatch_configuration_fault:" + $role)
        | .current_stage = null' \
-      --arg id "$stage_id" --arg role "$role"
+      --arg id "$stage_id" --arg role "$role" --argjson return_attempt "$return_reserved_attempt"
   else
     state_apply_json "$state_yaml" \
       '(.stages[] | select(.id == $id)).worker_pid = null
@@ -401,6 +407,45 @@ halt_dispatch_configuration_fault() {
       --arg id "$stage_id" --arg role "$role"
   fi
   budget_halt "$repo_root" "dispatch-configuration-fault"
+}
+
+# A completion file can be absent because the agent omitted it, or because a
+# relative state/ path resolved into a private directory inside a damaged run
+# worktree. Only the latter is a dispatch fault. Return 0 when the fault was
+# handled so callers stop before charging or blaming the role.
+handle_missing_completion_dispatch_fault() {
+  local repo_root="$1"
+  local stage_id="$2"
+  local role="$3"
+  local completion_path="$4"
+
+  [[ ! -f "$completion_path" ]] || return 1
+  if assert_run_worktree_state_link "$repo_root" "$stage_id"; then
+    return 1
+  fi
+
+  halt_dispatch_configuration_fault "$repo_root" "$stage_id" "$role"
+  if [[ "$role" == "verifier" ]]; then
+    log "stage ${stage_id} dispatch fault: verifier artefact is missing while the run worktree state symlink is invalid; reserved attempt returned (dispatch-configuration-fault)"
+  else
+    log "stage ${stage_id} dispatch fault: worker handoff envelope is missing while the run worktree state symlink is invalid (dispatch-configuration-fault)"
+  fi
+  return 0
+}
+
+# Fail a pending role before spawn when its relative completion path cannot
+# reach the shared state store. No verifier attempt exists yet on this path.
+guard_run_worktree_state_before_dispatch() {
+  local repo_root="$1"
+  local stage_id="$2"
+  local role="$3"
+
+  if assert_run_worktree_state_link "$repo_root" "$stage_id"; then
+    return 0
+  fi
+  halt_dispatch_configuration_fault "$repo_root" "$stage_id" "$role" false
+  log "stage ${stage_id} dispatch fault: ${role} not started because the run worktree state symlink is invalid; no attempt reserved (dispatch-configuration-fault)"
+  return 1
 }
 
 # Apply a jq filter to state.yaml. Pass values via --arg / --argjson rather
@@ -758,6 +803,33 @@ worktree_path_for_stage() {
   printf '%s/%s-run-%s\n' "$(dirname "$repo_root")" "$(basename "$repo_root")" "$stage_id"
 }
 
+# Relative completion paths are part of the prompt contract. Prove the link
+# that gives them their shared meaning exists and resolves to repo_root/state;
+# a real directory at the same path is specifically not equivalent.
+assert_run_worktree_state_link() {
+  local repo_root="$1" stage_id="$2"
+  local work_dir state_link expected_state actual_state
+  work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  state_link="$work_dir/state"
+
+  if [[ ! -L "$state_link" ]]; then
+    log "dispatch fault for ${stage_id}: run worktree state symlink is missing or has been replaced at ${state_link}"
+    return 1
+  fi
+  if ! expected_state="$(cd "$repo_root/state" 2>/dev/null && pwd -P)"; then
+    log "dispatch fault for ${stage_id}: subscriber state directory cannot be resolved at ${repo_root}/state"
+    return 1
+  fi
+  if ! actual_state="$(cd "$state_link" 2>/dev/null && pwd -P)"; then
+    log "dispatch fault for ${stage_id}: run worktree state symlink is broken at ${state_link}"
+    return 1
+  fi
+  if [[ "$actual_state" != "$expected_state" ]]; then
+    log "dispatch fault for ${stage_id}: run worktree state symlink resolves to ${actual_state}, expected ${expected_state}"
+    return 1
+  fi
+}
+
 # remove_run_worktree: the single implementation of "get rid of this stage's
 # run worktree and run branch", which is requeue-stage.sh's. It is called
 # rather than copied so a reset, a teardown after an ff-merge, a re-cut of a
@@ -804,6 +876,9 @@ ensure_run_worktree() {
   ) || { log "ensure_run_worktree: failed to cut ${work_dir} from ${base_branch} for ${stage_id}"; return 1; }
   rm -rf "${work_dir:?}/state"
   ln -s "../$(basename "$repo_root")/state" "$work_dir/state"
+  if ! assert_run_worktree_state_link "$repo_root" "$stage_id"; then
+    return 1
+  fi
   # A fresh worktree has no node_modules, so every gate the card leans on
   # (tsc, vitest, the verify script) exits 127 and the stage comes back
   # partial with its acceptance criteria unverified rather than failed --
@@ -1672,6 +1747,13 @@ _process_repo_locked() {
       # not double-count.
       if [[ -n "${worker_pid:-}" ]]; then
         local worker_log_path="$repo_root/state/logs/${current_stage}-worker.log"
+        local expected_worker_envelope="$repo_root/state/handoffs/${current_stage}.json"
+
+        if handle_missing_completion_dispatch_fault \
+             "$repo_root" "$current_stage" worker "$expected_worker_envelope"; then
+          commit_state_branch "$repo_root"
+          return 0
+        fi
 
         # Provider refusal: the worker exited immediately without attempting
         # the stage. Rewind it to pending so the next unpaused tick dispatches
@@ -1821,6 +1903,13 @@ _process_repo_locked() {
       # we spawn a fresh verifier, then clear verifier_pid for idempotency.
       if [[ -n "${verifier_pid:-}" ]]; then
         local stale_verifier_log_path="$repo_root/state/logs/${current_stage}-verifier.log"
+        local expected_verifier_artefact="$repo_root/state/verifiers/${current_stage}.json"
+
+        if handle_missing_completion_dispatch_fault \
+             "$repo_root" "$current_stage" verifier "$expected_verifier_artefact"; then
+          commit_state_branch "$repo_root"
+          return 0
+        fi
 
         # Provider refusal: the verifier was never attempted. Clear its pid so
         # the next unpaused tick re-dispatches it, but do not consume one of
@@ -1883,6 +1972,13 @@ _process_repo_locked() {
       fi
     card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
     if [[ -n "$card_path" ]]; then
+      # Completion paths in both prompts are relative to the run worktree.
+      # Assert their shared-state boundary immediately before every verifier
+      # spawn, before reserving an attempt or spending any tokens.
+      if ! guard_run_worktree_state_before_dispatch "$repo_root" "$current_stage" verifier; then
+        commit_state_branch "$repo_root"
+        return 0
+      fi
       # Cap check at the point of spend, not at the top of the tick. By here
       # this tick may already have reaped a worker and charged its tokens
       # (budget_account_tokens_from_log, above), so the budget read at line

@@ -399,3 +399,25 @@ A healthy self-resuming pause can sleep through the next working window. The sta
 `usage_limit_reset_epoch` treats a reset in the previous 15 minutes as already elapsed, including when the clock crossed midnight. It returns the current epoch, so `budget_pause_active` clears the elapsed pause on the next tick and redispatches the untouched stage. A reset still ahead keeps today's date. Older clocks retain the previous next-day interpretation, but the resulting target is capped at six hours from `now`, above the five-hour provider window. An unparseable clock keeps the existing one-hour fallback, also below the cap.
 
 `scripts/usage-error-smoke.sh` fixes the clock offline and covers two minutes past, two minutes ahead, midnight crossing, the exact incident timestamp, and a nonsense clock. The general rule: when a provider supplies a wall-clock time without a date, near-boundary arithmetic must distinguish "just elapsed" from "next occurrence", and every inferred wait needs a bound tied to the real window it represents.
+
+## Headless gotcha 18: the agent wrote the file, but the tick looked through a different state path
+
+### One-sentence summary
+An agent's log says it wrote its handoff envelope or verifier artefact, but the tick cannot find it: inspect the run worktree's `state` symlink before blaming the agent or spending a retry.
+
+### Incident origin
+On 2026-08-25 the verifier for stage 51 returned a genuine PASS on all six criteria and wrote a valid artefact under its working directory. The tick read the matching path under the subscriber root, found nothing, recorded the verifier as aborted, and dispatched it again. Two of the three verifier attempts were spent on a verdict that already existed.
+
+The apparent contradiction came from two views of one tree. Prompts give agents relative paths such as `state/handoffs/<stage-id>.json` and `state/verifiers/<stage-id>.json`, resolved from the run worktree. Readers anchor the same paths to the subscriber root. `ensure_run_worktree` normally replaces the worktree's tracked `state/` directory with a symlink to the subscriber's shared state, making both views agree. An operator script had replaced that symlink with a real directory, so the verifier's successful write landed in private worktree state while the tick kept reading shared state.
+
+This is the completion-path version of the card-sync race in gotcha 2. The writer and reader both behaved correctly against different physical files, and the missing-file branch erased that distinction by reporting an agent failure.
+
+### Failure mode if ignored
+A missing symlink looks exactly like `worker_envelope_missing_after_exit` or an aborted verifier. The work may be complete, the agent may explicitly say where it wrote the completion file, and every retry will still write into the same wrong directory. The operator is sent towards the model, prompt, or auth route while the fault is in the dispatch boundary.
+
+### Mitigation
+Relative completion paths remain the contract because they are clone-safe and already shared by both agent families. The symlink that gives those paths their meaning is now asserted after a fresh worktree is cut, immediately before verifier spawn, and before either missing-envelope or missing-artefact diagnosis. The assertion requires `state` to be a symlink and compares its resolved directory with the subscriber's resolved `state/`, so a real directory, broken link, or wrong target all fail closed.
+
+A pre-spawn failure is recorded as `dispatch_configuration_fault` before an agent starts. A read-time failure gets the same diagnosis instead of `worker_envelope_missing_after_exit` or `aborted`; a verifier's reserved attempt is returned, so the counter is unchanged across the faulty dispatch. `scripts/run-worktree-state-symlink-smoke.sh` cuts a real temporary worktree, replaces the link with a directory, writes a valid verifier artefact into the misdirected path, and exercises both completion-file fault paths without auth, network, or token spend.
+
+The general rule: when one side writes a relative path and the other reads an anchored path, the filesystem link that makes them equivalent is part of the protocol. Assert it where the path is created, where the next role is dispatched, and before absence is interpreted as agent behaviour.
