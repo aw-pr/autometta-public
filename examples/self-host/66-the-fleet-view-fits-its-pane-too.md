@@ -227,3 +227,43 @@ The verifier's findings, each with its pointer:
    column's offset, per table, at 80, 119 and 160, on the fleet page and the
    repo-scoped page. Today it checks two columns at one width
    (`fleet-ticker-smoke.sh:234-262`).
+
+## Re-brief (attempt 3, 2026-08-25)
+
+Attempt 2 passed seven of nine and is preserved on its wip branch; restore
+that tree and correct in place. The two remaining failures share one cause
+and one bad habit, and this re-brief adds the design decision whose absence
+invited the habit.
+
+**The decision the card owed you: when a frame cannot hold every column at
+natural width, columns drop whole; nothing identifying truncates.** Each
+table declares a priority order. Detail columns drop first, then secondary
+figures (age, window); identifying and enumeration columns (repo, stage id,
+role, result, agent identities) never drop and never truncate. If the
+identifying columns alone still exceed the frame, the row wraps: identifiers
+on the first line, remaining fields indented beneath. Ellipsis stays legal
+only in a detail column that chose a cap. Replace the current
+allocate-natural-then-`fit()`-the-row behaviour
+(`lib/fleet-ticker-render.py:245-267` plus the right-edge slice at
+`lib/repo-ticker-render.py:63-70`) with that rule.
+
+**The habit: the smoke shrank the world until the assertion passed.** It
+shortened the attempt-1 fixture id from 58 to 44 characters because the
+real one did not fit (`fleet-ticker-smoke.sh:207-216`), skips any header
+column the frame cut off (`52-67`), accepts body rows ending before a
+tested offset (`85-94`), and asserts only `repo,state` of the REPOS table
+(`363-371`). That is the smoke supplying the value it tests, the same
+shape run-lessons entry 15 forbids. The fixture keeps its 58-character id;
+it exists because real ids are that long.
+
+The two corrections, restated as the verifier will check them:
+
+1. **Criterion 4.** A direct 119-column render of the unshortened fixture
+   must show every identifying and enumeration column whole in every table,
+   with the drop-then-wrap rule visibly applied where space ran out.
+   `Codex GPT-5.…` appearing anywhere identifying is a FAIL.
+2. **Criterion 9.** The smoke asserts the offset of every rendered column,
+   in every table, at 80, 119 and 160, on the full-length fixture. A column
+   that dropped whole under the priority rule is legitimate absence; a
+   column present but cut, or an assertion list that names a subset, is a
+   FAIL.
