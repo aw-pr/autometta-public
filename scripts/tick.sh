@@ -9,6 +9,8 @@ source "$script_dir/budget.sh"
 source "$script_dir/cost-log.sh"
 # shellcheck source=./usage-limit.sh
 source "$script_dir/usage-limit.sh"
+# shellcheck source=./quota-window.sh
+source "$script_dir/quota-window.sh"
 # shellcheck source=./session-slug.sh
 source "$script_dir/session-slug.sh"
 # shellcheck source=./subscribers.sh
@@ -26,6 +28,58 @@ log() {
   local msg="$1"
   mkdir -p "$controller_log_dir"
   printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$msg" | tee -a "$controller_log_dir/tick-$(date +%F).log" >&2
+}
+
+quota_log_tick_readings() {
+  local family reading status summary
+  for family in claude codex; do
+    reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
+    status="$(printf '%s' "$reading" | jq -r '.status')"
+    if [[ "$status" == "known" ]]; then
+      summary="$(printf '%s' "$reading" | jq -r '[.windows[] | "\(.label) \(.utilization)% used, resets \(.resets_at // "unknown")"] | join("; ")')"
+      log "quota ${family}: ${summary} (source $(printf '%s' "$reading" | jq -r '.source'))"
+    else
+      log "quota ${family}: unknown ($(printf '%s' "$reading" | jq -r '.reason // "reader failed"')); dispatch remains fail-open"
+    fi
+  done
+}
+
+# quota_gate_family_dispatch <repo> claude|codex <description>
+# Returns 1 only after recording a pause at the published reset. Zero covers
+# outside-reserve, reserve off, observe and every unknown reading.
+quota_gate_family_dispatch() {
+  local repo_root="$1" family="$2" what="$3"
+  local settings reserve action reading
+  case "$family" in claude|codex) ;; *)
+    log "quota ${what}: family unknown; dispatch remains fail-open"
+    return 0
+  esac
+  settings="$(quota_reserve_settings "${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}")"
+  IFS=$'\t' read -r reserve action <<<"$settings"
+  reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
+  if quota_gate_reading "$reading" "$reserve" "$action"; then
+    if [[ "$QUOTA_GATE_REASON" == reading\ unknown:* ]]; then
+      log "quota ${what} (${family}): ${QUOTA_GATE_REASON}; dispatch remains fail-open"
+    elif [[ "$QUOTA_GATE_REASON" == *"inside reserve"* ]]; then
+      log "quota ${what} (${family}): ${QUOTA_GATE_REASON}; dispatch proceeds"
+    fi
+    return 0
+  fi
+  budget_pause_until "$repo_root" "$QUOTA_GATE_RESET" \
+    "quota reserve: ${family} ${QUOTA_GATE_WINDOW}; resets at $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+  log "quota ${what} (${family}): held in ${reserve}% reserve on ${QUOTA_GATE_WINDOW}; paused until $(date -r "$QUOTA_GATE_RESET" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+  return 1
+}
+
+# Resolve a stage role to its family, then use the same gate as the controller
+# pass. Keeping one family gate prevents the two dispatch paths drifting.
+quota_gate_role_dispatch() {
+  local repo_root="$1" state_yaml="$2" stage_id="$3" role="$4"
+  local identity family
+  identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" --arg role "$role" \
+    '.stages[] | select(.id == $id) | .[$role] // empty')"
+  family="$(costlog_family_for_identity "$identity")"
+  quota_gate_family_dispatch "$repo_root" "$family" "${role} ${stage_id}"
 }
 
 # Per-repo advisory lock. mkdir is atomic on POSIX and works on macOS
@@ -1592,6 +1646,11 @@ _process_repo_locked() {
     return 1
   fi
 
+  # The reader ran once for this tick fire. Persist only its sanitised result
+  # for the dashboard surfaces; no publisher payload or credential field can
+  # cross this seam.
+  quota_write_repo_state "$repo_root"
+
   # Budget window auto-reset: a halted-or-at-cap budget from a prior run
   # window (UTC calendar day) is not terminal for this window. See
   # budget_ensure_window in budget.sh.
@@ -2029,6 +2088,11 @@ _process_repo_locked() {
       # emergence-lab-gpu -- three of the five largest runs in the incident
       # were verifier dispatches, the largest 18.1M tokens against a
       # 1,000,000 cap.
+      if ! quota_gate_role_dispatch "$repo_root" "$state_yaml" "$current_stage" verifier; then
+        log "not dispatching verifier for ${current_stage}: provider-window reserve held"
+        commit_state_branch "$repo_root"
+        return 0
+      fi
       if ! budget_gate_dispatch "$repo_root" "verifier dispatch for ${current_stage}"; then
         log "not dispatching verifier for ${current_stage}: budget gate refused"
         commit_state_branch "$repo_root"
@@ -2077,6 +2141,8 @@ _process_repo_locked() {
       card_path="$(stage_card_for_id "$repo_root" "$next_stage" "$manifest_path")"
       if [[ -z "$card_path" ]]; then
         log "stage card missing for ${next_stage} in ${repo_root}"
+      elif ! quota_gate_role_dispatch "$repo_root" "$state_yaml" "$next_stage" worker; then
+        log "not dispatching worker for ${next_stage}: provider-window reserve held"
       elif ! budget_gate_dispatch "$repo_root" "worker dispatch for ${next_stage}"; then
         # Refuse before any state is mutated and before a run worktree is
         # cut, so a gated stage stays cleanly pending for the next window
@@ -2160,6 +2226,11 @@ main() {
     log "dependency pre-flight failed; run scripts/check-deps.sh for details"
     exit 1
   fi
+
+  # One read per tick fire, shared by every subscriber and every display.
+  # Failure becomes explicit unknown data and never blocks the queue.
+  quota_refresh_tick || true
+  quota_log_tick_readings
 
   sweep_controller_log_retention
   reap_idle_dash_sessions

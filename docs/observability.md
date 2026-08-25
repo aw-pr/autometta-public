@@ -24,6 +24,9 @@ does not supervise workers, retry stages, or create another controller loop.
   moved here by the heartbeat watchdog when the process exits.
 - `state/heartbeat.json`: latest watchdog report (per-agent flags for
   `silent` log mtime, `over-budget`, etc.).
+- `state/quota-window.json`: the tick's latest sanitised provider-window
+  reading. It carries only source, fetch time and window labels, utilisation
+  and reset times. It never carries a publisher payload or credential.
 - `${AUTOMETTA_HOME:-$HOME/.autometta}/log/tick-YYYY-MM-DD.log`:
   controller-level tick log.
 - `${AUTOMETTA_HOME:-$HOME/.autometta}/subscribers/*.yaml`:
@@ -71,7 +74,8 @@ shows these sections:
   queue on an enabled subscriber** (zero pending and nothing in flight).
 - `SPEND`: current-window tokens against the cap, today's and seven-day USD
   estimates at list prices, today's mean cache-hit rate, and tokens burned in
-  the last hour. It reads at most the final
+  the last hour. The same panel shows each family's most-used provider window
+  and reset time, or an explicit unknown reason. It reads at most the final
   `AUTOMETTA_COST_LOG_TAIL_ROWS` rows (default 5,000), so refresh cost is
   bounded as the append-only ledger grows. Token figures remain the primary
   signal on subscription routes.
@@ -153,6 +157,41 @@ whose subscriber is disabled or absent.
 It is an operator cockpit only. It must not dispatch `autometta tick`, send
 commands to workers, or keep state that cannot be reconstructed from the
 filesystem.
+
+## Provider-window readings
+
+`scripts/quota-window.py` is the single reader. At the start of a tick fire it
+reads both families once and `tick.sh` passes the sanitised JSON to every
+subscriber as `state/quota-window.json`. The tmux pane and web dashboard read
+that file; they do not start their own pollers.
+
+The published snapshot contract is one file per family at
+`${AI_QUOTA_DIR:-$HOME/.local/state/ai-quota}/<family>.json`:
+
+```json
+{
+  "fetched_at": "2026-08-25T09:30:00Z",
+  "source": "publisher-name",
+  "windows": [
+    {"key": "five_hour", "label": "5-hour", "utilization": 72.5,
+     "resets_at": "2026-08-25T12:10:00Z"}
+  ]
+}
+```
+
+For Claude, the reader consumes `claude.json`. Autometta makes no network
+request and reads no credential or Keychain entry. The publisher controls its
+own cadence; the current panel polls the upstream source about every five
+minutes. Autometta's default staleness bound is ten minutes
+(`AI_QUOTA_STALE_SECONDS`). Only the contract fields above are propagated;
+unknown or extra fields are discarded.
+
+For Codex, the same reader may inspect local rollout JSONL because that source
+is not rate limited. It uses the newest local `rate_limits` event and exposes
+the same window shape. An absent, malformed or stale Claude snapshot, or
+missing Codex rollout evidence, is `unknown` with a reason. Unknown is not zero
+utilisation: it is logged, displayed legibly and always fails open, so it costs
+the tick no dispatch and does not pause the queue.
 
 ## Per-agent liveness registry
 

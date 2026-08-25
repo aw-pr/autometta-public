@@ -81,6 +81,28 @@
       Number(spend.cost_usd_est || 0).toFixed(2);
   }
 
+  function renderQuota(repos) {
+    var rows = [];
+    repos.forEach(function (repo) {
+      ["claude", "codex"].forEach(function (family) {
+        var reading = ((repo.quota || {}).families || {})[family] || {
+          status: "unknown", reason: "no tick reading", windows: []
+        };
+        if (reading.status !== "known") {
+          rows.push([repo.name, family, "unknown", "-", "-", reading.reason || "unknown"]);
+          return;
+        }
+        (reading.windows || []).forEach(function (window) {
+          rows.push([repo.name, family, window.label,
+            Number(window.utilization).toFixed(1) + "%", window.resets_at || "unknown",
+            reading.source || "unknown"]);
+        });
+      });
+    });
+    renderSimpleTable("quota-table-wrap",
+      ["Repo", "Family", "Window", "Used", "Resets", "Source / reason"], rows);
+  }
+
   function renderSimpleTable(id, headers, rows) {
     var wrap = document.getElementById(id);
     if (!rows.length) {
@@ -229,6 +251,7 @@
     renderAgents(data.repos);
     renderFailures(data.spend || {});
     renderSpend(data.spend || {});
+    renderQuota(data.repos);
     renderStagesTable(data.repos);
     drawReposChart(data.repos);
     drawStagesChart(data.repos);

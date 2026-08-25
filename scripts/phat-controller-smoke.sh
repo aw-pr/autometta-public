@@ -122,6 +122,7 @@ spend_answer='Up to 40M tokens this run on the Claude subscription. The codex ap
 seed_out="$fixture/controller/phat-controller-seed.md"
 "$script_dir/render-controller-seed.sh" \
   --spend-authority "$spend_answer" \
+  --window-reserve-percent 10 --window-reserve-action hold \
   --token-ceiling 40000000 \
   --expires 2126-01-01T00:00:00Z \
   --repo "$rseed" --out "$seed_out" >/dev/null
@@ -141,6 +142,8 @@ assert_contains "$seed_body" "Auth routes: codex" "the seed carries the per-fami
 assert_contains "$seed_body" "state/budget.json" "the seed says where state lives"
 assert_contains "$seed_body" "codex exec\` reads stdin after the prompt arg" "the seed carries this repo's own gotchas"
 assert_eq 40000000 "$(yq -r '.spend_authority.token_ceiling' "$AUTOMETTA_HOME/phat-controller-mandate.yaml")" "machine-readable ceiling mirrored into the mandate"
+assert_eq 10 "$(yq -r '.window_reserve.percent' "$AUTOMETTA_HOME/phat-controller-mandate.yaml")" "window reserve mirrored into the mandate"
+assert_eq hold "$(yq -r '.window_reserve.action' "$AUTOMETTA_HOME/phat-controller-mandate.yaml")" "window action mirrored into the mandate"
 # The committed template must not ship a spend authority of its own.
 tpl_ceiling="$(yq -r '.spend_authority.token_ceiling' "$autometta_root/templates/phat-controller-mandate.yaml.tpl")"
 [[ -z "$tpl_ceiling" || "$tpl_ceiling" == "null" ]] || fail "the committed mandate template ships a default ceiling: ${tpl_ceiling}"
@@ -155,7 +158,9 @@ printf '   -- end of rendered seed --\n\n'
 
 printf '== an already-rendered seed is not silently clobbered ==\n'
 clobber_rc=0
-"$script_dir/render-controller-seed.sh" --spend-authority 'something else' --out "$seed_out" >/dev/null 2>&1 || clobber_rc=$?
+"$script_dir/render-controller-seed.sh" --spend-authority 'something else' \
+  --window-reserve-percent 0 --window-reserve-action observe \
+  --out "$seed_out" >/dev/null 2>&1 || clobber_rc=$?
 [[ "$clobber_rc" -ne 0 ]] || fail "an existing operator-owned seed was overwritten without --force"
 assert_contains "$(cat "$seed_out")" "$spend_answer" "the operator's seed is unchanged"
 printf 'PASS an existing seed needs --force, because the operator may have edited it\n'
@@ -169,7 +174,8 @@ cp "$autometta_root/docs/proposals/orchestrator-role-review.md" "$drift_home/doc
 for s in render-controller-seed.sh resolve-root.sh subscribers.sh auth-route.sh; do cp "$autometta_root/scripts/$s" "$drift_home/scripts/"; done
 sed -i.bak 's/^2\. Verifying its own dispatches\..*/2. Verifying its own dispatches, unless it is in a hurry./' "$drift_home/templates/phat-controller-seed.md.tpl"
 rm -f "$drift_home/templates"/*.bak
-drift_out="$(AUTOMETTA_ROOT="$drift_home" "$drift_home/scripts/render-controller-seed.sh" --spend-authority x --print 2>&1 || true)"
+drift_out="$(AUTOMETTA_ROOT="$drift_home" "$drift_home/scripts/render-controller-seed.sh" \
+  --spend-authority x --window-reserve-percent 0 --window-reserve-action observe --print 2>&1 || true)"
 assert_contains "$drift_out" "drifted" "a seed template whose prohibitions drifted is refused"
 printf 'PASS the seed template cannot drift from the proposal that owns the negative list\n'
 

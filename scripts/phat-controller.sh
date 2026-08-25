@@ -93,9 +93,9 @@ log() {
 # Thresholds and cadence only. It does not carry authority (the negative list
 # is the authority, and it lives in the proposal and the rendered seed) and it
 # does not carry the spend authority prose (that is answered for at configure
-# time and written into the seed). The two machine-readable spend bounds below
-# are mirrored into it by scripts/render-controller-seed.sh so a pass can stop
-# without having to parse prose.
+# time and written into the seed). Machine-readable spend and provider-window
+# bounds are mirrored into it by scripts/render-controller-seed.sh so a pass
+# can stop without having to parse prose.
 
 pc_mandate_ensure() {
   if [[ -f "$pc_mandate_path" ]]; then
@@ -1086,6 +1086,17 @@ pc_pass() {
   if [[ "$family" != "claude" && "$family" != "codex" ]]; then
     log "phat-controller: the mandate names an unsupported controller identity (${identity})"
     return 1
+  fi
+
+  # This scheduled pass is a dispatched role too. Read once for the pass,
+  # publish the sanitised result for both displays, and apply the same family
+  # gate workers and verifiers use before constructing or launching a prompt.
+  quota_refresh_tick || true
+  quota_log_tick_readings
+  quota_write_repo_state "$host_repo"
+  if ! quota_gate_family_dispatch "$host_repo" "$family" "phat-controller pass"; then
+    log "phat-controller: pass held by the provider-window reserve"
+    return 0
   fi
 
   mkdir -p "$host_repo/state/logs" "$pc_log_dir"

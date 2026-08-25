@@ -82,6 +82,15 @@ Spend to that authority without asking. There is nobody to ask: the reason
 this role exists is that the operator is asleep. When it is exhausted, halt
 and stop; do not escalate into a wait that nothing will service.
 
+## Provider-window reserve
+
+<<window-reserve>>
+
+The usage reading is advisory when it is unknown. An absent, malformed or
+stale snapshot must never become zero utilisation and must never stop work.
+When the configured action is `hold`, a known window inside the reserve pauses
+dispatch only until that window's published reset time. A zero reserve is off.
+
 ## Human presence, and the push protocol
 
 Assume nobody is awake. That assumption is what turns `git-push-check`'s

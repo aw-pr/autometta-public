@@ -172,23 +172,26 @@ frontier verifier (`api` or `subscription`) for judgement-heavy criteria; the
 cloud free tier (Groq, OpenRouter) is measured but not yet a selectable
 dispatch mode, only reachable via `scripts/verifier-bake-off.sh` directly.
 
-### Optional: configure the phat-controller job (and ask for spend authority)
+### Optional: configure the phat-controller job (and ask both authority questions)
 
 The tick loop dispatches and verifies. It does not decide that a verifier FAIL is a card defect, preserve work stranded by an agent that died mid-write, merge an integration, clear a stale pause, or keep the queue fed. phat-controller does, and it is worth adding only once the loop itself ticks cleanly. Full design: `docs/tick-loop.md` section (k).
 
-It is an agent seeded at configure time, so configuring the job means rendering its seed, and rendering the seed means answering one question you cannot skip.
+It is an agent seeded at configure time, so configuring the job means rendering its seed, and rendering the seed means answering two questions you cannot skip.
 
 **Ask the operator, in the conversation, before running anything:**
 
 > What may this controller spend on this run? Give me a level in your own words, and optionally a hard token ceiling and a time the authority expires.
 
-**Do not offer a default and do not pick one for them.** The right level varies by run, by hour and by day: an overnight window drain and a Tuesday-afternoon smoke run want different numbers, and a default would be wrong most of the time it was used, in the expensive direction. If the operator will not answer, stop and say the job cannot be configured yet. The tooling agrees with you: `render-controller-seed.sh` with no `--spend-authority` writes nothing and exits 2, and `install-launchagent-phat-controller.sh` refuses to install a schedule with no seed.
+> How much of each provider window should remain unspent? Give a percentage, where zero turns the feature off, and choose `hold` (pause until that window resets) or `observe` (surface it but continue).
+
+**Do not offer defaults and do not pick answers for them.** Both choices vary by run, by hour and by day. If the operator will not answer either question, stop and say the job cannot be configured yet. The tooling agrees: the renderer writes nothing and exits 2 when either answer is absent, and the installer refuses to install a schedule with no seed.
 
 Then, with the answer in hand:
 
 ```sh
 autometta install-launchagent-phat-controller <target-repo-root> \
   --spend-authority 'Up to 40M tokens overnight on the Claude subscription. The codex api route stays off tonight.' \
+  --window-reserve-percent 10 --window-reserve-action hold \
   --token-ceiling 40000000 \
   --expires 2026-08-25T07:00:00Z
 ```

@@ -277,6 +277,20 @@ PY
   else
     printf '  (budget.json missing or jq unavailable)\n'
   fi
+  local quota_path="$repo_root/state/quota-window.json"
+  if [[ -f "$quota_path" ]] && command -v jq >/dev/null 2>&1; then
+    jq -r '
+      .families | to_entries[] |
+      if .value.status == "known" then
+        (.value.windows | sort_by(-.utilization) | .[0]) as $window |
+        "  quota \(.key): \($window.label) \($window.utilization)% used, resets \($window.resets_at // "unknown")"
+      else
+        "  quota \(.key): unknown (\(.value.reason // "no reason"))"
+      end
+    ' "$quota_path" 2>/dev/null || printf '  quota: unknown (tick reading unreadable)\n'
+  else
+    printf '  quota: unknown (no tick reading)\n'
+  fi
   printf '\n'
 
   printf 'ACTIVE\n'
@@ -643,7 +657,7 @@ body = []
 roomy = height >= 20
 body += bounded(alerts, 4, "ALERTS")
 body += bounded(active, max(3, height - 14), "ACTIVE")
-body += bounded(panels["SPEND"] or ["SPEND unavailable"], 6 if roomy else 3, "SPEND")
+body += bounded(panels["SPEND"] or ["SPEND unavailable"], 8 if roomy else 4, "SPEND")
 body += bounded(panels["RECENT"] or ["RECENT: 0 entries"], 2 if roomy else 1, "RECENT")
 body += bounded(panels["SCHEDULED"] or ["SCHEDULED: 0 entries"], 2 if roomy else 1, "SCHEDULED")
 footer = "Refresh: %ss  Ctrl+C to quit" % interval

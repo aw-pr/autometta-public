@@ -238,10 +238,11 @@ design is `docs/proposals/orchestrator-role-review.md`.
 **The context seed.** Rendered by `scripts/render-controller-seed.sh` when a
 job is configured, to `$AUTOMETTA_HOME/phat-controller-seed.md`
 (gitignored, operator-owned, editable afterwards). It carries, in this order:
-the persona and mandate, the negative list below, the spend authority
-answered for at setup, and the repo facts an orchestrator would otherwise
-rediscover (paths, families and their auth modes, branch policy, where state
-lives, the repo's own gotchas lifted from its agent brief at render time). It
+the persona and mandate, the negative list below, the spend authority and
+provider-window reserve answered for at setup, and the repo facts an
+orchestrator would otherwise rediscover (paths, families and their auth modes,
+branch policy, where state lives, the repo's own gotchas lifted from its agent
+brief at render time). It
 is prose an agent reads, not a config file anything parses; thresholds that a
 script must act on stay in the mandate manifest.
 
@@ -257,6 +258,15 @@ is exhausted rather than escalating into a wait nothing will service. The
 prose answer lives in the seed; its machine-readable half
 (`--token-ceiling`, `--expires`) is mirrored into the mandate's
 `spend_authority` block so a pass can stop without parsing prose.
+
+**The provider-window reserve is the second configure-time answer.** The
+operator supplies a percentage, where zero explicitly means off, and chooses
+`hold` or `observe`. No answer is committed as a default. The renderer records
+the answer in the seed and mirrors `window_reserve.percent` and
+`window_reserve.action` into the mandate. Before each worker or verifier spawn,
+the tick compares that role's family with the once-per-tick quota reading. A
+known window inside a `hold` reserve pauses until its own reset; an unknown
+reading and `observe` both proceed unchanged.
 
 **What bounds it is a short negative list, not an action enumeration.** The
 recoverable actions do not need enumerating and the unrecoverable ones are
@@ -389,7 +399,7 @@ The CLI delegates to these scripts:
 
 - `scripts/tick.sh`: the cron entry point.
 - `scripts/phat-controller.sh`: the queue minder's verbs; sources `tick.sh` for its merge, teardown, preservation and state-write mechanics rather than duplicating them.
-- `scripts/render-controller-seed.sh`: renders the context seed at configure time and mirrors the machine-readable spend bounds into the mandate.
+- `scripts/render-controller-seed.sh`: renders the context seed at configure time and mirrors the machine-readable spend and provider-window bounds into the mandate.
 - `scripts/install-launchagent-phat-controller.sh` / `scripts/uninstall-launchagent-phat-controller.sh`: the controller's own LaunchAgent, on a separate schedule and label from the tick's. The installer is where a job is configured, so it fails closed with no seed.
 - `scripts/spawn-worker.sh`: helper invoked by `tick.sh` to dispatch one worker per the stage card.
 - `scripts/spawn-verifier.sh`: helper invoked by `tick.sh` to dispatch the cross-family verifier.

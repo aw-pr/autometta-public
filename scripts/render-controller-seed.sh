@@ -14,7 +14,8 @@
 # writing anything.
 #
 # Usage:
-#   render-controller-seed.sh --spend-authority '<prose>' [options]
+#   render-controller-seed.sh --spend-authority '<prose>' \
+#     --window-reserve-percent N --window-reserve-action hold|observe [options]
 #
 # Options:
 #   --spend-authority TEXT   what this job may spend, in the operator's own
@@ -24,6 +25,11 @@
 #                            mandate manifest so a pass can halt without
 #                            parsing prose.
 #   --expires ISO8601        machine-readable expiry, mirrored the same way.
+#   --window-reserve-percent N
+#                            percentage of each provider window to leave
+#                            unspent. Required; zero explicitly turns it off.
+#   --window-reserve-action A
+#                            hold or observe. Required.
 #   --repo PATH              describe only this repo. Repeatable. Default is
 #                            every enabled subscriber.
 #   --out PATH               where to write. Default
@@ -52,6 +58,8 @@ out_path="${AUTOMETTA_CONTROLLER_SEED:-$controller_home/phat-controller-seed.md}
 spend_authority=""
 token_ceiling=""
 expires_at=""
+window_reserve_percent=""
+window_reserve_action=""
 force=false
 to_stdout=false
 repos=()
@@ -59,7 +67,7 @@ repos=()
 die() { printf '%s\n' "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -70,6 +78,8 @@ while [[ $# -gt 0 ]]; do
       if [[ "$1" == "-" ]]; then spend_authority="$(cat)"; else spend_authority="$(cat "$1")"; fi ;;
     --token-ceiling) shift; [[ $# -gt 0 ]] || die "--token-ceiling needs a value"; token_ceiling="$1" ;;
     --expires) shift; [[ $# -gt 0 ]] || die "--expires needs a value"; expires_at="$1" ;;
+    --window-reserve-percent) shift; [[ $# -gt 0 ]] || die "--window-reserve-percent needs a value"; window_reserve_percent="$1" ;;
+    --window-reserve-action) shift; [[ $# -gt 0 ]] || die "--window-reserve-action needs a value"; window_reserve_action="$1" ;;
     --repo) shift; [[ $# -gt 0 ]] || die "--repo needs a path"; repos+=( "$(cd "$1" && pwd)" ) ;;
     --out) shift; [[ $# -gt 0 ]] || die "--out needs a path"; out_path="$1" ;;
     --force) force=true ;;
@@ -105,12 +115,32 @@ REFUSED
   exit 2
 fi
 
+if [[ -z "$window_reserve_percent" || -z "$window_reserve_action" ]]; then
+  cat >&2 <<'REFUSED'
+phat-controller: no provider-window reserve answer was supplied, so no seed
+was rendered. Nothing has been written.
+
+Answer how much of a provider window to leave unspent and what to do at that
+point. Use --window-reserve-percent N (zero means off) together with
+--window-reserve-action hold|observe. There is no committed default.
+REFUSED
+  exit 2
+fi
+
 if [[ -n "$token_ceiling" && ! "$token_ceiling" =~ ^[0-9]+$ ]]; then
   die "--token-ceiling must be a whole number of tokens, got: $token_ceiling"
 fi
 if [[ -n "$expires_at" && ! "$expires_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
   die "--expires must be UTC ISO8601 like 2026-08-25T07:00:00Z, got: $expires_at"
 fi
+if ! [[ "$window_reserve_percent" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+   || ! awk -v value="$window_reserve_percent" 'BEGIN { exit !(value >= 0 && value <= 100) }'; then
+  die "--window-reserve-percent must be between 0 and 100, got: $window_reserve_percent"
+fi
+case "$window_reserve_action" in
+  hold|observe) ;;
+  *) die "--window-reserve-action must be hold or observe, got: $window_reserve_action" ;;
+esac
 
 if [[ "$to_stdout" == false && -f "$out_path" && "$force" == false ]]; then
   die "a seed already exists at $out_path and may have been edited; pass --force to replace it"
@@ -261,6 +291,8 @@ rendered="$(awk 'NR == 1 && $0 == "<!--" { skipping = 1 }
 rendered="${rendered//"<<rendered-at>>"/$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 rendered="${rendered//"<<spend-authority>>"/$spend_authority}"
 rendered="${rendered//"<<spend-bounds>>"/$spend_bounds}"
+window_reserve="Leave ${window_reserve_percent}% of each reported provider window unspent. At that point, action: \`${window_reserve_action}\`."
+rendered="${rendered//"<<window-reserve>>"/$window_reserve}"
 rendered="${rendered//"<<repo-facts>>"/$facts}"
 rendered="${rendered//"<<gotchas>>"/$gotchas}"
 rendered="${rendered//"<<verbs-path>>"/$autometta_root/scripts/phat-controller.sh}"
@@ -279,11 +311,11 @@ printf '%s\n' "$rendered" > "$out_path"
 chmod 0600 "$out_path"
 printf 'PASS seed rendered %s\n' "$out_path"
 
-# Mirror the machine-readable half of the answer into the mandate, which is
-# where a script is allowed to read a threshold from.
-if [[ -n "$token_ceiling" || -n "$expires_at" ]]; then
+# Mirror the machine-readable answers into the mandate, which is where a
+# script is allowed to read a threshold from.
+if [[ -n "$token_ceiling" || -n "$expires_at" || -n "$window_reserve_percent" ]]; then
   if ! command -v yq >/dev/null 2>&1; then
-    printf 'yq is not on PATH, so the spend bounds could not be written to %s; the seed prose still carries them\n' "$mandate_path" >&2
+    printf 'yq is not on PATH, so the spend and provider-window bounds could not be written to %s; the seed prose still carries them\n' "$mandate_path" >&2
     exit 0
   fi
   if [[ ! -f "$mandate_path" ]]; then
@@ -297,5 +329,9 @@ if [[ -n "$token_ceiling" || -n "$expires_at" ]]; then
   if [[ -n "$expires_at" ]]; then
     EXPIRES_AT="$expires_at" yq -i '.spend_authority.expires_at = strenv(EXPIRES_AT)' "$mandate_path"
   fi
-  printf 'PASS spend bounds written %s\n' "$mandate_path"
+  WINDOW_RESERVE_PERCENT="$window_reserve_percent" yq -i \
+    '.window_reserve.percent = (strenv(WINDOW_RESERVE_PERCENT) | tonumber)' "$mandate_path"
+  WINDOW_RESERVE_ACTION="$window_reserve_action" yq -i \
+    '.window_reserve.action = strenv(WINDOW_RESERVE_ACTION)' "$mandate_path"
+  printf 'PASS spend and window bounds written %s\n' "$mandate_path"
 fi

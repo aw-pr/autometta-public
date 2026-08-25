@@ -93,6 +93,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   state_yaml="$repo_path/state/state.yaml"
   budget_path="$repo_path/state/budget.json"
   cost_log_path="$repo_path/state/cost-log.jsonl"
+  quota_path="$repo_path/state/quota-window.json"
   active_agents_dir="$repo_path/state/active-agents"
   heartbeat_path="$repo_path/state/heartbeat.json"
 
@@ -200,6 +201,15 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   queue_json="$(printf '%s' "$stages_json" | jq -c '[.[] | select(.status == "pending") |
     {stage_id:.id, worker:(.worker // null), verifier:(.verifier // null)}]')"
 
+  quota='{"read_at":null,"families":{"claude":{"family":"claude","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]},"codex":{"family":"codex","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]}}}'
+  if [[ -f "$quota_path" ]]; then
+    quota="$(jq -c '
+      {read_at:(.read_at // null), families:{
+        claude:(.families.claude // {family:"claude",status:"unknown",reason:"missing from tick reading",source:null,fetched_at:null,windows:[]}),
+        codex:(.families.codex // {family:"codex",status:"unknown",reason:"missing from tick reading",source:null,fetched_at:null,windows:[]})}}
+    ' "$quota_path" 2>/dev/null || printf '%s' "$quota")"
+  fi
+
   spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"by_role":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0}'
   if [[ -f "$cost_log_path" ]]; then
     spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" '
@@ -244,7 +254,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson halt_reason "$halt_reason" --argjson consecutive_failures "${consecutive_failures:-0}" \
     --argjson consecutive_failure_cap "${consecutive_failure_cap:-0}" \
     --argjson stages "$stages_json" --argjson alerts "$alerts_json" --argjson agents "$agents_json" \
-    --argjson queue "$queue_json" --argjson spend "$spend" --argjson state_error "$state_error" \
+    --argjson queue "$queue_json" --argjson spend "$spend" --argjson quota "$quota" --argjson state_error "$state_error" \
     --argjson heartbeat_checked_at "$heartbeat_checked_at" --argjson drain_active "$drain_active" \
     --argjson drain_cap "$drain_cap" --argjson drain_expires_at "$drain_expires_at" '
     {name:$name, repo_path:$repo_path, enabled:$enabled, tokens_spent:$tokens_spent,
@@ -253,7 +263,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      state_error:$state_error, heartbeat_checked_at:$heartbeat_checked_at,
      drain_active:$drain_active, drain_cap:$drain_cap, drain_expires_at:$drain_expires_at,
      queue_depth:($queue|length), in_flight:([$stages[] | select(.status == "in_progress")] | length),
-     alerts:$alerts, agents:$agents, active_agents:$agents, queue:$queue, stages:$stages, spend:$spend,
+     alerts:$alerts, agents:$agents, active_agents:$agents, queue:$queue, stages:$stages, spend:$spend, quota:$quota,
      today_tokens:$spend.tokens_total, today_cost_usd_est:$spend.cost_usd_est,
      seven_day_cost_usd_est:$spend.seven_day_cost_usd_est,
      last_hour_tokens:$spend.last_hour_tokens, last_dispatch_at:$spend.last_dispatch_at}')"

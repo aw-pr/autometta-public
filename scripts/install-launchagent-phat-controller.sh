@@ -6,11 +6,13 @@
 # walks every enabled subscriber, so installing one job per repo would run the
 # same fleet pass several times concurrently.
 #
-# Configuring the job is where the spend authority is answered for. This
+# Configuring the job is where spend authority and the provider-window
+# reserve are answered for. This
 # script refuses to install a schedule with no seed rather than rendering one
 # with a default, because there is no right default: the level varies by run,
 # by hour and by day. Pass --spend-authority (and optionally --token-ceiling
-# and --expires) through to scripts/render-controller-seed.sh, or render the
+# and --expires), plus --window-reserve-percent and --window-reserve-action,
+# through to scripts/render-controller-seed.sh, or render the
 # seed first and re-run this.
 set -euo pipefail
 IFS=$'\n\t'
@@ -42,7 +44,7 @@ if command -v yq >/dev/null 2>&1; then
 fi
 
 usage() {
-  printf 'Usage: %s <repo_path> [--interval N] [--spend-authority TEXT] [--token-ceiling N] [--expires ISO8601]\n' "$(basename "$0")" >&2
+  printf 'Usage: %s <repo_path> [--interval N] [--spend-authority TEXT] [--token-ceiling N] [--expires ISO8601] [--window-reserve-percent N] [--window-reserve-action hold|observe]\n' "$(basename "$0")" >&2
   exit 1
 }
 
@@ -100,7 +102,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -gt 0 ]] || usage
       interval="$1"
       ;;
-    --spend-authority|--spend-authority-file|--token-ceiling|--expires)
+    --spend-authority|--spend-authority-file|--token-ceiling|--expires|--window-reserve-percent|--window-reserve-action)
       [[ $# -gt 1 ]] || usage
       seed_argv+=( "$1" "$2" )
       shift
@@ -128,18 +130,19 @@ fi
 if [[ ! -f "$seed_path" ]]; then
   if [[ ${#seed_argv[@]} -eq 0 ]]; then
     cat >&2 <<SEEDLESS
-No context seed at ${seed_path}, and no spend authority was supplied, so
+No context seed at ${seed_path}, and the setup answers were not supplied, so
 nothing was installed.
 
 phat-controller is a seeded agent. The seed carries its persona, its
-prohibitions, the repo facts it would otherwise rediscover, and what this job
-may spend. The last of those has no committed default: the right level varies
-by run, by hour and by day.
+prohibitions, the repo facts it would otherwise rediscover, what this job may
+spend and its provider-window reserve. Neither operator choice has a committed
+default.
 
 Supply it here:
 
   $(basename "$0") ${repo_path} \\
     --spend-authority 'Up to 40M tokens overnight on the Claude subscription.' \\
+    --window-reserve-percent 10 --window-reserve-action hold \\
     --token-ceiling 40000000 --expires 2026-08-25T07:00:00Z
 
 or render the seed first with scripts/render-controller-seed.sh and re-run.

@@ -11,6 +11,14 @@ that gates the loop (a hard stop on spend). The cost log is the itemised
 ledger behind that total: who spent what, on which stage, through which billing
 route, with how much of the input served from cache.
 
+Provider-window utilisation is a separate fact. It says how much subscription
+capacity remains and when that provider window resets; it does not say what a
+role cost. The tick reads it once through `scripts/quota-window.py` and writes
+the sanitised result to `state/quota-window.json`. It does not append quota
+readings to this ledger, invent token usage from a percentage, or treat unknown
+as zero. See `docs/observability.md` for the snapshot contract and staleness
+rules.
+
 ## Where it lives
 
 `<repo>/state/cost-log.jsonl`, alongside `budget.json` and `logs/`. Like the

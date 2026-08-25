@@ -50,7 +50,7 @@ Usage:
   autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]
   autometta uninstall-launchagent <repo-path>
-  autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT]
+  autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--window-reserve-percent N] [--window-reserve-action hold|observe]
   autometta uninstall-launchagent-phat-controller
   autometta install-homebrew-local [--dry-run]
   autometta auth status
@@ -210,7 +210,7 @@ case "$command_name" in
     ;;
   install-launchagent-phat-controller|install-launchagent-warden)
     if [[ $# -lt 1 ]]; then
-      printf 'usage: autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT]\n' >&2
+      printf 'usage: autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--window-reserve-percent N] [--window-reserve-action hold|observe]\n' >&2
       exit 1
     fi
     run_script install-launchagent-phat-controller.sh "$@"

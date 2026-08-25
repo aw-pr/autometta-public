@@ -29,6 +29,12 @@ spend_authority:
   token_ceiling:
   expires_at:
 
+# Written only when the operator answers the setup question. Zero is an
+# explicit answer meaning off; null means this older job has not been asked.
+window_reserve:
+  percent:
+  action:
+
 escalation:
   # A verifier_failed stage at or above this many verifier_attempts is a
   # repeated failure. The controller reads this; it does not enumerate what
