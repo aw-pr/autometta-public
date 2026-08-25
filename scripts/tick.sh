@@ -759,6 +759,340 @@ select_next_dispatchable_stage() {
     '.stages[] | select(.status == "pending") | [.id, (.gate.type // ""), (.gate.stage_id // "")] | @tsv')
 }
 
+pipeline_claims_overlap() {
+  local left_json="$1" right_json="$2"
+  jq -e -n --argjson left "$left_json" --argjson right "$right_json" '
+    any($left[]; . as $a |
+      any($right[]; . as $b |
+        $a == $b or ($a | startswith($b + "/")) or ($b | startswith($a + "/"))))
+  ' >/dev/null
+}
+
+pipeline_claims_require_serial() {
+  local claims_json="$1"
+  jq -e -n --argjson claims "$claims_json" '
+    any($claims[];
+      . == "scripts/tick.sh" or . == "scripts/lib" or startswith("scripts/lib/"))
+  ' >/dev/null
+}
+
+pipeline_p95_tokens() {
+  local repo_root="$1"
+  local log_path="$repo_root/state/cost-log.jsonl"
+  [[ -s "$log_path" ]] || return 1
+  jq -rs '
+    [ .[]
+      | ((.total_tokens // .tokens //
+          ((.input_tokens // 0) + (.cached_input_tokens // 0) + (.output_tokens // 0))) | tonumber?)
+      | select(. != null and . > 0) ]
+    | sort
+    | if length == 0 then empty
+      else .[(((length * 95 + 99) / 100 | floor) - 1)]
+      end
+  ' "$log_path" 2>/dev/null
+}
+
+pipeline_pairing_disabled_refresh() {
+  local state_yaml="$1" disabled_stage status
+  disabled_stage="$(state_json "$state_yaml" | jq -r '.pairing_disabled_stage // empty')"
+  [[ -n "$disabled_stage" ]] || return 1
+  status="$(state_json "$state_yaml" | jq -r --arg id "$disabled_stage" \
+    '[.stages[] | select(.id == $id)][0].status // empty')"
+  if [[ "$status" == "completed" ]]; then
+    state_apply_json "$state_yaml" 'del(.pairing_disabled_stage, .pairing_disabled_reason)'
+    log "pipeline pairing resumed after re-brief ${disabled_stage} landed"
+    return 1
+  fi
+  return 0
+}
+
+pipeline_adjacent_pending_stage() {
+  local state_yaml="$1" head_stage="$2"
+  state_json "$state_yaml" | jq -r --arg id "$head_stage" '
+    (.stages | map(.id) | index($id)) as $i
+    | if $i == null then empty else .stages[$i + 1]
+      | select(.status == "pending") | .id
+      end'
+}
+
+pipeline_tail_gate_met() {
+  local state_yaml="$1" stage_id="$2" gate_type prerequisite prerequisite_status active_others
+  gate_type="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+    '[.stages[] | select(.id == $id)][0].gate.type // empty')"
+  case "$gate_type" in
+    "") return 0 ;;
+    stage_completed)
+      prerequisite="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+        '[.stages[] | select(.id == $id)][0].gate.stage_id // empty')"
+      prerequisite_status="$(state_json "$state_yaml" | jq -r --arg id "$prerequisite" \
+        '[.stages[] | select(.id == $id)][0].status // empty')"
+      [[ "$prerequisite_status" == "completed" ]]
+      ;;
+    queue_empty)
+      active_others="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+        '[.stages[] | select(.id != $id and (.status == "pending" or .status == "in_progress"))] | length')"
+      [[ "$active_others" == "0" ]]
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+spawn_worker_for_stage() {
+  local card_path="$1" repo_root="$2" work_dir="$3"
+  "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
+}
+
+pipeline_try_dispatch_tail() {
+  local repo_root="$1" state_yaml="$2" head_stage="$3" manifest_path="$4"
+  local tail_stage head_claims tail_claims head_worker tail_worker head_family tail_family
+
+  [[ "$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')" == "" ]] || return 1
+  tail_stage="$(pipeline_adjacent_pending_stage "$state_yaml" "$head_stage")"
+  [[ -n "$tail_stage" ]] || return 1
+  head_claims="$(state_json "$state_yaml" | jq -c --arg id "$head_stage" \
+    '[.stages[] | select(.id == $id)][0].path_claims // []')"
+  tail_claims="$(state_json "$state_yaml" | jq -c --arg id "$tail_stage" \
+    '[.stages[] | select(.id == $id)][0].path_claims // []')"
+
+  # No claims means serial by default and, deliberately, no pairing log.
+  [[ "$(jq 'length' <<<"$head_claims")" != "0" && "$(jq 'length' <<<"$tail_claims")" != "0" ]] || return 1
+  pipeline_pairing_disabled_refresh "$state_yaml" && return 1
+  if ! pipeline_tail_gate_met "$state_yaml" "$tail_stage"; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: tail dispatch gate is not met"
+    return 1
+  fi
+  if pipeline_claims_overlap "$head_claims" "$tail_claims"; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: path claims overlap"
+    return 1
+  fi
+  if pipeline_claims_require_serial "$head_claims" \
+     || pipeline_claims_require_serial "$tail_claims"; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: tick.sh and scripts/lib claims are serial-only"
+    return 1
+  fi
+
+  head_worker="$(state_json "$state_yaml" | jq -r --arg id "$head_stage" \
+    '[.stages[] | select(.id == $id)][0].worker // empty')"
+  tail_worker="$(state_json "$state_yaml" | jq -r --arg id "$tail_stage" \
+    '[.stages[] | select(.id == $id)][0].worker // empty')"
+  head_family="$(costlog_family_for_identity "$head_worker")"
+  tail_family="$(costlog_family_for_identity "$tail_worker")"
+  if [[ -z "$head_family" || "$head_family" == "$tail_family" ]]; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: worker families do not alternate"
+    return 1
+  fi
+
+  local p95 budget_path cap spent headroom required active_drain_cap=""
+  if ! p95="$(pipeline_p95_tokens "$repo_root")" || [[ ! "$p95" =~ ^[0-9]+$ ]]; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: no repo p95 dispatch history"
+    return 1
+  fi
+  budget_path="$(budget_file "$repo_root")"
+  cap="$(jq -r '.token_cap_total // 0' "$budget_path")"
+  if active_drain_cap="$(budget_drain_active "$repo_root" 2>/dev/null)" \
+     && [[ -n "$active_drain_cap" ]]; then
+    cap="$active_drain_cap"
+  fi
+  spent="$(jq -r '.tokens_spent // 0' "$budget_path")"
+  headroom=$((cap - spent))
+  required=$((p95 * 2))
+  if (( headroom < required )); then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: budget headroom ${headroom} is below two p95 dispatches (${required})"
+    return 1
+  fi
+
+  local card_path base_branch work_dir now_iso base_tip
+  card_path="$(stage_card_for_id "$repo_root" "$tail_stage" "$manifest_path")"
+  [[ -n "$card_path" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: tail card missing"; return 1; }
+  if ! quota_gate_role_dispatch "$repo_root" "$state_yaml" "$tail_stage" worker; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: provider-window reserve held"
+    return 1
+  fi
+  if ! budget_gate_dispatch "$repo_root" "worker dispatch for ${tail_stage}"; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: budget gate refused"
+    return 1
+  fi
+  base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
+  [[ -n "$base_branch" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: base branch unresolved"; return 1; }
+  base_tip="$(git -C "$repo_root" rev-parse "refs/heads/${base_branch}" 2>/dev/null || true)"
+  if ! work_dir="$(ensure_run_worktree "$repo_root" "$tail_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: tail run worktree failed"
+    return 1
+  fi
+
+  now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  state_apply_json "$state_yaml" '
+    (.stages[] | select(.id == $tail)).status = "in_progress"
+    | (.stages[] | select(.id == $tail)).started_at = $now
+    | (.stages[] | select(.id == $tail)).base_branch = $base
+    | .pipeline_pair = {head:$head, tail:$tail, base_tip:$tip,
+                        phase:"workers-overlapped", rebase_required:false}' \
+    --arg head "$head_stage" --arg tail "$tail_stage" --arg now "$now_iso" \
+    --arg base "$base_branch" --arg tip "$base_tip"
+  local worker_spawn_rc=0
+  spawn_worker_for_stage "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
+  if (( worker_spawn_rc != 0 )); then
+    state_apply_json "$state_yaml" '
+      (.stages[] | select(.id == $id)).status = "stalled"
+      | (.stages[] | select(.id == $id)).stall_marker = "dispatch_configuration_fault:worker"
+      | .pairing_disabled_stage = $id
+      | .pairing_disabled_reason = "pipeline-tail-dispatch-fault"
+      | del(.pipeline_pair)' --arg id "$tail_stage"
+    budget_halt "$repo_root" "dispatch-configuration-fault"
+    log "pipeline pair ${head_stage} + ${tail_stage} dropped to serial: tail worker dispatch failed"
+    return 1
+  fi
+  log "pipeline pair formed: worker ${tail_stage} dispatched while verifier ${head_stage} is running (p95 ${p95}, headroom ${headroom})"
+  return 0
+}
+
+pipeline_after_head_resolution() {
+  local state_yaml="$1" head_stage="$2"
+  local pair_head tail_stage head_status
+  pair_head="$(state_json "$state_yaml" | jq -r '.pipeline_pair.head // empty')"
+  [[ "$pair_head" == "$head_stage" ]] || return 0
+  tail_stage="$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')"
+  [[ -n "$tail_stage" ]] || return 0
+  head_status="$(state_json "$state_yaml" | jq -r --arg id "$head_stage" \
+    '[.stages[] | select(.id == $id)][0].status // empty')"
+
+  if [[ "$head_status" == "completed" ]]; then
+    state_apply_json "$state_yaml" '
+      .pipeline_pair.phase = "head-landed"
+      | .pipeline_pair.rebase_required = true
+      | .current_stage = $tail' --arg tail "$tail_stage"
+    log "pipeline pair ${head_stage} + ${tail_stage}: queue head landed; tail waits for actual-diff rebase"
+  else
+    state_apply_json "$state_yaml" '
+      .pipeline_pair.phase = "head-failed"
+      | .pipeline_pair.rebase_required = false
+      | .pairing_disabled_stage = $head
+      | .pairing_disabled_reason = "active-pair-failure"
+      | .current_stage = $tail' --arg head "$head_stage" --arg tail "$tail_stage"
+    log "pipeline pair ${head_stage} + ${tail_stage} dropped to serial after ${head_status}; ${tail_stage} will use plain fast-forward"
+  fi
+}
+
+pipeline_escalate_tail() {
+  local repo_root="$1" state_yaml="$2" tail_stage="$3" reason="$4"
+  state_apply_json "$state_yaml" '
+    (.stages[] | select(.id == $tail)).status = "stalled"
+    | (.stages[] | select(.id == $tail)).stall_marker = $reason
+    | .pairing_disabled_stage = $tail
+    | .pairing_disabled_reason = $reason
+    | .pipeline_pair.phase = "controller-escalation"
+    | .current_stage = null' --arg tail "$tail_stage" --arg reason "$reason"
+  budget_halt "$repo_root" "controller-escalation"
+  log "pipeline pair controller escalation for ${tail_stage}: ${reason}; no headless conflict resolution attempted"
+}
+
+pipeline_prepare_tail_rebase() {
+  local repo_root="$1" state_yaml="$2" tail_stage="$3"
+  local pair_tail required worker_pid head_stage old_base base_branch head_commit work_dir
+  pair_tail="$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')"
+  required="$(state_json "$state_yaml" | jq -r '.pipeline_pair.rebase_required // false')"
+  [[ "$pair_tail" == "$tail_stage" && "$required" == "true" ]] || return 0
+
+  worker_pid="$(state_json "$state_yaml" | jq -r --arg id "$tail_stage" \
+    '[.stages[] | select(.id == $id)][0].worker_pid // empty')"
+  if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+    return 2
+  fi
+
+  head_stage="$(state_json "$state_yaml" | jq -r '.pipeline_pair.head')"
+  old_base="$(state_json "$state_yaml" | jq -r '.pipeline_pair.base_tip // empty')"
+  base_branch="$(state_json "$state_yaml" | jq -r --arg id "$tail_stage" \
+    '[.stages[] | select(.id == $id)][0].base_branch // empty')"
+  head_commit="$(state_json "$state_yaml" | jq -r --arg id "$head_stage" \
+    '[.stages[] | select(.id == $id)][0].commit // empty')"
+  work_dir="$(worktree_path_for_stage "$repo_root" "$tail_stage")"
+  if [[ -z "$old_base" || -z "$base_branch" || -z "$head_commit" || ! -d "$work_dir" ]]; then
+    pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" "pipeline-rebase-input-missing"
+    return 1
+  fi
+
+  local head_paths tail_paths overlap
+  head_paths="$(git -C "$repo_root" diff --name-only "$old_base" "$head_commit" -- \
+    . ':(exclude)state' 2>/dev/null | sort -u)"
+  tail_paths="$({ git -C "$work_dir" diff --name-only "$old_base" -- \
+                    . ':(exclude)state' 2>/dev/null; \
+                  git -C "$work_dir" ls-files --others --exclude-standard -- \
+                    . ':(exclude)state' 2>/dev/null; } | sort -u)"
+  overlap="$(comm -12 <(printf '%s\n' "$head_paths" | sed '/^$/d') \
+                       <(printf '%s\n' "$tail_paths" | sed '/^$/d') | head -n1)"
+  if [[ -n "$overlap" ]]; then
+    pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" "pipeline-actual-diff-overlap:${overlap}"
+    return 1
+  fi
+
+  local had_changes=false stash_sha="" rebase_rc=0
+  [[ -n "$tail_paths" ]] && had_changes=true
+  if [[ "$had_changes" == "true" ]]; then
+    git -C "$work_dir" stash push -u -m "autometta pipeline ${tail_stage}" -- \
+      . ':(exclude)state' >/dev/null 2>&1 || rebase_rc=$?
+    stash_sha="$(git -C "$work_dir" rev-parse -q --verify refs/stash 2>/dev/null || true)"
+  fi
+  if (( rebase_rc == 0 )); then
+    git -C "$work_dir" reset --hard "$base_branch" >/dev/null 2>&1 || rebase_rc=$?
+  fi
+  if (( rebase_rc == 0 )) && [[ "$had_changes" == "true" ]]; then
+    git -C "$work_dir" stash pop --index >/dev/null 2>&1 || rebase_rc=$?
+  fi
+  if (( rebase_rc != 0 )); then
+    git -C "$work_dir" reset --hard "$old_base" >/dev/null 2>&1 || true
+    if [[ -n "$stash_sha" ]]; then
+      git -C "$work_dir" stash apply --index "$stash_sha" >/dev/null 2>&1 || true
+    fi
+    pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" "pipeline-rebase-conflict"
+    return 1
+  fi
+
+  state_apply_json "$state_yaml" '
+    .pipeline_pair.phase = "tail-rebased"
+    | .pipeline_pair.rebase_required = false
+    | (.stages[] | select(.id == $tail)).pair_rebased_onto = $head' \
+    --arg tail "$tail_stage" --arg head "$head_commit"
+  log "pipeline pair ${head_stage} + ${tail_stage}: actual diffs are file-disjoint; rebased tail worktree onto ${base_branch}"
+  return 0
+}
+
+pipeline_after_tail_resolution() {
+  local state_yaml="$1" tail_stage="$2"
+  local pair_tail tail_status
+  pair_tail="$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')"
+  [[ "$pair_tail" == "$tail_stage" ]] || return 0
+  tail_status="$(state_json "$state_yaml" | jq -r --arg id "$tail_stage" \
+    '[.stages[] | select(.id == $id)][0].status // empty')"
+  if [[ "$tail_status" != "completed" ]]; then
+    state_apply_json "$state_yaml" '
+      .pairing_disabled_stage = $tail
+      | .pairing_disabled_reason = "active-pair-failure"' --arg tail "$tail_stage"
+    log "pipeline pair tail ${tail_stage} failed; repo dropped to serial until its re-brief lands"
+  fi
+  state_apply_json "$state_yaml" 'del(.pipeline_pair)'
+}
+
+pipeline_after_member_failure() {
+  local state_yaml="$1" stage_id="$2"
+  local pair_head pair_tail
+  pair_head="$(state_json "$state_yaml" | jq -r '.pipeline_pair.head // empty')"
+  pair_tail="$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')"
+  if [[ "$pair_head" == "$stage_id" ]]; then
+    pipeline_after_head_resolution "$state_yaml" "$stage_id"
+  elif [[ "$pair_tail" == "$stage_id" ]]; then
+    pipeline_after_tail_resolution "$state_yaml" "$stage_id"
+  fi
+}
+
+verifier_completion_ready() {
+  local artefact_abs="$1" verifier_pid="${2:-}"
+  [[ -f "$artefact_abs" ]] || return 1
+  if [[ -n "$verifier_pid" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
 # The loop's own snapshot ref. A branch rather than a private ref namespace
 # because the tick loop owns its snapshots. Loop-owned: never
 # checked out, never pushed, and no operator ever commits on it.
@@ -1787,6 +2121,14 @@ _process_repo_locked() {
     worker_pid="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .worker_pid // empty')"
     verifier_pid="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_pid // empty')"
 
+    local pair_rebase_rc=0
+    pipeline_prepare_tail_rebase "$repo_root" "$state_yaml" "$current_stage" || pair_rebase_rc=$?
+    if (( pair_rebase_rc == 1 )); then
+      budget_increment_tick "$repo_root" work
+      commit_state_branch "$repo_root"
+      return 0
+    fi
+
     # Artefact check must run BEFORE the stall check: a verifier that
     # produced a passing artefact wins, even if the worker phase ran
     # past its declared wall-clock budget. Stalling a completed stage
@@ -1795,6 +2137,16 @@ _process_repo_locked() {
     local artefact
     artefact="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_artefact // empty')"
     if [[ -n "$artefact" && -f "$repo_root/$artefact" ]]; then
+      # The artefact is output, not process completion. A verifier may write
+      # it before finishing further checks, so never account, land or reap
+      # until the recorded writer pid is gone (run-lessons entry 17).
+      if ! verifier_completion_ready "$repo_root/$artefact" "$verifier_pid"; then
+        pipeline_try_dispatch_tail "$repo_root" "$state_yaml" "$current_stage" "$manifest_path" || true
+        log "verifier ${verifier_pid} for ${current_stage} wrote its artefact but is still running; deferring consumption"
+        budget_increment_tick "$repo_root" work
+        commit_state_branch "$repo_root"
+        return 0
+      fi
       # Token accounting (stage 10): the verifier has produced its
       # artefact, so its log is final. Count its tokens before the stage
       # closes out. This branch runs exactly once per stage because
@@ -1822,6 +2174,14 @@ _process_repo_locked() {
       esac
       costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "$verifier_result"
       _process_verifier_artefact "$repo_root" "$state_yaml" "$current_stage" "$artefact" "$manifest_path"
+      local pair_head pair_tail
+      pair_head="$(state_json "$state_yaml" | jq -r '.pipeline_pair.head // empty')"
+      pair_tail="$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')"
+      if [[ "$pair_head" == "$current_stage" ]]; then
+        pipeline_after_head_resolution "$state_yaml" "$current_stage"
+      elif [[ "$pair_tail" == "$current_stage" ]]; then
+        pipeline_after_tail_resolution "$state_yaml" "$current_stage"
+      fi
       budget_increment_tick "$repo_root" work
       commit_state_branch "$repo_root"
       return 0
@@ -1848,6 +2208,7 @@ _process_repo_locked() {
           state_apply_json "$state_yaml" \
             '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
             --arg id "$current_stage"
+          pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} stalled after ${elapsed}s (budget ${budget_seconds}s + 50% grace), marked stalled"
           budget_increment_tick "$repo_root" work
@@ -1905,6 +2266,7 @@ _process_repo_locked() {
            && is_instant_dispatch_configuration_fault \
                 "$worker_log_path" "$started_at" "$repo_root/state/handoffs/${current_stage}.json"; then
           halt_dispatch_configuration_fault "$repo_root" "$current_stage" worker
+          pipeline_after_member_failure "$state_yaml" "$current_stage"
           log "stage ${current_stage} halted: worker exited before starting because its dispatch configuration is invalid (dispatch-configuration-fault)"
           commit_state_branch "$repo_root"
           return 0
@@ -1941,6 +2303,7 @@ _process_repo_locked() {
              | (.stages[] | select(.id == $id)).stall_marker = "worker_envelope_missing_after_exit"
              | .current_stage = null' \
             --arg id "$current_stage"
+          pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} stalled: worker exited but wrote no handoff envelope (worker_envelope_missing_after_exit)"
           budget_increment_tick "$repo_root" work
@@ -1972,6 +2335,7 @@ _process_repo_locked() {
              | (.stages[] | select(.id == $id)).stall_marker = "worker_envelope_invalid"
              | .current_stage = null' \
             --arg id "$current_stage"
+          pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} stalled: handoff envelope failed schema validation (worker_envelope_invalid); moved to ${invalid_path}"
           budget_increment_tick "$repo_root" work
@@ -1992,6 +2356,7 @@ _process_repo_locked() {
              | (.stages[] | select(.id == $id)).stall_marker = $notes
              | .current_stage = null' \
             --arg id "$current_stage" --arg notes "$env_notes_val"
+          pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} failed: worker envelope status=fail; notes: ${env_notes_val}"
           budget_increment_tick "$repo_root" work
@@ -2018,6 +2383,7 @@ _process_repo_locked() {
       fi
 
       if [[ -n "${verifier_pid:-}" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
+        pipeline_try_dispatch_tail "$repo_root" "$state_yaml" "$current_stage" "$manifest_path" || true
         log "verifier ${verifier_pid} for ${current_stage} still running, skipping verifier dispatch"
         budget_increment_tick "$repo_root" work
         commit_state_branch "$repo_root"
@@ -2054,6 +2420,7 @@ _process_repo_locked() {
              "$stale_verifier_log_path" "$stale_verifier_started_at" \
              "$repo_root/state/verifiers/${current_stage}.json"; then
           halt_dispatch_configuration_fault "$repo_root" "$current_stage" verifier
+          pipeline_after_member_failure "$state_yaml" "$current_stage"
           log "stage ${current_stage} halted: verifier exited before verification because its dispatch configuration is invalid; reserved attempt returned (dispatch-configuration-fault)"
           commit_state_branch "$repo_root"
           return 0
@@ -2090,6 +2457,7 @@ _process_repo_locked() {
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
           --arg id "$current_stage"
+        pipeline_after_member_failure "$state_yaml" "$current_stage"
         budget_record_failure "$repo_root"
         budget_increment_tick "$repo_root" work
         commit_state_branch "$repo_root"
@@ -2138,6 +2506,7 @@ _process_repo_locked() {
       fi
       if (( verifier_spawn_rc != 0 )); then
         halt_dispatch_configuration_fault "$repo_root" "$current_stage" verifier
+        pipeline_after_member_failure "$state_yaml" "$current_stage"
         log "stage ${current_stage} halted: verifier dispatch command failed before an agent started (dispatch-configuration-fault, exit ${verifier_spawn_rc}); reserved attempt returned"
         commit_state_branch "$repo_root"
         return 0

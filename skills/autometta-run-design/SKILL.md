@@ -75,14 +75,14 @@ Landing policy for a `pipeline` pair, written into both cards:
 - Any FAIL in an overlapped pair drops the rest of the run to `serial`
   until the re-brief lands.
 
-**Mechanical status.** The tick currently runs one stage in flight per repo;
-the `pipeline` class needs a bounded tick change (dispatch-under-verifier
-plus the ordered-landing rule above) before its first use. Declare the plan
-in the cards regardless: the schedule is then ready the day the mechanism
-is, and until that day the declared pairs document where clock time is
-waiting to be recovered. Cross-repo parallelism needs nothing and is
-available today: two subscribers with fed queues already run concurrently
-under one drain.
+**Mechanical status.** The bounded pipeline mechanism exists. Queue insertion
+parses each card's `Path claims:` line, and the tick may overlap worker N+1
+with verifier N only after checking claims, alternating families and two-p95
+budget headroom. Landing remains ordered and actual-diff checked; a failure
+drops the repo to serial until the affected re-brief lands. Cards without
+claims remain on the unchanged serial path. Cross-repo parallelism remains
+independent: two subscribers with fed queues can run concurrently under one
+drain.
 
 ## 5. Spend plan
 

@@ -88,6 +88,23 @@ git add .gitignore state/state.yaml state/budget.json
 git commit -m "Initialise Autometta"
 ```
 
+### Queueing path claims
+
+Serial dispatch needs no extra metadata. To opt two adjacent cards into a
+pipeline pair, give both cards a comma-separated metadata line of repo-relative
+file or directory paths:
+
+```markdown
+- **Path claims:** scripts/report.sh, docs/report.md
+```
+
+`autometta add-stage` stores valid claims in the stage record. Absolute paths,
+`.` or `..` segments, empty entries, and characters outside letters, digits,
+`.`, `_`, `/` and `-` are refused at queue time. Omitting the line keeps the
+stage serial and produces no pairing log. Claims are a dispatch precondition,
+not a landing guarantee: after N passes, the tick checks both actual diffs and
+escalates rather than rebasing on any file overlap or conflict.
+
 ## 4. Scheduling
 
 macOS uses one LaunchAgent per subscribed repo. `autometta subscribe <repo>`

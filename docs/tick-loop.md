@@ -23,12 +23,43 @@ A tick is a single non-interactive invocation of `autometta tick`, which delegat
 1. Reads the current `state/state.yaml` of the repo it is operating on.
 2. Reads the current `state/budget.json` of the same repo.
 3. Checks the budget. If any of `token_cap_total`, `wall_clock_cap_seconds`, `clock_tick_cap`, or `consecutive_failure_cap` is exhausted, the tick writes a stall marker into `state.yaml` and exits without dispatching.
-4. Selects exactly one transition to make. The transition rule is the simplest possible: if a stage is `in_progress`, advance it by running its verifier (if the worker has reported done) or by checking it for stall; if no stage is `in_progress`, claim the next `pending` stage and dispatch its worker; if no `pending` stage exists, the queue is drained and the tick exits cleanly.
+4. Selects one queue transition to make. Normally this is serial: advance the
+   `current_stage`, or claim the next `pending` stage when none is in flight.
+   The one bounded exception is a declared pipeline pair: while verifier N is
+   live, the tick may dispatch worker N+1 and record both flights by stage id.
+   It never starts a third stage.
 5. Updates `state.yaml` and `budget.json` atomically. "Atomically" means: write to a temp file in the same directory, then `mv` into place. The `mv` is the atomicity primitive on POSIX filesystems given same-directory restraint.
 6. Snapshots the state update onto the `autometta/state` ref, using the per-agent author attribution from the global dev rules. It does this with git plumbing and never checks the branch out: see (j).
 7. Exits. The next tick is the next cron fire.
 
 A tick is one transition, not a loop within the tick. This is the "cron + tick > daemon" belief from `docs/philosophy.md`. The cron schedule defines the loop; the script is a one-shot.
+
+### Pipeline pairs
+
+Serial remains the default. Two adjacent stages become a pipeline pair only
+when both queued stage records have non-empty `path_claims`, the claimed paths
+are disjoint, their worker families differ, and remaining token headroom covers
+twice the repo's p95 historical dispatch cost from `state/cost-log.jsonl`.
+Missing claims produce no pairing decision or pairing log. Overlap, a repeated
+worker family, or thin headroom is logged as an explicit refusal. The ordinary
+provider-window and `budget_gate_dispatch` checks still guard the second worker
+spawn individually.
+
+`current_stage` remains the ordered landing head. `pipeline_pair` records the
+head, tail, common pre-head base tip, phase, and whether the tail needs rebasing;
+each stage retains its own worker and verifier PIDs. Heartbeat and worktree
+reaping continue to use those stage-specific registrations and statuses. The
+tail worker may finish early, but its verifier artefact is not considered until
+the head resolves.
+
+Landing is strict queue order. If N fails, dev has not moved and N+1 follows the
+ordinary fast-forward path. If N passes, the tick compares the actual changed
+file names in N's landed commit with N+1's tracked and untracked work. A
+file-disjoint tail is stashed, reset onto the new base, and restored before its
+verifier runs. Any overlap or restore conflict halts with
+`controller-escalation`; the tick does not resolve a conflict. A FAIL or stall
+in either member latches pairing off for the repo until that stage's re-brief
+lands, while the remaining queue proceeds serially where safe.
 
 ## (b) The state file `state.yaml`
 
@@ -88,7 +119,14 @@ Per [`decision-verifier-handoff-naming`](../memory/decision-verifier-handoff-nam
 }
 ```
 
-The tick reads this file when promoting a stage from `in_progress` to `completed` or `failed`. The file is committed alongside the stage deliverables on the working branch; future ticks and humans can read the audit trail in `git log` plus `state/verifiers/`.
+The tick reads this file when promoting a stage from `in_progress` to
+`completed` or `failed`, but only after the verifier PID recorded for that same
+stage is no longer live. The artefact is output, not a process-completion
+signal: an early writer cannot trigger accounting, landing, or worktree reaping
+while it is still running. This check is identical for serial and paired
+flights. The file is committed alongside the stage deliverables on the working
+branch; future ticks and humans can read the audit trail in `git log` plus
+`state/verifiers/`.
 
 ## (e) Identity resolution at tick time
 
@@ -167,7 +205,8 @@ The dispatch contract's seven steps are the per-stage protocol; the tick loop is
 
 The controller is observable through files it already owns:
 
-- `state/state.yaml` for current stage, statuses, identities, PIDs, halt state, and tick counters.
+- `state/state.yaml` for the ordered current stage, optional `pipeline_pair`,
+  per-stage statuses, identities and PIDs, halt state, and tick counters.
 - `state/budget.json` for budget caps, failure counters, and halt reason.
 - `state/logs/<stage-id>-worker.log` and `state/logs/<stage-id>-verifier.log` for process output.
 - `state/verifiers/<stage-id>.json` for structured verifier reports.

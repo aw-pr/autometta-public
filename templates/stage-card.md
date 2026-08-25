@@ -29,6 +29,12 @@ only accepted forms; a prerequisite always uses its full stage id:
 The first waits for the named stage to read completed. The second waits until
 no other stage is pending or in_progress. An unmet gate does not prevent the
 card being queued and does not change its pending status.
+
+Optional pipeline metadata. Omit the Path claims line for serial dispatch.
+Use comma-separated repo-relative file or directory paths; add-stage refuses
+absolute paths, dot segments and empty entries at queue time:
+
+- **Path claims:** scripts/report.sh, docs/report.md
 -->
 - **Pairing rationale:** <<why-this-worker-verifier-pair>>
 
