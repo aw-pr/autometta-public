@@ -243,10 +243,17 @@ fast-forward.
   (dialog reported 2.1.241 against a local 2.1.243) reaching iCloud Drive and
   network volumes. This is gotcha 11 territory and the best candidate for the
   22:36 tick freeze.
-- **`git show <branch>:<path>` printed the commit rather than the blob** during
-  this investigation, which briefly looked like a file full of diff markers and
-  a corrupted commit. It was not. `git cat-file blob <sha>` is the reliable read
-  when the answer matters.
+- **Reading a file out of a branch is unreliable here in two different ways,
+  and both fail silently.** `git show <branch>:<path>` printed the commit and
+  its whole diff rather than the blob, which briefly looked like a file full of
+  diff markers and a corrupted commit. Later, `git rev-parse <branch>:<path>`
+  returned the **commit** sha rather than the blob sha for a path that
+  demonstrably exists, so a `cat-file` on it failed with `bad file`. Both
+  happened on this repo, hours apart, and the second one bit after the first
+  was already written down here. The reliable read is
+  `git ls-tree <branch> <path>` to get the blob sha, then
+  `git cat-file blob <sha>`. Anything that hands you a sha you did not verify
+  is a sha you may be reading the wrong object from.
 - **Stale vendor warnings repeat every tick** for `fractals-from-the-90s` and
   `emergence-lab`, both holding the contract from `9630ebb` against `4320a6d`.
   Harmless, and it is four lines of noise in every five-minute tick, which is
@@ -296,6 +303,92 @@ integration is not recognised.
 
 ---
 
+## 10. A rebuild costs twenty-five times a fix, and nothing warns you
+
+**What happened.** Stage 63's attempt-1 worker spent **45,758,708 tokens**. A
+normal worker on this repo spends between 1 and 2 million: stage 62's was
+1,824,717 on the same day, against a card of comparable size. 63 was 25 times
+that, and it took the day's total from 18.8M to 66.6M in a single stage.
+
+**Where it went.** Not on thrashing. The work is sound and passed 9 of its 11
+criteria: 1252 insertions across 9 files, a new renderer, a new smoke, a new
+failures-history command. It went on building all of that from nothing.
+
+**Why it matters.** The stage then failed verification on two criteria, and the
+default move after a FAIL is to requeue. A requeue without a re-brief invites
+attempt 2 to rebuild the same 1252 lines and spend the same 45M, because the
+preserved branch is not part of the worker's prompt unless the card says so.
+Two attempts like that is 90M against a 150M cap, on one card.
+
+**Nothing in the loop notices.** The budget gate refuses a dispatch when the
+cap is reached; there is no signal for "this dispatch cost twenty-five times
+the median". The cost log has every figure needed to produce one:
+`state/cost-log.jsonl` carries per-role totals, and the median over the last
+ten dispatches is a one-line jq. The information exists and nothing reads it.
+
+**Mitigation applied.** The attempt-2 re-brief on card 63 names the preserved
+commit, states its size, and says the job is two focused fixes rather than a
+rebuild. That is a per-card fix for a loop-shaped problem.
+
+**Fix:** none in the mechanism. Open hole. An outlier warning is cheap and
+would have flagged this while the worker was still running.
+
+---
+
+## 11. Cards ask for end-to-end evidence that an offline smoke cannot produce
+
+**What happened.** Stages 63 and 61 failed verification back to back, on 2 of
+11 and 4 of 8 criteria. Six failures across two cards, two families, two
+workers, and five of the six are the same failure: **the smoke proves the
+helpers compose, using fabricated artefacts, rather than exercising the real
+path.**
+
+61's four are almost comic in how consistent they are. The smoke hard-codes the
+refusal text and calls `inbox-refuse` itself
+(`scripts/phat-controller-smoke.sh:762-763`), calls `pc_inbox_scan` and
+`pc_inbox_reply` directly without running a pass (`:733-752`), fabricates a
+transcript and appends the index by hand (`:713-727`), and greps a planted file
+rather than anything a pass produced (`:895-912`). In every case the verifier
+found the **production ordering correct**. What was missing was evidence that
+production runs.
+
+63's version of it: the smoke captures a 160-column view and never asserts on
+it (`scripts/repo-ticker-smoke.sh:147-148` against `:256-262`).
+
+**Why it is not sloppiness.** An offline smoke cannot dispatch a live agent. The
+cards ask for evidence from real passes: "a message left in the inbox is read at
+the start of the next pass", "a forbidden request is refused and recorded". A
+worker that must satisfy that offline has two options, fabricate the artefacts
+or fake the dispatch, and fabricating is the shorter path. **The cards ask for
+something the harness structurally cannot give, and the workers took the only
+route left.** Same shape as entry 1: the mechanism invited the behaviour and
+two independent agents took it.
+
+**There is a way through and it is cheap.** Drive the real pass with a scripted
+stand-in for the agent rather than calling the helpers directly. The production
+path then genuinely executes, and the smoke asserts on what it produced. Both
+re-briefs now say this.
+
+**A harder blocker underneath 61.** The card asks for a transcript of what the
+controller read, considered and rejected. On the default Claude route that
+transcript cannot exist: the dispatch runs `claude --output-format json` piped
+through `scripts/claude-token-log.sh`, which reduces the document to
+`doc["result"]` and discards turn history
+(`scripts/phat-controller.sh:1480-1482`, `scripts/claude-token-log.sh:22-37`).
+Verified directly against the preserved branch rather than taken on the
+verifier's word. No smoke work fixes that; the record has to be something the
+controller writes, not something a log is mined for.
+
+**The general lesson.** Before writing "prove X end to end" into a card, check
+that the harness the worker will use can observe X. A criterion the harness
+cannot satisfy is not a high standard, it is a trap, and it costs a full
+dispatch to discover.
+
+**Fix:** none. Open hole, and it is about how cards are written rather than
+about the loop.
+
+---
+
 ## Open holes, collected
 
 Entries above with no card, in the order I would write them:
@@ -310,6 +403,10 @@ Entries above with no card, in the order I would write them:
    (entry 5).
 5. Nothing prunes a landed stage's branches or an unrecognised integration's
    worktree (entry 9). Same card as 2, most likely.
+6. No outlier warning on dispatch cost (entry 10). One stage spent a third of
+   the daily cap and nothing said so until it was over.
+7. Cards asking for evidence the offline harness cannot produce (entry 11).
+   Six criteria across two stages, one cause.
 
 ## What went right, recorded on purpose
 
