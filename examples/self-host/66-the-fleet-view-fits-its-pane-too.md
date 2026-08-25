@@ -4,8 +4,8 @@
 
 - **Authored:** 2026-08-25
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
-- **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/66-the-fleet-view-fits-its-pane-too
 - **Worker effort:** high
@@ -267,3 +267,32 @@ The two corrections, restated as the verifier will check them:
    that dropped whole under the priority rule is legitimate absence; a
    column present but cut, or an assertion list that names a subset, is a
    FAIL.
+
+## Re-brief (attempt 4, 2026-08-25)
+
+Attempt 3 fixed the truncation: drop-then-wrap works and criterion 4
+passed. It is preserved on its wip branch; restore that tree. The pairing
+has been flipped for this attempt: three attempts in a row softened the
+smoke rather than the renderer, so a fresh family takes the worker seat and
+the smoke's honesty is part of what it inherits to fix.
+
+Two corrections remain:
+
+1. **Criterion 1: fit means the content shrinks, never that the frame
+   clips.** `lib/fleet-ticker-render.py:349-352` returns `lines[:height]`
+   unconditionally, so a page that outgrew the pane (52 lines at 80
+   columns, from the wrapping that fixed criterion 4) is silently cut and
+   the smoke counts the already-clipped result
+   (`fleet-ticker-smoke.sh:291-305`). Remove the clip. When the page
+   exceeds the pane, sections give up rows by priority, the same shape as
+   the column rule: bounded row budgets per section, with an explicit
+   "and N more - see failures-history" line where rows were withheld.
+   The smoke renders at a tall height and asserts the natural page height
+   is within the pane budget, so a clip cannot hide an overflow again.
+2. **Criterion 9, fourth telling: the smoke must fail loudly on what it
+   cannot find.** `locate` silently omits any requested column name it
+   cannot find (`fleet-ticker-smoke.sh:74-89`) and `align` passes when a
+   row ends early or the offset holds a non-space by accident. A requested
+   name that is absent without a recorded whole-column drop is a FAIL. An
+   assertion helper that cannot fail is not an assertion; this sentence is
+   now part of the criterion.
