@@ -49,6 +49,30 @@
             "type": "string",
             "description": "Verifier identity string at dispatch time. Same format as worker."
           },
+          "gate": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional dispatch precondition parsed from the stage card by add-stage.sh. An unmet gate leaves the stage pending while tick.sh considers later stages.",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["stage_completed", "queue_empty"]
+              },
+              "stage_id": {
+                "type": "string",
+                "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+                "description": "Full prerequisite stage id. Present only when type is stage_completed."
+              }
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"type": {"const": "stage_completed"}}},
+                "then": {"required": ["stage_id"]},
+                "else": {"not": {"required": ["stage_id"]}}
+              }
+            ]
+          },
           "started_at": {
             "type": ["string", "null"],
             "format": "date-time",

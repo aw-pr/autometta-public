@@ -662,6 +662,49 @@ validate_stage_id() {
   [[ "$stage_id" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]
 }
 
+# Print the first pending stage whose declared dispatch precondition is met.
+# Unmet gates are observations, not state transitions: each one stays pending
+# and the scan continues so a later eligible stage can still run.
+select_next_dispatchable_stage() {
+  local state_yaml="$1"
+  local stage_id gate_type prerequisite prerequisite_status active_others
+
+  while IFS=$'\t' read -r stage_id gate_type prerequisite; do
+    [[ -n "$stage_id" ]] || continue
+    case "$gate_type" in
+      "")
+        printf '%s\n' "$stage_id"
+        return 0
+        ;;
+      stage_completed)
+        prerequisite_status="$(state_json "$state_yaml" | jq -r --arg id "$prerequisite" \
+          '[.stages[] | select(.id == $id)][0].status // empty')"
+        if [[ -z "$prerequisite_status" ]]; then
+          log "stage ${stage_id} gate unmet, stepping over: prerequisite ${prerequisite} is absent from the queue (requires completed)"
+        elif [[ "$prerequisite_status" != "completed" ]]; then
+          log "stage ${stage_id} gate unmet, stepping over: prerequisite ${prerequisite} is ${prerequisite_status} (requires completed)"
+        else
+          printf '%s\n' "$stage_id"
+          return 0
+        fi
+        ;;
+      queue_empty)
+        active_others="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+          '[.stages[] | select(.id != $id and (.status == "pending" or .status == "in_progress"))] | length')"
+        if [[ "$active_others" == "0" ]]; then
+          printf '%s\n' "$stage_id"
+          return 0
+        fi
+        log "stage ${stage_id} gate unmet, stepping over: queue-empty requires no other pending or in_progress stages (found ${active_others})"
+        ;;
+      *)
+        log "stage ${stage_id} gate unmet, stepping over: unknown gate type ${gate_type}"
+        ;;
+    esac
+  done < <(state_json "$state_yaml" | jq -r \
+    '.stages[] | select(.status == "pending") | [.id, (.gate.type // ""), (.gate.stage_id // "")] | @tsv')
+}
+
 # The loop's own snapshot ref. A branch rather than a private ref namespace
 # because the tick loop owns its snapshots. Loop-owned: never
 # checked out, never pushed, and no operator ever commits on it.
@@ -2020,10 +2063,9 @@ _process_repo_locked() {
     fi
   else
     local next_stage
-    # Dispatch selects on pending alone, so a superseded stage sitting ahead
-    # of a pending one is stepped over rather than run. Terminal means
-    # terminal: no path here moves a stage out of superseded.
-    next_stage="$(state_json "$state_yaml" | jq -r '.stages[] | select(.status == "pending") | .id' | head -n1)"
+    # Selection steps over terminal stages and pending stages whose declared
+    # gate is not met. Neither case is a state transition or a failure.
+    next_stage="$(select_next_dispatchable_stage "$state_yaml")"
     if [[ -n "$next_stage" ]]; then
       tick_kind="work"
       if ! validate_stage_id "$next_stage"; then

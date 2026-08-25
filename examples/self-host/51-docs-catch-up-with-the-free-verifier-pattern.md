@@ -11,6 +11,7 @@
 - **Worker effort:** medium
 - **Verifier effort:** medium
 - **Verifier panel:** false
+- **Gate:** stage-completed: 46-verifier-bake-off-local-against-cloud-free
 - **Pairing rationale:** prose over settled facts, the Claude side's ground;
   Codex verifies cross-family that every documented claim matches what the
   scripts and the bake-off artefacts actually say, since docs drift is a
@@ -72,8 +73,6 @@ Do not read anything else unless you need to; keep your context lean.
 
 ## Constraints
 
-- **Gate: card 46 completed first.** If dispatched early, the worker must
-  halt with a note naming the gate rather than writing speculative prose.
 - Every model-quality claim traces to `docs/verifier-bake-off.md` or a
   checked-in artefact; no claim rests on the card 45/46 authoring-time
   guesses that the bake-off has since replaced or confirmed.

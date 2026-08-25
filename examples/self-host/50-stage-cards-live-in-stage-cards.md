@@ -11,6 +11,7 @@
 - **Worker effort:** medium
 - **Verifier effort:** medium
 - **Verifier panel:** false
+- **Gate:** queue-empty
 - **Pairing rationale:** a rename that threads through dispatch resolution,
   where the failure mode is a tick that cannot find a card any more. Codex
   verifies cross-family by actually resolving cards from both old and new

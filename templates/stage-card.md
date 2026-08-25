@@ -19,6 +19,17 @@ Dispatch happens in an ephemeral worktree cut from the base branch (`git worktre
 - **Verifier effort:** <<low|medium|high|xhigh|max — optional. Honoured by the Claude and Codex CLI routes, the Claude SDK route, and every verifier panel member. Omit to leave each route on its default.>>
 - **Requires GUI:** <<true if any role must drive a browser, screenshot, or otherwise reach the window server; omit otherwise. Codex roles are sandboxed and every browser aborts at NSApplication init without this, headless included. It grants that agent full machine access, so declare it only when the acceptance criteria genuinely need it.>>
 - **Verifier panel:** false
+<!--
+Optional dispatch gate. Omit the Gate line for an ungated stage. These are the
+only accepted forms; a prerequisite always uses its full stage id:
+
+- **Gate:** stage-completed: 58-the-controller-decides-the-scripts-are-its-verbs
+- **Gate:** queue-empty
+
+The first waits for the named stage to read completed. The second waits until
+no other stage is pending or in_progress. An unmet gate does not prevent the
+card being queued and does not change its pending status.
+-->
 - **Pairing rationale:** <<why-this-worker-verifier-pair>>
 
 ## Objective

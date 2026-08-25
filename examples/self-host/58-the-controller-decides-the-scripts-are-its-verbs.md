@@ -11,8 +11,9 @@
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Gate:** after 56. That card frees the name phat-controller from the tick
-  loop, and this card gives the name to the role.
+- **Gate:** stage-completed: 56-phat-controller-is-the-minder-not-the-loop
+  That card frees the name phat-controller from the tick loop, and this card
+  gives the name to the role.
 - **Pairing rationale:** the deliverable is mostly prose that another agent
   will be seeded with, so the family that will read it writes it, and the
   other family verifies that the boundary holds against fixtures designed

@@ -11,8 +11,8 @@
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Gate:** after 58. That card creates the controller; this one makes it
-  auditable and reachable.
+- **Gate:** stage-completed: 58-the-controller-decides-the-scripts-are-its-verbs
+  That card creates the controller; this one makes it auditable and reachable.
 - **Pairing rationale:** the deliverable is a record a human reads and a
   channel a human writes to, so the family that will be read writes it, and
   the other family verifies that a message cannot widen the mandate.

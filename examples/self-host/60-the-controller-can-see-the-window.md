@@ -11,9 +11,10 @@
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Gate:** after 58. That card creates the context seed and the setup
-  prompt for spend authority; this card adds a second question to the same
-  prompt rather than inventing a second place to configure the role.
+- **Gate:** stage-completed: 58-the-controller-decides-the-scripts-are-its-verbs
+  That card creates the context seed and the setup prompt for spend authority;
+  this card adds a second question to the same prompt rather than inventing a
+  second place to configure the role.
 - **Pairing rationale:** the credential being read belongs to the Claude
   family, so the other family writes the reader and the Claude side
   verifies that its own token never reaches a log.
