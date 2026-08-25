@@ -183,7 +183,7 @@ The hooks block (a) any commit that contains a personal-pattern string from `.pu
 
 For a deeper introduction or to retrofit a repo that pre-dates this pattern, use the `repo-publish-workflow` skill directly.
 
-## 7. Auth routes (subscription vs API key vs local)
+## 7. Auth routes: subscription, API key and free
 
 Every dispatched agent (worker or verifier) runs on its OAuth subscription session (Claude Pro / ChatGPT plan), its API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude), or, codex family only, local Ollama weights with no provider at all. Resolver fallback (no manifest) is `subscription` for both families; the shipped `.autometta.local.yaml.example` recommends `codex: api` + `claude: subscription`. Aligned to the `auth-route-security` skill: every launch goes through `op-fetch`, which exec's the child with `env -i` + an allowlist + named refs only, so no stray API key from your parent shell can accidentally redirect billing.
 
@@ -213,9 +213,24 @@ A third codex route: `codex exec --oss --local-provider=ollama -m <model>` again
 One-time host setup:
 
 ```sh
+# macOS
+brew install ollama
+brew services start ollama
+
+# Linux: install, then keep `ollama serve` running in another terminal or
+# under the host's service supervisor.
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve
+```
+
+After the server is running:
+
+```sh
 ollama pull gpt-oss:120b   # the default; scripts/models.sh:AUTOMETTA_MODEL_CODEX_LOCAL
 ollama list                # confirm it shows in the NAME column
 ```
+
+Keeping the server running is the operator's job, not autometta's: `ollama serve` (or the `brew services` equivalent) must already be up before any dispatch that resolves `local`, and it stays up independently of any tick or worktree. Autometta never starts, stops, or supervises it; a spawn against a stopped server fails closed with a clear message rather than launching one for you. `brew services start ollama` is the lowest-effort way to make that true across reboots on macOS; on Linux, run it under whichever supervisor keeps other long-lived local services alive on that host.
 
 Then set the mode:
 
@@ -227,9 +242,35 @@ auth:
 
 or override at dispatch time with `AUTOMETTA_CODEX_MODE=local`. No `OP_REF_*` and no sibling `CODEX_HOME` are needed: the spawn scripts fetch no key for this route (op-fetch still runs, so any stray `OPENAI_API_KEY` in your shell is stripped rather than silently billing the API). If `ollama` is not on `PATH`, is not serving, or the model is not pulled, the spawn fails closed before launching an agent and names the missing piece; autometta never runs `ollama serve` on your behalf.
 
-Local weights are a real step down in capability from a frontier verifier. Prefer this route for stages whose acceptance is mechanical (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria: a FAIL from a weaker verifier still blocks the merge, but a PASS is only as trustworthy as the acceptance commands it actually ran. If the default `gpt-oss:120b` proves too slow per verification (cold model load is on the order of a minute; warm dispatches are faster), `qwen3-coder:30b` is the natural second setting of the same `AUTOMETTA_MODEL_CODEX_LOCAL` knob.
+Local weights are a real step down in capability from a frontier verifier. Prefer this route for stages whose acceptance is mechanical (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria: a FAIL from a weaker verifier still blocks the merge, but a PASS is only as trustworthy as the acceptance commands it actually ran. `gpt-oss:120b` is the measured default (77% FAIL recall against a 10-stage benchmark, tied for best of seven candidates measured; see `docs/verifier-bake-off.md`); `qwen3-coder:30b` is faster but effectively a rubber stamp (15% FAIL recall) and should not be substituted for the default without accepting that trade. Cold model load is on the order of a minute; warm dispatches are faster.
 
-**Investigated but out of scope:** an OpenRouter `:free` route (DeepSeek R1, Qwen3 Coder 480B, a rotating set of roughly two dozen models) is viable as a fallback but not the default. The free tier is 20 requests/minute and 50 requests/day (1,000/day once $10 of credits have ever been bought), an agentic verifier can burn several requests per criterion, and the model list rotates without notice. Codex CLI can reach it as a custom `model_providers` entry with `OPENROUTER_API_KEY` through the existing op-fetch machinery if a future card takes this on. A genuine third CLI family (Gemini CLI's free tier) was also investigated and is further out of scope again: new spawn branch, new log format, new registry/heartbeat family value.
+### Cloud free tier (measured, not a selectable dispatch mode)
+
+A second free route exists at two cloud providers, Groq and OpenRouter, each with a free API tier. It is not wired into `auth-route.sh` or `spawn-verifier.sh`: there is no `auth.<family>.mode: cloud-free` a stage card can select. It is exercised today only by the standalone bake-off harness, `scripts/verifier-bake-off.sh`, which measured it against the same benchmark set as the local candidates (results and methodology in `docs/verifier-bake-off.md`). Run one measured candidate by hand with:
+
+```sh
+scripts/verifier-bake-off.sh run \
+  --candidate openrouter-nemotron-3-ultra-550b \
+  --stage <stage-id>
+```
+
+The harness sources `op-refs.sh`, selects the one provider ref and invokes `op-fetch` itself. Do not wrap this command in a second `op-fetch` call.
+
+Plant the two extra refs at the same live file as the paid keys, using the names `op-refs.sh` already declares:
+
+```sh
+# in ~/.config/autometta/op-refs.local.sh
+export OP_REF_GROQ_API_KEY="op://<your-vault>/groq-api-key/credential"
+export OP_REF_OPENROUTER_API_KEY="op://<your-vault>/openrouter-api-key/credential"
+```
+
+**Route isolation.** Each cloud candidate's caller (`scripts/verifier-bake-off-caller.py`) reads exactly one `--api-key-env` value; no code path reads `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`. `scripts/verifier-bake-off.sh` resolves exactly one `NAME=ref` pair per candidate and hands it to `op-fetch`, whose `env -i` plus allowlist strips the paid refs from the child even when they are exported in the parent shell. Verified live: with `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` exported in the parent shell, `op-fetch GROQ_API_KEY=$OP_REF_GROQ_API_KEY -- env` showed only `GROQ_API_KEY` in the child. `scripts/verifier-bake-off-route-smoke.sh` turns the same property into an offline, credential-free check (stubbed `op-fetch` capturing argv); run it after touching the harness rather than re-verifying by hand.
+
+**Data-sharing constraint.** Every cloud call ships the stage card and the deliverable files it evaluates to a third party (Groq or OpenRouter). Nothing from `.autometta.local.yaml`, `op-refs.local.sh`, or the controller home directory is included, but the card and diff themselves leave the machine. A repo whose diffs must not reach a third party stays on the local candidates only.
+
+**Measured recommendation.** Of the seven candidates measured (four local, Groq, two OpenRouter), `local-gpt-oss-120b` and `openrouter-nemotron-3-ultra-550b` tie at 77% FAIL recall, the only two that clear a defensible bar. `local-gpt-oss-120b` is the better default (same recall, better artefact discipline, $0 with no daily cap); the cloud candidate is a fallback for when the local machine is busy or a stage's evidence is too large for local wall-clock patience, and only for a repo already cloud-eligible. The one-time $10 OpenRouter unlock (50 to 1,000 requests/day) is not worth taking for this purpose: the free local candidate already matches its FAIL recall at $0. Groq's free tier cannot complete this comparison at all: its 8,000 tokens/minute cap is smaller than this verifier's prompt on most stages, a capacity fact rather than a quality one. Full table and per-candidate evidence: `docs/verifier-bake-off.md`.
+
+A genuine third CLI family (Gemini CLI's free tier) was investigated and stays out of scope: it would need a new spawn branch, a new log format, and a new registry/heartbeat family value.
 
 ### Two committed files, one user-config file
 
@@ -239,7 +280,7 @@ templates/op-refs.local.sh.tpl                    # COMMITTED — template
 ~/.config/autometta/op-refs.local.sh        # GITIGNORED — your actual op:// references
 ```
 
-`op-refs.sh` declares `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` with `op://YOUR_VAULT/...` placeholders, then searches for an override in this order: `$AUTOMETTA_LOCAL_REFS`, `~/.config/autometta/op-refs.local.sh` (XDG, recommended), then `<repo-root>/op-refs.local.sh` (dev checkout only). The XDG location is the one location both the brew-installed CLI and the dev checkout can both see.
+`op-refs.sh` declares `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`, plus the two cloud free-tier refs `OP_REF_GROQ_API_KEY` and `OP_REF_OPENROUTER_API_KEY` (see "Cloud free tier" above), all with `op://YOUR_VAULT/...` placeholders, then searches for an override in this order: `$AUTOMETTA_LOCAL_REFS`, `~/.config/autometta/op-refs.local.sh` (XDG, recommended), then `<repo-root>/op-refs.local.sh` (dev checkout only). The XDG location is the one location both the brew-installed CLI and the dev checkout can both see.
 
 ### Per-repo mode toggle
 
@@ -264,11 +305,11 @@ AUTOMETTA_CLAUDE_MODE=api autometta tick
 
 ```sh
 autometta auth status            # mode + ref provenance per family
-autometta auth check codex       # PASS / FAIL / subscription with redacted credential
+autometta auth check codex       # also preflights Ollama when mode=local
 autometta auth check claude
 ```
 
-`auth check` calls `op-fetch --print` against the configured ref — if the service-account token resolves it, the dispatch path will too. The resolved key is redacted in the report and never written to disk.
+In API mode, `auth check` calls `op-fetch --print` against the configured ref. If the service-account token resolves it, the dispatch path will too; the resolved key is redacted and never written to disk. Subscription mode reports that no key fetch is needed. Codex local mode runs the same Ollama server and model preflight as the spawn scripts.
 
 ### How it dispatches
 

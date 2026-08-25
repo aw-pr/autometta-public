@@ -73,7 +73,7 @@ Catches silent agent deaths in both manual and loop dispatches.
 
 ### Cross-cutting features shipped
 
-- **Auth routing (subscription vs API key).** Per-family billing route
+- **Auth routing (subscription vs API key vs free).** Per-family billing route
   resolved per repo, with a fail-closed `op-fetch` path. See section 5 and
   `docs/setup.md` section 7.
 - **SDK verifier route with prompt caching.** The Claude verifier can run via
@@ -118,8 +118,8 @@ to one backing script.
 | `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
 | `autometta uninstall-launchagent <repo-path>` | macOS: remove the per-repo LaunchAgent. |
 | `autometta install-homebrew-local [--dry-run] [--tap owner/name]` | Render and install the local Homebrew tap from the working tree. Rerun after every `git pull` of this repo. |
-| `autometta auth status` | Per-family table: mode (subscription or api), provenance (env, manifest, default), and ref status. Also prints which `op-refs.local.sh` was loaded, whether `op-fetch` is on PATH, and the sibling `CODEX_HOME` state. No token spend. |
-| `autometta auth check <codex\|claude>` | Probe the route plumbing for one family without spending a token. `subscription` returns no-key-fetch; `api` resolves the ref via `op-fetch --print` and returns `PASS` with a redacted credential or `FAIL` with the error path. For codex it also checks the sibling `CODEX_HOME` has `auth_mode: apikey`. |
+| `autometta auth status` | Per-family table: mode (`subscription`, `api`, or codex-only `local`), provenance (env, manifest, default), and ref status. Also prints which `op-refs.local.sh` was loaded, whether `op-fetch` is on PATH, and the sibling `CODEX_HOME` state. No token spend. |
+| `autometta auth check <codex\|claude>` | Probe one family without spending a token. `subscription` reports no-key-fetch; `api` resolves the ref via `op-fetch --print` and, for codex, checks the sibling `CODEX_HOME`; codex `local` runs the Ollama server/model preflight. Each route returns `PASS`, `FAIL`, or the explicit subscription result. |
 
 Notes:
 
@@ -247,12 +247,13 @@ See `docs/tick-loop.md` for the full FSM and token accounting.
 
 ---
 
-## 5. Auth routes (subscription vs API key)
+## 5. Auth routes (subscription vs API key vs free)
 
-Every dispatched worker or verifier runs on either an OAuth subscription
-(Claude Pro / ChatGPT plan) or an API key. Resolver fallback with no manifest
-is `subscription` for both families. The shipped template recommends
-`codex: api` + `claude: subscription`. Flip per repo or per dispatch.
+Every dispatched worker or verifier uses an OAuth subscription (Claude Pro /
+ChatGPT plan), an API key, or the free local Ollama route for the codex family.
+Resolver fallback with no manifest is `subscription` for both families. The
+shipped template recommends `codex: api` + `claude: subscription`. Flip per
+repo or per dispatch.
 
 Every launch goes through `op-fetch`, which exec's the child via `env -i` plus
 an allowlist plus only the named refs. Subscription mode still goes through
@@ -291,9 +292,9 @@ carries only the mode, never keys:
 ```yaml
 auth:
   codex:
-    mode: api          # subscription | api
+    mode: api          # subscription | api | local
   claude:
-    mode: subscription
+    mode: subscription # subscription | api
 ```
 
 Dispatch-time override beats the manifest:
@@ -330,6 +331,61 @@ autometta auth check claude
 The spawn fails closed on a missing `op-fetch`, an unset `OP_REF_*`, or an
 unresolved placeholder. Full surface: `docs/setup.md` section 7 and the
 `auth-route-security` skill.
+
+### Free verifier tier: flip, read and identify
+
+The measured default is the codex-family local route (`gpt-oss:120b`) for
+mechanical-acceptance stages, with a frontier verifier retained for
+judgement-heavy criteria. See `docs/verifier-bake-off.md` for the evidence.
+
+**Flip a repo onto the free verifier route.** Install, start and populate
+Ollama as described in `docs/setup.md` section 7, then set the repo's
+gitignored `.autometta.local.yaml`:
+
+```yaml
+auth:
+  codex:
+    mode: local
+```
+
+For one dispatch, use `AUTOMETTA_CODEX_MODE=local autometta tick` instead.
+There is no Claude-family local mode, and the measured cloud-free candidates
+are available only through `scripts/verifier-bake-off.sh`, not as manifest
+modes.
+
+**Read a local verifier in the cost log.** Route and tier are independent.
+`auth_route` comes from the auth resolver; `tier` comes only from the stage's
+identity string (`scripts/cost-log.sh:212-215`, `scripts/rates.sh:40-59`). An
+identity containing `GPT-OSS` maps to T5, whose rate row is zero
+(`scripts/rates.sh:64-72`). A local route using a Terra, Sol or other identity
+keeps that identity's tier and estimate; local mode does not rewrite it to T5.
+Inspect all three facts together, including the actual tokens captured from
+the role log:
+
+```sh
+jq -r 'select(.role=="verifier" and .auth_route=="local")
+  | "\(.stage_id): identity=\(.identity) tier=\(.tier) tokens=\([.input_tokens,.cached_input_tokens,.output_tokens]|add) estimate=$\(.cost_usd_est)"' \
+  state/cost-log.jsonl
+```
+
+For a correctly named local GPT-OSS verifier this prints `tier=T5` and
+`estimate=$0`; the token total remains real and non-zero. Codex total-only logs
+put the total in `input_tokens`, while routes with a full usage breakdown fill
+all three buckets, so summing them works for both shapes. The checked-in
+fixture behaviour is exercised by `scripts/cost-log-smoke.sh`.
+
+**Identify a running verifier's route.** `autometta auth status` shows the
+current per-family resolution from env override, repo manifest, then default,
+which is the same precedence used at launch (`scripts/auth-route.sh`). For a
+running codex verifier, `ps -p <pid> -o command=` identifies the local route by
+`--oss --local-provider=ollama`; API and subscription both use `--model`
+(`scripts/spawn-verifier.sh:338-362`). For Claude, the
+`verifier-transport: cli|sdk` log line reports the harness, not the billing
+route. CLI accepts subscription or API, while SDK requires API
+(`scripts/spawn-verifier.sh:307-320,365-380`). The running-agent registry does
+not expose a separate billing-route field, so for a Claude CLI verifier use
+the launch-time auth resolution; after reap, read `auth_route` in its cost-log
+line.
 
 ---
 

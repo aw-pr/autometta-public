@@ -172,7 +172,7 @@ autometta/
 3. `docs/lessons.md` - the headless gotchas that will bite you on day one.
 4. `templates/stage-card.md` and `templates/worker-prompt.md` - copy these, fill them in.
 5. `docs/verification.md` - how to gate the worker's output.
-6. `docs/tick-loop.md` and `docs/setup.md` - when you want to put the dispatch contract under cron. `docs/setup.md` section 7 covers auth-route configuration (subscription vs API key).
+6. `docs/tick-loop.md` and `docs/setup.md` - when you want to put the dispatch contract under cron. `docs/setup.md` section 7 covers subscription, API-key and free verifier routes.
 7. `docs/deployment.md` and `docs/observability.md` - when you want to adopt it across repos and watch the loop.
 
 ## Your first dispatch (five minutes)
@@ -231,11 +231,64 @@ pinned to the old Cellar version. Re-source the shell or restart the
 session after `install-homebrew-local.sh` to pick up new scripts
 (`heartbeat`, `watch-agent`, `agent-ticker`, `install-launchagent`, etc.).
 
-## Billing routes (subscription vs API key vs local)
+## Billing routes: three tiers
 
-Every dispatched worker or verifier runs on an OAuth subscription session (Claude Pro / ChatGPT plan), an API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude), or, codex family only, local Ollama weights with no provider at all (`auth.codex.mode: local`, `codex exec --oss --local-provider=ollama`). Resolver fallback (no manifest) is `subscription` for both; the shipped template recommends `codex: api` + `claude: subscription`. Flip per repo or per dispatch.
+Every dispatched worker or verifier runs on one of three tiers: **subscription**
+(OAuth session: Claude Pro / ChatGPT plan), **api** (a metered key:
+`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude), or **free**. The
+free tier has two shapes: **local** (codex-family only, Ollama weights on the
+same machine, zero marginal cost, no rate limit) and **cloud** (a keyed free
+tier at a third-party provider, Groq or OpenRouter). Resolver fallback (no
+manifest) is `subscription` for both codex and claude; the shipped template
+recommends `codex: api` + `claude: subscription`. Flip per repo or per
+dispatch.
 
-The local route is zero marginal cost with no rate limits, at the price of real weights: prefer it for stages with mechanical acceptance (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria. One-time host setup is `ollama pull gpt-oss:120b` (the default; see `scripts/models.sh:AUTOMETTA_MODEL_CODEX_LOCAL`) and a confirming `ollama list`. No `OP_REF_*` and no sibling `CODEX_HOME` are needed; if `ollama` is not installed, not serving, or the model is not pulled, the spawn fails closed before launching an agent, and autometta never runs `ollama serve` for you. `auth.claude.mode: local` is refused: a Claude-family local route would be a different CLI and a different card. Full detail, including the investigated-but-out-of-scope OpenRouter free-tier fallback, is in `docs/setup.md` section 7.
+Only **local** is a selectable dispatch mode today: `auth.codex.mode: local`
+runs `codex exec --oss --local-provider=ollama`. **Cloud free** (Groq,
+OpenRouter) is measured (`scripts/verifier-bake-off.sh` dispatches it
+directly against benchmark stages), but it is not wired into
+`auth-route.sh`/`spawn-verifier.sh` as a mode a stage card can select. Running
+it means invoking the bake-off harness by hand. `auth.claude.mode: local` is
+refused outright: a Claude-family local route would be a different CLI and a
+different piece of work.
+
+### The measured recommendation
+
+`docs/verifier-bake-off.md` retro-grades every free candidate (four local
+Ollama models, Groq, two OpenRouter models) against ten benchmark stages that
+already carry a frontier verdict, scoring FAIL recall (does the candidate
+catch a real failure) and PASS agreement. Full methodology, gotchas and the
+regenerate command are in that doc; this table is its bottom line.
+
+| Verifier tier | Recommended candidate | FAIL recall | Cost | Use for | Evidence |
+|---|---|---|---|---|---|
+| Free, local (production default) | `local-gpt-oss-120b` (`AUTOMETTA_MODEL_CODEX_LOCAL=gpt-oss:120b`) | 77% (10/13) | $0, no cap | Mechanical-acceptance stages (smoke scripts, `bash -n`, fixture comparisons); the codex-family default already, now measurement-backed | [Recommendation](docs/verifier-bake-off.md#recommendation) |
+| Free, cloud (measured, not dispatch-wired) | `openrouter-nemotron-3-ultra-550b` | 77% (10/13) | $0 (50 req/day free; 1,000/day after a one-time $10 unlock, not worth taking per the bake-off's conclusion) | Fallback only when the local machine is busy or a stage's evidence is too large for local wall-clock patience, and only for a repo already cloud-eligible (every cloud call ships the stage card and diff to the provider) | [Cloud fallback](docs/verifier-bake-off.md#the-one-time-10-openrouter-unlock) |
+| Frontier (api/subscription) | the repo's normal Claude or Codex verifier | backstop | paid or metered | Judgement-heavy criteria, and as a backstop on anything a free-tier verdict leaves borderline | [Recommendation](docs/verifier-bake-off.md#recommendation) |
+
+**Do not trust as a primary verifier at any tier:** `local-devstral` (0% FAIL
+recall, a rubber stamp), `local-qwen3-32b` (8%), `local-qwen3-coder-30b`
+(15%, and its speed makes the rubber-stamp failure mode more dangerous, not
+less), `openrouter-nemotron-3-super-120b` (0%), and `groq-gpt-oss-120b` (not
+a quality verdict: its 8,000 tokens/minute cap cannot fit this verifier's
+prompt shape at all, so it completed only 1 of 10 benchmark attempts). See
+`docs/verifier-bake-off.md` for the full results table and per-candidate
+evidence.
+
+**Trust generally, unqualified:** none of the seven. Every candidate's FAIL
+recall sits at 77% or worse against the 10-stage sample, which is not a
+tolerable false-negative rate for a gate that decides whether broken work
+merges. Free-tier verification lowers cost on mechanical stages; it does not
+replace a frontier verifier on judgement calls.
+
+The local route is zero marginal cost with no rate limits, at the price of
+real weights. One-time host setup is `ollama pull gpt-oss:120b` (the default;
+see `scripts/models.sh:AUTOMETTA_MODEL_CODEX_LOCAL`) and a confirming `ollama
+list`. No `OP_REF_*` and no sibling `CODEX_HOME` are needed; if `ollama` is
+not installed, not serving, or the model is not pulled, the spawn fails
+closed before launching an agent, and autometta never runs `ollama serve` for
+you. Full detail, including how to run the cloud free tier by hand, is in
+`docs/setup.md` section 7.
 
 Aligned to the `auth-route-security` skill — every launch goes through `op-fetch`, which exec's the child via `env -i` plus an allowlist plus only the named refs. Subscription mode still goes through `op-fetch`, so any stray `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` in your parent shell is **stripped** rather than silently flipping you to API billing.
 
@@ -268,7 +321,7 @@ chmod 600 ~/.config/autometta/op-refs.local.sh
 
 The keys themselves live only in 1Password. The live file names them; `op-fetch` resolves the named refs at dispatch time via the service-account token at `~/.config/op/service-account.env` and injects them into the child env only; nothing lands on disk or in the parent shell. Any missing piece (no `op-fetch`, unset `OP_REF_*`, unresolved `YOUR_VAULT` placeholder) fails closed before a token is spent. Subscription mode needs no refs at all.
 
-The free verification routes (card 46) add `OP_REF_OPENROUTER_API_KEY` and `OP_REF_GROQ_API_KEY` alongside the paid refs. Each caller names only its own ref to `op-fetch`, so the paid keys are structurally absent from a free route's child env.
+The free cloud verification routes add `OP_REF_OPENROUTER_API_KEY` and `OP_REF_GROQ_API_KEY` alongside the paid refs, resolved the same way. Each caller names only its own ref to `op-fetch`, so the paid keys are structurally absent from a free route's child env; see `docs/verifier-bake-off.md` "Route isolation" for the live-verified proof.
 
 ### Per-repo mode toggle
 
@@ -334,7 +387,9 @@ The spawn scripts and the manual dispatch pattern both export `CODEX_HOME=$AUTOM
 |---|---|---|
 | Dispatch contract (pass 1) | shipped | Self-hosted through stage 6. |
 | Agent observability | shipped | Registry, heartbeat, ticker, watch primitive. |
-| Auth routing (subscription / API) | shipped | `op-fetch`, fail-closed, per-family toggle. |
+| Auth routing (subscription / API / local) | shipped | `op-fetch`, fail-closed, per-family toggle. |
+| Free verifier tier, local (codex `auth.codex.mode: local`) | shipped | Zero-cost Ollama route, measurement-backed default (`gpt-oss:120b`). See "Billing routes" above. |
+| Free verifier tier, cloud bake-off | measured, not dispatch-wired | `docs/verifier-bake-off.md`; run manually via `scripts/verifier-bake-off.sh`, not a stage-card-selectable mode yet. |
 | SDK verifier route + prompt caching | shipped | Claude family only (stages 15-16). |
 | Worker handoff envelope | shipped | Sole worker completion signal (stage 17). |
 | Autonomous loop (pass 2) | shipped | Unattended macOS launchd path verified 2026-05-29 (gotcha 9 fix). Linux via cron. |

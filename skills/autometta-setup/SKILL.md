@@ -157,6 +157,21 @@ Headline checklist (refer to `docs/setup.md` in Autometta for details):
 
 If `state/budget.json` halts mid-run, `autometta tick --reset-halt` clears it. To add a new stage to the loop, `autometta add-stage <repo-root> <stage-card-path>` is the idempotent helper.
 
+### Verification tier choice
+
+Every subscribed repo picks a verification tier per family in
+`.autometta.local.yaml` (`auth.<family>.mode`), and the choice should start
+from measurement, not folklore: Autometta's own "Billing routes" table in
+`README.md` (backed by `docs/verifier-bake-off.md`) is the current
+recommendation, and it applies unchanged to an adopter repo. Point a new
+subscriber at that table rather than restating the numbers here: they will
+drift out of step with the bake-off's own re-runs if duplicated. The
+one-line version: `auth.codex.mode: local` (`gpt-oss:120b`) is the
+measurement-backed free default for mechanical-acceptance stages; keep a
+frontier verifier (`api` or `subscription`) for judgement-heavy criteria; the
+cloud free tier (Groq, OpenRouter) is measured but not yet a selectable
+dispatch mode, only reachable via `scripts/verifier-bake-off.sh` directly.
+
 ### Budget policy: the daily cap is a host decision
 
 Most adopters should not choose a token cap at all. `autometta init-host` asks for one daily `token_cap_total` and writes it to `~/.autometta/config.yaml`; every subscribed repo inherits it. That is the intended resting state.
