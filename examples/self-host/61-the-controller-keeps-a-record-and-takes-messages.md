@@ -152,3 +152,66 @@ credential grep, and the retention and publish-guard evidence.
 ## Family-specific notes
 
 None
+
+## Re-brief, attempt 2 (2026-08-25)
+
+Attempt 1 was verified by GPT-5.6 Sol and returned **FAIL on 4 of 8
+criteria**. The four that passed are real and stay passed: the tick lock
+blocks in both directions, the 2026-08-25 race lands the proper stage commit
+with its trailers, a reply is readable without attaching to a session, and
+transcripts prune to retention with the publish guard refusing them.
+
+The work is preserved at `7fef86f` on
+`wip/61-the-controller-keeps-a-record-and-takes-messages-attempt-1`. Start
+from it. Attempt 1 cost 16.2M tokens; a rebuild is not the job.
+
+**All four failures are one failure, and it is not sloppiness.** Every one of
+them says the same thing: the smoke proves the helpers compose, using
+fabricated artefacts, rather than exercising a real controller pass. It
+hard-codes the refusal text and calls `inbox-refuse` itself
+(`scripts/phat-controller-smoke.sh:762-763`), it calls `pc_inbox_scan` and
+`pc_inbox_reply` directly without running a pass (`:733-752`), it fabricates a
+transcript and appends the index by hand (`:713-727`), and it greps a planted
+file rather than artefacts a pass produced (`:895-912`). The production
+ordering is correct in all four cases. What is missing is evidence that the
+production path runs.
+
+### The blocker you must resolve first
+
+The card asks for a transcript of what the controller read, considered and
+rejected. **On the default Claude route that transcript cannot exist.** The
+dispatch runs `claude --output-format json` piped through
+`scripts/claude-token-log.sh`, and that helper reduces the document to
+`doc["result"]`, the final result text, discarding turn history
+(`scripts/phat-controller.sh:1480-1482`, `scripts/claude-token-log.sh:22-37`).
+Verified independently against the preserved branch, not taken on the
+verifier's word.
+
+So a scraped transcript is the wrong mechanism, and no amount of smoke work
+will fix it. **The record must be something the controller writes, not
+something a log is mined for.** The card is called "the controller keeps a
+record": have the controller emit its decisions to the journal as it makes
+them, through the verbs it already has, and treat the pass log as spend
+accounting rather than as the record. If you conclude the transport should
+change instead, say so in your handoff envelope with the reason and do not
+change it unilaterally.
+
+### How to prove a pass without a live agent
+
+The reason attempt 1 fabricated artefacts is that an offline smoke cannot
+dispatch a real agent, and the card asks for evidence from two actual passes.
+That tension is the whole bug, and the way through it is a scripted stand-in:
+drive the **real** `pc_pass` code path with a fake dispatch that emits known
+output, instead of calling the helpers directly. The pass then genuinely reads
+the inbox, builds its picture, records its decisions, refuses the forbidden
+request and writes its artefacts, and the smoke asserts on what that produced.
+No live agent, no fabricated artefacts, and the production ordering is
+actually executed.
+
+Then the credential grep is meaningful, because it runs over artefacts a pass
+produced rather than over a planted file.
+
+### Everything else
+
+Do not weaken the four passing criteria. Do not touch the tick lock behaviour,
+which is the part of this card the 2026-08-25 race most needs.
