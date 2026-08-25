@@ -172,6 +172,31 @@ frontier verifier (`api` or `subscription`) for judgement-heavy criteria; the
 cloud free tier (Groq, OpenRouter) is measured but not yet a selectable
 dispatch mode, only reachable via `scripts/verifier-bake-off.sh` directly.
 
+### Optional: configure the phat-controller job (and ask for spend authority)
+
+The tick loop dispatches and verifies. It does not decide that a verifier FAIL is a card defect, preserve work stranded by an agent that died mid-write, merge an integration, clear a stale pause, or keep the queue fed. phat-controller does, and it is worth adding only once the loop itself ticks cleanly. Full design: `docs/tick-loop.md` section (k).
+
+It is an agent seeded at configure time, so configuring the job means rendering its seed, and rendering the seed means answering one question you cannot skip.
+
+**Ask the operator, in the conversation, before running anything:**
+
+> What may this controller spend on this run? Give me a level in your own words, and optionally a hard token ceiling and a time the authority expires.
+
+**Do not offer a default and do not pick one for them.** The right level varies by run, by hour and by day: an overnight window drain and a Tuesday-afternoon smoke run want different numbers, and a default would be wrong most of the time it was used, in the expensive direction. If the operator will not answer, stop and say the job cannot be configured yet. The tooling agrees with you: `render-controller-seed.sh` with no `--spend-authority` writes nothing and exits 2, and `install-launchagent-phat-controller.sh` refuses to install a schedule with no seed.
+
+Then, with the answer in hand:
+
+```sh
+autometta install-launchagent-phat-controller <target-repo-root> \
+  --spend-authority 'Up to 40M tokens overnight on the Claude subscription. The codex api route stays off tonight.' \
+  --token-ceiling 40000000 \
+  --expires 2026-08-25T07:00:00Z
+```
+
+The prose answer goes into the seed, which the agent reads. The ceiling and expiry are mirrored into the mandate manifest, which is where a script is allowed to read a threshold from. Both are optional; the prose is not.
+
+Check the result with `autometta phat-controller --print-seed` and read it back to the operator: it also carries the prohibitions, this machine's paths, each family's auth route, the repo's branch policy and its own gotchas, and any of those being wrong is worth catching before the first unattended pass rather than after it. The seed is operator-owned afterwards; re-rendering needs `--force`.
+
 ### Budget policy: the daily cap is a host decision
 
 Most adopters should not choose a token cap at all. `autometta init-host` asks for one daily `token_cap_total` and writes it to `~/.autometta/config.yaml`; every subscribed repo inherits it. That is the intended resting state.

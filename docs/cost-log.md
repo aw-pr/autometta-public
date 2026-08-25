@@ -71,11 +71,11 @@ worker then a verifier produces two lines. A verifier that is re-dispatched
 `result: "aborted"` for the failed attempt, then a further line for the
 attempt that succeeds.
 
-The phat-controller writes a third role only for remediation 1, its one bounded triage
-agent. That line is appended synchronously when the triage returns, while the
+phat-controller writes a third role, `phat-controller`, once per dispatched
+pass. That line is appended synchronously when the pass returns, while the
 same parsed tokens are also charged to `state/budget.json`; the itemised cost
-log never replaces the hard-stop ledger. Mechanical warden remediations write
-no cost line because they dispatch no model.
+log never replaces the hard-stop ledger. The verbs the controller calls write
+no cost line of their own because they dispatch no model.
 
 ### `wall_clock_s` is an estimate
 

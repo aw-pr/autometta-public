@@ -7,7 +7,8 @@
   <key>ProgramArguments</key>
   <array>
     <string>{{AUTOMETTA_BIN}}</string>
-    <string>warden</string>
+    <string>phat-controller</string>
+    <string>pass</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -18,9 +19,9 @@
   <key>WorkingDirectory</key>
   <string>{{AUTOMETTA_HOME}}</string>
   <key>StandardOutPath</key>
-  <string>{{LOG_DIR}}/warden-launchagent.out.log</string>
+  <string>{{LOG_DIR}}/phat-controller-launchagent.out.log</string>
   <key>StandardErrorPath</key>
-  <string>{{LOG_DIR}}/warden-launchagent.err.log</string>
+  <string>{{LOG_DIR}}/phat-controller-launchagent.err.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>

@@ -332,9 +332,11 @@ and nothing else overwrites a pre-existing reason on subsequent ticks:
   was not on PATH.
 - `invalid-stage-id` — `current_stage` (or a referenced stage id) failed
   the id-format validator.
-- `warden-escalation` - the warden reached a repeated-failure threshold,
-  found no usable budget ledger, met a forbidden metered route, or received
-  an unexpected provider-payment signal. It requires operator review.
+- `controller-escalation` - phat-controller raised a blocking escalation: a
+  repeated failure past the mandate's cap, a spend authority exhausted, or an
+  unexpected provider-payment signal. It requires operator review.
+  `warden-escalation` is the same reason under its card-54 name and may
+  appear in a ledger written before card 58.
 
 `dirty-working-tree` is retired as of the worktree-per-run backport (see
 below): dispatch happens in an ephemeral sibling worktree, never
@@ -401,41 +403,39 @@ the ephemeral worktree and `autometta/<stage>` branch, prints the preserved
 SHA, and leaves every `wip/` ref standing. Those refs are per-attempt and are
 not garbage-collected automatically.
 
-The phat-controller (`scripts/phat-controller.sh`, `docs/tick-loop.md` section (k)) can
-perform this re-brief-and-requeue step unattended: it dispatches one bounded
-triage agent that reads the verifier artefact and the `wip_commit` diff,
-judges whether the FAIL is a work defect or a card defect, and either
-appends the re-brief and requeues (work defect) or appends a
-`PROPOSED-AMENDMENT` block and requeues nothing (card defect, which only an
-operator or an interactive orchestrator may turn into an actual criterion
-change). It is bounded to one such action per pass and escalates rather than
-trying a third time against a stage that is not advancing.
+phat-controller (`scripts/phat-controller.sh`, `docs/tick-loop.md` section
+(k)) performs this re-brief-and-requeue step unattended. It is an agent
+seeded at configure time, not a script choosing from a list: it reads the
+verifier artefact and the `wip_commit` diff, decides whether the FAIL is a
+work defect or a card defect, and either appends a re-brief and requeues, or
+appends a `PROPOSED-AMENDMENT` block and requeues nothing. Only an operator
+or an interactive orchestrator turns a proposal into an actual criterion
+change.
 
-Its authority is the following closed list:
+The same role covers the case where there is no verifier artefact at all: a
+stage that went `stalled` because its worker exited without a handoff
+envelope still has its work preserved (`phat-controller.sh preserve`), its
+stall marker recorded, and a re-brief citing the preserved commit before it
+is requeued.
 
-1. **Requeue a `verifier_failed` stage** after triage: read the verifier
-   artefact and the preserved WIP (card 53's `wip_commit`), append a
-   re-brief to the card citing both, and run `requeue-stage.sh`. If the
-   artefact shows the FAIL rests on the card's own wording rather than
-   the work, the warden appends a **proposed** amendment to the card
-   marked `PROPOSED-AMENDMENT`, requeues nothing, and surfaces it: only
-   the operator, or an interactive orchestrator, turns a proposal into a
-   criterion change.
-2. **Merge an `awaiting` integration** into base when the merge is
-   conflict-free, run the repo's offline smokes on the result, push per
-   `git-push-check`, and re-render the installed build at a queue gap.
-   A conflict is surfaced, never resolved by the warden.
-3. **Clear a pause or halt that is provably stale**: the recorded reason
-   names a reset time that has passed (card 52's grace rule), or a
-   `tick-cap` halt from a previous window. Anything else stands.
-4. **Queue the next card** from `stage-cards` `PLAN.md` order when the
-   queue is empty and the plan names an unqueued card whose stated gate
-   (e.g. card 51's "after 46") is satisfied.
+Its authority is bounded by a short negative list rather than an action
+enumeration, because the recoverable actions do not need enumerating and the
+unrecoverable ones are few. The governing distinction is that it may change
+**what is recorded and where**, never **what was asked for or whether it was
+met**. Forbidden without exception: editing a card's acceptance criteria,
+objective or specification; verifying its own dispatches; rewriting history,
+pushing non-fast-forward, or moving a publish branch outward; lifting its own
+spend caps; resolving a merge conflict. The list is owned by
+`docs/proposals/orchestrator-role-review.md` and carried verbatim into every
+rendered seed. An interactive orchestrator may step outside it only while the
+operator is in the conversation and explicitly authorises it; a scheduled
+pass never may.
 
-Anything outside this list is surfaced and left untouched. The scheduled
-warden cannot extend its authority through either its prompt or mandate; an
-interactive orchestrator may exceed the list only while the operator is in
-the conversation and explicitly authorises it.
+Two of the five are enforced mechanically. Re-briefs and proposed amendments
+go through an append-only guard that restores the card and refuses if the
+write would have changed a single existing byte, and pushing inherits
+`git-push-check`'s verdict rather than adding policy: `PUSH` act, `ASK`
+escalate and carry on with other work, `HOLD` stop and report.
 
 ### Budget window auto-reset
 

@@ -8,14 +8,14 @@ usage() {
 }
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  printf 'not macOS, skipping warden LaunchAgent uninstall\n'
+  printf 'not macOS, skipping phat-controller LaunchAgent uninstall\n'
   exit 0
 fi
 
 if [[ $# -ne 0 ]]; then
   usage
 fi
-label="com.autometta.warden.fleet"
+label="com.autometta.phat-controller.fleet"
 
 plist_file="$HOME/Library/LaunchAgents/${label}.plist"
 uid="$(id -u)"

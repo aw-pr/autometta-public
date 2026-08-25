@@ -842,8 +842,18 @@ teardown_run_worktree() {
 # so requeue can remove the ephemeral run branch without orphaning useful work.
 # Any git failure restores the original index and dirty tree, logs loudly, and
 # returns non-zero. The caller deliberately treats that as non-fatal.
+#
+# The two trailing arguments are optional and default to the verifier-FAIL
+# case, so every existing caller is unchanged. They exist for the other way a
+# run worktree ends up holding stranded work: a stage that went `stalled`
+# because its worker exited without a handoff envelope, where there is no
+# verifier artefact to read a reason out of and calling the preserved commit
+# a verifier FAIL would be untrue. scripts/phat-controller.sh passes
+# ("worker_envelope_missing_after_exit", "stalled"). The index-safe git
+# surgery below is the part that must not be duplicated.
 preserve_failed_work() {
   local repo_root="$1" state_yaml="$2" stage_id="$3" artefact_abs="$4"
+  local reason_override="${5:-}" reason_label="${6:-verifier FAIL}"
   local work_dir run_branch worker_identity attempt previous_wip_branch wip_branch reason
   work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
   run_branch="$(run_branch_for_stage "$stage_id")"
@@ -858,36 +868,40 @@ preserve_failed_work() {
   wip_branch="wip/${stage_id}-attempt-${attempt}"
 
   if [[ ! -d "$work_dir" ]]; then
-    log "stage ${stage_id} verifier FAIL: no run worktree to preserve; left standing as before"
+    log "stage ${stage_id} ${reason_label}: no run worktree to preserve; left standing as before"
     return 1
   fi
   if [[ "$(git -C "$work_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)" != "$run_branch" ]]; then
-    log "stage ${stage_id} verifier FAIL: ${work_dir} is not on ${run_branch}; preservation skipped and worktree left standing"
+    log "stage ${stage_id} ${reason_label}: ${work_dir} is not on ${run_branch}; preservation skipped and worktree left standing"
     return 1
   fi
 
   local non_state_changes
   non_state_changes="$(git -C "$work_dir" status --porcelain -- . ':(exclude)state' 2>/dev/null || true)"
   if [[ -z "$non_state_changes" ]]; then
-    log "stage ${stage_id} verifier FAIL: clean worktree, nothing to preserve"
+    log "stage ${stage_id} ${reason_label}: clean worktree, nothing to preserve"
     return 0
   fi
   if [[ -z "$worker_identity" ]]; then
-    log "stage ${stage_id} verifier FAIL: worker identity missing; preservation skipped and worktree left standing"
+    log "stage ${stage_id} ${reason_label}: worker identity missing; preservation skipped and worktree left standing"
     return 1
   fi
 
-  reason="$(jq -r '
-    ([.criteria[]? | select(.verdict == "FAIL")
-      | "criterion \(.id) \(.name): \(.evidence)"][0])
-    // (if (.additional_findings // "") != "" then .additional_findings else "verifier reported FAIL" end)
-  ' "$artefact_abs" 2>/dev/null || printf 'verifier reported FAIL')"
+  if [[ -n "$reason_override" ]]; then
+    reason="$reason_override"
+  else
+    reason="$(jq -r '
+      ([.criteria[]? | select(.verdict == "FAIL")
+        | "criterion \(.id) \(.name): \(.evidence)"][0])
+      // (if (.additional_findings // "") != "" then .additional_findings else "verifier reported FAIL" end)
+    ' "$artefact_abs" 2>/dev/null || printf 'verifier reported FAIL')"
+  fi
   reason="$(printf '%s' "$reason" | tr '\r\n\t' '   ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' | cut -c1-240)"
   [[ -n "$reason" ]] || reason="verifier reported FAIL"
 
   local index_path index_backup parent commit_sha commit_rc=0
   index_path="$(git -C "$work_dir" rev-parse --git-path index 2>/dev/null || true)"
-  [[ -n "$index_path" ]] || { log "stage ${stage_id} verifier FAIL: cannot resolve git index; worktree left standing"; return 1; }
+  [[ -n "$index_path" ]] || { log "stage ${stage_id} ${reason_label}: cannot resolve git index; worktree left standing"; return 1; }
   [[ "$index_path" = /* ]] || index_path="$work_dir/$index_path"
   index_backup="$(mktemp)"
   if [[ -f "$index_path" ]]; then
@@ -903,12 +917,12 @@ preserve_failed_work() {
     git add -- . ':(exclude)state'
     git diff --cached --quiet && exit 3
     git commit --author="$worker_identity" \
-      -m "wip(${stage_id}): attempt ${attempt}, verifier FAIL: ${reason}" >/dev/null
+      -m "wip(${stage_id}): attempt ${attempt}, ${reason_label}: ${reason}" >/dev/null
   ) || commit_rc=$?
   if (( commit_rc != 0 )); then
     cp -p "$index_backup" "$index_path" 2>/dev/null || true
     rm -f "$index_backup"
-    log "stage ${stage_id} verifier FAIL: git commit preservation failed (exit ${commit_rc}); worktree left standing"
+    log "stage ${stage_id} ${reason_label}: git commit preservation failed (exit ${commit_rc}); worktree left standing"
     return 1
   fi
 
@@ -918,7 +932,7 @@ preserve_failed_work() {
     git -C "$work_dir" reset --mixed "$parent" >/dev/null 2>&1 || true
     cp -p "$index_backup" "$index_path" 2>/dev/null || true
     rm -f "$index_backup"
-    log "stage ${stage_id} verifier FAIL: could not create append-only ${wip_branch}; preservation rolled back and worktree left standing"
+    log "stage ${stage_id} ${reason_label}: could not create append-only ${wip_branch}; preservation rolled back and worktree left standing"
     return 1
   fi
   rm -f "$index_backup"
@@ -927,10 +941,10 @@ preserve_failed_work() {
       '(.stages[] | select(.id == $id)).wip_commit = $sha
        | (.stages[] | select(.id == $id)).wip_branch = $branch' \
       --arg id "$stage_id" --arg sha "$commit_sha" --arg branch "$wip_branch"; then
-    log "stage ${stage_id} verifier FAIL: work is pinned at ${commit_sha} on ${wip_branch}, but state recording failed"
+    log "stage ${stage_id} ${reason_label}: work is pinned at ${commit_sha} on ${wip_branch}, but state recording failed"
     return 1
   fi
-  log "stage ${stage_id} verifier FAIL: preserved attempt ${attempt} as ${commit_sha} on ${wip_branch}"
+  log "stage ${stage_id} ${reason_label}: preserved attempt ${attempt} as ${commit_sha} on ${wip_branch}"
   return 0
 }
 

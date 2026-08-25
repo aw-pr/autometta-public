@@ -213,130 +213,164 @@ integration:
 ## (k) The phat-controller role
 
 The tick loop dispatches and verifies; it does not decide that a verifier
-FAIL is a card defect rather than a work defect, merge an integration a
-person would otherwise merge by hand, clear a stale pause, or keep the
-queue fed. On 2026-08-24 an interactive orchestrator session did all of
-that on a 15-minute check cadence while the operator left the queue running
-unattended. The cadence and the checklist worked; phat-controller is that
-checklist, packaged as a second scheduled pass rather than a person.
+FAIL is a card defect rather than a work defect, preserve work stranded by an
+agent that died mid-write, merge an integration a person would otherwise
+merge by hand, clear a stale pause, or keep the queue fed. On 2026-08-24 an
+interactive orchestrator session did all of that on a fifteen-minute cadence
+while the operator left the queue running unattended. **phat-controller** is
+that session, packaged.
 
-**Cron plus tick, same as the loop itself.** `scripts/phat-controller.sh`, dispatched
-as `autometta phat-controller` on its own LaunchAgent interval
-(`templates/launchagent-warden.plist.tpl`,
-`scripts/install-launchagent-warden.sh`, singleton label
-`com.autometta.warden.fleet`, same `AbandonProcessGroup` care as the tick's
-own). One pass reads state across every enabled subscriber, performs
-**at most one** remediation, writes state, exits. It is not a daemon and it
-does not watch anything continuously.
+**An agent that calls scripts, not a script that calls an agent.** Card 54
+shipped this the other way round: four remediations enumerated in bash, two
+stage statuses scanned, one narrow judgement dispatched. Two things fell out
+of that shape the evening it landed. The mandate manifest was not a mandate
+(it said so in its own header: thresholds and cadence only), and the blocker
+that actually happened was not on the list. Stage 54's own first attempt went
+`stalled` with `worker_envelope_missing_after_exit`, and the only occurrence
+of the string "stalled" in the script was inside the word "installed"; the
+queue would have sat there until morning. The list was short because an
+enumerated list is what a script can hold, and the remit wanted is the
+initiative an orchestrator session actually exercises. Initiative does not
+enumerate. Card 58 inverted it: the role is an agent, seeded at configure
+time, and `scripts/phat-controller.sh` is the set of verbs it calls. The
+design is `docs/proposals/orchestrator-role-review.md`.
 
-**The whole list, closed by construction:**
+**The context seed.** Rendered by `scripts/render-controller-seed.sh` when a
+job is configured, to `$AUTOMETTA_HOME/phat-controller-seed.md`
+(gitignored, operator-owned, editable afterwards). It carries, in this order:
+the persona and mandate, the negative list below, the spend authority
+answered for at setup, and the repo facts an orchestrator would otherwise
+rediscover (paths, families and their auth modes, branch policy, where state
+lives, the repo's own gotchas lifted from its agent brief at render time). It
+is prose an agent reads, not a config file anything parses; thresholds that a
+script must act on stay in the mandate manifest.
 
-1. **Requeue a `verifier_failed` stage after triage.** The only remediation
-   that dispatches an agent. The agent reads the verifier artefact and the
-   preserved WIP (`wip_commit`, card 53), judges work defect vs card defect
-   vs inconclusive, and writes a structured decision envelope --
-   `scripts/phat-controller.sh` performs the actual mutation (append the re-brief,
-   commit it narrowly to `repo_root` attributed to `Autometta Warden
-   <autometta-warden@local>`, run `requeue-stage.sh`), never the agent
-   itself. A card-defect verdict appends and commits a `PROPOSED-AMENDMENT`
-   block and requeues nothing: only the operator or an interactive
-   orchestrator turns a proposal into a criterion change. The commit stages
-   only the one card path, never a broad `git add`, so an operator's own
-   unrelated dirty file in `repo_root` is never swept in; a commit that
-   fails (an unexpected checked-out branch, a dirty index) leaves the
-   append on disk and logs loudly rather than losing it. It does not requeue
-   unless that card-only commit succeeds.
-2. **Merge a conflict-free `awaiting` integration.** Checked with
-   `git merge-tree --write-tree` before any ref moves; a conflict is
-   surfaced, never resolved by the warden. A clean fast-forward reuses
-   `finalize_run_worktree`; the ordinary `awaiting` case, where base and the
-   run branch diverged cleanly, produces a two-parent merge commit attributed
-   to the warden. It then tears down through the existing helper, runs every
-   offline `scripts/*-smoke.sh` in the repo (the live, metered
-   `sdk-cache-smoke.sh` is excluded), and pushes the exact base refspec per
-   `git-push-check` when it is on `PATH` -- never without it.
-3. **Clear a pause or halt that is provably stale.** Reuses
-   `budget_pause_active` and `budget_ensure_window` verbatim rather than
-   re-deriving staleness: those are the same audited functions a regular
-   tick already calls, and a second implementation of "is this stale" could
-   only drift from the first. This remediation exists because nothing
-   guarantees a tick has run recently enough to have already done it for a
-   given repo.
-4. **Queue the next `PLAN.md` card** when a repo's queue is empty and the
-   plan names an unqueued card whose stated gate (`blocked by`, `gated on`,
-   `after`, followed by stage numbers) is satisfied -- checked against
-   `PLAN.md`'s own `done` column first (authoritative for cards never
-   dispatched through `state.yaml`) and `state.yaml`'s `completed` status
-   second. A gate the warden cannot parse is left unmet, never guessed.
+**The spend authority is answered for at configure time, and there is no
+default.** The right level varies by run, by hour and by day, so a committed
+default would be wrong most of the time it was used, and wrong expensively.
+`render-controller-seed.sh` with no `--spend-authority` prints what it needs
+and exits 2 having written nothing;
+`install-launchagent-phat-controller.sh` refuses to install a schedule with
+no seed rather than rendering one. The controller then spends to that
+authority without asking, because there is nobody to ask, and halts when it
+is exhausted rather than escalating into a wait nothing will service. The
+prose answer lives in the seed; its machine-readable half
+(`--token-ceiling`, `--expires`) is mirrored into the mandate's
+`spend_authority` block so a pass can stop without parsing prose.
 
-Nothing else. The action list lives in `scripts/phat-controller.sh` and nowhere
-else -- not in the rendered triage prompt (`templates/phat-controller-prompt.md`),
-not in the mandate manifest below. Adding a fifth action is a card.
+**What bounds it is a short negative list, not an action enumeration.** The
+recoverable actions do not need enumerating and the unrecoverable ones are
+few. The governing distinction: the controller may change **what is recorded
+and where**, never **what was asked for or whether it was met**. Anything in
+the first class is auditable and revertible in git; anything in the second is
+the record of intent, and a queue minder that can edit intent can make any
+stage pass.
 
-**One remediation per pass, in a fixed priority order:** clear-stale (3),
-merge-awaiting (2), requeue-verifier-failed (1), queue-next-card (4).
-Unblocking dispatch matters more than anything that dispatch would enable;
-landing already-verified work is the cheapest win; triage is the only
-remediation that spends tokens, so it comes after the free ones; queueing
-fresh work only matters once a queue is confirmed empty. The order is
-hard-coded in `warden_pass`, not a mandate knob.
+Forbidden, without exception: editing a card's acceptance criteria, objective
+or specification (it proposes instead, in the `PROPOSED-AMENDMENT` form card
+54 defined); verifying its own dispatches; rewriting history, pushing
+non-fast-forward, or moving a publish branch outward; lifting its own spend
+caps; resolving a merge conflict. The list is written once, in the proposal,
+and copied verbatim into the seed template; `render-controller-seed.sh`
+diffs the two at render time and refuses to render a seed whose prohibitions
+have drifted from the document that owns them.
 
-**No silent action.** Every applied remediation appends one attributed JSON
-line to `<repo>/state/warden-actions.jsonl`. Card amendments and divergent
-merges also carry the warden as git author; the runtime audit covers actions
-such as stale-pause clears, fast-forwards and queue additions that are state
-writes rather than new commits.
+Two of the five are enforced mechanically rather than trusted to prose.
+`pc_card_append` measures the card before writing and re-checks afterwards
+that every previous byte is still an exact prefix, restoring the file and
+refusing otherwise, so nothing that goes through `rebrief` or
+`propose-amendment` can soften a criterion. `push` has no policy of its own
+and does exactly what `git-push-check` says.
 
-**Escalation, not a third attempt.** The two things the objective names as
-needing a human: repeated failure and metered spend.
+**The verbs.** `scripts/phat-controller.sh <verb>`: `picture` (the
+mechanical triage picture as JSON, reporting observations under `signals` and
+never naming an action), `preserve`, `rebrief`, `propose-amendment`,
+`requeue`, `stale-halt`, `merge-awaiting`, `smokes`, `push`, `queue-card`,
+`escalate`, `journal`, and `pass` (render the seed and dispatch one
+controller agent). Exit codes are `0` acted or nothing needed doing, `1`
+failed, `2` bad usage, `3` refused or held. A `3` is a deliberate answer, not
+an error.
 
-- *Repeated failure* is tracked per stage in `<repo>/state/warden-state.json`
-  (gitignored): a counter per `(stage_id, remediation)`, dropped once the
-  stage reaches a resolved state (`completed`/`superseded` for remediation
-  1, integration leaving `awaiting` for remediation 2). At the mandate's
-  `same_remediation_without_progress_cap` (default 2), the next application
-  escalates instead. A `verifier_failed` stage at or above the mandate's
-  `attempt_cap` escalates immediately rather than triaging again.
-- *Metered spend* is checked before the one remediation that spends
-  anything. The normal `budget_gate_dispatch` guards triage exactly as it
-  guards a worker or verifier, and the returned token usage is charged back
-  to `state/budget.json` before the triage verdict is applied. The mandate
-  classifies metered auth routes, may forbid them even within budget, and
-  carries the provider-payment signal pattern that escalates rather than
-  acting on a returned envelope. `triage_dispatch_enabled` can turn triage
-  off entirely.
+`preserve` covers the case card 54 missed. A stage that went `stalled`
+because its worker exited without a handoff envelope has no verifier artefact
+to read a reason out of, and calling the preserved commit a verifier FAIL
+would be untrue, so `preserve_failed_work` in `tick.sh` takes an optional
+reason and label and the commit reads `wip(<stage>): attempt N, stalled:
+worker_envelope_missing_after_exit`. The index-safe git surgery, the `state/`
+exclusion and the append-only wip ref are the tick's, unchanged and not
+duplicated.
 
-Escalation is `budget_halt "$repo_root" "warden-escalation"` -- the loud log
-line acceptance criteria ask for is the `ESCALATION:` line in
-`warden-YYYY-MM-DD.log`, and the ticker-visible alert is `halted` itself,
-the signal every renderer (dashboard, agent-ticker, alerts table) already
-reads. No second alert channel exists to drift from the first. A halted
-repo dispatches nothing further -- worker, verifier, or warden -- until an
-operator clears it.
+**The decision journal.** Every mutating verb writes a `phase: "decision"`
+line to `<repo>/state/phat-controller-journal.jsonl` **before** attempting
+the action, then a `phase: "outcome"` line after, sharing a `decision_id`.
+The ordering is the contract: a decision whose action is then refused by a
+guard still leaves its decision line, because the journal records intent
+rather than effects. Schema at `schemas/decision-journal.json`.
+
+Long runs, measured in days rather than an evening, invite a second
+controller reviewing the first, on the theory that a role marking its own
+homework drifts. That is not built and building it now would be speculative.
+What the journal does is not foreclose it: it costs little while the
+controller is alone and it is the whole input a reviewing controller would
+need. Retrofitting one afterwards would mean reconstructing intent from
+effects, which is not possible.
+
+**Escalating without blocking.** Two flavours, and choosing between them is
+the whole judgement. A *blocking* escalation is `budget_halt` with reason
+`controller-escalation`: `halted` is the signal every renderer (dashboard,
+agent-ticker, alerts table) already reads, and a halted repo dispatches
+nothing further until an operator clears it. It is correct only when carrying
+on makes things worse: the same failure repeated past the mandate's
+`same_remediation_without_progress_cap`, a spend authority exhausted, a
+provider asking for payment. A *non-blocking* escalation is a loud log line
+plus a journal entry, and the queue carries on. No second alert channel
+exists to drift from the first.
+
+`git-push-check` returning `ASK` is the case that forces the split, and its
+three verdicts read directly as a human-presence protocol: `PUSH` act, `ASK`
+escalate and carry on with other work, `HOLD` stop and report. Blocking on
+`ASK` would be the queue sitting still until morning waiting for an answer
+nobody is awake to give, which is the failure this role exists to prevent.
+
+**One skill, two callers.** `skills/phat-controller/SKILL.md` is loaded both
+into the rendered prompt of a scheduled pass and into an interactive session
+that has been asked to mind the queue, so a conversation and a cron dispatch
+read one source of truth rather than two descriptions that drift. It opens
+with a table naming which file owns each fact: the seed owns the persona, the
+prohibitions, the spend authority and the repo facts; the mandate owns
+thresholds and cadence; `phat-controller.sh` owns what the verbs do; the
+skill owns how to decide and the formats a decision has to produce. The
+difference between the two callers is not the contract, it is who is in the
+room: an operator can authorise something the negative list forbids the
+controller doing alone, and a headless pass never can.
 
 **The mandate manifest.** A committed template
-(`templates/warden-mandate.yaml.tpl`) copied verbatim to
-`$AUTOMETTA_HOME/warden-mandate.yaml` (gitignored, operator-owned) the
-first time the warden runs with no operator copy present. It holds
-escalation thresholds including what counts as metered spend, pass cadence
+(`templates/phat-controller-mandate.yaml.tpl`) copied to
+`$AUTOMETTA_HOME/phat-controller-mandate.yaml` (gitignored, operator-owned)
+on first use. Thresholds and cadence only: the attempt cap, the
+repeat-without-progress cap, what counts as metered spend, the pass interval
 (read by the installer at provisioning time; re-run it to reschedule a live
-LaunchAgent), which repos the warden minds (empty means every
-enabled subscriber, the same convention a drain's `repos` list uses), the
-triage dispatch identity, and the reporting voice for surfaced summaries.
+LaunchAgent), which repos the controller minds (empty means every enabled
+subscriber), the dispatch identity and effort, and the reporting voice.
 Budget figures are never restated here: they live in each repo's
 `state/budget.json` and the controller's host defaults (card 47). The
-warden prompt is rendered from template plus mandate at dispatch time for
-either Claude or Codex, through the same family auth routes and bounded by
-the mandate's effort and timeout. Editing the mandate changes behaviour at
-the next pass with no code edit --
-the action list above is the one thing the mandate cannot touch.
+`AUTOMETTA_WARDEN_MANDATE` env var and a `warden-mandate.yaml` already in the
+controller home are honoured for one release.
 
-**The interactive side.** The `autometta-warden` skill loads the same
-mandate and the same closed action list into an interactive orchestrator
-session, so a human-driven minding session (as run on 2026-08-24) and the
-scheduled pass operate under one contract. The skill states plainly that an
-interactive orchestrator may exceed the list only with the operator in the
-conversation -- the warden itself never does.
+**Scheduling.** `autometta phat-controller pass` on its own LaunchAgent
+interval (`templates/launchagent-phat-controller.plist.tpl`,
+`scripts/install-launchagent-phat-controller.sh`, singleton label
+`com.autometta.phat-controller.fleet`, same `AbandonProcessGroup` care as the
+tick's own). One pass reads the picture across every enabled subscriber,
+decides, acts, and exits. It is not a daemon and it does not watch anything
+continuously.
+
+**Offline proof.** `scripts/phat-controller-smoke.sh` runs every fixture with
+no auth, network or provider dispatch: the seed rendered for a fresh job, the
+refusal when no spend authority is supplied, the drift check on the negative
+list, each verb, the journal's decision-before-action ordering demonstrated
+by a refused action that still leaves its decision line, and the card-58
+contract test replaying the evening of 2026-08-24.
 
 ## Operational entry points
 
@@ -346,15 +380,17 @@ The `autometta` CLI is the preferred operator surface:
 - `autometta init <repo>`: initialise host state if needed, subscribe one repo, and create its tmux viewer when `tmux` is available.
 - `autometta add-stage <repo> <card>`: add a stage card to the repo queue.
 - `autometta tick`: run one cron-safe controller tick.
-- `autometta phat-controller [--print-mandate]`: run one queue-minding pass (see (k)); the flag prints the resolved mandate without acting.
+- `autometta phat-controller <verb>`: the queue minder's verbs (see (k)). `pass` renders the seed and dispatches one controller agent; `picture` prints the mechanical triage picture; `--print-mandate` and `--print-seed` print the resolved mandate and seed without acting.
+- `autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]`: render the context seed when a job is configured. Refuses, writing nothing, if no spend authority is supplied.
 - `autometta status`: print a read-only status table.
 - `autometta attach <repo>`: open or create the repo-scoped tmux viewer.
 
 The CLI delegates to these scripts:
 
 - `scripts/tick.sh`: the cron entry point.
-- `scripts/phat-controller.sh`: the queue minder's cron entry point; sources `tick.sh` for its merge/teardown/state-write mechanics rather than duplicating them.
-- `scripts/install-launchagent-warden.sh` / `scripts/uninstall-launchagent-warden.sh`: the warden's own LaunchAgent, on a separate schedule and label from the tick's.
+- `scripts/phat-controller.sh`: the queue minder's verbs; sources `tick.sh` for its merge, teardown, preservation and state-write mechanics rather than duplicating them.
+- `scripts/render-controller-seed.sh`: renders the context seed at configure time and mirrors the machine-readable spend bounds into the mandate.
+- `scripts/install-launchagent-phat-controller.sh` / `scripts/uninstall-launchagent-phat-controller.sh`: the controller's own LaunchAgent, on a separate schedule and label from the tick's. The installer is where a job is configured, so it fails closed with no seed.
 - `scripts/spawn-worker.sh`: helper invoked by `tick.sh` to dispatch one worker per the stage card.
 - `scripts/spawn-verifier.sh`: helper invoked by `tick.sh` to dispatch the cross-family verifier.
 - `scripts/budget.sh`: helper for reading and updating `state/budget.json` atomically.

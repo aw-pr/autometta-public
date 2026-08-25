@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://autometta.local/schemas/decision-journal.json",
+  "title": "phat-controller decision journal line",
+  "description": "One line of <repo>/state/phat-controller-journal.jsonl. The file is append-only JSONL, one object per line. Each decision produces two lines sharing a decision_id: a decision line written BEFORE the action is attempted, then an outcome line written after. The ordering is the contract. A decision whose action then fails or is refused still leaves its decision line, because the journal records intent rather than effects. It is the input a second reviewing controller would need, and reconstructing intent from effects afterwards is not possible.",
+  "type": "object",
+  "required": ["ts", "seq", "decision_id", "phase", "repo", "actor"],
+  "properties": {
+    "ts": {
+      "type": "string",
+      "description": "UTC ISO8601, when this line was written."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic per journal file: the line's own 1-based position. Two lines with the same decision_id are ordered by this, and a decision line always has the lower value."
+    },
+    "decision_id": {
+      "type": "string",
+      "description": "Joins a decision line to its outcome line."
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["decision", "outcome"]
+    },
+    "repo": {
+      "type": "string",
+      "description": "Absolute path of the repo the decision is about."
+    },
+    "actor": {
+      "type": "string",
+      "description": "The role identity, always 'Phat Controller <phat-controller@local>'. Not the agent: the role outlives whichever model held it."
+    },
+    "agent": {
+      "type": ["string", "null"],
+      "description": "Decision lines only. The agent identity driving this pass, from AUTOMETTA_CONTROLLER_AGENT, when one is set."
+    },
+    "verb": {
+      "type": "string",
+      "description": "Decision lines only. The operation in scripts/phat-controller.sh being decided on."
+    },
+    "stage_id": {
+      "type": ["string", "null"],
+      "description": "Decision lines only. Null for a decision about the repo rather than a stage."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Decision lines only. Why this, now."
+    },
+    "evidence": {
+      "type": "string",
+      "description": "Decision lines only. What was read to reach it."
+    },
+    "expected_effect": {
+      "type": "string",
+      "description": "Decision lines only. What should be true afterwards. A reviewing controller compares this against the outcome line."
+    },
+    "result": {
+      "type": "string",
+      "enum": ["acted", "refused", "held", "failed", "escalated", "none"],
+      "description": "Outcome lines only. 'refused' is a guard declining, 'held' is a verdict declining, 'failed' is the action itself going wrong, 'none' is the correct action having been none."
+    },
+    "note": {
+      "type": "string",
+      "description": "Outcome lines only. What actually happened."
+    }
+  },
+  "additionalProperties": false
+}
