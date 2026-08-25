@@ -137,23 +137,44 @@ seen. A card on disk that has never been queued is labelled `unqueued`, which
 is deliberately not the same word as `pending`: it is a real and useful
 category, but it is not queue depth.
 
-`autometta-autometta` is the fleet viewer. Its default `fleet` window renders
-only `${AUTOMETTA_HOME}/dashboard/data.json`, which is produced by the
-existing dashboard aggregator. It shows every enabled subscriber, halt reason,
-queue depth, today's tokens and estimated cost, shortened window spend, last
-dispatch and fleet totals. The alert union is a stable table with repo,
-stage/card, kind and detail columns; repo-level conditions say `repo` in the
-stage/card column. Completed worker handoffs and verifier artefacts prevent
-source text or commit subjects about rate limits from becoming provider-limit
-alerts.
+`autometta-autometta` is the fleet viewer, and card 66 applied card 63's
+"fits its pane" discipline to it. It has four windows: `repo` (the landing
+window, `attach.sh --fleet-ticker <path>` scoped to the autometta repo
+itself), `status` (the ordinary per-repo ticker every subscriber gets), `fleet`
+(the fleet-wide page, every enabled subscriber) and `log`. Landing on the
+fleet-wide page by default was the wrong default for a session that is
+already scoped to one repo — "I rarely if ever will want a fleet view"
+(operator feedback, 2026-08-25) — so window 0 is the repo-scoped page and the
+fleet-wide page is one `tmux next-window` away, never the first thing an
+operator sees.
+
+The fleet page (`scripts/lib/fleet-ticker-render.py`, the sibling of the repo
+ticker's renderer) reads only `${AUTOMETTA_HOME}/dashboard/data.json`, the
+existing dashboard aggregator's output, or a single repo object from
+`aggregate-dashboard.sh --repo` when scoped. Fleet-wide it shows TOTALS
+(enabled repos, today's tokens and cost, window spend against cap), REPOS
+(one row per subscriber: name, operational state with its reason, queue
+depth, today's spend, and spend against the cap that binds), and ESCALATIONS:
+every halted, paused, attempt-capped or stale-vendor repo, every stage in an
+alert status, every over-budget live agent, and every provider-limit alert
+younger than 24 hours — one row each, repo/result/stage/role/identity
+rendering whole and a trailing detail column carrying the ellipsis budget. A
+repo with nothing outstanding earns no ESCALATIONS row. Scoped to one repo,
+REPOS is dropped entirely (that repo's row would be the whole page's
+subject; the other rows are the fleet view's business) and TOTALS narrows to
+that repo's own figures. The itemised failures list and the per-role spend
+breakdown moved to `scripts/failures-history.sh --fleet`
+(`autometta failures --fleet`), the fleet-wide sibling of the per-repo command
+card 63 shipped.
 
 A separate tmux background job runs the existing dashboard aggregator every
-`AUTOMETTA_FLEET_REFRESH_INTERVAL` seconds (default 120). The ticker
-continues to read only `data.json`, so there is still one fleet walker. It
-prints the snapshot's exact generation time and age. A missing snapshot or one
-older than `AUTOMETTA_FLEET_STALE_SECONDS` (default 600) is labelled
-missing or stale rather than healthy. The `repo` window preserves autometta's
-own per-repo view. Interactive `autometta attach` refreshes its viewer so
+`AUTOMETTA_FLEET_REFRESH_INTERVAL` seconds (default 120), feeding the
+fleet-wide window; the repo-scoped landing window re-runs
+`aggregate-dashboard.sh --repo` on every frame instead, the same as any other
+subscriber's `status` window. The page prints the snapshot's exact generation
+time and age. A missing snapshot or one older than
+`AUTOMETTA_FLEET_STALE_SECONDS` (default 600) is labelled missing or stale
+rather than healthy. Interactive `autometta attach` refreshes its viewer so
 long-running ticker loops pick up script changes; `autometta detach --all`
 removes all `autometta-*` viewers and nothing else. Attach also reports viewers
 whose subscriber is disabled or absent.

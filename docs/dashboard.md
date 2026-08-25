@@ -50,26 +50,45 @@ in `data.json`; the tick itself does not walk the fleet.
 tmux session. Override its 120-second interval with
 `AUTOMETTA_FLEET_REFRESH_INTERVAL`. The fleet pane prints the exact
 `generated_at` age, and retains the stale warning after
-`AUTOMETTA_FLEET_STALE_SECONDS` (default 600). Set
-`AUTOMETTA_FLEET_ABSOLUTE_TIME=true` when the absolute ISO timestamp is
-needed alongside the relative age.
+`AUTOMETTA_FLEET_STALE_SECONDS` (default 600).
 
 ## Fleet pane
 
-The fleet pane starts with one TOTALS line and one traffic-light row per repo.
-ATTENTION is recomputed from current conditions. HISTORY is a seven-day event
-view, newest first and capped at eight rows. AGENTS shows live registrations,
-then pending stages with their intended worker and verifier. FAILURES itemises
-non-pass cost-log rows and their token loss. SPEND splits fresh input, cached
-input and output by repo and role; its token total is the TOTALS today figure.
-An active drain is named in the header with its effective cap and expiry.
+Card 66 applied card 63's discipline (one repo, fits its pane) one level up:
+the fleet pane now carries only what an operator acts on. It opens with one
+TOTALS line (enabled repos, today's spend, window spend against cap), then
+REPOS -- one row per subscriber: name, operational state (`HALTED: <reason>`,
+`STALLED: <stage>`, `PAUSED: <reason>`, `running <stage>`, `queued <stage>` or
+`idle`), queue depth, today's spend and window spend against cap -- then
+ESCALATIONS: every halted, paused, attempt-capped or stale-vendor repo, every
+stage in an alert status, every over-budget live agent and every alert younger
+than 24 hours, one row each, with a repo, result, stage, role and agent
+identity that render whole and a trailing detail column that carries the
+ellipsis budget. A repo with nothing outstanding earns no ESCALATIONS row.
+The itemised failures list and the per-role spend breakdown moved to
+`scripts/failures-history.sh --fleet` (`autometta failures --fleet`), the
+fleet-wide sibling of the per-repo command card 63 shipped -- it is reachable
+on demand and reads the same aggregated JSON, so it never disagrees with the
+live pane. An active drain is named in the header with its effective cap and
+expiry.
 
-All tabular sections use one pane-width-aware renderer. Cells are truncated
-with an ellipsis before a row can wrap, numeric columns are right-aligned, and
-important states are emphasised. Colour-capable UTF-8 terminals use box-drawing
-borders and state colours. `NO_COLOR=1`, a non-UTF-8 locale, or a terminal
-without colour capabilities selects readable ASCII borders and plain text.
-The renderer retains per-line erase-to-end repainting in the live ticker.
+The renderer is `scripts/lib/fleet-ticker-render.py`, the sibling of
+`scripts/lib/repo-ticker-render.py` (card 63) one level up: it reuses the same
+column-allocation algorithm, ANSI-safe `fit`/`pad` helpers and short-token
+formatting rather than reimplementing them, reads only the already-aggregated
+JSON `attach.sh` hands it, and truncates with an ellipsis only in a row's
+trailing detail column -- repo names, stage ids, `role`, `result` and agent
+identities render whole at 119 columns and wider. `attach.sh` gathers the
+JSON (the shared `dashboard/data.json` fleet-wide, or a single repo object
+from `aggregate-dashboard.sh --repo` when scoped) and calls the renderer once
+per frame; neither reads a subscriber's `state.yaml`, `budget.json` or
+`cost-log.jsonl` directly.
+
+The per-repo viewer session's window 0 renders this same page scoped to one
+repo (TOTALS and ESCALATIONS for that repo, no REPOS table -- the other rows
+are the fleet view's business, not that page's subject). The fleet-wide page
+stays reachable as its own tmux window (`fleet`), never the landing view: an
+operator attached to one repo's session rarely wants every subscriber.
 
 ## Traffic-light rules
 
@@ -96,13 +115,14 @@ Worst condition wins. `FLEET_FRESH_FAILURE_HOURS` defaults to 24.
 - drain in force covering this repo
 - heartbeat `checked_at` older than 600s while stages are in flight
 
-**GREEN**: none of the above. Sub-states shown in the state column are
-`run <stage>` when work is in flight, `queued <stage>` when pending work waits,
-and `idle` when the queue is empty.
+**GREEN**: none of the above.
 
-With colour enabled the marks are `●`, `◐`, and `○`. With `NO_COLOR=1` or
-`NO_COLOUR=1`, they are `ok`, `WARN`, and `FAIL`, so colour is never the only
-signal.
+`data.json` still carries `light` and `light_reason` per repo -- the web view
+below reads them for its traffic-light marks (`●`/`◐`/`○` with colour,
+`ok`/`WARN`/`FAIL` under `NO_COLOR`). The text-mode fleet pane (previous
+section) does not repeat them: its REPOS state column and ESCALATIONS table
+already say `HALTED`, `STALLED`, `PAUSED`, `vendor-stale`, `over-budget` or
+`provider-limit` in words, so a colour-only signal is never the only one.
 
 ## Web view
 

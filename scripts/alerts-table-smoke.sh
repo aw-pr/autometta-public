@@ -70,19 +70,23 @@ assert_not_contains "$scan_output" '996d42eab40d765bc5ea681511ecfe7234cb823c' 'c
 assert_not_contains "$scan_output" '71f99a7 fix(budget): rate-limit' 'commit prose raised an alert'
 
 PHAT_CONTROLLER_HOME="$controller_home" "$script_dir/aggregate-dashboard.sh" >/dev/null
+# Wide enough that ESCALATIONS' detail column (the provider-limit message)
+# is not squeezed out by the mandatory repo/result/stage columns ahead of it.
 render_one="$(PHAT_CONTROLLER_HOME="$controller_home" PHAT_CONTROLLER_FLEET_ONCE=true \
-  "$script_dir/attach.sh" --fleet-ticker)"
+  PHAT_CONTROLLER_FLEET_COLUMNS=160 "$script_dir/attach.sh" --fleet-ticker)"
 
-assert_contains "$render_one" 'QUEUE' 'QUEUE section missing'
-assert_contains "$render_one" 'empty' 'empty queue value missing'
+assert_contains "$render_one" 'ESCALATIONS' 'ESCALATIONS section missing'
 assert_contains "$render_one" 'failed-stage' 'failed stage missing'
 assert_contains "$render_one" 'verifier_failed' 'failure status missing'
-assert_contains "$render_one" 'LIMITS' 'LIMITS section missing'
-assert_contains "$render_one" 'genuine' 'genuine provider alert missing from pane'
+assert_contains "$render_one" "session limit" 'genuine provider alert missing from pane'
 assert_not_contains "$render_one" 'Zero marginal cost' 'card prose appeared in pane limits'
 assert_contains "$render_one" '12.3M' 'today token shortening changed'
 assert_contains "$render_one" "\$3.46" 'today cost formatting changed'
-assert_contains "$render_one" '16.1M/150M' 'window token formatting changed'
+# Card 66 moved the REPOS row's token shortening onto the reused
+# scripts/lib/repo-ticker-render.py short_tokens (one formatter for both
+# pages), which always carries one decimal place rather than card 63's own
+# bash formatter's whole-number special case, hence 150.0M rather than 150M.
+assert_contains "$render_one" '16.1M/150.0M' 'window token formatting changed'
 [[ "$(jq -r '.repos[0].today_tokens' "$controller_home/dashboard/data.json")" == 12345678 ]] \
   || fail 'exact aggregate token total changed'
 

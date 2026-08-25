@@ -326,10 +326,13 @@ repo_path: "$alert_repo"
 manifest_path: ""
 YAML
 
+# Card 66 renamed the fleet page's alert-bearing section from ALERTS to
+# ESCALATIONS and dropped the itemised FAILURES table; the alert-worthy set
+# it still draws on is the same one scripts/alert-statuses.sh defines.
 render_fleet() {
   "$script_dir/aggregate-dashboard.sh" >/dev/null 2>&1
   PHAT_CONTROLLER_FLEET_ONCE=true "$script_dir/attach.sh" --fleet-ticker 2>/dev/null |
-    sed -n '/^ALERTS/,$p'
+    sed -n '/^ESCALATIONS/,$p'
 }
 render_ticker() {
   "$script_dir/agent-ticker.sh" "$alert_repo" --once 2>/dev/null |
@@ -373,7 +376,7 @@ check "the one definition was actually edited in the copy" \
   "$([[ "$("$patched/alert-statuses.sh")" == *superseded* ]] && printf 'ok\n' || printf 'edit did not take\n')"
 
 patched_fleet="$("$patched/aggregate-dashboard.sh" >/dev/null 2>&1; \
-  PHAT_CONTROLLER_FLEET_ONCE=true "$patched/attach.sh" --fleet-ticker 2>/dev/null | sed -n '/^ALERTS/,$p')"
+  PHAT_CONTROLLER_FLEET_ONCE=true "$patched/attach.sh" --fleet-ticker 2>/dev/null | sed -n '/^ESCALATIONS/,$p')"
 patched_ticker="$("$patched/agent-ticker.sh" "$alert_repo" --once 2>/dev/null | sed -n '/^ALERTS/,/^$/p')"
 
 check "one edit makes the fleet pane alert on superseded" \
@@ -445,8 +448,12 @@ YAML
 
 alerts_now() {
   "$script_dir/aggregate-dashboard.sh" >/dev/null 2>&1
-  PHAT_CONTROLLER_FLEET_ONCE=true "$script_dir/attach.sh" --fleet-ticker 2>/dev/null |
-    sed -n '/^ALERTS/,$p'
+  # Wide enough that the ESCALATIONS detail column (the provider-limit
+  # message itself) is not squeezed out by the mandatory repo/result/stage
+  # columns ahead of it -- this test cares whether the alert survives the
+  # retirement procedure, not how it wraps at a narrow width.
+  PHAT_CONTROLLER_FLEET_COLUMNS=160 PHAT_CONTROLLER_FLEET_ONCE=true "$script_dir/attach.sh" --fleet-ticker 2>/dev/null |
+    sed -n '/^ESCALATIONS/,$p'
   "$script_dir/agent-ticker.sh" "$retire_repo" --once 2>/dev/null |
     sed -n '/^ALERTS/,/^$/p'
 }

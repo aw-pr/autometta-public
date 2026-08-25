@@ -27,6 +27,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=alert-statuses.sh
 . "$script_dir/alert-statuses.sh"
 alert_statuses_json="$(alert_stage_statuses_json)"
+# shellcheck source=vendor-set.sh
+. "$script_dir/vendor-set.sh"
+autometta_current_sha="$(git -C "$script_dir/.." rev-parse --short HEAD 2>/dev/null || printf unknown)"
 
 repo_filter=""
 while [[ $# -gt 0 ]]; do
@@ -173,6 +176,20 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   heartbeat_checked_at="$(printf '%s' "$heartbeat_json" | jq -c '.checked_at // null')"
   heartbeat_baselines="$(printf '%s' "$heartbeat_json" | jq -c '.baselines // {}')"
   heartbeat_outlier_policy="$(printf '%s' "$heartbeat_json" | jq -c '.outlier_policy // {}')"
+
+  # Vendor staleness (card 66): the same comparison scripts/tick.sh's
+  # warn_if_vendor_stale makes each pass, offered here as data rather than a
+  # log line so the fleet page can show which subscribers are dispatching
+  # against a copy of the contract older than this autometta checkout.
+  vendor_stale=false; vendor_from=null
+  vendor_stamp="$repo_path/$autometta_vendor_stamp_name"
+  if [[ -f "$vendor_stamp" && "$autometta_current_sha" != unknown ]]; then
+    vendored_from_raw="$(autometta_vendor_stamp_field "$vendor_stamp" vendored_from | tr -d '[:space:]')"
+    if [[ -n "$vendored_from_raw" ]]; then
+      vendor_from="$(jq -nc --arg value "$vendored_from_raw" '$value')"
+      [[ "$vendored_from_raw" == "$autometta_current_sha" ]] || vendor_stale=true
+    fi
+  fi
 
   stages_json='[]'; state_error=null; last_tick_at=null
   if [[ ! -r "$state_yaml" ]]; then
@@ -356,7 +373,9 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson heartbeat_checked_at "$heartbeat_checked_at" --argjson drain_active "$drain_active" \
     --argjson heartbeat_baselines "$heartbeat_baselines" \
     --argjson heartbeat_outlier_policy "$heartbeat_outlier_policy" \
-    --argjson drain_cap "$drain_cap" --argjson drain_expires_at "$drain_expires_at" '
+    --argjson drain_cap "$drain_cap" --argjson drain_expires_at "$drain_expires_at" \
+    --argjson vendor_stale "$([[ "$vendor_stale" == true ]] && printf true || printf false)" \
+    --argjson vendor_from "$vendor_from" --arg vendor_current "$autometta_current_sha" '
     {name:$name, repo_path:$repo_path, enabled:$enabled, tokens_spent:$tokens_spent,
      token_cap_total:$token_cap_total, effective_token_cap:$effective_token_cap, cap_source:$cap_source,
      halted:$halted, halt_reason:$halt_reason,
@@ -366,6 +385,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      state_error:$state_error, heartbeat_checked_at:$heartbeat_checked_at,
      heartbeat_baselines:$heartbeat_baselines, heartbeat_outlier_policy:$heartbeat_outlier_policy,
      drain_active:$drain_active, drain_cap:$drain_cap, drain_expires_at:$drain_expires_at,
+     vendor_stale:$vendor_stale, vendor_from:$vendor_from, vendor_current:$vendor_current,
      queue_depth:($queue|length), in_flight:([$stages[] | select(.status == "in_progress")] | length),
      alerts:$alerts, agents:$agents, active_agents:$agents, queue:$queue, queue_counts:$queue_counts,
      stages:$stages, spend:$spend, quota:$quota,

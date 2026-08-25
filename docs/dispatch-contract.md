@@ -306,7 +306,7 @@ mv state/budget.json.tmp state/budget.json
 
 ```sh
 scripts/aggregate-dashboard.sh
-AUTOMETTA_FLEET_ONCE=true scripts/attach.sh --fleet-ticker | sed -n '/^ALERTS/,$p'
+AUTOMETTA_FLEET_ONCE=true scripts/attach.sh --fleet-ticker | sed -n '/^ESCALATIONS/,$p'
 scripts/agent-ticker.sh . --once | sed -n '/^ALERTS/,/^$/p'
 ```
 

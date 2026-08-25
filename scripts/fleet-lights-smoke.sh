@@ -65,12 +65,6 @@ render_ascii() {
   LC_ALL=C NO_COLOR=1 AUTOMETTA_HOME="$controller" AUTOMETTA_FLEET_ONCE=true \
     AUTOMETTA_FLEET_COLUMNS="$width" "$script_dir/attach.sh" --fleet-ticker > "$out"
 }
-render_colour() {
-  local width="$1" out="$2"
-  env -u NO_COLOR -u NO_COLOUR LC_ALL=en_US.UTF-8 TERM=xterm-256color AUTOMETTA_FLEET_STYLE=colour \
-    AUTOMETTA_HOME="$controller" AUTOMETTA_FLEET_ONCE=true AUTOMETTA_FLEET_COLUMNS="$width" \
-    "$script_dir/attach.sh" --fleet-ticker > "$out"
-}
 assert_jq() {
   local filter="$1" message="$2"
   jq -e "$filter" "$controller/dashboard/data.json" >/dev/null || { printf 'FAIL %s\n' "$message" >&2; exit 1; }
@@ -90,27 +84,28 @@ assert_jq '.spend.tokens_total == 4850 and .fleet_totals.today_tokens == 4850 an
   .spend.lost.tokens == 4500 and ([.spend.failures[].tokens_lost] | add) == 4500' \
   'spend or lost-token totals do not reconcile'
 
-ascii80="$fixture/ascii-80.txt"; ascii120="$fixture/ascii-120.txt"; colour120="$fixture/colour-120.txt"
-render_ascii 80 "$ascii80"; render_ascii 120 "$ascii120"; render_colour 120 "$colour120"
+# Card 66: the live fleet page carries TOTALS, REPOS (state, queue, spend)
+# and ESCALATIONS only; the itemised failures and per-role spend tables it
+# replaces those checks below verify from scripts/failures-history.sh
+# --fleet instead, the command they moved to.
+ascii80="$fixture/ascii-80.txt"; ascii120="$fixture/ascii-120.txt"
+render_ascii 80 "$ascii80"; render_ascii 120 "$ascii120"
 for pair in "$ascii80:80" "$ascii120:120"; do
   file="${pair%:*}"; limit="${pair##*:}"
   awk -v max="$limit" 'length($0)>max {exit 1}' "$file" || { printf 'FAIL line exceeds %s columns\n' "$limit" >&2; exit 1; }
 done
 [[ "$(grep -c '^TOTALS$' "$ascii120")" -eq 1 ]]
-grep -q 'FAIL.*halted' "$ascii120"
-grep -q 'WARN.*cap' "$ascii120"
-grep -q 'ok.*clean' "$ascii120"
+grep -q 'halted.*HALTED: operator stop' "$ascii120"
 grep -q 'state unreadable' "$ascii120"
-grep -q 'old-failure.*verifier_failed.*6d' "$ascii120"
-grep -q 'active-42.*worker.*GPT-5.6 Sol.*1m30s/1h30m' "$ascii120"
-grep -q 'queue-one.*GPT-5.6 Terra.*Claude Sonnet 5' "$ascii120"
-grep -q 'failed-stage.*worker.*fail.*3300' "$ascii120"
-grep -q 'aborted-stage.*verifier.*aborted.*960' "$ascii120"
-grep -q 'stalled-stage.*worker.*stalled.*240' "$ascii120"
-grep -q 'TOTAL LOST.*4500' "$ascii120"
-grep -q 'SPEND (today UTC)' "$ascii120"
-grep -q $'\033' "$colour120"
-grep -q '●' "$colour120"; grep -q '◐' "$colour120"; grep -q '○' "$colour120"
+grep -q 'ESCALATIONS' "$ascii120"
+if grep -q 'FAILURES' "$ascii120"; then printf 'FAIL FAILURES table leaked into the live fleet page\n' >&2; exit 1; fi
+fleet_history="$(AUTOMETTA_HOME="$controller" "$script_dir/failures-history.sh" --fleet)"
+[[ "$fleet_history" == *'old-failure'* ]] || { printf 'FAIL stage failure missing from the fleet history command\n' >&2; exit 1; }
+[[ "$fleet_history" == *'verifier_failed'* ]] || { printf 'FAIL failure status missing from the fleet history command\n' >&2; exit 1; }
+[[ "$fleet_history" == *'failed-stage'* ]] || { printf 'FAIL dispatch failure missing from the fleet history command\n' >&2; exit 1; }
+[[ "$fleet_history" == *'aborted-stage'* ]] || { printf 'FAIL aborted dispatch missing from the fleet history command\n' >&2; exit 1; }
+[[ "$fleet_history" == *'stalled-stage'* ]] || { printf 'FAIL stalled dispatch missing from the fleet history command\n' >&2; exit 1; }
+[[ "$fleet_history" == *'Total tokens lost (6d): 4500'* ]] || { printf 'FAIL lost-token total missing from the fleet history command\n' >&2; exit 1; }
 
 printf '{"token_cap_total":250,"expires_at":%s,"repos":[]}\n' "$(( now + 3600 ))" > "$controller/drain.json"
 aggregate
@@ -128,8 +123,8 @@ jq '.halted=false | .halt_reason=null' "$fixture/halted/state/budget.json" > "$f
 mv "$fixture/halted/state/budget.next" "$fixture/halted/state/budget.json"
 aggregate
 cleared_frame="$fixture/cleared.txt"; render_ascii 120 "$cleared_frame"
-if grep -q $'halted\tred\tbudget halted' "$cleared_frame"; then
-  printf 'FAIL cleared condition remained in ATTENTION\n' >&2
+if grep -q 'HALTED' "$cleared_frame"; then
+  printf 'FAIL cleared halt condition still rendered\n' >&2
   exit 1
 fi
 
@@ -140,4 +135,4 @@ json_compact="$(jq -c '.' "$controller/dashboard/data.json")"
 js_compact="$(sed -e 's/^window.AUTOMETTA_DATA = //' -e 's/;$//' "$controller/dashboard/data.js")"
 [[ "$json_compact" == "$js_compact" ]]
 
-printf 'PASS fleet lights, agents, queue, failures, spend, drain, widths, colour and file fallback\n'
+printf 'PASS fleet lights, agent/queue joins, fleet failures command, spend, drain, widths and file fallback\n'

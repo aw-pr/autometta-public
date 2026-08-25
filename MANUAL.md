@@ -110,11 +110,12 @@ to one backing script.
 | `autometta subscribe [repo-path]` | Subscribe a repo to the controller without the full init flow. Defaults to the current directory. |
 | `autometta add-stage <repo-path> <stage-card-path>` | Append a stage to a subscribed repo's `state.yaml` from a stage card. |
 | `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Any stage whose run branch is still waiting to be merged into its base branch gets an `awaiting integration` line under the repo's row, naming the branch to merge. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. `scripts/status.sh --repo <path>` narrows the table to one subscriber; the tmux status pane uses it so an attached dash shows the repo you attached to. |
-| `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`): status ticker, work pane, and agent ticker. An interactive attach replaces an existing viewer so ticker script changes take effect. `--dry-run` prints what it would do. `--ensure` (used internally by `init`) creates the session only if absent. The `autometta-autometta` session opens on the fleet summary; its `repo` window retains the control-plane repo view and a separate background job refreshes fleet `data.json` every 120 seconds. Orphaned viewers whose subscriber is disabled or gone are reported. |
+| `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`): status ticker, work pane, and agent ticker. An interactive attach replaces an existing viewer so ticker script changes take effect. `--dry-run` prints what it would do. `--ensure` (used internally by `init`) creates the session only if absent. The `autometta-autometta` session opens on the repo-scoped fleet page for the autometta repo itself (window `repo`); its `status` window carries the ordinary per-repo ticker, and the fleet-wide page (every subscriber) is one window further on (`fleet`), reachable but never the landing view. A separate background job refreshes fleet `data.json` every 120 seconds. Orphaned viewers whose subscriber is disabled or gone are reported. |
 | `autometta detach [repo-path\|--all]` | Remove one tmux viewer, defaulting to the current repo, or tear down every `autometta-*` viewer with `--all`. Other tmux sessions are never touched. |
 | `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one tick across subscribers: read state, dispatch one worker and/or verifier, write next state, snapshot state onto `autometta/state`, sweep retention and stale run worktrees, exit. It never changes the branch checked out in a subscriber's own checkout. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` requeues every stalled or failed stage across all enabled subscribers, via the same reset `scripts/requeue-stage.sh` performs by hand; it leaves `in_progress` and `verifier_failed` alone, refuses a stage whose card no longer resolves (`stall_marker: card_missing`), skips a repo still over a spend cap, and stops at `repair_attempts` 2 per stage (`AUTOMETTA_REPAIR_ATTEMPT_CAP`). |
 | `autometta check-deps` | Verify required tooling is present (bash, git, jq, yq, tmux, the CLI families, op-fetch, etc.). |
 | `autometta dashboard [--open]` | Regenerate the static dashboard under the controller home; `--open` opens it in the default browser. |
+| `autometta failures (<repo-path>\|--fleet) [--json]` | Itemised failures history on demand: every terminal-status stage and every non-pass dispatch, with tokens lost. Moved out of the live ticker panes so they stop competing for space; `--fleet` covers every enabled subscriber instead of one repo. Reads the same aggregated JSON the pane it reports for reads, so the two never disagree. |
 | `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
 | `autometta uninstall-launchagent <repo-path>` | macOS: remove the per-repo LaunchAgent. |
 | `autometta install-homebrew-local [--dry-run] [--tap owner/name]` | Render and install the local Homebrew tap from the working tree. Rerun after every `git pull` of this repo. |
@@ -429,15 +430,20 @@ without further coupling.
   `autometta detach --all` to tear down all viewers.
 
 - **Fleet viewer**: `autometta attach /path/to/autometta` opens
-  `autometta-autometta` on a read-only roll-up sourced from dashboard
-  `data.json`. It shows enabled subscribers, halts, queue depth, today's tokens
-  and estimated cost, shortened window spend, last dispatch and fleet totals.
-  Alerts are a stable repo / stage-card / kind / detail table. Repo-level rows
-  say `repo`; completed roles are excluded from provider-limit scans so source
-  text and commit subjects cannot cry wolf. A separate job reuses the existing
-  aggregator every 120 seconds, while the ticker only reads the snapshot. The
-  pane states the exact generation time and still labels genuinely stale data.
-  Fleet, status and agent headers name the running `autometta <sha>`; a
+  `autometta-autometta` landing on the repo-scoped fleet page for autometta
+  itself (TOTALS and ESCALATIONS, no REPOS table). The fleet-wide page --
+  every enabled subscriber, its operational state and why, queue depth,
+  today's spend and spend against the cap that binds, plus one ESCALATIONS
+  row per halted, paused, attempt-capped, stale-vendor or over-budget
+  condition -- is a `tmux next-window` away, sourced from the same read-only
+  dashboard `data.json`. Completed roles are excluded from provider-limit
+  scans so source text and commit subjects cannot cry wolf. The itemised
+  failures list and per-role spend breakdown are reachable with
+  `autometta failures --fleet` rather than rendered live. A separate job
+  reuses the existing aggregator every 120 seconds, while the ticker only
+  reads the snapshot. The pane states the exact generation time and still
+  labels genuinely stale data. Fleet, status and agent headers name the
+  running `autometta <sha>`; a
   mismatch between the installed command and checkout HEAD is shown as build
   drift and rechecked at most once a minute.
   Override the refresh interval with `AUTOMETTA_FLEET_REFRESH_INTERVAL`.
