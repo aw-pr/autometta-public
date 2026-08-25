@@ -24,6 +24,7 @@
 #   4. A healthy repo under its caps still dispatches.
 #   5. A window reset preserves the evidence of the breach it clears.
 #   6. requeue-stage.sh refuses to unlatch a halt whose spend cap is blown.
+#   7. A Codex transcript alone charges cached usage and blows the token cap.
 #
 # Exit 0 on all-pass, 1 on any assertion failure.
 set -euo pipefail
@@ -280,6 +281,30 @@ check "requeue still clears a failure-cap halt" \
 check "requeue clears the failure counter with it" \
   "$(eq 0 "$(jq -r '.consecutive_failures' "$rq_dir/state/budget.json")")"
 rm -rf "$rq_dir"
+
+# ---------------------------------------------------------------------------
+printf '== 7. codex transcript spend reaches the cap by itself ==\n' >&2
+
+codex_cap_dir="$(mktemp -d)"
+new_budget "$codex_cap_dir"
+codex_sessions="$codex_cap_dir/codex-sessions/2026/08/25"
+codex_work_dir="$codex_cap_dir/worktree"
+mkdir -p "$codex_sessions" "$codex_work_dir" "$codex_cap_dir/state/logs"
+printf '%s\n' \
+  "{\"timestamp\":\"2026-08-25T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"timestamp\":\"2026-08-25T00:00:00Z\",\"cwd\":\"$codex_work_dir\"}}" \
+  '{"timestamp":"2026-08-25T00:05:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1200000,"cached_input_tokens":900000,"output_tokens":100000,"total_tokens":1300000}}}}' \
+  > "$codex_sessions/cap.jsonl"
+printf 'tokens used\n400000\n' > "$codex_cap_dir/state/logs/codex.log"
+
+AUTOMETTA_CODEX_TRANSCRIPT_ROOTS="$codex_cap_dir/codex-sessions" \
+  budget_account_tokens_from_dispatch "$codex_cap_dir" \
+    "$codex_cap_dir/state/logs/codex.log" worker "$codex_work_dir" 0 codex 2>/dev/null
+
+check "Codex budget charge includes fresh, cached and output tokens" \
+  "$(eq 1300000 "$(jq -r '.tokens_spent' "$codex_cap_dir/state/budget.json")")"
+check "budget_spend_caps_blown sees the Codex-only token breach" \
+  "$(eq token-cap "$(budget_spend_caps_blown "$codex_cap_dir")")"
+rm -rf "$codex_cap_dir"
 
 # ---------------------------------------------------------------------------
 if (( fail )); then

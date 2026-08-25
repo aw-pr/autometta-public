@@ -511,12 +511,13 @@ stage_snapshot_tokens() {
   local role="$5"
   local work_dir="${6:-}"
   local since_epoch="${7:-0}"
+  local family="${8:-claude}"
   local tokens=""
   # Prefer the transcript for the same reason budget_account_tokens_from_dispatch
   # does: a role killed at the dispatch timeout never writes its usage to the log.
   if [[ -n "$work_dir" ]]; then
     local triple t_in t_cached t_out
-    triple="$(budget_parse_tokens_from_transcript "$work_dir" "$since_epoch")"
+    triple="$(budget_parse_dispatch_tokens_from_transcript "$work_dir" "$since_epoch" "$family")"
     if [[ -n "$triple" ]]; then
       IFS=' ' read -r t_in t_cached t_out <<<"$triple"
       tokens=$(( t_in + t_cached + t_out ))
@@ -1585,15 +1586,18 @@ _process_repo_locked() {
       # closes out. This branch runs exactly once per stage because
       # _process_verifier_artefact clears current_stage on exit.
       local verifier_log_path="$repo_root/state/logs/${current_stage}-verifier.log"
-      local verifier_work_dir_acct verifier_start_epoch
+      local verifier_work_dir_acct verifier_start_epoch verifier_identity_acct verifier_family_acct
       verifier_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$current_stage")"
       verifier_start_epoch="$(role_started_epoch "$state_yaml" "$current_stage" verifier)"
+      verifier_identity_acct="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
+        '.stages[] | select(.id == $id) | .verifier // empty')"
+      verifier_family_acct="$(costlog_family_for_identity "$verifier_identity_acct")"
       budget_account_tokens_from_dispatch "$repo_root" "$verifier_log_path" "verifier" \
-        "$verifier_work_dir_acct" "$verifier_start_epoch" || true
+        "$verifier_work_dir_acct" "$verifier_start_epoch" "$verifier_family_acct" || true
       # Per-stage snapshot (stage 11): capture verifier tokens against the
       # stage entry. Worker tokens may already be set from an earlier tick.
       stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$verifier_log_path" "verifier" \
-        "$verifier_work_dir_acct" "$verifier_start_epoch"
+        "$verifier_work_dir_acct" "$verifier_start_epoch" "$verifier_family_acct"
       # Cost-log: the verifier produced an artefact, so its log is final.
       # Emit before _process_verifier_artefact clears current_stage.
       local verifier_overall verifier_result
@@ -1685,14 +1689,17 @@ _process_repo_locked() {
           return 0
         fi
 
-        local worker_work_dir_acct worker_start_epoch
+        local worker_work_dir_acct worker_start_epoch worker_identity_acct worker_family_acct
         worker_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$current_stage")"
         worker_start_epoch="$(role_started_epoch "$state_yaml" "$current_stage" worker)"
+        worker_identity_acct="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
+          '.stages[] | select(.id == $id) | .worker // empty')"
+        worker_family_acct="$(costlog_family_for_identity "$worker_identity_acct")"
         budget_account_tokens_from_dispatch "$repo_root" "$worker_log_path" "worker" \
-          "$worker_work_dir_acct" "$worker_start_epoch" || true
+          "$worker_work_dir_acct" "$worker_start_epoch" "$worker_family_acct" || true
         # Per-stage snapshot (stage 11).
         stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$worker_log_path" "worker" \
-          "$worker_work_dir_acct" "$worker_start_epoch"
+          "$worker_work_dir_acct" "$worker_start_epoch" "$worker_family_acct"
         # Cost-log: the worker has exited and its log is final. Result is
         # read from the handoff envelope inside the helper.
         costlog_emit_worker "$repo_root" "$state_yaml" "$current_stage" "$started_at"
@@ -1824,14 +1831,17 @@ _process_repo_locked() {
           return 0
         fi
 
-        local stale_work_dir_acct stale_start_epoch
+        local stale_work_dir_acct stale_start_epoch stale_verifier_identity_acct stale_verifier_family_acct
         stale_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$current_stage")"
         stale_start_epoch="$(role_started_epoch "$state_yaml" "$current_stage" verifier)"
+        stale_verifier_identity_acct="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
+          '.stages[] | select(.id == $id) | .verifier // empty')"
+        stale_verifier_family_acct="$(costlog_family_for_identity "$stale_verifier_identity_acct")"
         budget_account_tokens_from_dispatch "$repo_root" "$stale_verifier_log_path" "verifier" \
-          "$stale_work_dir_acct" "$stale_start_epoch" || true
+          "$stale_work_dir_acct" "$stale_start_epoch" "$stale_verifier_family_acct" || true
         # Per-stage snapshot (stage 11).
         stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$stale_verifier_log_path" "verifier" \
-          "$stale_work_dir_acct" "$stale_start_epoch"
+          "$stale_work_dir_acct" "$stale_start_epoch" "$stale_verifier_family_acct"
         # Cost-log: a verifier died without an artefact. Record its spend
         # against this stage with result=aborted before we re-dispatch.
         costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "aborted"

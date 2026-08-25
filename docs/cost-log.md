@@ -31,12 +31,14 @@ One JSON object per line. All fields are always present.
   "identity": "GPT-5.6 Sol <gpt-5-6-sol@local>",
   "tier": "T2",
   "auth_route": "subscription",
-  "input_tokens": 0,
-  "cached_input_tokens": 0,
-  "output_tokens": 0,
+  "input_tokens": 3200,
+  "cached_input_tokens": 14800,
+  "output_tokens": 900,
+  "total_tokens": 18900,
+  "usage_status": "recorded",
   "wall_clock_s": 0,
-  "cost_usd_est": 0.0,
-  "cache_hit_rate": 0.0,
+  "cost_usd_est": 0.02754,
+  "cache_hit_rate": 0.8222,
   "result": "pass"
 }
 ```
@@ -50,12 +52,14 @@ One JSON object per line. All fields are always present.
 | `identity` | string | The full agent identity string from the stage card / state. |
 | `tier` | string | Capability tier derived from the identity (`T0`, `T1`, `T2`, `T4`, `T5`), matching the agent-orchestrator tier table. Drives the rate row. |
 | `auth_route` | string | `subscription`, `api`, or `local` (codex only), resolved the same way as the dispatch (env override, then `.autometta.local.yaml`, then subscription default). |
-| `input_tokens` | int | Fresh (non-cached) input tokens. Cache-creation (write) tokens are folded in here, see below. |
-| `cached_input_tokens` | int | Input tokens served from the prompt cache (the cache-read count). |
-| `output_tokens` | int | Generated output tokens. |
+| `input_tokens` | int or null | Fresh (non-cached) input tokens. Cache-creation (write) tokens are folded in here, see below. Null when no full breakdown was recovered. |
+| `cached_input_tokens` | int or null | Input tokens served from the prompt cache (the cache-read count). Null when no full breakdown was recovered. |
+| `output_tokens` | int or null | Generated output tokens. Null when no full breakdown was recovered. |
+| `total_tokens` | int or null | Input including cached input, plus output. This remains populated for a `total_only` row. Null means usage could not be read. |
+| `usage_status` | string | `recorded` for a full breakdown, `total_only` when only a real aggregate was recovered, or `unknown` when no usage signal was readable. |
 | `wall_clock_s` | int | Estimated wall-clock seconds for the role. |
-| `cost_usd_est` | float | Estimated USD cost from the per-tier rate table. An estimate, not an invoice. |
-| `cache_hit_rate` | float | `cached_input_tokens / (input_tokens + cached_input_tokens)`, 0 when there was no input. |
+| `cost_usd_est` | float or null | Estimated USD cost from the per-tier rate table. Null when the breakdown is unavailable, because assigning a total to one rate would fabricate a cost. |
+| `cache_hit_rate` | float or null | `cached_input_tokens / (input_tokens + cached_input_tokens)`, 0 when recorded input was genuinely zero, null when the breakdown is unavailable. |
 | `result` | string | The loop's terminal verdict for this role: `pass`, `fail`, `partial`, `stalled`, or `aborted`. |
 
 ### Worker vs verifier
@@ -90,22 +94,23 @@ comparison across stages, not a precise runtime.
 
 ## Per-route token fidelity
 
-How much of the token breakdown is real depends on what each route prints to
-its log. The parser (`costlog_parse_breakdown` in `scripts/cost-log.sh`) reads
-whatever is there and is honest about the gaps:
+The parser prefers the harness transcript for either family, then falls back
+to structured stdout. Transcript selection is scoped to the dispatch working
+directory and start time, so a reused worktree does not re-bill an earlier
+run.
 
-| Route | Log signal | What we get |
+| Route | Usage signal | What we get |
 |---|---|---|
-| SDK verifier (`verify-sdk.py`) | `cache: write=W read=R input=I output=O` | Full breakdown. `input_tokens = I + W`, `cached_input_tokens = R`, `output_tokens = O`. The only route with a true split today. |
-| Claude CLI with JSON output | a `usage` object with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` | Full breakdown, parsed if present. The default `claude -p` text output does not emit it, so most CLI runs fall through to total-only. |
-| Codex CLI (`codex exec`) | `tokens used` then a number | Total only. The whole total lands in `input_tokens`; `cached_input_tokens` and `output_tokens` are 0 and `cache_hit_rate` is 0. |
-| Claude CLI text / other | `Total tokens: <N>` | Total only, same coarseness as codex. |
+| Codex CLI (`codex exec`) | Last cumulative `total_token_usage` in the matching Codex session JSONL | Full breakdown. Codex `input_tokens` includes cached input, so the producer records fresh input as `input_tokens - cached_input_tokens`, cached input separately, and output as emitted. The three fields reconcile to Codex `total_tokens`. |
+| Claude CLI (`claude -p`) | Per-message usage in the matching Claude Code transcript | Full breakdown, deduplicated by request and summed from dispatch start. Cache creation is folded into fresh input and cache reads remain separate. |
+| SDK verifier (`verify-sdk.py`) | `cache: write=W read=R input=I output=O` | Full breakdown. `input_tokens = I + W`, `cached_input_tokens = R`, `output_tokens = O`. |
+| Claude CLI with JSON output | a `usage` object with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` | Full breakdown when present in stdout. This is a fallback when the matching Claude transcript is unavailable. |
+| Terminal fallback | Codex `tokens used` or Claude `Total tokens: <N>` | `usage_status: "total_only"`, the real aggregate in `total_tokens`, and null breakdown, cost and cache-rate fields. |
+| No readable signal | Missing transcript usage and no terminal total | `usage_status: "unknown"` with null token, cost and cache-rate fields. The tick logs a `WARNING: usage unknown` line and does not charge an invented value to the budget. |
 
-The coarseness is deliberate: a total-only route still records real spend, it
-just cannot attribute it across the input/cached/output buckets. When such a
-route is dominant, `cache_hit_rate` will read 0 because the breakdown is not
-visible to us, not necessarily because nothing was cached. The SDK route is
-where the cache saving is measured precisely.
+Zero remains a measured fact. A complete transcript that reports zero records
+numeric zeroes and `usage_status: "recorded"`. Missing data never becomes zero.
+Historical rows retain the older schema and are not rewritten.
 
 ### Cache-creation folding
 
@@ -143,8 +148,9 @@ unrecognised local identity would otherwise fall through to the T2 default and
 cost a free dispatch at the $3/M workhorse rate, so T5 is an explicit row
 rather than an accident of the fallback.
 
-`cost_usd_est = (input_tokens * input_rate + cached_input_tokens * cached_rate
-+ output_tokens * output_rate) / 1e6`.
+For `usage_status: "recorded"`, `cost_usd_est = (input_tokens * input_rate +
+cached_input_tokens * cached_rate + output_tokens * output_rate) / 1e6`.
+It is null for `total_only` and `unknown` rows.
 
 Tier is derived from the identity string (`tier_for_identity`). An identity
 with no recognised tier marker falls back to T2 (workhorse), so an unknown
@@ -158,8 +164,11 @@ It is plain JSONL, so `jq` works directly:
 # Per-stage estimated spend
 jq -r '"\(.stage_id) \(.role): $\(.cost_usd_est)"' state/cost-log.jsonl
 
-# Total estimated spend for the repo
-jq -s 'map(.cost_usd_est) | add' state/cost-log.jsonl
+# Total known estimated spend for the repo
+jq -s 'map(.cost_usd_est // 0) | add' state/cost-log.jsonl
+
+# Dispatches whose usage needs investigation
+jq -c 'select((.usage_status // "legacy") != "recorded")' state/cost-log.jsonl
 
 # Cache-hit rate per verifier (SDK route)
 jq -r 'select(.role=="verifier") | "\(.stage_id) hit=\(.cache_hit_rate)"' state/cost-log.jsonl
@@ -198,8 +207,6 @@ line. Both routes cache, they just expose it differently:
   `cache_read_input_tokens` / `cache_creation_input_tokens` in the usage block.
   This is the route the cost log can measure precisely.
 - Subscription / OAuth route (`claude -p`, codex chatgpt mode): caching is
-  applied automatically by the harness, but the default CLI output does not
-  surface the cached-token counts, so the cost log sees a total only and
-  `cache_hit_rate` reads 0. The saving is still happening, it is just not
-  observable from the log. To measure it, use the API route (or the SDK
-  verifier) where the usage block is returned.
+  applied automatically by the harness. The terminal output is incomplete,
+  but the local Claude and Codex transcripts expose cached-token counts, so
+  ordinary dispatch rows now retain the full breakdown.

@@ -771,6 +771,126 @@ budget_transcript_dir() {
   printf '%s/.claude/projects/%s\n' "$HOME" "$slug"
 }
 
+# budget_parse_codex_tokens_from_transcript: recover real token usage for a
+# codex-family dispatch from the Codex session JSONL.
+#
+# Codex's final `tokens used` log value is fresh input plus output. It omits
+# cached input, so it is not the dispatch total and cannot drive the budget.
+# Session `token_count` events carry the full cumulative breakdown. For every
+# session started in work_dir at or after since_epoch, take the last cumulative
+# value and sum the sessions. input_tokens includes cached_input_tokens in the
+# Codex event, so subtract cached input for the cost-log triple before returning
+# it. The three returned fields still sum to total_tokens.
+#
+# AUTOMETTA_CODEX_TRANSCRIPT_ROOTS is a colon-separated test/operator override.
+# Otherwise inspect the subscription home plus the API-only sibling used by
+# auth-route.sh. Duplicate roots and files are resolved before accounting.
+budget_parse_codex_tokens_from_transcript() {
+  local work_dir="$1"
+  local since_epoch="${2:-0}"
+  [[ -n "$work_dir" ]] || return 0
+
+  local roots="${AUTOMETTA_CODEX_TRANSCRIPT_ROOTS:-}"
+  if [[ -z "$roots" ]]; then
+    local default_home="${HOME}/.codex"
+    local api_home="${AUTOMETTA_CODEX_HOME:-${HOME}/.codex-api-only}"
+    roots="${CODEX_HOME:-$default_home}/sessions:${default_home}/sessions:${api_home}/sessions"
+  fi
+
+  python3 - "$work_dir" "$since_epoch" "$roots" <<'PY'
+import datetime as dt
+import json
+import os
+import sys
+
+work_dir, since_raw, roots_raw = sys.argv[1:]
+try:
+    since = int(since_raw)
+except ValueError:
+    since = 0
+
+
+def epoch(value):
+    if not value:
+        return None
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (AttributeError, ValueError):
+        return None
+
+
+seen_paths = set()
+inp = cached = out = 0
+found = False
+
+for raw_root in roots_raw.split(":"):
+    if not raw_root:
+        continue
+    root = os.path.realpath(os.path.expanduser(raw_root))
+    if not os.path.isdir(root):
+        continue
+    for base, _dirs, files in os.walk(root):
+        for name in files:
+            if not name.endswith(".jsonl"):
+                continue
+            path = os.path.realpath(os.path.join(base, name))
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            try:
+                if since and os.stat(path).st_mtime < since:
+                    continue
+                fh = open(path, encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+
+            matched = False
+            last = None
+            with fh:
+                for line in fh:
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if rec.get("type") == "session_meta":
+                        payload = rec.get("payload") or {}
+                        started = epoch(payload.get("timestamp") or rec.get("timestamp"))
+                        matched = payload.get("cwd") == work_dir
+                        if since and (started is None or started < since):
+                            matched = False
+                        if not matched:
+                            break
+                        continue
+                    if not matched or rec.get("type") != "event_msg":
+                        continue
+                    payload = rec.get("payload") or {}
+                    if payload.get("type") != "token_count":
+                        continue
+                    info = payload.get("info") or {}
+                    usage = info.get("total_token_usage")
+                    if isinstance(usage, dict):
+                        last = usage
+
+            if last is None:
+                continue
+            try:
+                total_input = int(last["input_tokens"])
+                cached_input = int(last.get("cached_input_tokens", 0) or 0)
+                output = int(last["output_tokens"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if min(total_input, cached_input, output) < 0 or cached_input > total_input:
+                continue
+            inp += total_input - cached_input
+            cached += cached_input
+            out += output
+            found = True
+
+if found:
+    print(f"{inp} {cached} {out}")
+PY
+}
+
 # budget_parse_tokens_from_transcript: recover real token usage for a
 # claude-family dispatch from its Claude Code transcript.
 #
@@ -850,22 +970,37 @@ if inp or cached or out:
 PY
 }
 
+# budget_parse_dispatch_tokens_from_transcript: select the transcript format
+# for the family that actually ran. Keeping this explicit prevents a manual
+# Codex session in the same cwd from being charged to a Claude dispatch, or
+# vice versa.
+budget_parse_dispatch_tokens_from_transcript() {
+  local work_dir="$1"
+  local since_epoch="${2:-0}"
+  local family="${3:-claude}"
+  case "$family" in
+    codex) budget_parse_codex_tokens_from_transcript "$work_dir" "$since_epoch" ;;
+    claude) budget_parse_tokens_from_transcript "$work_dir" "$since_epoch" ;;
+    *) return 0 ;;
+  esac
+}
+
 # budget_account_tokens_from_dispatch: account a finished role's spend,
 # preferring the transcript and falling back to the log parser.
 #
-# work_dir/since_epoch are optional; without them (or for a codex-family
-# role, which writes no Claude transcript) this degrades exactly to
-# budget_account_tokens_from_log. Non-fatal throughout.
+# work_dir/since_epoch/family are optional. Without a readable family-specific
+# transcript this degrades to the terminal total parser. Non-fatal throughout.
 budget_account_tokens_from_dispatch() {
   local repo_root="$1"
   local log_path="$2"
   local label="${3:-log}"
   local work_dir="${4:-}"
   local since_epoch="${5:-0}"
+  local family="${6:-claude}"
 
   local triple=""
   if [[ -n "$work_dir" ]]; then
-    triple="$(budget_parse_tokens_from_transcript "$work_dir" "$since_epoch")"
+    triple="$(budget_parse_dispatch_tokens_from_transcript "$work_dir" "$since_epoch" "$family")"
   fi
   if [[ -z "$triple" ]]; then
     budget_account_tokens_from_log "$repo_root" "$log_path" "$label"
@@ -876,8 +1011,8 @@ budget_account_tokens_from_dispatch() {
   IFS=' ' read -r t_in t_cached t_out <<<"$triple"
   total=$(( t_in + t_cached + t_out ))
   budget_add_tokens "$repo_root" "$total"
-  printf 'budget_account_tokens_from_dispatch: recorded %s tokens (in=%s cached=%s out=%s) from transcript for %s (%s)\n' \
-    "$total" "$t_in" "$t_cached" "$t_out" "$work_dir" "$label" >&2
+  printf 'budget_account_tokens_from_dispatch: recorded %s tokens (in=%s cached=%s out=%s) from %s transcript for %s (%s)\n' \
+    "$total" "$t_in" "$t_cached" "$t_out" "$family" "$work_dir" "$label" >&2
 }
 
 # budget_parse_tokens_from_log: scan a worker/verifier log for token-usage
@@ -947,13 +1082,14 @@ budget_account_tokens_from_log() {
   local log_path="$2"
   local label="${3:-log}"
   if [[ ! -f "$log_path" ]]; then
-    printf 'budget_account_tokens_from_log: %s missing at %s, skipping\n' "$label" "$log_path" >&2
+    printf 'WARNING: usage unknown for %s: log missing at %s; budget not charged\n' "$label" "$log_path" >&2
     return 0
   fi
   local tokens
   tokens="$(budget_parse_tokens_from_log "$log_path")"
   if [[ -z "$tokens" ]]; then
-    printf 'budget_account_tokens_from_log: no token-usage line found in %s (%s)\n' "$log_path" "$label" >&2
+    printf 'WARNING: usage unknown for %s: no transcript usage or token-usage line in %s; budget not charged\n' \
+      "$label" "$log_path" >&2
     return 0
   fi
   budget_add_tokens "$repo_root" "$tokens"

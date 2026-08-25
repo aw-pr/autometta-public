@@ -6,9 +6,10 @@
 #
 #   1. Every route's log parses into a valid cost-log JSONL line carrying
 #      the full schema (docs/cost-log.md).
-#   2. The codex total-only route lands its total in input_tokens with
-#      cache_hit_rate 0 (documented coarseness).
-#   3. A repeated-prefix loop on the SDK route shows the Phase-2 result:
+#   2. Codex worker and verifier transcripts produce full, non-zero usage.
+#   3. Total-only and unknown usage remain distinct from earned zeroes, and
+#      unknown usage emits a warning at reap time.
+#   4. A repeated-prefix loop on the SDK route shows the Phase-2 result:
 #      run 1 (cold) has cache_hit_rate 0; run 2 (warm) has a non-zero
 #      cache_hit_rate and a strictly lower cost_usd_est for the same token
 #      shape, because cached input is billed at the cache-read rate.
@@ -45,18 +46,79 @@ check() {
 # jq helper: value of field $2 on the JSONL row whose .stage_id == $1.
 row() { jq -r --arg id "$1" --arg f "$2" 'select(.stage_id==$id) | .[$f]' "$cost_log"; }
 
-# --- 1. codex total-only worker log ------------------------------------------
-printf 'codex\nWork done.\ntokens used\n28,164\n' > "$log_dir/00-codex-worker.log"
-costlog_append "$tmp" "00-codex" worker "GPT-5.6 Sol <gpt-5-6-sol@local>" \
-  "$log_dir/00-codex-worker.log" 312 pass
+# --- 1. codex worker and verifier transcripts -------------------------------
+codex_sessions="$tmp/codex-sessions/2026/08/25"
+codex_worker_dir="$tmp/codex-worker"
+codex_verifier_dir="$tmp/codex-verifier"
+codex_zero_dir="$tmp/codex-zero"
+mkdir -p "$codex_sessions" "$codex_worker_dir" "$codex_verifier_dir" "$codex_zero_dir"
+AUTOMETTA_CODEX_TRANSCRIPT_ROOTS="$tmp/codex-sessions"
+export AUTOMETTA_CODEX_TRANSCRIPT_ROOTS
 
-note "== codex total-only =="
-check "input_tokens carries the total (28164)" "$([[ "$(row 00-codex input_tokens)" == "28164" ]] && echo 1 || echo 0)"
-check "cached_input_tokens is 0"               "$([[ "$(row 00-codex cached_input_tokens)" == "0" ]] && echo 1 || echo 0)"
-check "cache_hit_rate is 0"                     "$(python3 -c "import sys; sys.exit(0 if float('$(row 00-codex cache_hit_rate)')==0 else 1)" && echo 1 || echo 0)"
-check "tier resolved to T1"                     "$([[ "$(row 00-codex tier)" == "T1" ]] && echo 1 || echo 0)"
+printf '%s\n' \
+  "{\"timestamp\":\"2026-08-25T00:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"timestamp\":\"2026-08-25T00:00:00Z\",\"cwd\":\"$codex_worker_dir\"}}" \
+  '{"timestamp":"2026-08-25T00:05:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1200,"cached_input_tokens":900,"output_tokens":300,"total_tokens":1500}}}}' \
+  > "$codex_sessions/worker.jsonl"
+printf '%s\n' \
+  "{\"timestamp\":\"2026-08-25T00:10:00Z\",\"type\":\"session_meta\",\"payload\":{\"timestamp\":\"2026-08-25T00:10:00Z\",\"cwd\":\"$codex_verifier_dir\"}}" \
+  '{"timestamp":"2026-08-25T00:15:00Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":8000,"cached_input_tokens":7500,"output_tokens":600,"total_tokens":8600}}}}' \
+  > "$codex_sessions/verifier.jsonl"
+printf '%s\n' \
+  "{\"timestamp\":\"2026-08-25T00:20:00Z\",\"type\":\"session_meta\",\"payload\":{\"timestamp\":\"2026-08-25T00:20:00Z\",\"cwd\":\"$codex_zero_dir\"}}" \
+  '{"timestamp":"2026-08-25T00:20:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"total_tokens":0}}}}' \
+  > "$codex_sessions/zero.jsonl"
 
-# --- 2. claude --output-format json verifier log -----------------------------
+printf 'tokens used\n1\n' > "$log_dir/00-codex-worker.log"
+printf 'tokens used\n2\n' > "$log_dir/00-codex-verifier.log"
+costlog_append "$tmp" "00-codex-worker" worker "GPT-5.6 Sol <gpt-5-6-sol@local>" \
+  "$log_dir/00-codex-worker.log" 312 pass "$codex_worker_dir" 0
+costlog_append "$tmp" "00-codex-verifier" verifier "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>" \
+  "$log_dir/00-codex-verifier.log" 95 pass "$codex_verifier_dir" 0
+costlog_append "$tmp" "00-codex-zero" worker "GPT-5.6 Sol <gpt-5-6-sol@local>" \
+  "$log_dir/00-codex-worker.log" 1 pass "$codex_zero_dir" 0
+
+note "== codex transcript usage =="
+check "worker fresh input is transcript input minus cached (300)" \
+  "$([[ "$(row 00-codex-worker input_tokens)" == "300" ]] && echo 1 || echo 0)"
+check "worker cached input is 900" \
+  "$([[ "$(row 00-codex-worker cached_input_tokens)" == "900" ]] && echo 1 || echo 0)"
+check "worker output is non-zero (300)" \
+  "$([[ "$(row 00-codex-worker output_tokens)" == "300" ]] && echo 1 || echo 0)"
+check "worker total reconciles to 1500" \
+  "$([[ "$(row 00-codex-worker total_tokens)" == "1500" ]] && echo 1 || echo 0)"
+check "verifier output is non-zero (600)" \
+  "$([[ "$(row 00-codex-verifier output_tokens)" == "600" ]] && echo 1 || echo 0)"
+check "verifier total reconciles to 8600" \
+  "$([[ "$(row 00-codex-verifier total_tokens)" == "8600" ]] && echo 1 || echo 0)"
+check "both codex roles are recorded from full usage" \
+  "$([[ "$(row 00-codex-worker usage_status)" == "recorded" && "$(row 00-codex-verifier usage_status)" == "recorded" ]] && echo 1 || echo 0)"
+check "a transcript that earned zero remains recorded zero" \
+  "$([[ "$(row 00-codex-zero usage_status)" == "recorded" && "$(row 00-codex-zero total_tokens)" == "0" ]] && echo 1 || echo 0)"
+
+# --- 2. total-only and unknown are not fabricated breakdowns ----------------
+printf 'codex\nWork done.\ntokens used\n28,164\n' > "$log_dir/00-codex-total-only.log"
+costlog_append "$tmp" "00-codex-total-only" worker "GPT-5.6 Sol <gpt-5-6-sol@local>" \
+  "$log_dir/00-codex-total-only.log" 312 pass
+
+printf 'completed without a usage footer\n' > "$log_dir/00-unknown.log"
+unknown_warning="$(costlog_append "$tmp" "00-unknown" worker "GPT-5.6 Sol <gpt-5-6-sol@local>" \
+  "$log_dir/00-unknown.log" 30 pass 2>&1)"
+
+note "== total-only and unknown usage =="
+check "total-only preserves the known total" \
+  "$([[ "$(row 00-codex-total-only total_tokens)" == "28164" ]] && echo 1 || echo 0)"
+check "total-only does not invent input" \
+  "$([[ "$(row 00-codex-total-only input_tokens)" == "null" ]] && echo 1 || echo 0)"
+check "total-only status is explicit" \
+  "$([[ "$(row 00-codex-total-only usage_status)" == "total_only" ]] && echo 1 || echo 0)"
+check "unknown token fields are null, not zero" \
+  "$([[ "$(row 00-unknown input_tokens)" == "null" && "$(row 00-unknown total_tokens)" == "null" ]] && echo 1 || echo 0)"
+check "unknown status is explicit" \
+  "$([[ "$(row 00-unknown usage_status)" == "unknown" ]] && echo 1 || echo 0)"
+check "unknown usage warns during reap" \
+  "$([[ "$unknown_warning" == *"WARNING: usage unknown"* ]] && echo 1 || echo 0)"
+
+# --- 3. claude --output-format json verifier log -----------------------------
 printf '{"type":"result","usage":{"input_tokens":1200,"output_tokens":800,"cache_creation_input_tokens":0,"cache_read_input_tokens":3400}}\n' \
   > "$log_dir/01-claude-json-verifier.log"
 costlog_append "$tmp" "01-claude-json" verifier "Claude Opus 4.8 <claude-opus-4-8@local>" \
@@ -66,9 +128,13 @@ note "== claude json usage =="
 check "input_tokens 1200"        "$([[ "$(row 01-claude-json input_tokens)" == "1200" ]] && echo 1 || echo 0)"
 check "cached_input_tokens 3400" "$([[ "$(row 01-claude-json cached_input_tokens)" == "3400" ]] && echo 1 || echo 0)"
 check "output_tokens 800"        "$([[ "$(row 01-claude-json output_tokens)" == "800" ]] && echo 1 || echo 0)"
+check "Anthropic total remains input + cached + output (5400)" \
+  "$([[ "$(row 01-claude-json total_tokens)" == "5400" ]] && echo 1 || echo 0)"
+check "Anthropic full breakdown remains recorded" \
+  "$([[ "$(row 01-claude-json usage_status)" == "recorded" ]] && echo 1 || echo 0)"
 check "tier resolved to T1"      "$([[ "$(row 01-claude-json tier)" == "T1" ]] && echo 1 || echo 0)"
 
-# --- 3. SDK route: repeated-prefix loop (cold then warm) ----------------------
+# --- 4. SDK route: repeated-prefix loop (cold then warm) ----------------------
 # Same token shape both runs; the only difference is whether the 1500-token
 # stable prefix is written (cold) or read from cache (warm).
 printf 'cache: write=1500 read=0 input=200 output=400\nTotal tokens: 600\n' \
@@ -99,7 +165,8 @@ note "== schema validity =="
 if python3 - "$cost_log" <<'PY'
 import json, sys
 required = {"ts","repo","stage_id","role","identity","tier","auth_route",
-           "input_tokens","cached_input_tokens","output_tokens","wall_clock_s",
+           "input_tokens","cached_input_tokens","output_tokens","total_tokens",
+           "usage_status","wall_clock_s",
            "cost_usd_est","cache_hit_rate","result"}
 ok = True
 for n, line in enumerate(open(sys.argv[1]), 1):

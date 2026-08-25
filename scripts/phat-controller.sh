@@ -516,7 +516,10 @@ warden_render_triage_prompt() {
 warden_record_triage_spend() {
   local repo_root="$1" stage_id="$2" identity="$3" dispatch_log="$4"
   local started_epoch="$5" wall="$6" result="$7"
-  budget_account_tokens_from_dispatch "$repo_root" "$dispatch_log" "phat-controller" "$repo_root" "$started_epoch" || true
+  local family
+  family="$(costlog_family_for_identity "$identity")"
+  budget_account_tokens_from_dispatch "$repo_root" "$dispatch_log" "phat-controller" \
+    "$repo_root" "$started_epoch" "$family" || true
   costlog_append "$repo_root" "$stage_id" phat-controller "$identity" "$dispatch_log" "$wall" "$result" \
     "$repo_root" "$started_epoch" || true
 }
