@@ -596,6 +596,30 @@ that does not name the remedy sends people to the source.
 
 ---
 
+## 17. The tick consumed a verdict while its verifier was still running
+
+Stage 66, 2026-08-25 afternoon. The codex verifier wrote its FAIL artefact
+at 14:25:55Z and kept running; by 14:28 the tick had already read the
+artefact, marked the stage `verifier_failed`, preserved the wip branch, and
+reaped the run worktree out from under the live process (pid checked alive
+at 14:27, cwd deleted). No damage this time: the verdict was final and the
+process exited on its own. But the artefact is being treated as a completion
+signal without checking the writer's pid, so a verifier that writes early
+and revises, or writes and then keeps validating, is raced. The worker path
+already checks ("worker still running, skipping verifier dispatch"); the
+verifier path should make the same check before consuming the artefact and
+before any reap.
+
+## 18. A 76.5M-token dispatch, and still nothing said so while it ran
+
+The stage 66 attempt-1 worker (Claude Sonnet 5) spent 76,551,470 tokens on
+a ticker refactor, against a 1-2M median: 1.7x the 45.7M outlier that
+motivated card 67, which was queued behind it and so not yet watching.
+Recorded here so the scale is on the record; the mechanism card 67 ships is
+the fix and needs no widening. What it does sharpen: dispatch order matters
+for instrumentation cards. The alarm should have been first in the batch,
+not last.
+
 ## Open holes, collected
 
 Entries above with no card, in the order I would write them:
