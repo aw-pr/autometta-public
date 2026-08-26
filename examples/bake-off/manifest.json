@@ -19,40 +19,40 @@
     },
     {
       "stage_id": "15c-sdk-verifier-integration",
-      "repo": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free",
-      "card": "examples/self-host/15c-sdk-verifier-integration.md",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/15c-sdk-verifier-integration.md",
       "frontier_artefact": "examples/bake-off/frontier/15c-sdk-verifier-integration.json",
       "frontier_overall": "FAIL",
       "deliverables": "scripts/spawn-verifier.sh,docs/sdk-verifier.md"
     },
     {
       "stage_id": "16-sdk-verifier-prompt-cache",
-      "repo": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free",
-      "card": "examples/self-host/16-sdk-verifier-prompt-cache.md",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/16-sdk-verifier-prompt-cache.md",
       "frontier_artefact": "examples/bake-off/frontier/16-sdk-verifier-prompt-cache.json",
       "frontier_overall": "FAIL",
       "deliverables": "scripts/verify-sdk.py,docs/sdk-verifier.md"
     },
     {
       "stage_id": "22-mcp-served-cards-design",
-      "repo": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free",
-      "card": "examples/self-host/22-mcp-served-cards-design.md",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/22-mcp-served-cards-design.md",
       "frontier_artefact": "examples/bake-off/frontier/22-mcp-served-cards-design.json",
       "frontier_overall": "FAIL",
       "deliverables": "docs/design/mcp-cards.md"
     },
     {
       "stage_id": "06-real-dispatch-test",
-      "repo": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free",
-      "card": "examples/self-host/06-real-dispatch-test.md",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/06-real-dispatch-test.md",
       "frontier_artefact": "examples/bake-off/frontier/06-real-dispatch-test.json",
       "frontier_overall": "PASS",
       "deliverables": "scripts/health-check.sh"
     },
     {
       "stage_id": "45-a-free-verifier-tier-on-local-weights",
-      "repo": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free",
-      "card": "examples/self-host/45-a-free-verifier-tier-on-local-weights.md",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/45-a-free-verifier-tier-on-local-weights.md",
       "frontier_artefact": "examples/bake-off/frontier/45-a-free-verifier-tier-on-local-weights.json",
       "frontier_overall": "PASS",
       "deliverables": "scripts/auth-route.sh,scripts/models.sh"
