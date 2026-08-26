@@ -278,6 +278,31 @@ with open(out_path, "w", encoding="utf-8") as fh:
     fh.write("\n")
 PY
 
+# Build drift is intentionally checked at heartbeat cadence. A production tree
+# walk takes seconds, so polling it on every 5s display refresh would make the
+# observability seam slower than its own refresh interval. Exit 1 means stale;
+# exit 2, malformed output, or a missing helper all become an unreadable
+# verdict. Heartbeat remains a watchdog and still exits 0.
+build_checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+build_check="$(jq -nc --arg checked_at "$build_checked_at" \
+  '{status:"unreadable",stale:false,installed_sha:null,checkout_sha:null,checked_at:$checked_at}')"
+set +e
+build_check_output="$("$script_dir/check-installed-build.sh" --json 2>/dev/null)"
+build_check_rc=$?
+set -e
+if [[ "$build_check_rc" -le 2 ]] \
+  && printf '%s' "$build_check_output" | jq -e '
+    (.status == "current" or .status == "stale" or .status == "unreadable") and
+    (.stale | type == "boolean") and
+    ((.installed_sha == null) or (.installed_sha | type == "string")) and
+    ((.checkout_sha == null) or (.checkout_sha | type == "string")) and
+    (.checked_at | type == "string")' >/dev/null 2>&1; then
+  build_check="$(printf '%s' "$build_check_output" | jq -c '.')"
+fi
+jq --argjson build_check "$build_check" '. + {build_check:$build_check}' \
+  "$tmp_report" > "${tmp_report}.next"
+mv "${tmp_report}.next" "$tmp_report"
+
 mv "$tmp_report" "$heartbeat_path"
 tmp_report=""
 exit 0

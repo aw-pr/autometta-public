@@ -58,6 +58,9 @@ data_js="$dashboard_dir/data.js"
 now_epoch="$(date -u +%s)"
 today_epoch=$(( now_epoch - (now_epoch % 86400) ))
 
+build_check_max_age="${AUTOMETTA_BUILD_CHECK_MAX_AGE:-600}"
+[[ "$build_check_max_age" =~ ^[0-9]+$ ]] || build_check_max_age=600
+
 # --repo prints one row and writes nothing, so the dashboard directory and the
 # scratch space belong to the fleet pass alone. Both were unconditional, which
 # cost a mkdir and two mktemps on every ticker refresh for files nothing read.
@@ -236,6 +239,18 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   if [[ -f "$heartbeat_path" ]]; then
     heartbeat_json="$(jq -c '.' "$heartbeat_path" 2>/dev/null || printf '{}')"
   fi
+  # Heartbeat owns the expensive tree walk. Missing or over-age evidence is
+  # unreadable, so a stopped cadence cannot leave an old "current" verdict on
+  # screen indefinitely.
+  build_check="$(printf '%s' "$heartbeat_json" | jq -c \
+    --argjson now "$now_epoch" --argjson max_age "$build_check_max_age" '
+    (.build_check // {status:"unreadable",stale:false,installed_sha:null,
+      checkout_sha:null,checked_at:null}) |
+    . as $check |
+    (try ($check.checked_at | fromdateiso8601) catch 0) as $checked_epoch |
+    if $checked_epoch == 0 or ($now - $checked_epoch) > $max_age
+    then $check + {status:"unreadable",stale:false}
+    else $check end')"
   # The alive-pid list rides along so the agent pass below can test membership
   # in the shell rather than ask jq once per dead-looking pid. It sits before
   # the outlier policy because it is the one field that can come out empty,
@@ -624,7 +639,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson heartbeat_outlier_policy "$heartbeat_outlier_policy" \
     --argjson drain_cap "$drain_cap" --argjson drain_expires_at "$drain_expires_at" \
     --argjson vendor_stale "$([[ "$vendor_stale" == true ]] && printf true || printf false)" \
-    --argjson vendor_from "$vendor_from" --arg vendor_current "$autometta_current_sha" '
+    --argjson vendor_from "$vendor_from" --arg vendor_current "$autometta_current_sha" \
+    --argjson build_check "$build_check" '
     input as $spend |
     (if $current_run_id == null then null else {
       id:$current_run_id,
@@ -649,6 +665,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      heartbeat_baselines:$heartbeat_baselines, heartbeat_outlier_policy:$heartbeat_outlier_policy,
      drain_active:$drain_active, drain_cap:$drain_cap, drain_expires_at:$drain_expires_at,
      vendor_stale:$vendor_stale, vendor_from:$vendor_from, vendor_current:$vendor_current,
+     build_check:$build_check,
      queue_depth:($queue|length), in_flight:([$stages[] | select(.status == "in_progress")] | length),
      alerts:$alerts, agents:$agents, active_agents:$agents, queue:$queue, queue_counts:$queue_counts,
      stages:$stages, spend:$spend, history:$spend.history, quota:$quota,

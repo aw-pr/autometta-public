@@ -30,26 +30,64 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 warn() { printf 'check-installed-build: %s\n' "$*" >&2; }
 digest() { shasum -a 256 "$1" | awk '{print $1}'; }
 
+json_mode=false
+if [[ "${1:-}" == "--json" && $# -eq 1 ]]; then
+  json_mode=true
+elif [[ $# -ne 0 ]]; then
+  printf 'usage: %s [--json]\n' "$(basename "$0")" >&2
+  exit 2
+fi
+checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+json_result() {
+  local status="$1" installed="${2:-}" checkout="${3:-}"
+  printf '{"status":"%s","stale":%s,"installed_sha":%s,"checkout_sha":%s,"checked_at":"%s"}\n' \
+    "$status" \
+    "$([[ "$status" == stale ]] && printf true || printf false)" \
+    "$([[ -n "$installed" ]] && printf '"%s"' "$installed" || printf null)" \
+    "$([[ -n "$checkout" ]] && printf '"%s"' "$checkout" || printf null)" \
+    "$checked_at"
+}
+unreadable() {
+  if [[ "$json_mode" == true ]]; then
+    json_result unreadable "${1:-}" "${2:-}"
+  else
+    warn "$3"
+  fi
+  exit 2
+}
+
 self_root="$(autometta_self_root "$script_dir")"
 
 # --- resolve the checkout side -------------------------------------------
 
 checkout_root=""
-for candidate in "${AUTOMETTA_CHECKOUT:-}" "$(autometta_config_root)" "$self_root"; do
+if [[ "$json_mode" == true && -n "${AUTOMETTA_CHECKOUT:-}" ]] \
+  && ! autometta_root_is_checkout "$AUTOMETTA_CHECKOUT"; then
+  unreadable "" "" "AUTOMETTA_CHECKOUT is not a readable git checkout"
+fi
+checkout_candidates=("${AUTOMETTA_CHECKOUT:-}" "$(autometta_config_root)")
+if [[ "$json_mode" == false ]]; then
+  checkout_candidates+=("$self_root")
+fi
+for candidate in "${checkout_candidates[@]}"; do
   if autometta_root_is_usable "$candidate" && autometta_root_is_checkout "$candidate"; then
     checkout_root="$(cd "$candidate" && pwd)"
     break
   fi
 done
 if [[ -z "$checkout_root" ]]; then
-  warn "no autometta git checkout found; set AUTOMETTA_CHECKOUT"
-  exit 2
+  unreadable "" "" "no autometta git checkout found; set AUTOMETTA_CHECKOUT"
 fi
 
 # --- resolve the installed side ------------------------------------------
 
 installed_root=""
 installed_candidates=("${AUTOMETTA_INSTALLED_ROOT:-}")
+if [[ "$json_mode" == true && -n "${AUTOMETTA_INSTALLED_ROOT:-}" ]] \
+  && ! autometta_root_is_usable "$AUTOMETTA_INSTALLED_ROOT"; then
+  checkout_sha="$(autometta_root_sha "$checkout_root")"
+  unreadable "" "$checkout_sha" "AUTOMETTA_INSTALLED_ROOT is not readable"
+fi
 if command -v brew >/dev/null 2>&1; then
   brew_opt="$(brew --prefix autometta 2>/dev/null || true)"
   [[ -n "$brew_opt" ]] && installed_candidates+=("$brew_opt/libexec")
@@ -62,21 +100,23 @@ for candidate in "${installed_candidates[@]}"; do
   fi
 done
 if [[ -z "$installed_root" ]]; then
-  warn "no installed autometta build found; run scripts/install-homebrew-local.sh"
-  exit 2
+  checkout_sha="$(autometta_root_sha "$checkout_root")"
+  unreadable "" "$checkout_sha" "no installed autometta build found; run scripts/install-homebrew-local.sh"
 fi
 
 checkout_sha="$(autometta_root_sha "$checkout_root")"
 installed_sha="$(autometta_root_sha "$installed_root")"
 dirty_files="$(autometta_root_dirty_scripts "$checkout_root")"
 
-printf 'Installed build: %s (%s)\n' "$installed_root" "$installed_sha"
-printf 'Checkout:        %s (%s)\n' "$checkout_root" "$checkout_sha"
-if [[ -n "$dirty_files" ]]; then
-  printf 'Checkout state:  DIRTY, %s tracked file(s) modified under scripts/\n\n' \
-    "$(printf '%s\n' "$dirty_files" | wc -l | tr -d '[:space:]')"
-else
-  printf 'Checkout state:  clean under scripts/\n\n'
+if [[ "$json_mode" == false ]]; then
+  printf 'Installed build: %s (%s)\n' "$installed_root" "$installed_sha"
+  printf 'Checkout:        %s (%s)\n' "$checkout_root" "$checkout_sha"
+  if [[ -n "$dirty_files" ]]; then
+    printf 'Checkout state:  DIRTY, %s tracked file(s) modified under scripts/\n\n' \
+      "$(printf '%s\n' "$dirty_files" | wc -l | tr -d '[:space:]')"
+  else
+    printf 'Checkout state:  clean under scripts/\n\n'
+  fi
 fi
 
 # --- compare the two trees -----------------------------------------------
@@ -118,12 +158,12 @@ while IFS= read -r rel; do
   [[ -f "$checkout_root/$rel" ]] || continue
   installed_file="$(installed_path "$rel")"
   if [[ ! -f "$installed_file" ]]; then
-    printf '  GONE   %s (in checkout, absent from installed build)\n' "$rel"
+    [[ "$json_mode" == true ]] || printf '  GONE   %s (in checkout, absent from installed build)\n' "$rel"
     gone=$((gone + 1))
   elif [[ "$(digest "$checkout_root/$rel")" == "$(digest "$installed_file")" ]]; then
     same=$((same + 1))
   else
-    printf '  DRIFT  %s\n' "$rel"
+    [[ "$json_mode" == true ]] || printf '  DRIFT  %s\n' "$rel"
     drift=$((drift + 1))
   fi
 done < <(git -C "$checkout_root" ls-files)
@@ -132,15 +172,17 @@ while IFS= read -r rel; do
   [[ -n "$rel" ]] || continue
   skip_path "$rel" && continue
   if [[ ! -f "$checkout_root/$rel" ]]; then
-    printf '  ORPHAN %s (in installed build, no longer in checkout)\n' "$rel"
+    [[ "$json_mode" == true ]] || printf '  ORPHAN %s (in installed build, no longer in checkout)\n' "$rel"
     orphan=$((orphan + 1))
   fi
 done < <(cd "$installed_root" && find . -type f \
   -not -path './.git/*' -not -path './state/*' -not -path './logs/*' \
   | sed 's|^\./||' | sort)
 
-printf '\n%d identical, %d drifted, %d missing from the install, %d left over in the install.\n' \
-  "$same" "$drift" "$gone" "$orphan"
+if [[ "$json_mode" == false ]]; then
+  printf '\n%d identical, %d drifted, %d missing from the install, %d left over in the install.\n' \
+    "$same" "$drift" "$gone" "$orphan"
+fi
 
 # --- which root does the fleet tick actually run? ------------------------
 
@@ -194,6 +236,7 @@ label_is_loaded() {
     || launchctl print "system/${label}" >/dev/null 2>&1
 }
 
+if [[ "$json_mode" == false ]]; then
 printf '\nFleet tick root (read from launchd, not assumed):\n'
 
 tick_jobs_found=0
@@ -258,10 +301,19 @@ else
     printf '  none: no launchd job on this host runs `autometta tick`.\n'
   fi
 fi
+fi
 
 if [[ "$drift" -gt 0 || "$gone" -gt 0 || "$orphan" -gt 0 ]]; then
+  if [[ "$json_mode" == true ]]; then
+    json_result stale "$installed_sha" "$checkout_sha"
+    exit 1
+  fi
   printf '\nInstalled build and checkout have drifted. Re-run scripts/install-homebrew-local.sh\n'
   printf 'when no dispatch is in flight; reinstalling replaces files a running tick executes.\n'
   exit 1
+fi
+if [[ "$json_mode" == true ]]; then
+  json_result current "$installed_sha" "$checkout_sha"
+  exit 0
 fi
 printf '\nInstalled build matches the checkout.\n'

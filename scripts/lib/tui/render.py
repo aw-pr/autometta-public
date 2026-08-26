@@ -21,6 +21,7 @@ _fleet = _load("autometta_fleet_ticker", "fleet-ticker-render.py")
 short_tokens = _repo.short_tokens
 short_secs = _repo.short_secs
 parse_iso = _repo.parse_iso
+build_warning = _repo.build_warning
 wrap_groups = _fleet.wrap_groups
 render_grouped_lines = _fleet.render_grouped_lines
 
@@ -547,6 +548,9 @@ def status_lines(state):
         content_line("● %s → dev  %s" % (name, light), [(0, 1, ACTIVE if running else DIM)]),
         content_line("last tick %s ago  tick #%s" % (relative_age(payload.get("last_tick_at"), state.now), payload.get("tick_count", 0))),
     ]
+    warning = build_warning(payload)
+    if warning:
+        lines.append(content_line(warning, [(0, len(warning), ALERT)]))
     if state.loading:
         lines.append(content_line("first poll running...", [(0, 21, ACTIVE)]))
     elif payload.get("state_error"):

@@ -48,6 +48,7 @@ short_tokens = _repo_ticker_render.short_tokens
 short_secs = _repo_ticker_render.short_secs
 parse_iso = _repo_ticker_render.parse_iso
 identity_short = _repo_ticker_render.identity_short
+build_warning = _repo_ticker_render.build_warning
 RED = _repo_ticker_render.RED
 YELLOW = _repo_ticker_render.YELLOW
 DIM = _repo_ticker_render.DIM
@@ -388,6 +389,20 @@ def build_frame(mode, scope, payload, width, height, stale_seconds, build_sha, b
                 lines.append(YELLOW(BOLD("DRAIN cap %s, expires %s" % (drain.get("cap"), drain.get("expires_at")))))
         if build_warning:
             lines.append(YELLOW(BOLD(build_warning)))
+        if mode == "fleet":
+            warning_groups = {}
+            for repo in repos:
+                warning = _repo_ticker_render.build_warning(repo)
+                if warning:
+                    warning_groups.setdefault(warning, []).append(repo.get("name") or "unknown")
+            for warning, names in warning_groups.items():
+                text = "%s (%d subscriber%s: %s)" % (
+                    warning, len(names), "" if len(names) == 1 else "s", ", ".join(names))
+                lines.append(RED(BOLD(text)) if "UNREADABLE" in warning else YELLOW(BOLD(text)))
+        else:
+            warning = _repo_ticker_render.build_warning(payload)
+            if warning:
+                lines.append(RED(BOLD(warning)) if "UNREADABLE" in warning else YELLOW(BOLD(warning)))
         lines.append("")
         lines.extend(render_totals(payload, width, mode == "repo"))
         lines.append("")

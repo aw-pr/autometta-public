@@ -53,6 +53,18 @@ def DIM(s): return paint(s, "2")
 def BOLD(s): return paint(s, "1")
 
 
+def build_warning(payload):
+    check = (payload or {}).get("build_check") or {}
+    status = check.get("status")
+    if status == "stale":
+        return "BUILD STALE installed %s, checkout %s" % (
+            check.get("installed_sha") or "unknown",
+            check.get("checkout_sha") or "unknown")
+    if status == "unreadable":
+        return "BUILD CHECK UNREADABLE"
+    return ""
+
+
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
@@ -409,7 +421,13 @@ def build_frame(repo_root, payload, width, height, interval, threshold):
         return [fit(l, width) for l in lines[:height]]
 
     name = payload.get("name") or os.path.basename(repo_root.rstrip("/"))
-    header = "%s  %s" % (BOLD(name), time.strftime("%H:%M:%SZ", time.gmtime(now)))
+    warning = build_warning(payload)
+    header = BOLD(name)
+    if warning:
+        rendered_warning = RED(BOLD(warning)) if "UNREADABLE" in warning else YELLOW(BOLD(warning))
+        header += "  " + rendered_warning
+    else:
+        header += "  " + time.strftime("%H:%M:%SZ", time.gmtime(now))
     if payload.get("state_error"):
         header += "  " + RED("STATE UNREADABLE: %s" % payload["state_error"])
     lines.append(header)
