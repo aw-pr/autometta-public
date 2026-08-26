@@ -144,3 +144,21 @@ manifest; drive it with the repo's own harness and read the artefacts it
 writes. Do not parallelise stages against a single Ollama server. A
 codex-family worker cannot take this seat: workspace-write denies the
 localhost network the harness depends on.
+
+## Re-brief (attempt 2, 2026-08-26, 22:45)
+
+Attempt 1 died by stopping short, not by erring: the worker started the
+batch, watched stage 02 time out and stage 05 begin, then wrote a
+sign-off ("I'll pause here and pick back up automatically") and exited
+at 1.97M tokens. A headless `claude -p` session is one-shot; nothing
+resumes it, and the batch died with the session. Three partial metadata
+files were discarded with the worktree.
+
+The correction is behavioural and is now part of the brief: **run the
+batch as one foreground invocation and stay with it to completion.**
+`verifier-bake-off.sh batch --candidates local-llama4-scout` blocks
+until all ten stages are done; do not background it, do not exit while
+it runs, do not narrate progress in place of finishing. The 150 minute
+worker wall-clock exists precisely to sit through ten local inferences
+at up to 420 seconds each plus reruns. Leaving the session before the
+batch returns is a failed attempt, whatever the log says.
