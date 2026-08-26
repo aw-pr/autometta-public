@@ -363,4 +363,268 @@ assert before[3] & mask == after[3] & mask
 os.close(terminal)
 PY
 
-printf 'PASS tui: run mint/join/remint, preserved run id, two-run scope at 80/119/160, mint elapsed, empty state, history, terminal restored\n'
+LC_ALL=C.UTF-8 TERM=xterm-256color python3 - \
+  "$script_dir/lib/tui/app.py" "$repo" "$polls" "$fixture" <<'PY' || \
+  fail "non-blocking poll contract failed"
+import fcntl
+import importlib.util
+import json
+import os
+import pty
+import queue
+import signal
+import struct
+import sys
+import termios
+import time
+
+app_path, repo_path, payload_path, fixture_dir = sys.argv[1:]
+stub_path = os.path.join(fixture_dir, "stub-aggregator.py")
+with open(stub_path, "w", encoding="utf-8") as handle:
+    handle.write(r'''#!/usr/bin/env python3
+import fcntl
+import json
+import os
+import sys
+import time
+
+plan_path = os.environ["AUTOMETTA_TUI_STUB_PLAN"]
+state_path = os.environ["AUTOMETTA_TUI_STUB_STATE"]
+events_path = os.environ["AUTOMETTA_TUI_STUB_EVENTS"]
+payload_path = os.environ["AUTOMETTA_TUI_STUB_PAYLOAD"]
+with open(state_path, "a+", encoding="utf-8") as state:
+    fcntl.flock(state, fcntl.LOCK_EX)
+    state.seek(0)
+    raw = state.read().strip()
+    call = int(raw) if raw else 0
+    state.seek(0)
+    state.truncate()
+    state.write(str(call + 1))
+    state.flush()
+    fcntl.flock(state, fcntl.LOCK_UN)
+with open(plan_path, "r", encoding="utf-8") as handle:
+    plan = json.load(handle)
+entry = plan[min(call, len(plan) - 1)]
+def event(kind):
+    with open(events_path, "a", encoding="utf-8") as events:
+        events.write(json.dumps({"event": kind, "call": call,
+                                 "marker": entry["marker"],
+                                 "at": time.monotonic()}) + "\n")
+        events.flush()
+event("start")
+time.sleep(entry["delay"])
+if entry.get("fail"):
+    event("fail")
+    sys.stderr.write("configured stub failure\n")
+    sys.exit(7)
+with open(payload_path, "r", encoding="utf-8") as handle:
+    document = json.load(handle)
+payload = document["polls"][-1]
+payload["name"] = entry["marker"]
+event("finish")
+json.dump(payload, sys.stdout)
+''')
+os.chmod(stub_path, 0o755)
+
+
+def read_jsonl(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
+    except FileNotFoundError:
+        return []
+
+
+class RunningApp:
+    serial = 0
+
+    def __init__(self, plan, interval):
+        RunningApp.serial += 1
+        prefix = os.path.join(fixture_dir, "interactive-%d" % RunningApp.serial)
+        self.plan_path = prefix + "-plan.json"
+        self.state_path = prefix + "-state"
+        self.events_path = prefix + "-events.jsonl"
+        self.frames_path = prefix + "-frames.jsonl"
+        with open(self.plan_path, "w", encoding="utf-8") as handle:
+            json.dump(plan, handle)
+        env = dict(os.environ,
+                   AUTOMETTA_TUI_STUB_PLAN=self.plan_path,
+                   AUTOMETTA_TUI_STUB_STATE=self.state_path,
+                   AUTOMETTA_TUI_STUB_EVENTS=self.events_path,
+                   AUTOMETTA_TUI_STUB_PAYLOAD=payload_path,
+                   AUTOMETTA_TUI_FRAME_LOG=self.frames_path)
+        self.started_at = time.monotonic()
+        self.pid, self.terminal = pty.fork()
+        if self.pid == 0:
+            os.execve(sys.executable, [sys.executable, app_path, repo_path, stub_path,
+                                       "--interval", str(interval)], env)
+        fcntl.ioctl(self.terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 119, 0, 0))
+        self.before = termios.tcgetattr(self.terminal)
+        flags = fcntl.fcntl(self.terminal, fcntl.F_GETFL)
+        fcntl.fcntl(self.terminal, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        self.status = None
+        self.output = bytearray()
+
+    def pump(self):
+        try:
+            while True:
+                chunk = os.read(self.terminal, 65536)
+                if not chunk:
+                    break
+                self.output.extend(chunk)
+        except (BlockingIOError, OSError):
+            pass
+        if self.status is None:
+            done, status = os.waitpid(self.pid, os.WNOHANG)
+            if done:
+                self.status = status
+
+    def wait_for(self, reader, predicate, timeout, message):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.pump()
+            items = reader()
+            match = next((item for item in items if predicate(item)), None)
+            if match is not None:
+                return match
+            if self.status is not None:
+                raise AssertionError("%s; app exited %d; terminal=%r" % (
+                    message, os.waitstatus_to_exitcode(self.status), bytes(self.output[-500:])))
+            time.sleep(0.02)
+        raise AssertionError(message)
+
+    def frame(self, predicate, timeout, message):
+        return self.wait_for(lambda: read_jsonl(self.frames_path), predicate, timeout, message)
+
+    def event(self, predicate, timeout, message):
+        return self.wait_for(lambda: read_jsonl(self.events_path), predicate, timeout, message)
+
+    def send(self, keys):
+        os.write(self.terminal, keys)
+
+    def quit(self):
+        started = time.monotonic()
+        self.send(b"q")
+        deadline = started + 1.0
+        while time.monotonic() < deadline and self.status is None:
+            self.pump()
+            time.sleep(0.02)
+        assert self.status is not None, "q did not exit within one second during a poll"
+        elapsed = time.monotonic() - started
+        after = termios.tcgetattr(self.terminal)
+        mask = termios.ECHO | termios.ICANON
+        assert os.waitstatus_to_exitcode(self.status) == 0
+        assert self.before[3] & mask == after[3] & mask, "terminal flags were not restored"
+        os.close(self.terminal)
+        return elapsed
+
+    def stop(self):
+        if self.status is None:
+            try:
+                os.kill(self.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            _, self.status = os.waitpid(self.pid, 0)
+        os.close(self.terminal)
+
+
+primary = RunningApp([
+    {"delay": 10.0, "marker": "slow-old"},
+    {"delay": 0.1, "marker": "fresh"},
+    {"delay": 3.0, "marker": "mid-poll"},
+], 5.0)
+try:
+    loading = primary.frame(lambda row: "first poll running..." in row["text"], 1.0,
+                            "loading frame did not appear within one second")
+    assert loading["at"] - primary.started_at < 1.0
+    primary.send(b"]")
+    primary.frame(lambda row: "[0]─History:" in row["text"], 1.0,
+                  "page switch was not applied during the first poll")
+    primary.send(b"[")
+    stale = primary.frame(
+        lambda row: "slow-old" in row["text"] and "data " in row["text"] and " old" in row["text"],
+        11.0, "slow payload did not replace loading with a data-age line")
+    fresh = primary.frame(lambda row: "fresh" in row["text"], 1.0,
+                          "fresh payload did not replace the slow payload")
+    assert "data " not in fresh["text"], "data-age line remained after a fresh payload"
+    primary.event(lambda row: row["event"] == "start" and row["call"] == 2, 6.0,
+                  "third poll did not start")
+    primary.send(b"2j\r")
+    primary.frame(lambda row: "stage-cards/69-tui.md" in row["text"], 1.0,
+                  "pinning was not applied during a poll")
+    primary.send(b"]")
+    primary.frame(lambda row: "01-historic-stage-01" in row["text"], 1.0,
+                  "history page did not render during a poll")
+    primary.send(b"[")
+    quit_elapsed = primary.quit()
+finally:
+    if primary.status is None:
+        primary.stop()
+
+failure = RunningApp([
+    {"delay": 0.05, "marker": "failure-base"},
+    {"delay": 0.5, "marker": "failure", "fail": True},
+], 0.2)
+try:
+    failure.frame(lambda row: "failure-base" in row["text"], 1.0,
+                  "failure test did not receive its first payload")
+    failure.event(lambda row: row["event"] == "start" and row["call"] == 1, 1.0,
+                  "failing poll did not start")
+    failure.send(b"]")
+    failure.frame(lambda row: "[0]─History:" in row["text"], 1.0,
+                  "keys stopped responding during the failing poll")
+    failure.send(b"[")
+    failure.frame(lambda row: "state error:" in row["text"], 1.0,
+                  "poll failure did not render state_error")
+    failure.quit()
+finally:
+    if failure.status is None:
+        failure.stop()
+
+spec = importlib.util.spec_from_file_location("autometta_tui_app", app_path)
+app = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(app)
+overlap_plan = os.path.join(fixture_dir, "overlap-plan.json")
+overlap_state = os.path.join(fixture_dir, "overlap-state")
+overlap_events = os.path.join(fixture_dir, "overlap-events.jsonl")
+with open(overlap_plan, "w", encoding="utf-8") as handle:
+    json.dump([{"delay": 0.5, "marker": "overlap-old"},
+               {"delay": 0.05, "marker": "overlap-new"}], handle)
+os.environ.update(AUTOMETTA_TUI_STUB_PLAN=overlap_plan,
+                  AUTOMETTA_TUI_STUB_STATE=overlap_state,
+                  AUTOMETTA_TUI_STUB_EVENTS=overlap_events,
+                  AUTOMETTA_TUI_STUB_PAYLOAD=payload_path)
+results = queue.Queue()
+state = app.TuiState(0.1)
+started = time.monotonic()
+old_thread = app.start_poll(results, 1, started, stub_path, repo_path)
+deadline = time.monotonic() + 1.0
+while time.monotonic() < deadline:
+    if any(row["event"] == "start" and row["call"] == 0 for row in read_jsonl(overlap_events)):
+        break
+    time.sleep(0.01)
+else:
+    raise AssertionError("old overlapping poll did not start")
+new_thread = app.start_poll(results, 2, time.monotonic(), stub_path, repo_path)
+accepted = 0
+deadline = time.monotonic() + 2.0
+while accepted < 2 and time.monotonic() < deadline:
+    try:
+        result = results.get(timeout=0.1)
+    except queue.Empty:
+        continue
+    app.apply_poll_result(state, result, 2)
+    accepted += 1
+old_thread.join(1.0)
+new_thread.join(1.0)
+assert accepted == 2, "overlapping polls did not both finish"
+overlap_frame = app.render(state, 119, 40).text()
+assert "overlap-new" in overlap_frame, "newer overlapping payload was not rendered"
+assert "overlap-old" not in overlap_frame, "stale overlapping payload replaced newer data"
+
+print("non-blocking evidence: loading %.3fs; quit %.3fs; stale and fresh age frames; "
+      "mid-poll pin/page; state_error; stale generation discarded" % (
+          loading["at"] - primary.started_at, quit_elapsed))
+PY
+
+printf 'PASS tui: run mint/join/remint, preserved run id, two-run scope at 80/119/160, mint elapsed, empty state, non-blocking polls, terminal restored\n'

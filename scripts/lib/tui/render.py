@@ -161,11 +161,20 @@ class TuiState:
         self.compose_notice = ""
         self.history = {}
         self.now = int(time.time())
+        self.monotonic_now = time.monotonic()
+        self.data_started_at = None
+        self.loading = True
+        self.polling = False
 
-    def update(self, payload, observed_at=None):
+    def update(self, payload, observed_at=None, data_started_at=None):
         self.payload = payload or {}
         self.now = int(self.payload.get("_now") or time.time())
         stamp = float(observed_at if observed_at is not None else time.monotonic())
+        self.monotonic_now = time.monotonic()
+        if data_started_at is not None:
+            self.data_started_at = float(data_started_at)
+        self.loading = False
+        self.polling = False
         for stage in self.payload.get("stages") or []:
             stage_id = stage.get("id")
             if not stage_id:
@@ -189,6 +198,24 @@ class TuiState:
         else:
             self.history_selection = 0
             self.pinned_history_card = None
+
+    def poll_started(self, started_at):
+        self.polling = True
+        self.loading = not bool(self.payload)
+        self.monotonic_now = float(started_at)
+
+    def poll_failed(self, error):
+        failed = dict(self.payload)
+        failed["state_error"] = error
+        self.payload = failed
+        self.loading = False
+        self.polling = False
+        self.monotonic_now = time.monotonic()
+
+    def observe_time(self, now):
+        previous = int(self.monotonic_now)
+        self.monotonic_now = float(now)
+        return int(self.monotonic_now) != previous
 
     def update_controller(self, controller):
         self.controller = controller or {"journal": [], "conversation": []}
@@ -508,6 +535,16 @@ def status_lines(state):
         content_line("● %s → dev  %s" % (name, light), [(0, 1, ACTIVE if running else DIM)]),
         content_line("last tick %s ago  tick #%s" % (relative_age(payload.get("last_tick_at"), state.now), payload.get("tick_count", 0))),
     ]
+    if state.loading:
+        lines.append(content_line("first poll running...", [(0, 21, ACTIVE)]))
+    elif payload.get("state_error"):
+        message = "state error: %s" % payload["state_error"]
+        lines.append(content_line(message, [(0, len("state error:"), ALERT)]))
+    if state.data_started_at is not None:
+        age = max(0, state.monotonic_now - state.data_started_at)
+        if age >= state.interval:
+            message = "data %s old" % short_secs(age)
+            lines.append(content_line(message, [(0, len(message), DIM)]))
     if run:
         lines.extend([
             content_line("run start %s  elapsed %s" % (run_start[-9:], elapsed)),
@@ -803,7 +840,7 @@ def render(state, width, height):
         right_x = left_width + 1
         right_width = width - right_x
         panel_total = usable - 3
-        heights = fit_heights([6, 16, 6, 4], [4, 5, 4, 3], panel_total, [1, 2, 0, 3])
+        heights = fit_heights([7, 16, 6, 4], [5, 5, 4, 3], panel_total, [1, 2, 0, 3])
         status_h, run_h, agents_h, inbox_h = heights
         y1 = 0
         y2 = y1 + status_h + 1
@@ -820,7 +857,7 @@ def render(state, width, height):
                  detail_lines(state, right_width - 4))
     else:
         available = usable - 4
-        heights = fit_heights([6, 18, 6, 4, 18], [3, 5, 3, 3, 6], available, [1, 4, 2, 0, 3])
+        heights = fit_heights([7, 18, 6, 4, 18], [4, 5, 3, 3, 6], available, [1, 4, 2, 0, 3])
         status_h, run_h, agents_h, inbox_h, detail_h = heights
         rects = []
         cursor = 0
