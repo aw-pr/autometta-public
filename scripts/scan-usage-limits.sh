@@ -45,7 +45,7 @@ logs_dir="$repo_root/state/logs"
 
 while IFS= read -r log_path; do
   [[ -n "$log_path" ]] || continue
-  log_name="$(basename "$log_path")"
+  log_name="${log_path##*/}"
   completion_signal=""
   case "$log_name" in
     *-worker.log)

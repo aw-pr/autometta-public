@@ -58,20 +58,49 @@ data_js="$dashboard_dir/data.js"
 now_epoch="$(date -u +%s)"
 today_epoch=$(( now_epoch - (now_epoch % 86400) ))
 
-mkdir -p "$dashboard_dir"
-aggregate_tmp="$(mktemp -d)"
-new_tmp() { mktemp "$aggregate_tmp/item.XXXXXX"; }
+# --repo prints one row and writes nothing, so the dashboard directory and the
+# scratch space belong to the fleet pass alone. Both were unconditional, which
+# cost a mkdir and two mktemps on every ticker refresh for files nothing read.
+aggregate_tmp=""
 cleanup() {
   case "$aggregate_tmp" in /tmp/*|/private/tmp/*|/private/var/*|/var/folders/*) rm -rf -- "$aggregate_tmp" ;; esac
 }
 trap cleanup EXIT
+new_tmp() {
+  [[ -n "$aggregate_tmp" ]] || aggregate_tmp="$(mktemp -d)"
+  mktemp "$aggregate_tmp/item.XXXXXX"
+}
+if [[ -z "$repo_filter" ]]; then
+  mkdir -p "$dashboard_dir"
+fi
 
-read_field() {
-  local file_path="$1" key="$2" raw
-  raw="$(sed -n "s/^${key}:[[:space:]]*//p" "$file_path" 2>/dev/null | head -n1)"
-  raw="${raw%\"}"; raw="${raw#\"}"
-  raw="${raw%\'}"; raw="${raw#\'}"
-  printf '%s' "$raw"
+# One pass over a subscriber file for the three fields that matter, in the
+# shell rather than a sed per key. --repo has to read every subscriber before
+# it knows which one it wants, so three forks per key became twenty-seven
+# forks to answer a question about one repo. Same rule as the sed it replaces:
+# the key at column zero, first occurrence wins, one layer of quoting off.
+subscriber_enabled=""; subscriber_repo_path=""; subscriber_manifest_path=""
+read_subscriber_fields() {
+  local file_path="$1" line key raw
+  local seen_enabled=false seen_repo_path=false seen_manifest_path=false
+  subscriber_enabled=""; subscriber_repo_path=""; subscriber_manifest_path=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%:*}"
+    case "$key" in
+      enabled|repo_path|manifest_path) ;;
+      *) continue ;;
+    esac
+    [[ "$line" != "$key" ]] || continue
+    raw="${line#"$key":}"
+    while [[ "$raw" == [[:space:]]* ]]; do raw="${raw#?}"; done
+    raw="${raw%\"}"; raw="${raw#\"}"
+    raw="${raw%\'}"; raw="${raw#\'}"
+    case "$key" in
+      enabled) [[ "$seen_enabled" == true ]] || { subscriber_enabled="$raw"; seen_enabled=true; } ;;
+      repo_path) [[ "$seen_repo_path" == true ]] || { subscriber_repo_path="$raw"; seen_repo_path=true; } ;;
+      manifest_path) [[ "$seen_manifest_path" == true ]] || { subscriber_manifest_path="$raw"; seen_manifest_path=true; } ;;
+    esac
+  done < "$file_path"
 }
 
 state_yaml_to_json() { yq -o=json '.' "$1"; }
@@ -84,28 +113,30 @@ epoch_iso() {
     || true
 }
 
-file_mtime_iso() {
-  local path="$1" epoch
-  epoch="$(stat -f %m "$path" 2>/dev/null || stat -c %Y "$path" 2>/dev/null || true)"
-  epoch_iso "$epoch"
-}
-
-repos_array_file="$(new_tmp)"
-printf '[]\n' > "$repos_array_file"
+repos_array_file=""
+if [[ -z "$repo_filter" ]]; then
+  repos_array_file="$(new_tmp)"
+  printf '[]\n' > "$repos_array_file"
+fi
 
 for subscriber_file in "$subscribers_dir"/*.yaml; do
   [[ -e "$subscriber_file" ]] || continue
-  [[ "$(basename "$subscriber_file")" == template.yaml ]] && continue
+  name="${subscriber_file##*/}"; name="${name%.yaml}"
+  [[ "$name" == template ]] && continue
 
-  enabled="$(read_field "$subscriber_file" enabled)"
-  repo_path="$(read_field "$subscriber_file" repo_path)"
-  manifest_path="$(read_field "$subscriber_file" manifest_path)"
-  name="$(basename "$subscriber_file" .yaml)"
+  read_subscriber_fields "$subscriber_file"
+  enabled="$subscriber_enabled"
+  repo_path="$subscriber_repo_path"
+  manifest_path="$subscriber_manifest_path"
   [[ -n "$repo_path" ]] || continue
 
   if [[ -n "$repo_filter" ]]; then
-    repo_path_resolved="$(cd "$repo_path" 2>/dev/null && pwd -P || printf '%s' "$repo_path")"
-    [[ "$repo_path_resolved" == "$repo_filter_resolved" || "$repo_path" == "$repo_filter" ]] || continue
+    # The literal comparison first, so the common case never forks a subshell
+    # to resolve a path it was about to skip anyway.
+    if [[ "$repo_path" != "$repo_filter" ]]; then
+      repo_path_resolved="$(cd "$repo_path" 2>/dev/null && pwd -P || printf '%s' "$repo_path")"
+      [[ "$repo_path_resolved" == "$repo_filter_resolved" ]] || continue
+    fi
   fi
 
   card_globs=()
@@ -117,24 +148,48 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   # Legacy fallbacks for subscribers that have not migrated their cards yet.
   card_globs+=("docs/stages/*.md" "examples/self-host/*.md")
 
-  find_card_for_stage() {
-    local sid="$1" g cand search
-    for g in "${card_globs[@]}"; do
-      if [[ "$g" = /* ]]; then search="$g"; else search="$repo_path/$g"; fi
-      for cand in $search; do
-        [[ -f "$cand" ]] || continue
-        if [[ "$(basename "$cand" .md)" == "$sid" ]]; then printf '%s\n' "$cand"; return 0; fi
-      done
+  # One index over every candidate card, built once per subscriber. The shape
+  # this replaces answered "which card is stage X?" by re-expanding the globs
+  # and forking basename per candidate, once for the card path and again for
+  # the orchestrator line: a fifty-stage repo with eighty cards paid several
+  # thousand forks for a question the glob already knew, and that was two
+  # thirds of the walk's wall clock. Suffix stripping is parameter expansion
+  # and the orchestrator lines come out of a single awk pass over the same
+  # file list. Earlier globs still win, and within a glob the earlier
+  # candidate wins, so the index answers exactly what the lookup did.
+  card_paths=()
+  card_index_lines=""
+  for card_glob in "${card_globs[@]}"; do
+    if [[ "$card_glob" = /* ]]; then card_search="$card_glob"; else card_search="$repo_path/$card_glob"; fi
+    for card_cand in $card_search; do
+      [[ -f "$card_cand" ]] || continue
+      card_sid="${card_cand##*/}"; card_sid="${card_sid%.md}"
+      card_index_lines+="$card_sid"$'\t'"$card_cand"$'\n'
+      card_paths+=("$card_cand")
     done
-    return 1
-  }
+  done
 
-  card_orchestrator_for_stage() {
-    local card
-    card="$(find_card_for_stage "$1")" || return 0
-    grep -E '^- \*\*Orchestrator:\*\*' "$card" 2>/dev/null | head -n1 \
-      | sed -E 's/^- \*\*Orchestrator:\*\*[[:space:]]*//'
-  }
+  cards_json='{}'
+  if [[ ${#card_paths[@]} -gt 0 ]]; then
+    cards_json="$(awk '
+      FNR == 1 { matched = 0 }
+      !matched && /^- \*\*Orchestrator:\*\*/ {
+        value = $0
+        sub(/^- \*\*Orchestrator:\*\*[[:space:]]*/, "", value)
+        printf "%s\t%s\n", FILENAME, value
+        matched = 1
+      }' "${card_paths[@]}" 2>/dev/null | jq -R -s -c \
+      --arg index_lines "$card_index_lines" '
+      ([splits("\n") | select(length > 0) | split("\t")] |
+        reduce .[] as $row ({}; . + {($row[0]): ($row[1] // "")})) as $orchestrators |
+      ($index_lines | split("\n") | map(select(length > 0) | split("\t"))) |
+      reduce .[] as $row ({};
+        if has($row[0]) then .
+        else . + {($row[0]): {path: $row[1],
+          orchestrator: (($orchestrators[$row[1]] // "") |
+            if . == "" then null else . end)}} end)' \
+      || printf '{}')"
+  fi
 
   state_yaml="$repo_path/state/state.yaml"
   budget_path="$repo_path/state/budget.json"
@@ -146,15 +201,21 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   tokens_spent=0; token_cap_total=0; halted=false; halt_reason=null
   consecutive_failures=0; consecutive_failure_cap=0
   paused_until=null; paused_reason=null
-  if [[ -f "$budget_path" ]] && budget_json="$(jq -c '.' "$budget_path" 2>/dev/null)"; then
-    tokens_spent="$(printf '%s' "$budget_json" | jq -r '.tokens_spent // 0')"
-    token_cap_total="$(printf '%s' "$budget_json" | jq -r '.token_cap_total // 0')"
-    halted="$(printf '%s' "$budget_json" | jq -r '.halted // false')"
-    halt_reason="$(printf '%s' "$budget_json" | jq -c '.halt_reason // null')"
-    consecutive_failures="$(printf '%s' "$budget_json" | jq -r '.consecutive_failures // 0')"
-    consecutive_failure_cap="$(printf '%s' "$budget_json" | jq -r '.consecutive_failure_cap // 0')"
-    paused_until="$(printf '%s' "$budget_json" | jq -c '.paused_until // null')"
-    paused_reason="$(printf '%s' "$budget_json" | jq -c '.paused_reason // null')"
+  # Eight fields off one file used to be eight jq invocations over a string
+  # the shell had already read. One pass emits them a line each instead; the
+  # nullable ones come through tojson, which never emits a bare newline, so a
+  # line is a safe frame for them.
+  if [[ -f "$budget_path" ]] && budget_fields="$(jq -r '
+    [(.tokens_spent // 0), (.token_cap_total // 0), (.halted // false),
+     ((.halt_reason // null) | tojson), (.consecutive_failures // 0),
+     (.consecutive_failure_cap // 0), ((.paused_until // null) | tojson),
+     ((.paused_reason // null) | tojson)] | .[]' "$budget_path" 2>/dev/null)"; then
+    {
+      IFS= read -r tokens_spent; IFS= read -r token_cap_total
+      IFS= read -r halted; IFS= read -r halt_reason
+      IFS= read -r consecutive_failures; IFS= read -r consecutive_failure_cap
+      IFS= read -r paused_until; IFS= read -r paused_reason
+    } <<<"$budget_fields"
   fi
   # Resolved cap (drain > repo cap > host default > floor) and which rule
   # won, so the ticker's CAP row never shows a resting number while a drain
@@ -175,9 +236,17 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   if [[ -f "$heartbeat_path" ]]; then
     heartbeat_json="$(jq -c '.' "$heartbeat_path" 2>/dev/null || printf '{}')"
   fi
-  heartbeat_checked_at="$(printf '%s' "$heartbeat_json" | jq -c '.checked_at // null')"
-  heartbeat_baselines="$(printf '%s' "$heartbeat_json" | jq -c '.baselines // {}')"
-  heartbeat_outlier_policy="$(printf '%s' "$heartbeat_json" | jq -c '.outlier_policy // {}')"
+  # The alive-pid list rides along so the agent pass below can test membership
+  # in the shell rather than ask jq once per dead-looking pid. It sits before
+  # the outlier policy because it is the one field that can come out empty,
+  # and a trailing empty line would not survive the command substitution.
+  {
+    IFS= read -r heartbeat_checked_at; IFS= read -r heartbeat_baselines
+    IFS= read -r heartbeat_alive_pids; IFS= read -r heartbeat_outlier_policy
+  } <<<"$(printf '%s' "$heartbeat_json" | jq -r '
+    [((.checked_at // null) | tojson), ((.baselines // {}) | tojson),
+     ([.entries[]? | select(.alive == true) | .pid | tostring] | join(",")),
+     ((.outlier_policy // {}) | tojson)] | .[]')"
 
   # Vendor staleness (card 66): the same comparison scripts/tick.sh's
   # warn_if_vendor_stale makes each pass, offered here as data rather than a
@@ -194,61 +263,112 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   fi
 
   stages_json='[]'; state_error=null; last_tick_at=null; tick_count=0; current_stage=null; run_started_at=null
-  current_run_id=null; current_run_started_at=null; current_run_stages='[]'; current_run=null
+  current_run_id=null; current_run_started_at=null; current_run_stages='[]'
   if [[ ! -r "$state_yaml" ]]; then
     state_error='"state.yaml unreadable"'
   elif state_doc="$(state_yaml_to_json "$state_yaml" 2>/dev/null)" \
-    && stages_json="$(printf '%s' "$state_doc" | jq -c '[.stages[]? | {
-      id, run_id:(.run_id // null), status:(.status // "pending"),
-      worker:(.worker // null), verifier:(.verifier // null),
-      started_at:(.started_at // null), completed_at:(.completed_at // null), tokens:(.tokens // 0),
-      worker_tokens:(.worker_tokens // null), verifier_tokens:(.verifier_tokens // null),
-      commit:(.commit // null), verifier_artefact:(.verifier_artefact // null),
-      integration:(.integration // null), required_action:(.required_action // null),
-      verifier_attempts:(.verifier_attempts // 0), wip_branch:(.wip_branch // null),
-      wip_commit:(.wip_commit // null), stall_marker:(.stall_marker // null)
-    }]')"; then
-    last_tick_at="$(printf '%s' "$state_doc" | jq -c '.last_tick_at // null')"
-    tick_count="$(printf '%s' "$state_doc" | jq -r '.tick_count // 0')"
-    current_stage="$(printf '%s' "$state_doc" | jq -c '.current_stage // null')"
-    run_started_at="$(printf '%s' "$stages_json" | jq -c '[.[] | .started_at // empty] | min // null')"
-    merged_file="$(new_tmp)"; printf '[]\n' > "$merged_file"
-    while IFS= read -r stage_entry; do
-      [[ -n "$stage_entry" ]] || continue
-      sid="$(printf '%s' "$stage_entry" | jq -r '.id')"
-      artefact_rel="$(printf '%s' "$stage_entry" | jq -r '.verifier_artefact // empty')"
-      verifier_overall=null; artefact_at=null
-      if [[ -n "$artefact_rel" && -f "$repo_path/$artefact_rel" ]]; then
-        verifier_overall="$(jq -c '.overall // null' "$repo_path/$artefact_rel" 2>/dev/null || printf null)"
-        artefact_stamp="$(file_mtime_iso "$repo_path/$artefact_rel")"
-        [[ -n "$artefact_stamp" ]] && artefact_at="$(jq -nc --arg value "$artefact_stamp" '$value')"
-      fi
-      orchestrator="$(card_orchestrator_for_stage "$sid" || true)"
-      orchestrator_json=null
-      [[ -z "$orchestrator" ]] || orchestrator_json="$(jq -nc --arg value "$orchestrator" '$value')"
-      card_path="$(find_card_for_stage "$sid" || true)"
-      card_rel="${card_path#"$repo_path"/}"
-      card_json=null
-      [[ -z "$card_path" ]] || card_json="$(jq -nc --arg value "$card_rel" '$value')"
-      enriched="$(printf '%s' "$stage_entry" | jq -c \
-        --argjson overall "$verifier_overall" --argjson orchestrator "$orchestrator_json" \
-        --argjson artefact_at "$artefact_at" --argjson card "$card_json" \
-        '. + {verifier_overall:$overall, orchestrator:$orchestrator,
-          card:$card, event_at:(.completed_at // .started_at // $artefact_at)}')"
-      jq --argjson row "$enriched" '. + [$row]' "$merged_file" > "${merged_file}.next"
-      mv "${merged_file}.next" "$merged_file"
-    done < <(printf '%s' "$stages_json" | jq -c '.[]')
-    stages_json="$(jq -c '.' "$merged_file")"
-    current_run_id="$(printf '%s' "$stages_json" | jq -c '
-      [.[] | select((.status == "pending" or .status == "in_progress") and .run_id != null) |
-        .run_id] | last // null')"
-    if [[ "$current_run_id" != "null" ]]; then
-      current_run_stages="$(printf '%s' "$stages_json" | jq -c --argjson run_id "$current_run_id" \
-        '[.[] | select(.run_id == $run_id)]')"
-      current_run_started_at="$(jq -nc --argjson run_id "$current_run_id" '
-        $run_id as $id |
-        "\($id[4:8])-\($id[8:10])-\($id[10:12])T\($id[13:15]):\($id[15:17]):\($id[17:19])Z"')"
+    && state_fields="$(printf '%s' "$state_doc" | jq -r '
+      [.stages[]? | {
+        id, run_id:(.run_id // null), status:(.status // "pending"),
+        worker:(.worker // null), verifier:(.verifier // null),
+        started_at:(.started_at // null), completed_at:(.completed_at // null), tokens:(.tokens // 0),
+        worker_tokens:(.worker_tokens // null), verifier_tokens:(.verifier_tokens // null),
+        commit:(.commit // null), verifier_artefact:(.verifier_artefact // null),
+        integration:(.integration // null), required_action:(.required_action // null),
+        verifier_attempts:(.verifier_attempts // 0), wip_branch:(.wip_branch // null),
+        wip_commit:(.wip_commit // null), stall_marker:(.stall_marker // null)
+      }] as $stages |
+      [($stages | tojson), ((.last_tick_at // null) | tojson), (.tick_count // 0),
+       ((.current_stage // null) | tojson),
+       ([$stages[] | select((.verifier_artefact // "") != "") | .verifier_artefact] | join("\t")),
+       (([$stages[] | .started_at // empty] | min // null) | tojson)] | .[]')"; then
+    {
+      IFS= read -r stages_json; IFS= read -r last_tick_at; IFS= read -r tick_count
+      IFS= read -r current_stage; IFS= read -r artefact_rel_line; IFS= read -r run_started_at
+    } <<<"$state_fields"
+
+    # Verifier artefacts, read as a set. Per stage this was a jq for .overall,
+    # a stat and a date for the mtime; one jq and one stat over the whole list
+    # answer the same thing, and jq's strftime formats the epochs it already
+    # holds rather than forking date per row. The paths ride out of the state
+    # pass above rather than costing a jq of their own to re-read.
+    artefact_keys=(); artefact_paths=()
+    if [[ -n "$artefact_rel_line" ]]; then
+      IFS=$'\t' read -ra artefact_rels <<<"$artefact_rel_line"
+      for artefact_rel in "${artefact_rels[@]}"; do
+        [[ -n "$artefact_rel" && -f "$repo_path/$artefact_rel" ]] || continue
+        artefact_keys+=("$artefact_rel"); artefact_paths+=("$repo_path/$artefact_rel")
+      done
     fi
+
+    artefact_key_lines=""; artefact_overall_lines=""; mtime_lines=""
+    if [[ ${#artefact_paths[@]} -gt 0 ]]; then
+      overall_values=()
+      if batch_overalls="$(jq -c '.overall // null' "${artefact_paths[@]}" 2>/dev/null)"; then
+        while IFS= read -r overall_line; do overall_values+=("$overall_line"); done <<<"$batch_overalls"
+      fi
+      if [[ ${#overall_values[@]} -ne ${#artefact_paths[@]} ]]; then
+        # One artefact jq cannot read aborts the batch, so an unreadable file
+        # costs a slow walk rather than values read against the wrong stage.
+        overall_values=()
+        for artefact_path in "${artefact_paths[@]}"; do
+          overall_values+=("$(jq -c '.overall // null' "$artefact_path" 2>/dev/null || printf null)")
+        done
+      fi
+      mtime_values=()
+      if batch_mtimes="$(stat -f '%m' "${artefact_paths[@]}" 2>/dev/null \
+        || stat -c '%Y' "${artefact_paths[@]}" 2>/dev/null)"; then
+        while IFS= read -r mtime_line; do mtime_values+=("$mtime_line"); done <<<"$batch_mtimes"
+      fi
+      if [[ ${#mtime_values[@]} -eq ${#artefact_paths[@]} ]]; then
+        mtime_lines="$(printf '%s\n' "${mtime_values[@]}")"
+      fi
+      artefact_key_lines="$(printf '%s\n' "${artefact_keys[@]}")"
+      artefact_overall_lines="$(printf '%s\n' "${overall_values[@]}")"
+    fi
+
+    # One pass builds the enriched stage list and everything derived from it.
+    # Joining the cards, joining the artefacts and scoping the current run were
+    # three walks of the same array through three jq processes, each one
+    # re-serialising a list the previous had just written.
+    {
+      IFS= read -r stages_json; IFS= read -r current_run_id
+      IFS= read -r current_run_stages; IFS= read -r current_run_started_at
+    } <<<"$(printf '%s' "$stages_json" | jq -r \
+      --arg repo_path "$repo_path" --argjson cards "$cards_json" \
+      --arg artefact_keys "$artefact_key_lines" --arg artefact_overalls "$artefact_overall_lines" \
+      --arg artefact_mtimes "$mtime_lines" '
+      ($artefact_keys | split("\n") | map(select(length > 0))) as $keys |
+      ($artefact_overalls | split("\n") | map(select(length > 0) | fromjson)) as $overalls |
+      ($artefact_mtimes | split("\n") | map(select(length > 0)) |
+        map(if test("^[0-9]+$") then tonumber else 0 end)) as $mtimes |
+      (reduce range(0; $keys | length) as $i ({};
+        . + {($keys[$i]): {
+          overall: $overalls[$i],
+          at: (($mtimes[$i] // 0) as $epoch |
+            if $epoch > 0 then ($epoch | strftime("%Y-%m-%dT%H:%M:%SZ")) else null end)}})) as $artefacts |
+      map(
+        ($cards[.id] // null) as $card |
+        (if (.verifier_artefact | type) == "string" then ($artefacts[.verifier_artefact] // null)
+         else null end) as $artefact |
+        . + {
+          verifier_overall: (if $artefact == null then null else $artefact.overall end),
+          orchestrator: (if $card == null then null else $card.orchestrator end),
+          card: (if $card == null then null
+            elif ($card.path | startswith($repo_path + "/")) then $card.path[($repo_path | length) + 1:]
+            else $card.path end),
+          event_at: (.completed_at // .started_at //
+            (if $artefact == null then null else $artefact.at end))
+        }) as $enriched |
+      ([$enriched[] | select((.status == "pending" or .status == "in_progress") and .run_id != null) |
+        .run_id] | last // null) as $run_id |
+      [($enriched | tojson),
+       ($run_id | tojson),
+       (if $run_id == null then "[]"
+        else ([$enriched[] | select(.run_id == $run_id)] | tojson) end),
+       (if $run_id == null then "null"
+        else ("\($run_id[4:8])-\($run_id[8:10])-\($run_id[10:12])T\($run_id[13:15]):\($run_id[15:17]):\($run_id[17:19])Z" | tojson)
+        end)] | .[]')"
   else
     stages_json='[]'; state_error='"state.yaml unparseable"'
   fi
@@ -261,29 +381,44 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       || printf '[]')"
   fi
 
-  agents_file="$(new_tmp)"; printf '[]\n' > "$agents_file"
+  # Registry pass: one jq per agent file for the three things the shell needs
+  # to decide liveness, then one jq for the whole enriched array. The shape
+  # this replaces spent seven jq invocations per agent and rewrote the growing
+  # array on every row, which is the same accumulate-by-rewrite the stage list
+  # was paying for.
+  agent_rows=""
   if [[ -d "$active_agents_dir" ]]; then
     for agent_file in "$active_agents_dir"/*.json; do
       [[ -f "$agent_file" ]] || continue
-      registration="$(jq -c '.' "$agent_file" 2>/dev/null || true)"
+      agent_pid=""; agent_log=""; registration=""
+      {
+        IFS= read -r agent_pid || agent_pid=""
+        IFS= read -r agent_log || agent_log=""
+        IFS= read -r registration || registration=""
+      } <<<"$(jq -r '(.pid // 0), (.log_path // ""), tojson' "$agent_file" 2>/dev/null || true)"
       [[ -n "$registration" ]] || continue
-      agent_pid="$(printf '%s' "$registration" | jq -r '.pid // 0')"
       [[ "$agent_pid" =~ ^[0-9]+$ ]] || continue
       if ! kill -0 "$agent_pid" 2>/dev/null; then
-        heartbeat_alive="$(printf '%s' "$heartbeat_json" | jq -r --argjson pid "$agent_pid" \
-          'any(.entries[]?; .pid == $pid and .alive == true)')"
-        [[ "$heartbeat_alive" == "true" ]] || continue
+        case ",$heartbeat_alive_pids," in *",$agent_pid,"*) ;; *) continue ;; esac
       fi
-      agent_log="$(printf '%s' "$registration" | jq -r '.log_path // empty')"
       agent_log_bytes=0
       if [[ -n "$agent_log" && -f "$agent_log" ]]; then
-        agent_log_bytes="$(wc -c < "$agent_log" | tr -d ' ')"
+        agent_log_bytes="$(stat -f %z "$agent_log" 2>/dev/null \
+          || stat -c %s "$agent_log" 2>/dev/null \
+          || wc -c < "$agent_log" | tr -d ' ')"
       fi
-      agent="$(jq -nc --argjson reg "$registration" --argjson hb "$heartbeat_json" \
-        --argjson now "$now_epoch" --argjson log_bytes "${agent_log_bytes:-0}" '
-        def epoch: try (. | fromdateiso8601) catch $now;
+      agent_rows+="$registration"$'\t'"${agent_log_bytes:-0}"$'\n'
+    done
+  fi
+  agents_json='[]'
+  if [[ -n "$agent_rows" ]]; then
+    agents_json="$(printf '%s' "$agent_rows" | jq -R -s -c \
+      --argjson hb "$heartbeat_json" --argjson now "$now_epoch" '
+      def epoch: try (. | fromdateiso8601) catch $now;
+      [splits("\n") | select(length > 0) | split("\t") |
+        (.[0] | fromjson) as $reg | (.[1] | tonumber) as $log_bytes |
         ($hb.entries // [] | map(select(.pid == $reg.pid))[0] // {}) as $live |
-        $reg + {
+        ($reg + {
           stage_id: ($reg.stage_id // ($reg.card_path // "unknown" | split("/")[-1] | sub("\\.md$"; ""))),
           elapsed_seconds: ($live.elapsed_seconds // ($now - (($reg.started_at // "") | epoch))),
           flags: ($live.flags // []),
@@ -292,13 +427,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
           baseline_sample_size: ($live.baseline_sample_size // null),
           token_outlier: ($live.token_outlier // null),
           log_bytes:$log_bytes, alive:true
-        }')"
-      agent="$(printf '%s' "$agent" | jq -c '. + {elapsed:.elapsed_seconds}')"
-      jq --argjson row "$agent" '. + [$row]' "$agents_file" > "${agents_file}.next"
-      mv "${agents_file}.next" "$agents_file"
-    done
+        }) | . + {elapsed:.elapsed_seconds}]')"
   fi
-  agents_json="$(jq -c '.' "$agents_file")"
 
   # Live transcript token totals, --repo mode only: reading the harness
   # transcript for every live agent across five repos every 5s is the cost
@@ -313,21 +443,23 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       "${AUTOMETTA_CODEX_SESSIONS:-$HOME/.codex/sessions}" <<<"$agents_json" 2>/dev/null || printf '%s' "$agents_json")"
   fi
 
-  queue_json="$(printf '%s' "$stages_json" | jq -c '[.[] | select(.status == "pending") |
-    {stage_id:.id, worker:(.worker // null), verifier:(.verifier // null)}]')"
-
-  # Stages done/outstanding/escalated for the repo ticker's NEXT counts line:
-  # an aggregate over the full stages list, so it belongs here and not in the
-  # renderer (scripts/lib/repo-ticker-render.py:9, card 63 criterion 9).
-  queue_counts_json="$(printf '%s' "$stages_json" | jq -c \
+  # The queue and, below it, the stages done/outstanding/escalated counts for
+  # the repo ticker's NEXT line: both aggregates over the full stages list, so
+  # they belong here and not in the renderer (scripts/lib/repo-ticker-render.py:9,
+  # card 63 criterion 9), and one pass answers both.
+  {
+    IFS= read -r queue_json; IFS= read -r queue_counts_json
+  } <<<"$(printf '%s' "$stages_json" | jq -r \
     --argjson alert "$alert_statuses_json" --argjson live "$agents_json" '
     ([.[] | select(.status != "completed" and .status != "superseded") | .id] | unique) as $outstanding |
     (([.[] | select(.status as $s | $alert | index($s) != null) | .id] +
       [$live[] | select((.flags // []) | index("token-outlier")) | .stage_id]) | unique) as $escalated |
-    {done: ([.[] | select(.status == "completed")] | length),
-     outstanding: ($outstanding | length),
-     escalated: ([$escalated[] | select(. as $id | $outstanding | index($id))] | length)}
-  ')"
+    [([.[] | select(.status == "pending") |
+       {stage_id:.id, worker:(.worker // null), verifier:(.verifier // null)}] | tojson),
+     ({done: ([.[] | select(.status == "completed")] | length),
+       outstanding: ($outstanding | length),
+       escalated: ([$escalated[] | select(. as $id | $outstanding | index($id))] | length)} | tojson)
+    ] | .[]')"
 
   quota='{"read_at":null,"families":{"claude":{"family":"claude","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]},"codex":{"family":"codex","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]}}}'
   if [[ -f "$quota_path" ]]; then
@@ -341,15 +473,24 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"by_stage":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0,"history":{"summary":{"card_count":0,"lost_seven_day_tokens":0,"lost_seven_day_marked":false,"seven_day_cost_usd_est":0,"seven_day_cost_marked":false},"cards":[],"fortnight":{"by_day":[],"by_model":[]}}}'
   if [[ -f "$cost_log_path" ]]; then
     spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" '
-      def epoch: try (.ts | fromdateiso8601) catch 0;
-      def tok: ((.input_tokens // 0) + (.cached_input_tokens // 0) + (.output_tokens // 0));
-      def dispatch_tokens: (.total_tokens // tok);
-      def dispatch_cost: (.total_cost_usd_est // .cost_usd_est // 0);
-      def zero_output_read:
+      # epoch, token sum and the zero-output test are asked of every row by
+      # thirty-odd separate comprehensions below, and the fortnight chart asks
+      # fourteen more times again. Answering them once per row on the way in
+      # turns a date parse and a regex per row per pass into a field read: on
+      # a five-thousand-row log that is most of the query. The three carrier
+      # fields never reach the payload, which builds its objects by name.
+      def parse_epoch: try (.ts | fromdateiso8601) catch 0;
+      def sum_tokens: ((.input_tokens // 0) + (.cached_input_tokens // 0) + (.output_tokens // 0));
+      def read_zero_output:
         (((.identity // "") | test("gpt|codex"; "i")) and
          ((.usage_status // "recorded") == "recorded") and
          (((.input_tokens // 0) + (.cached_input_tokens // 0)) > 0) and
          ((.output_tokens // 0) == 0));
+      def epoch: .row_epoch;
+      def tok: .row_tokens;
+      def zero_output_read: .row_zero_output;
+      def dispatch_tokens: (.total_tokens // .row_tokens);
+      def dispatch_cost: (.total_cost_usd_est // .cost_usd_est // 0);
       def totals($rows): {
         input_tokens: ([$rows[] | .input_tokens // 0] | add // 0),
         cached_input_tokens: ([$rows[] | .cached_input_tokens // 0] | add // 0),
@@ -357,7 +498,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
         tokens: ([$rows[] | tok] | add // 0),
         cost_usd_est: ([$rows[] | .cost_usd_est // 0] | add // 0)
       };
-      [.[] | select(type == "object")] as $all |
+      [.[] | select(type == "object") | . + {
+        row_epoch: parse_epoch, row_tokens: sum_tokens, row_zero_output: read_zero_output}] as $all |
       [$all[] | select(epoch >= $today)] as $rows |
       [$rows[] | select((.result // "") == "pass")] as $pass |
       [$rows[] | select((.result // "") != "pass")] as $lost |
@@ -366,6 +508,15 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       [$all[] | select((.role // "") != "phat-controller")] as $dispatches |
       [$dispatches[] | select(epoch >= ($today - 1123200))] as $fortnight_rows |
       ([$fortnight_rows[] | dispatch_cost] | add // 0) as $fortnight_cost |
+      # The fortnight chart used to re-scan the fortnight twice per day drawn,
+      # twenty-eight passes over the log for fourteen numbers. One reduce
+      # buckets by UTC midnight instead, in the same row order, so each day
+      # sums the same values in the same sequence it did before.
+      (reduce $fortnight_rows[] as $row ({};
+        (($row.row_epoch - ($row.row_epoch % 86400)) | tostring) as $day |
+        .[$day] = {
+          cost_usd_est: ((.[$day].cost_usd_est // 0) + ($row | dispatch_cost)),
+          marked: ((.[$day].marked // false) or $row.row_zero_output)})) as $fortnight_by_day |
       (totals($rows)) as $t |
       {scope:"today_utc", input_tokens:$t.input_tokens,
        cached_input_tokens:$t.cached_input_tokens, output_tokens:$t.output_tokens,
@@ -373,11 +524,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
        productive:(totals($pass) | {tokens, cost_usd_est}),
        lost:(totals($lost) | {tokens, cost_usd_est}),
        lost_seven_day:(totals($lost_week) | {tokens, cost_usd_est}),
-       openai_zero_output_caveat: (any($week_rows[]?;
-         ((.identity // "") | test("gpt|codex"; "i")) and
-         ((.usage_status // "recorded") == "recorded") and
-         (((.input_tokens // 0) + (.cached_input_tokens // 0)) > 0) and
-         ((.output_tokens // 0) == 0))),
+       openai_zero_output_caveat: (any($week_rows[]?; zero_output_read)),
        by_role: ([$rows | group_by(.role)[] | . as $role_rows |
          (totals($role_rows)) + {role:($role_rows[0].role // "unknown"),
            productive_tokens:([$role_rows[] | select((.result // "") == "pass") | tok] | add // 0),
@@ -430,11 +577,10 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
          fortnight: {
            by_day: ([range(0; 14) as $offset |
              ($today - ((13 - $offset) * 86400)) as $day |
+             ($fortnight_by_day[$day | tostring] // {}) as $bucket |
              {day: ($day | strftime("%Y-%m-%d")),
-              cost_usd_est: ([$fortnight_rows[] |
-                select(epoch >= $day and epoch < ($day + 86400)) | dispatch_cost] | add // 0),
-              marked: (any($fortnight_rows[]?;
-                epoch >= $day and epoch < ($day + 86400) and zero_output_read))}]),
+              cost_usd_est: ($bucket.cost_usd_est // 0),
+              marked: ($bucket.marked // false)}]),
            by_model: ([$fortnight_rows | group_by(.identity)[] | . as $model_rows |
              ([$model_rows[] | dispatch_cost] | add // 0) as $model_cost |
              {identity: ($model_rows[0].identity // "unknown"),
@@ -448,24 +594,17 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     ' "$cost_log_path" 2>/dev/null || printf '%s' "$spend")"
   fi
 
-  if [[ "$current_run_id" != "null" ]]; then
-    current_run="$(jq -nc \
-      --argjson id "$current_run_id" --argjson started_at "$current_run_started_at" \
-      --argjson stages "$current_run_stages" --argjson spend "$spend" '
-      {
-        id:$id,
-        started_at:$started_at,
-        stages:$stages,
-        tokens_total: ([$stages[] as $stage |
-          ([$spend.by_stage[]? | select(.stage_id == $stage.id)][0].tokens // $stage.tokens // 0)] |
-          add // 0),
-        cost_usd_est: ([$stages[] as $stage |
-          ([$spend.by_stage[]? | select(.stage_id == $stage.id)][0].cost_usd_est // 0)] |
-          add // 0)
-      }')"
-  fi
-
-  repo_row="$(jq -nc \
+  # The spend block arrives on stdin, not in argv. It carries a dispatch object
+  # per cost-log row, so a subscriber with a few thousand rows pushes it past
+  # ARG_MAX and jq dies with "Argument list too long" -- taking the whole row
+  # with it, at exactly the scale where the figures matter most. Same reason
+  # scripts/repo-light.sh reads its row in. The current run is built here too
+  # rather than in a jq of its own: it needs the same spend block, and asking
+  # for it twice meant parsing it twice.
+  repo_row="$(printf '%s' "$spend" | jq -nc \
+    --argjson current_run_id "$current_run_id" \
+    --argjson current_run_started_at "$current_run_started_at" \
+    --argjson current_run_stages "$current_run_stages" \
     --arg name "$name" --arg repo_path "$repo_path" \
     --argjson enabled "$([[ "$enabled" == true ]] && printf true || printf false)" \
     --argjson tokens_spent "${tokens_spent:-0}" --argjson token_cap_total "${token_cap_total:-0}" \
@@ -476,17 +615,28 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson paused_until "$paused_until" --argjson paused_reason "$paused_reason" \
     --argjson last_tick_at "$last_tick_at" --argjson tick_count "${tick_count:-0}" \
     --argjson current_stage "$current_stage" --argjson run_started_at "$run_started_at" \
-    --argjson current_run "$current_run" \
     --argjson verifier_attempt_cap 3 \
     --argjson stages "$stages_json" --argjson alerts "$alerts_json" --argjson agents "$agents_json" \
     --argjson queue "$queue_json" --argjson queue_counts "$queue_counts_json" \
-    --argjson spend "$spend" --argjson quota "$quota" --argjson state_error "$state_error" \
+    --argjson quota "$quota" --argjson state_error "$state_error" \
     --argjson heartbeat_checked_at "$heartbeat_checked_at" --argjson drain_active "$drain_active" \
     --argjson heartbeat_baselines "$heartbeat_baselines" \
     --argjson heartbeat_outlier_policy "$heartbeat_outlier_policy" \
     --argjson drain_cap "$drain_cap" --argjson drain_expires_at "$drain_expires_at" \
     --argjson vendor_stale "$([[ "$vendor_stale" == true ]] && printf true || printf false)" \
     --argjson vendor_from "$vendor_from" --arg vendor_current "$autometta_current_sha" '
+    input as $spend |
+    (if $current_run_id == null then null else {
+      id:$current_run_id,
+      started_at:$current_run_started_at,
+      stages:$current_run_stages,
+      tokens_total: ([$current_run_stages[] as $stage |
+        ([$spend.by_stage[]? | select(.stage_id == $stage.id)][0].tokens // $stage.tokens // 0)] |
+        add // 0),
+      cost_usd_est: ([$current_run_stages[] as $stage |
+        ([$spend.by_stage[]? | select(.stage_id == $stage.id)][0].cost_usd_est // 0)] |
+        add // 0)
+    } end) as $current_run |
     {name:$name, repo_path:$repo_path, enabled:$enabled, tokens_spent:$tokens_spent,
      token_cap_total:$token_cap_total, effective_token_cap:$effective_token_cap, cap_source:$cap_source,
      halted:$halted, halt_reason:$halt_reason,
@@ -508,13 +658,16 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   IFS=$'\t' read -r light reason <<<"$(repo_light "$repo_row" "$now_epoch")"
   repo_row="$(printf '%s' "$repo_row" | jq -c --arg light "$light" --arg reason "$reason" \
     '. + {light:$light, light_reason:$reason}')"
-  jq --argjson row "$repo_row" '. + [$row]' "$repos_array_file" > "${repos_array_file}.next"
-  mv "${repos_array_file}.next" "$repos_array_file"
-
+  # --repo prints this row and leaves; appending it to a fleet array nothing
+  # downstream reads was a whole jq and a file rewrite spent on the way out.
   if [[ -n "$repo_filter" ]]; then
     printf '%s\n' "$repo_row"
     exit 0
   fi
+
+  printf '%s' "$repo_row" | jq -n --slurpfile rows "$repos_array_file" \
+    'input as $row | $rows[0] + [$row]' > "${repos_array_file}.next"
+  mv "${repos_array_file}.next" "$repos_array_file"
 done
 
 if [[ -n "$repo_filter" ]]; then
@@ -556,11 +709,12 @@ drain_json="$(printf '%s' "$repos_json" | jq -c '
 
 generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 data_tmp="$(new_tmp)"
-jq -n --arg generated_at "$generated_at" --argjson repos "$repos_json" \
+jq -n --arg generated_at "$generated_at" --slurpfile repos_file "$repos_array_file" \
   --argjson by_model "$by_model_json" --argjson by_day "$by_day_json" \
   --argjson fleet_totals "$fleet_totals_json" --argjson spend "$spend_json" \
   --argjson drain "$drain_json" \
-  '{generated_at:$generated_at,repos:$repos,by_model:$by_model,by_day:$by_day,
+  '$repos_file[0] as $repos |
+   {generated_at:$generated_at,repos:$repos,by_model:$by_model,by_day:$by_day,
     fleet_totals:$fleet_totals,spend:$spend,drain:$drain,
     drain_active:$drain.active,drain_cap:$drain.cap,drain_expires_at:$drain.expires_at}' > "$data_tmp"
 mv "$data_tmp" "$data_json"

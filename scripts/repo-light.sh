@@ -16,11 +16,17 @@ repo_light() {
   local alert_statuses
   alert_statuses="$(alert_stage_statuses_json)"
 
-  jq -nr \
-    --argjson repo "$repo_json" \
+  # The row arrives on stdin, not in argv. A subscriber with a few thousand
+  # cost-log rows builds a payload past ARG_MAX, and --argjson made that an
+  # "Argument list too long" from jq: the caller's read then set an empty
+  # light and an empty reason, so the repo's traffic light went blank on the
+  # one repo busy enough to need it. printf is a builtin and a pipe has no
+  # such limit.
+  printf '%s' "$repo_json" | jq -nr \
     --argjson now "$now" \
     --argjson fresh_hours "$fresh_hours" \
     --argjson alert_statuses "$alert_statuses" '
+    input as $repo |
     def epoch:
       if . == null or . == "" then 0
       elif type == "number" then .
