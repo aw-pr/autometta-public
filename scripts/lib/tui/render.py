@@ -2,6 +2,7 @@
 """Pure payload-to-canvas rendering for the Autometta TUI."""
 import importlib.util
 import os
+import re
 import time
 
 
@@ -89,22 +90,33 @@ class Canvas:
 
 
 def identity_alias(identity):
-    value = (identity or "").lower()
-    if "sol" in value:
-        return "sol"
-    if "fable" in value:
-        return "fable"
-    if "terra" in value:
-        return "terra"
-    if "luna" in value:
-        return "luna"
-    if "claude" in value:
-        return "claude"
-    if "codex" in value or "gpt" in value:
-        return "codex"
-    if "gemini" in value:
-        return "gemini"
-    return "-"
+    value = (identity or "").strip().lower()
+    address = re.search(r"<([^<>]+)>", value)
+    slug = (address.group(1) if address else value).split("@", 1)[0].strip()
+    if not slug:
+        return "-"
+
+    releases = ("sol", "terra", "luna", "fable")
+    tokens = slug.split("-")
+    for release in releases:
+        if release in tokens:
+            return release
+
+    model = slug
+    prefixes = ("anthropic-", "openai-", "google-", "claude-", "codex-")
+    while True:
+        prefix = next((item for item in prefixes if model.startswith(item)), None)
+        if prefix is None:
+            break
+        model = model[len(prefix):]
+    if model in ("claude", "codex", "gemini"):
+        return model
+
+    versioned = re.fullmatch(r"(gpt|opus|sonnet|haiku)-(\d+)(?:-(\d+))?", model)
+    if versioned:
+        name, major, minor = versioned.groups()
+        return "%s-%s%s" % (name, major, "." + minor if minor else "")
+    return model or slug
 
 
 def relative_age(stamp, now):
@@ -559,39 +571,51 @@ def status_lines(state):
     return lines
 
 
-def run_lines(state, inner_width, force_pair_wrap=False):
+def run_lines(state, inner_width):
     payload = state.payload
     lines = []
     stages = ordered_run_stages(payload)
     if not stages:
         return [content_line("no current run · use the history tab", [(0, 14, DIM)])]
-    for index, stage in enumerate(stages):
+
+    rows = []
+    for stage in stages:
         glyph, status, active_role = stage_state(payload, stage)
         worker = identity_alias(stage.get("worker"))
         verifier = identity_alias(stage.get("verifier"))
         pair = "%s→%s" % (worker, verifier)
-        cells = {"glyph": glyph, "id": stage.get("id") or "?", "role": status,
-                 "pair": pair, "tokens": short_tokens(stage_total(payload, stage.get("id")))}
-        widths = {name: len(value) for name, value in cells.items()}
-        if force_pair_wrap:
-            groups = wrap_groups(["glyph", "id", "role"], widths, inner_width)
-            groups += wrap_groups(["pair", "tokens"], widths, inner_width)
-        else:
-            groups = wrap_groups(["glyph", "id", "role", "pair", "tokens"], widths, inner_width)
+        rows.append(({"glyph": glyph, "id": stage.get("id") or "?", "role": status,
+                      "pair": pair, "tokens": short_tokens(stage_total(payload, stage.get("id")))},
+                     worker, verifier, active_role))
+
+    gap = 2
+    indent = 2
+    widths = {
+        "glyph": max(len(row[0]["glyph"]) for row in rows),
+        "role": max(len(row[0]["role"]) for row in rows),
+        "pair": max(len(row[0]["pair"]) for row in rows),
+        "tokens": max(len(row[0]["tokens"]) for row in rows),
+    }
+    fixed = indent + sum(widths.values()) + gap * 4
+    widths["id"] = max(1, inner_width - fixed)
+    order = ["glyph", "id", "role", "pair", "tokens"]
+
+    for index, (cells, worker, verifier, active_role) in enumerate(rows):
         selected = state.focus == 2 and state.selection[2] == index
-        for physical, group in enumerate(groups):
-            rendered = render_grouped_lines(cells, group, widths, {}, inner_width, indent="  ")[0].rstrip()
-            if physical:
-                rendered = "  " + rendered
-            spans = []
-            if selected:
-                spans.append((0, len(rendered), REVERSE))
-            if "pair" in group and active_role:
-                alias = worker if active_role == "worker" else verifier
-                start = rendered.find(alias, rendered.find(pair))
-                if start >= 0:
-                    spans.append((start, start + len(alias), ACTIVE))
-            lines.append(content_line(rendered, spans))
+        if len(cells["id"]) > widths["id"]:
+            id_line = "  " + cells["id"]
+            lines.append(content_line(
+                id_line, [(0, len(id_line), REVERSE)] if selected else []))
+            cells = dict(cells, id="")
+        rendered = render_grouped_lines(
+            cells, order, widths, {}, inner_width, indent="  ")[0].rstrip()
+        spans = [(0, len(rendered), REVERSE)] if selected else []
+        if active_role:
+            alias = worker if active_role == "worker" else verifier
+            start = rendered.find(alias, rendered.find(cells["pair"]))
+            if start >= 0:
+                spans.append((start, start + len(alias), ACTIVE))
+        lines.append(content_line(rendered, spans))
     return lines
 
 
@@ -865,7 +889,7 @@ def render(state, width, height):
             rects.append((0, cursor, width, panel_height))
             cursor += panel_height + 1
         draw_box(canvas, rects[0], "[1]─Status", status_lines(state), state.focus == 1)
-        draw_box(canvas, rects[1], run_title, run_lines(state, width - 4, True), state.focus == 2)
+        draw_box(canvas, rects[1], run_title, run_lines(state, width - 4), state.focus == 2)
         draw_box(canvas, rects[2], "[3]─Agents  %d live" % live_count, agent_lines(state), state.focus == 3)
         draw_box(canvas, rects[3], "[4]─Escalations & inbox  %d · 0" % esc_count,
                  inbox_lines(state), state.focus == 4)

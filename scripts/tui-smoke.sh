@@ -85,6 +85,10 @@ polls_path, empty_path, long_id, repo_path, controller_home = sys.argv[1:]
 sol = "GPT-5.6 Sol <gpt-5-6-sol@local>"
 terra = "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>"
 fable = "Claude Fable 5 <claude-fable-5@local>"
+gpt53 = "Codex GPT-5.3 <codex-gpt-5-3@local>"
+opus47 = "Claude Opus 4.7 <claude-opus-4-7@local>"
+unknown = "Unknown Worker <unknown-worker-slug@local>"
+family = "Codex <codex@local>"
 historic = []
 for number in range(1, 41):
     stage = {
@@ -103,18 +107,18 @@ run_id = "run-20260826-073000"
 current = [
     {"id": "65-loop-stamps-hb", "status": "completed", "worker": sol, "verifier": fable,
      "tokens": 412000, "card": "stage-cards/65-loop-stamps-hb.md", "run_id": run_id},
-    {"id": "66-fleet-view-fits", "status": "completed", "worker": sol, "verifier": fable,
+    {"id": "66-fleet-view-fits", "status": "completed", "worker": gpt53, "verifier": opus47,
      "tokens": 3911200, "card": "stage-cards/66-fleet-view-fits.md", "run_id": run_id},
     {"id": "67-outlier-says-so", "status": "completed", "worker": terra, "verifier": fable,
      "tokens": 1200000, "card": "stage-cards/67-outlier-says-so.md", "run_id": run_id},
-    {"id": "50-cards", "status": "completed", "worker": terra, "verifier": fable,
+    {"id": "50-cards", "status": "completed", "worker": unknown, "verifier": family,
      "tokens": 3800000, "card": "stage-cards/50-cards.md", "run_id": run_id},
     {"id": long_id, "status": "completed", "worker": terra, "verifier": fable,
      "tokens": 776800, "card": f"stage-cards/{long_id}.md", "run_id": run_id},
     {"id": "68-a-pipeline-pair", "status": "in_progress", "worker": sol, "verifier": fable,
      "verifier_attempts": 2, "tokens": 2301200, "card": "stage-cards/68-a-pipeline-pair.md",
      "acceptance": "scripts/pipeline-pair-smoke.sh", "run_id": run_id},
-    {"id": "69-tui", "status": "pending", "worker": sol, "verifier": fable,
+    {"id": "69-tui", "status": "pending", "worker": fable, "verifier": gpt53,
      "tokens": 0, "card": "stage-cards/69-tui.md", "run_id": run_id},
 ]
 
@@ -250,6 +254,9 @@ for frame in "$frame80" "$frame119" "$frame160"; do
   done
   assert_contains "$frame" 'sol→fable' "worker-to-verifier pairing was lost"
   assert_contains "$frame" 'terra→fable' "second worker-to-verifier pairing was lost"
+  assert_contains "$frame" 'gpt-5.3→opus-4.7' "old-style model aliases were lost"
+  assert_contains "$frame" 'fable→gpt-5.3' "current verifier alias was lost"
+  assert_contains "$frame" 'unknown-worker-slug→codex' "unknown and family-fallback aliases were lost"
   assert_contains "$frame" 'Claude Fable 5 <claude-fable-5@local>' "full verifier identity was truncated"
   for status in "done" WORKER queued; do
     assert_contains "$frame" "$status" "status word $status was truncated or hidden"
@@ -257,14 +264,56 @@ for frame in "$frame80" "$frame119" "$frame160"; do
   assert_not_contains "$frame" '…' "a frame used silent identifying-column truncation"
 done
 
-assert_contains "$frame119" '▶  68-a-pipeline-pair  WORKER  sol→fable' "119-column wide row missing"
-assert_contains "$frame160" '▶  68-a-pipeline-pair  WORKER  sol→fable' "160-column wide row missing"
-AUTOMETTA_TEST_FRAME="$frame80" python3 - <<'PY' || fail "80-column pairing did not wrap"
+for spec in "80:$frame80" "119:$frame119" "160:$frame160"; do
+  width="${spec%%:*}"
+  frame="${spec#*:}"
+  AUTOMETTA_TEST_FRAME="$frame" python3 - <<'PY' \
+    || fail "$width-column run rows did not keep constant column offsets"
 import os
 lines = os.environ["AUTOMETTA_TEST_FRAME"].splitlines()
-stage = next(i for i, line in enumerate(lines) if "68-a-pipeline-pair" in line)
-assert "sol→fable" not in lines[stage]
-assert "sol→fable" in lines[stage + 1]
+right_x = lines[0].rfind("┌")
+if right_x > 0:
+    lines = [line[:right_x] for line in lines]
+run_start = next(i for i, line in enumerate(lines) if "[2]─This run" in line)
+run_end = next(i for i, line in enumerate(lines[run_start + 1:], run_start + 1)
+               if "[3]─Agents" in line)
+lines = lines[run_start:run_end]
+stages = {
+    "65-loop-stamps-hb": ("done", "sol→fable", "412.0K"),
+    "66-fleet-view-fits": ("done", "gpt-5.3→opus-4.7", "3.9M"),
+    "67-outlier-says-so": ("done", "terra→fable", "1.2M"),
+    "50-cards": ("done", "unknown-worker-slug→codex", "3.8M"),
+    "68-a-pipeline-pair": ("WORKER", "sol→fable", "2.3M"),
+    "69-tui": ("queued", "fable→gpt-5.3", "0"),
+}
+offsets = set()
+for stage_id, (status, pair, tokens) in stages.items():
+    line = next(line for line in lines if stage_id in line)
+    assert pair in line and status in line, (stage_id, status, pair, line)
+    offsets.add((line.find(next(g for g in "✔▶○" if g in line)), line.index(stage_id),
+                 line.index(status), line.index(pair), line.rfind(tokens)))
+assert len(offsets) == 1, offsets
+PY
+done
+
+python3 - "$script_dir/lib/tui/render.py" <<'PY' \
+  || fail "identity alias mapping did not follow canonical slugs"
+import importlib.util
+import sys
+spec = importlib.util.spec_from_file_location("autometta_tui_render", sys.argv[1])
+render = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(render)
+cases = {
+    "GPT-5.6 Sol <gpt-5-6-sol@local>": "sol",
+    "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>": "terra",
+    "Codex GPT-5.6 Luna <codex-gpt-5-6-luna@local>": "luna",
+    "Claude Fable 5 <claude-fable-5@local>": "fable",
+    "Codex GPT-5.3 <codex-gpt-5-3@local>": "gpt-5.3",
+    "Claude Opus 4.7 <claude-opus-4-7@local>": "opus-4.7",
+    "Unknown Worker <unknown-worker-slug@local>": "unknown-worker-slug",
+    "Codex <codex@local>": "codex",
+}
+assert {identity: render.identity_alias(identity) for identity in cases} == cases
 PY
 
 for spec in "80:$frame80" "119:$frame119" "160:$frame160"; do
