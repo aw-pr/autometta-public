@@ -77,6 +77,7 @@ local-gpt-oss-120b|local|http://localhost:11434/v1|gpt-oss:120b|
 local-qwen3-coder-30b|local|http://localhost:11434/v1|qwen3-coder:30b|
 local-qwen3-32b|local|http://localhost:11434/v1|qwen3:32b|
 local-devstral|local|http://localhost:11434/v1|devstral:latest|
+local-llama4-scout|local|http://localhost:11434/v1|llama4:scout|
 groq-gpt-oss-120b|groq|https://api.groq.com/openai/v1|openai/gpt-oss-120b|GROQ_API_KEY
 openrouter-nemotron-3-super-120b|openrouter|https://openrouter.ai/api/v1|nvidia/nemotron-3-super-120b-a12b:free|OPENROUTER_API_KEY
 openrouter-nemotron-3-ultra-550b|openrouter|https://openrouter.ai/api/v1|nvidia/nemotron-3-ultra-550b-a55b:free|OPENROUTER_API_KEY
