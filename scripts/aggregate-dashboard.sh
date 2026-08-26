@@ -193,7 +193,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     fi
   fi
 
-  stages_json='[]'; state_error=null; last_tick_at=null
+  stages_json='[]'; state_error=null; last_tick_at=null; tick_count=0; current_stage=null; run_started_at=null
   if [[ ! -r "$state_yaml" ]]; then
     state_error='"state.yaml unreadable"'
   elif state_doc="$(state_yaml_to_json "$state_yaml" 2>/dev/null)" \
@@ -207,6 +207,9 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       wip_commit:(.wip_commit // null), stall_marker:(.stall_marker // null)
     }]')"; then
     last_tick_at="$(printf '%s' "$state_doc" | jq -c '.last_tick_at // null')"
+    tick_count="$(printf '%s' "$state_doc" | jq -r '.tick_count // 0')"
+    current_stage="$(printf '%s' "$state_doc" | jq -c '.current_stage // null')"
+    run_started_at="$(printf '%s' "$stages_json" | jq -c '[.[] | .started_at // empty] | min // null')"
     merged_file="$(new_tmp)"; printf '[]\n' > "$merged_file"
     while IFS= read -r stage_entry; do
       [[ -n "$stage_entry" ]] || continue
@@ -221,11 +224,15 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       orchestrator="$(card_orchestrator_for_stage "$sid" || true)"
       orchestrator_json=null
       [[ -z "$orchestrator" ]] || orchestrator_json="$(jq -nc --arg value "$orchestrator" '$value')"
+      card_path="$(find_card_for_stage "$sid" || true)"
+      card_rel="${card_path#"$repo_path"/}"
+      card_json=null
+      [[ -z "$card_path" ]] || card_json="$(jq -nc --arg value "$card_rel" '$value')"
       enriched="$(printf '%s' "$stage_entry" | jq -c \
         --argjson overall "$verifier_overall" --argjson orchestrator "$orchestrator_json" \
-        --argjson artefact_at "$artefact_at" \
+        --argjson artefact_at "$artefact_at" --argjson card "$card_json" \
         '. + {verifier_overall:$overall, orchestrator:$orchestrator,
-          event_at:(.completed_at // .started_at // $artefact_at)}')"
+          card:$card, event_at:(.completed_at // .started_at // $artefact_at)}')"
       jq --argjson row "$enriched" '. + [$row]' "$merged_file" > "${merged_file}.next"
       mv "${merged_file}.next" "$merged_file"
     done < <(printf '%s' "$stages_json" | jq -c '.[]')
@@ -315,7 +322,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     ' "$quota_path" 2>/dev/null || printf '%s' "$quota")"
   fi
 
-  spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0}'
+  spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"by_stage":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0}'
   if [[ -f "$cost_log_path" ]]; then
     spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" '
       def epoch: try (.ts | fromdateiso8601) catch 0;
@@ -349,6 +356,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
          (totals($role_rows)) + {role:($role_rows[0].role // "unknown"),
            productive_tokens:([$role_rows[] | select((.result // "") == "pass") | tok] | add // 0),
            lost_tokens:([$role_rows[] | select((.result // "") != "pass") | tok] | add // 0)}]),
+       by_stage: ([$all | group_by(.stage_id)[] | . as $stage_rows |
+         (totals($stage_rows)) + {stage_id:($stage_rows[0].stage_id // "unknown")}]),
        failures: ([$all[] | select((.result // "") != "pass" and epoch >= ($today - 518400)) |
          {ts, stage_id, role, result, input_tokens:(.input_tokens // 0),
           cached_input_tokens:(.cached_input_tokens // 0), output_tokens:(.output_tokens // 0),
@@ -368,7 +377,9 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson halt_reason "$halt_reason" --argjson consecutive_failures "${consecutive_failures:-0}" \
     --argjson consecutive_failure_cap "${consecutive_failure_cap:-0}" \
     --argjson paused_until "$paused_until" --argjson paused_reason "$paused_reason" \
-    --argjson last_tick_at "$last_tick_at" --argjson verifier_attempt_cap 3 \
+    --argjson last_tick_at "$last_tick_at" --argjson tick_count "${tick_count:-0}" \
+    --argjson current_stage "$current_stage" --argjson run_started_at "$run_started_at" \
+    --argjson verifier_attempt_cap 3 \
     --argjson stages "$stages_json" --argjson alerts "$alerts_json" --argjson agents "$agents_json" \
     --argjson queue "$queue_json" --argjson queue_counts "$queue_counts_json" \
     --argjson spend "$spend" --argjson quota "$quota" --argjson state_error "$state_error" \
@@ -383,7 +394,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      halted:$halted, halt_reason:$halt_reason,
      consecutive_failures:$consecutive_failures, consecutive_failure_cap:$consecutive_failure_cap,
      paused_until:$paused_until, paused_reason:$paused_reason,
-     last_tick_at:$last_tick_at, verifier_attempt_cap:$verifier_attempt_cap,
+     last_tick_at:$last_tick_at, tick_count:$tick_count, current_stage:$current_stage,
+     run_started_at:$run_started_at, verifier_attempt_cap:$verifier_attempt_cap,
      state_error:$state_error, heartbeat_checked_at:$heartbeat_checked_at,
      heartbeat_baselines:$heartbeat_baselines, heartbeat_outlier_policy:$heartbeat_outlier_policy,
      drain_active:$drain_active, drain_cap:$drain_cap, drain_expires_at:$drain_expires_at,

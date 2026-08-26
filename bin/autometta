@@ -31,6 +31,7 @@ Usage:
   autometta add-stage <repo-path> <stage-card-path>
   autometta status
   autometta attach [repo-path] [--dry-run]
+  autometta tui [repo-path]
   autometta detach [repo-path|--all]
   autometta tick [--repair|--reset-halt [--reset-tokens]]
   autometta phat-controller <verb> [args]   # pass | picture | preserve |
@@ -163,6 +164,13 @@ case "$command_name" in
     ;;
   attach)
     run_script attach.sh "$@"
+    ;;
+  tui)
+    if [[ $# -gt 1 ]]; then
+      printf 'usage: autometta tui [repo-path]\n' >&2
+      exit 1
+    fi
+    run_script tui.sh "${1:-.}"
     ;;
   detach)
     if [[ $# -eq 1 && "$1" == "--all" ]]; then
