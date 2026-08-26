@@ -11,6 +11,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render import ACTIVE, ALERT, BOLD, DIM, NORMAL, REVERSE, TuiState, render
+from messages import read_bus, write_pending
 
 
 def payload_from_aggregator(aggregator, repo_root):
@@ -28,6 +29,33 @@ def fixture_polls(path):
     return polls
 
 
+def refresh_controller(state, repo_root):
+    state.update_controller(read_bus(repo_root))
+
+
+def apply_key(state, key, repo_root):
+    action = state.key(key)
+    if not action:
+        return
+    kind, message = action
+    if kind != "submit":
+        return
+    try:
+        message_id = write_pending(repo_root, message)
+        controller = read_bus(repo_root)
+    except (OSError, ValueError) as error:
+        state.compose_failed(str(error))
+        return
+    observed = any(
+        row.get("id") == message_id and row.get("status") == "pending"
+        for row in controller.get("conversation") or [])
+    state.update_controller(controller)
+    if observed:
+        state.compose_done("queued for the controller's next pass")
+    else:
+        state.compose_failed("write completed but the pending message was not observed")
+
+
 def capture(args):
     state = TuiState(args.interval)
     if args.fixture:
@@ -36,8 +64,9 @@ def capture(args):
         polls = [payload_from_aggregator(args.aggregator, args.repo_root)]
     for index, payload in enumerate(polls):
         state.update(payload, observed_at=index * args.interval)
+        refresh_controller(state, args.repo_root)
     for key in filter(None, (part.strip() for part in args.keys.split(","))):
-        state.key(key)
+        apply_key(state, key, args.repo_root)
     sys.stdout.write(render(state, args.width, args.height).text(args.ansi) + "\n")
 
 
@@ -106,6 +135,7 @@ def interactive(args):
                     else:
                         payload = payload_from_aggregator(args.aggregator, args.repo_root)
                     state.update(payload, now)
+                    refresh_controller(state, args.repo_root)
                     dirty = True
                 except (OSError, ValueError, subprocess.SubprocessError) as error:
                     failed = dict(state.payload)
@@ -123,13 +153,14 @@ def interactive(args):
             if key == curses.KEY_RESIZE:
                 dirty = True
                 continue
-            if key in (ord("q"), ord("Q")):
+            if key in (ord("q"), ord("Q")) and not state.composing:
                 break
             mapping = {
                 curses.KEY_DOWN: "DOWN", curses.KEY_UP: "UP", curses.KEY_ENTER: "ENTER",
-                10: "ENTER", 13: "ENTER", 9: "TAB",
+                10: "ENTER", 13: "ENTER", 9: "TAB", 27: "ESC",
+                curses.KEY_BACKSPACE: "BACKSPACE", 127: "BACKSPACE", 8: "BACKSPACE",
             }
-            state.key(mapping.get(key, chr(key) if 0 <= key < 256 else ""))
+            apply_key(state, mapping.get(key, chr(key) if 0 <= key < 256 else ""), args.repo_root)
             dirty = True
     finally:
         try:

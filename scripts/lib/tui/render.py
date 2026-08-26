@@ -139,6 +139,11 @@ class TuiState:
         self.pinned_stage = None
         self.history_selection = 0
         self.pinned_history_card = None
+        self.controller = {"journal": [], "conversation": []}
+        self.journal_offset = 0
+        self.composing = False
+        self.compose_buffer = ""
+        self.compose_notice = ""
         self.history = {}
         self.now = int(time.time())
 
@@ -170,6 +175,19 @@ class TuiState:
             self.history_selection = 0
             self.pinned_history_card = None
 
+    def update_controller(self, controller):
+        self.controller = controller or {"journal": [], "conversation": []}
+        maximum = max(0, len(self.controller.get("journal") or []) - 1)
+        self.journal_offset = min(self.journal_offset, maximum)
+
+    def compose_done(self, notice):
+        self.composing = False
+        self.compose_buffer = ""
+        self.compose_notice = notice
+
+    def compose_failed(self, notice):
+        self.compose_notice = "not queued: " + notice
+
     def rows_for_focus(self):
         if self.focus == 2:
             return self.payload.get("stages") or []
@@ -180,6 +198,26 @@ class TuiState:
         return [self.payload]
 
     def key(self, key):
+        if self.composing:
+            if key in ("ESC", "\x1b"):
+                self.composing = False
+                self.compose_buffer = ""
+                self.compose_notice = "message cancelled"
+            elif key in ("BACKSPACE", "\b", "\x7f"):
+                self.compose_buffer = self.compose_buffer[:-1]
+            elif key in ("ENTER", "\n", "\r"):
+                if self.compose_buffer.strip():
+                    return "submit", self.compose_buffer
+                self.compose_notice = "not queued: message is empty"
+            elif key and all(char.isprintable() for char in key):
+                self.compose_buffer += key
+            return None
+        if key in ("m", "M"):
+            self.page = 3
+            self.composing = True
+            self.compose_buffer = ""
+            self.compose_notice = ""
+            return None
         if key in ("1", "2", "3", "4"):
             self.focus = int(key)
             return
@@ -201,6 +239,17 @@ class TuiState:
             elif key in ("ENTER", "\n", "\r") and rows:
                 self.pinned_history_card = rows[self.history_selection].get("id")
             return
+        if self.page == 3:
+            journal = self.controller.get("journal") or []
+            if key in ("j", "DOWN"):
+                self.journal_offset = max(0, self.journal_offset - 1)
+            elif key in ("k", "UP") and journal:
+                self.journal_offset = min(len(journal) - 1, self.journal_offset + 1)
+            elif key in ("ENTER", "\n", "\r"):
+                self.composing = True
+                self.compose_buffer = ""
+                self.compose_notice = ""
+            return None
         rows = self.rows_for_focus()
         if key in ("j", "DOWN") and rows:
             self.selection[self.focus] = min(len(rows) - 1, self.selection[self.focus] + 1)
@@ -619,6 +668,76 @@ def fit_heights(desired, minimum, available, shrink_order):
     return heights
 
 
+def _journal_window(state, capacity):
+    rows = state.controller.get("journal") or []
+    if not rows:
+        return [content_line("no controller record yet", [(0, 24, DIM)]),
+                content_line("the controller's first decision will populate this strip", [(0, 55, DIM)])]
+    end = max(0, len(rows) - state.journal_offset)
+    available = max(1, capacity)
+    start = max(0, end - available)
+    if start > 0:
+        start = max(0, end - max(1, available - 1))
+    visible = rows[start:end]
+    lines = []
+    if start > 0:
+        label = "and %d earlier" % start
+        lines.append(content_line(label, [(0, len(label), DIM)]))
+    for row in visible:
+        text = "%s  %-8s  %s" % (row.get("time") or "?", row.get("kind") or "decision",
+                                  row.get("summary") or "recorded")
+        kind_start = 7
+        attr = ALERT if row.get("kind") == "refusal" else BOLD
+        lines.append(content_line(text, [(kind_start, kind_start + len(row.get("kind") or "decision"), attr)]))
+    return lines[-available:]
+
+
+def _conversation_lines(state, capacity):
+    rows = state.controller.get("conversation") or []
+    if not rows:
+        empty = [content_line("no operator messages or controller replies yet", [(0, 45, DIM)]),
+                 content_line("press m to write; replies arrive after the controller's next pass", [(0, 63, DIM)])]
+        return empty[:max(1, capacity)]
+    lines = []
+    for row in rows:
+        status = row.get("status")
+        marker = " [%s]" % status if status in ("pending", "refusal") else ""
+        text = "%-4s  %s%s  %s" % (row.get("speaker") or "?", row.get("time") or "?", marker,
+                                   row.get("text") or "")
+        spans = []
+        if status == "pending":
+            start = text.find("[pending]")
+            spans.append((start, start + 9, ACTIVE))
+        elif status == "refusal":
+            start = text.find("[refusal]")
+            spans.append((start, start + 9, ALERT))
+        lines.append(content_line(text, spans))
+    if len(lines) > capacity:
+        hidden = len(lines) - max(1, capacity - 1)
+        label = "and %d earlier messages" % hidden
+        lines = [content_line(label, [(0, len(label), DIM)])] + lines[-max(1, capacity - 1):]
+    return lines[:capacity]
+
+
+def render_messages(canvas, state, width, usable):
+    inner_height = max(1, usable - 2)
+    journal_capacity = min(8, max(2, (inner_height - 5) // 2))
+    journal = _journal_window(state, journal_capacity)
+    separator = "── inbox " + "─" * max(0, width - 15)
+    input_separator = "── message " + "─" * max(0, width - 17)
+    fixed = len(journal) + 4 + (1 if state.compose_notice else 0)
+    conversation = _conversation_lines(state, max(1, inner_height - fixed))
+    prompt = "> " + state.compose_buffer + ("_" if state.composing else "")
+    if not state.composing:
+        prompt = "> press m or enter to message the controller"
+    lines = journal + [content_line(separator, [(0, 8, BOLD)])]
+    lines += conversation + [content_line(input_separator, [(0, 10, BOLD)]), content_line(prompt)]
+    if state.compose_notice:
+        attr = ALERT if state.compose_notice.startswith("not queued") else DIM
+        lines.append(content_line(state.compose_notice, [(0, len(state.compose_notice), attr)]))
+    draw_box(canvas, (0, 0, width, usable), "[0]─Controller", lines, state.composing)
+
+
 def footer(canvas, state):
     tabs = "[1]run [2]history [3]messages"
     hints = "  j/k select · enter detail · [/] page · m message controller · q quit"
@@ -644,8 +763,7 @@ def render(state, width, height):
         footer(canvas, state)
         return canvas
     if state.page != 1:
-        draw_box(canvas, (0, 0, width, height - 1), "[3] Messages", [
-            content_line("arrives with card 71", [(0, 20, DIM)])])
+        render_messages(canvas, state, width, height - 1)
         footer(canvas, state)
         return canvas
 

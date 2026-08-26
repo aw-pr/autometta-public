@@ -134,7 +134,7 @@ history="$(capture 119 40 ']')"
 messages="$(capture 119 40 '],]')"
 returned="$(capture 119 40 '2,j,ENTER,],],]')"
 assert_contains "$history" 'no historic dispatches' "empty history page missing"
-assert_contains "$messages" 'arrives with card 71' "messages placeholder missing"
+assert_contains "$messages" 'no controller record yet' "fresh messages page state missing"
 assert_contains "$returned" 'stage-cards/50-cards.md' "page round-trip disturbed run-page state"
 
 AUTOMETTA_TEST_80="$frame80" AUTOMETTA_TEST_119="$frame119" AUTOMETTA_TEST_160="$frame160" python3 - <<'PY' || fail "layouts were not genuinely different"
