@@ -4,7 +4,7 @@
 
 - **Authored:** 2026-08-26
 - **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
-- **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
 - **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/76-llama-sits-the-verifier-bake-off
@@ -13,12 +13,11 @@
 - **Requires GUI:** false
 - **Verifier panel:** false
 - **Gate:** stage-completed: 75-the-run-rows-name-models-and-line-up
-- **Pairing rationale:** operator ruling 2026-08-26: OpenAI session quota
-  is low (reintroduced on the last refresh), so this card runs on Claude
-  seats only, a sanctioned exception to the cross-family default. The
-  work is mechanical harness driving plus documentation; Sonnet does it,
-  Fable verifies with the higher effort because the numbers feed a
-  published write-up.
+- **Pairing rationale:** mechanical harness driving plus documentation
+  on the cheaper codex tier, verified cross-family by Fable at higher
+  effort because the numbers feed a published write-up. (An earlier
+  Claude-only ruling applied while the codex session window was drained;
+  the operator lifted it at 13:30 London once the window reset.)
 
 ## Objective
 
@@ -77,10 +76,9 @@ Do not read anything else unless you need to; keep your context lean.
 
 ## Constraints
 
-- No OpenAI-family dispatch anywhere in this card, worker or candidate:
-  the operator's session quota is low. The cloud candidates are already
-  scored; do not rerun them. Groq and OpenRouter are not to be touched
-  either -- this card spends nothing but local wall-clock.
+- The cloud candidates are already scored; do not rerun them. Groq and
+  OpenRouter are not to be touched -- beyond the worker's own session,
+  this card spends nothing but local wall-clock.
 - Do not modify the harness, the caller, the manifest, or any existing
   candidate's artefacts. If the harness misbehaves, that is a finding
   for the envelope, not a fix in this card.
