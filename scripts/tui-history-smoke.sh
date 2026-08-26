@@ -36,6 +36,9 @@ today = now.replace(hour=0, minute=0, second=0, microsecond=0)
 sol = "GPT-5.6 Sol <gpt-5-6-sol@local>"
 terra = "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>"
 fable = "Claude Fable 5 <claude-fable-5@local>"
+gpt53 = "Codex GPT-5.3 <codex-gpt-5-3@local>"
+opus47 = "Claude Opus 4.7 <claude-opus-4-7@local>"
+unknown = "Unknown Worker <unknown-worker-slug@local>"
 ids = [
     "01-history-alpha", "02-history-bravo", "03-history-charlie", "04-history-delta",
     "05-history-echo", "06-history-foxtrot", "07-history-golf", "08-history-hotel",
@@ -47,7 +50,8 @@ rows = []
 for index, stage_id in enumerate(ids):
     day_offset = 2 - index // 4
     base = today - datetime.timedelta(days=day_offset) + datetime.timedelta(hours=index % 4 + 8)
-    worker = terra if index in (2, 6) else sol
+    worker = (sol, terra, gpt53, unknown)[index % 4]
+    verifier = opus47 if index % 3 == 1 else fable
     worker_cost = float(index // 4 + 1)
     rows.extend((
         {
@@ -60,7 +64,7 @@ for index, stage_id in enumerate(ids):
         {
             "ts": (base + datetime.timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "repo": "fixture-history", "stage_id": stage_id, "role": "verifier",
-            "identity": fable, "input_tokens": 20000, "cached_input_tokens": 10000,
+            "identity": verifier, "input_tokens": 20000, "cached_input_tokens": 10000,
             "output_tokens": 2000, "total_tokens": 32000, "usage_status": "recorded",
             "cost_usd_est": 0.2, "result": "pass",
         },
@@ -147,6 +151,16 @@ for frame in "$frame80" "$frame119" "$frame160"; do
   assert_not_contains "$frame" '…' "history silently truncated an identifying column"
 done
 
+AUTOMETTA_TEST_FRAME="$frame160" python3 - <<'PY' \
+  || fail "history footer did not name every distinct model exactly once"
+import os
+line = next(line for line in os.environ["AUTOMETTA_TEST_FRAME"].splitlines()
+            if "by model:" in line)
+for alias in ("sol", "terra", "gpt-5.3", "unknown-worker-slug", "fable", "opus-4.7"):
+    assert line.count(alias) == 1, (alias, line)
+assert "claude " not in line and "codex " not in line
+PY
+
 AUTOMETTA_TEST_FRAME="$frame80" AUTOMETTA_TEST_ID="$long_id" python3 - <<'PY' \
   || fail "80-column identifier and alias did not survive drop-then-wrap"
 import os
@@ -160,6 +174,7 @@ PY
 detail119="$(capture 119 40 '],ENTER')"
 detail160="$(capture 160 40 '],ENTER')"
 for detail in "$detail119" "$detail160"; do
+  assert_contains "$detail" 'FAIL · sol→fable' "history detail pairing disagreed with the card row"
   assert_contains "$detail" 'role  result  tokens  cost' "history detail headings missing"
   assert_contains "$detail" 'when' "history detail time heading missing"
   assert_contains "$detail" 'worker' "history detail omitted worker dispatch"
