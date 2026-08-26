@@ -4,7 +4,7 @@
 
 - **Authored:** 2026-08-26
 - **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
-- **Worker:** Claude Opus 5 <claude-opus-5@local>
+- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
 - **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/75-the-run-rows-name-models-and-line-up
@@ -122,3 +122,10 @@ smoke runs before and after.
 ## Family-specific notes
 
 None
+
+### Operator note on seats (2026-08-26, 12:32 London)
+
+The codex weekly window reset and the Claude session limit bit mid-flight
+(the Opus attempt on card 74 died on it at 9.7M tokens). Seats restored to
+the original cross-family pairing above; the 95%-window ruling that moved
+this card to Claude seats is spent.
