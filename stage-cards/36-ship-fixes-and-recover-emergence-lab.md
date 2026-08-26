@@ -178,3 +178,12 @@ verifier decide it could not look. A successor card should re-brief those four
 stages against that rule, and check whether a codex verifier also needs
 `Requires GUI: true` on those cards, since a sandboxed codex role aborts at
 NSApplication init even headless.
+
+## Superseded (2026-08-26)
+
+Retired by the operator after three failed attempts and 76.5M tokens lost
+(the outlier incident). The keg half was overtaken by events: the install
+has been re-rendered repeatedly since (`autometta --version` matched HEAD
+on 2026-08-26). The emergence-lab recovery belongs to emergence-lab, not
+this repo's queue. The durable leftover, a warning when a repo runs an
+out-of-date build, is card 77.
