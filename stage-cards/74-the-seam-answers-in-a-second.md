@@ -4,7 +4,7 @@
 
 - **Authored:** 2026-08-26
 - **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
-- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Worker:** Claude Opus 5 <claude-opus-5@local>
 - **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/74-the-seam-answers-in-a-second
@@ -12,9 +12,11 @@
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Gate:** stage-completed: 73-the-tui-never-blocks-on-its-seam
-- **Pairing rationale:** a bounded mechanical optimisation with a
-  byte-identical output contract routes to the cheaper codex tier;
-  Fable verifies the contract cross-family. Serial batch.
+- **Pairing rationale:** originally routed to the cheaper codex tier as
+  a bounded mechanical optimisation, re-paired pre-dispatch on the
+  operator's 2026-08-26 ruling: the codex 5-hour window hit 95%, so the
+  rest of the batch runs on Claude seats only. Same-family
+  worker/verifier is sanctioned by that ruling. Serial batch.
 
 ## Objective
 

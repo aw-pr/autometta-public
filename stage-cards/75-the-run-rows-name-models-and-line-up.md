@@ -4,7 +4,7 @@
 
 - **Authored:** 2026-08-26
 - **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
-- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
+- **Worker:** Claude Opus 5 <claude-opus-5@local>
 - **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/75-the-run-rows-name-models-and-line-up
@@ -12,8 +12,11 @@
 - **Verifier effort:** medium
 - **Verifier panel:** false
 - **Gate:** stage-completed: 74-the-seam-answers-in-a-second
-- **Pairing rationale:** presentation work stays with the premium pair;
-  a small card, so effort drops to medium. Serial batch.
+- **Pairing rationale:** presentation work stays on a premium seat; a
+  small card, so effort drops to medium. Re-paired pre-dispatch from Sol
+  on the operator's 2026-08-26 ruling: the codex 5-hour window hit 95%,
+  the rest of the batch runs on Claude seats only, same-family
+  sanctioned. Serial batch.
 
 ## Objective
 
