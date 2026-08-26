@@ -4,7 +4,7 @@
 
 - **Authored:** 2026-08-26
 - **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
-- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Worker:** Claude Opus 5 <claude-opus-5@local>
 - **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/74-the-seam-answers-in-a-second
@@ -129,3 +129,10 @@ The codex weekly window reset and the Claude session limit bit mid-flight
 (the Opus attempt on card 74 died on it at 9.7M tokens). Seats restored to
 the original cross-family pairing above; the 95%-window ruling that moved
 this card to Claude seats is spent.
+
+### Operator note on seats (2026-08-26, 12:50 London)
+
+Terra hit the reintroduced codex session window minutes after dispatch.
+The operator chose not to wait the half hour for its reset: this card
+goes back to the Opus seat (Claude window fresh since 12:30). Card 75
+stays on Sol; by the time it dispatches the codex window has reset.
