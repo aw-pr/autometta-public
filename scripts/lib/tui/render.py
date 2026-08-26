@@ -129,6 +129,21 @@ def stage_total(payload, stage_id):
     return 0
 
 
+def current_run(payload):
+    run = payload.get("current_run")
+    return run if isinstance(run, dict) and run.get("id") else None
+
+
+def current_run_stages(payload):
+    run = current_run(payload)
+    return (run.get("stages") or []) if run else []
+
+
+def ordered_run_stages(payload):
+    order = {"completed": 0, "in_progress": 1, "pending": 2}
+    return sorted(current_run_stages(payload), key=lambda stage: order.get(stage.get("status"), 3))
+
+
 class TuiState:
     def __init__(self, interval=5.0):
         self.interval = float(interval)
@@ -160,7 +175,7 @@ class TuiState:
             if not points or points[-1][1] != total:
                 points.append((stamp, total))
                 del points[:-9]
-        ids = [s.get("id") for s in self.payload.get("stages") or []]
+        ids = [s.get("id") for s in ordered_run_stages(self.payload)]
         if self.pinned_stage not in ids:
             preferred = self.payload.get("current_stage")
             self.pinned_stage = preferred if preferred in ids else (ids[0] if ids else None)
@@ -190,7 +205,7 @@ class TuiState:
 
     def rows_for_focus(self):
         if self.focus == 2:
-            return self.payload.get("stages") or []
+            return ordered_run_stages(self.payload)
         if self.focus == 3:
             return self.payload.get("agents") or []
         if self.focus == 4:
@@ -482,21 +497,26 @@ def status_lines(state):
     running = bool(agents)
     name = payload.get("name") or "repo"
     light = "RUNNING" if running else ("HALTED" if payload.get("halted") else "IDLE")
-    run_start = payload.get("run_started_at")
+    run = current_run(payload)
+    run_start = run.get("started_at") if run else None
     run_epoch = parse_iso(run_start) if isinstance(run_start, str) else None
-    elapsed = short_secs(max(0, state.now - run_epoch)) if run_epoch is not None else "?"
-    spend = payload.get("spend") or {}
+    elapsed = short_secs(max(0, state.now - run_epoch)) if run_epoch is not None else None
     cap = payload.get("effective_token_cap") or payload.get("token_cap_total") or 0
     spent = payload.get("tokens_spent") or 0
     pct = int(spent * 100 / cap) if cap else 0
     lines = [
         content_line("● %s → dev  %s" % (name, light), [(0, 1, ACTIVE if running else DIM)]),
         content_line("last tick %s ago  tick #%s" % (relative_age(payload.get("last_tick_at"), state.now), payload.get("tick_count", 0))),
-        content_line("run start %s  elapsed %s" % ((run_start or "?")[-9:], elapsed)),
-        content_line("tokens %s  $%.2f  cap %s (%d%%)" % (
-            short_tokens(spend.get("tokens_total", 0)), spend.get("cost_usd_est", 0) or 0,
-            short_tokens(cap), pct)),
     ]
+    if run:
+        lines.extend([
+            content_line("run start %s  elapsed %s" % (run_start[-9:], elapsed)),
+            content_line("run tokens %s  $%.2f  repo cap %s (%d%%)" % (
+                short_tokens(run.get("tokens_total", 0)), run.get("cost_usd_est", 0) or 0,
+                short_tokens(cap), pct)),
+        ])
+    else:
+        lines.append(content_line("repo cap %s (%d%% lifetime used)" % (short_tokens(cap), pct)))
     if state.focus == 1:
         lines[0][1].insert(0, (0, len(lines[0][0]), REVERSE))
     return lines
@@ -505,7 +525,10 @@ def status_lines(state):
 def run_lines(state, inner_width, force_pair_wrap=False):
     payload = state.payload
     lines = []
-    for index, stage in enumerate(payload.get("stages") or []):
+    stages = ordered_run_stages(payload)
+    if not stages:
+        return [content_line("no current run · use the history tab", [(0, 14, DIM)])]
+    for index, stage in enumerate(stages):
         glyph, status, active_role = stage_state(payload, stage)
         worker = identity_alias(stage.get("worker"))
         verifier = identity_alias(stage.get("verifier"))
@@ -613,7 +636,7 @@ def wrap_content_lines(lines, inner_width):
 
 
 def detail_lines(state, inner_width):
-    stages = state.payload.get("stages") or []
+    stages = ordered_run_stages(state.payload)
     stage = next((item for item in stages if item.get("id") == state.pinned_stage), None)
     if not stage:
         return [content_line("No card selected", [(0, 16, DIM)])]
@@ -769,7 +792,7 @@ def render(state, width, height):
 
     usable = height - 1
     stacked = width <= 80
-    stages = state.payload.get("stages") or []
+    stages = ordered_run_stages(state.payload)
     done = len([s for s in stages if s.get("status") == "completed"])
     run_title = "[2]─This run  %d of %d" % (done, len(stages))
     live_count = len(state.payload.get("agents") or [])
