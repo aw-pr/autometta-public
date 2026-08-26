@@ -4,7 +4,7 @@
 
 - **Authored:** 2026-08-26
 - **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
-- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
 - **Verifier:** Claude Fable 5 <claude-fable-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/76-llama-sits-the-verifier-bake-off
@@ -13,11 +13,12 @@
 - **Requires GUI:** false
 - **Verifier panel:** false
 - **Gate:** stage-completed: 75-the-run-rows-name-models-and-line-up
-- **Pairing rationale:** mechanical harness driving plus documentation
-  on the cheaper codex tier, verified cross-family by Fable at higher
-  effort because the numbers feed a published write-up. (An earlier
-  Claude-only ruling applied while the codex session window was drained;
-  the operator lifted it at 13:30 London once the window reset.)
+- **Pairing rationale:** the worker must reach the local Ollama server
+  at localhost:11434, and the codex workspace-write sandbox denies
+  network (the card 36 failure class), so the worker seat is Claude by
+  necessity, not quota: Sonnet drives the harness, Fable verifies at
+  higher effort because the numbers feed a published write-up. The
+  operator's OAI clearance stands for any card without this constraint.
 
 ## Objective
 
@@ -140,4 +141,6 @@ prose-rule check, and the reproduction commands as run.
 
 Claude worker: the batch is one long-running bash invocation per the
 manifest; drive it with the repo's own harness and read the artefacts it
-writes. Do not parallelise stages against a single Ollama server.
+writes. Do not parallelise stages against a single Ollama server. A
+codex-family worker cannot take this seat: workspace-write denies the
+localhost network the harness depends on.
