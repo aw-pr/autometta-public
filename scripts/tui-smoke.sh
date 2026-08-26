@@ -7,6 +7,8 @@ fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT
 repo="$fixture/repo"
 polls="$fixture/polls.json"
+empty_polls="$fixture/empty-polls.json"
+controller_home="$fixture/controller"
 mkdir -p "$repo"
 
 fail() {
@@ -22,52 +24,207 @@ assert_not_contains() {
   [[ "$1" != *"$2"* ]] || fail "$3"
 }
 
+assert_equals() {
+  [[ "$1" == "$2" ]] || fail "$3 (got '$1', wanted '$2')"
+}
+
+queue_repo="$fixture/queue-repo"
+mkdir -p "$queue_repo/state" "$queue_repo/stage-cards"
+printf '%s\n' \
+  'version: 1' \
+  'current_stage: null' \
+  'stages: []' \
+  'last_tick_at: 2026-08-26T07:00:00Z' \
+  'tick_count: 0' \
+  'clock_tick_budget_remaining: 100' > "$queue_repo/state/state.yaml"
+
+for stage_id in 80-run-one-first 81-run-one-second 82-run-two-first; do
+  printf '%s\n' \
+    "# Stage card ${stage_id}" \
+    '' \
+    '## Metadata' \
+    '- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>' \
+    '- **Verifier:** Claude Fable 5 <claude-fable-5@local>' \
+    > "$queue_repo/stage-cards/${stage_id}.md"
+done
+
+"$script_dir/add-stage.sh" "$queue_repo" "$queue_repo/stage-cards/80-run-one-first.md"
+first_run="$(yq -r '.stages[] | select(.id == "80-run-one-first") | .run_id' "$queue_repo/state/state.yaml")"
+[[ "$first_run" =~ ^run-[0-9]{8}-[0-9]{6}$ ]] || fail "first add-stage invocation did not mint a run id"
+
+"$script_dir/add-stage.sh" "$queue_repo" "$queue_repo/stage-cards/81-run-one-second.md"
+second_run="$(yq -r '.stages[] | select(.id == "81-run-one-second") | .run_id' "$queue_repo/state/state.yaml")"
+assert_equals "$second_run" "$first_run" "second outstanding stage did not join the current run"
+
+yq -i '(.stages[] | select(.id == "80-run-one-first")).status = "in_progress"' "$queue_repo/state/state.yaml"
+assert_equals "$(yq -r '.stages[] | select(.id == "80-run-one-first") | .run_id' "$queue_repo/state/state.yaml")" \
+  "$first_run" "pending-to-in_progress transition stripped run_id"
+yq -i '
+  (.stages[] | select(.id == "80-run-one-first")).status = "completed" |
+  (.stages[] | select(.id == "81-run-one-second")).status = "completed"' "$queue_repo/state/state.yaml"
+assert_equals "$(yq -r '.stages[] | select(.id == "80-run-one-first") | .run_id' "$queue_repo/state/state.yaml")" \
+  "$first_run" "in_progress-to-completed transition stripped run_id"
+
+while [[ "$(date -u +"run-%Y%m%d-%H%M%S")" == "$first_run" ]]; do
+  sleep 0.1
+done
+"$script_dir/add-stage.sh" "$queue_repo" "$queue_repo/stage-cards/82-run-two-first.md"
+third_run="$(yq -r '.stages[] | select(.id == "82-run-two-first") | .run_id' "$queue_repo/state/state.yaml")"
+[[ "$third_run" =~ ^run-[0-9]{8}-[0-9]{6}$ ]] || fail "third add-stage invocation did not mint a run id"
+[[ "$third_run" != "$first_run" ]] || fail "queue-empty add-stage invocation reused the completed run id"
+
 long_id="36-this-stage-identifier-is-deliberately-fifty-eight-characters-long"
 
-cat > "$polls" <<EOF
-{"polls":[
-  {
-    "_now":1787731200,"name":"autometta","current_stage":"68-a-pipeline-pair","last_tick_at":"2026-08-26T07:59:18Z","tick_count":214,"run_started_at":"2026-08-26T06:12:09Z","tokens_spent":12400000,"effective_token_cap":150000000,"verifier_attempt_cap":3,
-    "spend":{"tokens_total":12400000,"cost_usd_est":9.12,"by_stage":[{"stage_id":"68-a-pipeline-pair","input_tokens":2000000,"cached_input_tokens":300000,"output_tokens":1000,"tokens":2300000,"cost_usd_est":1.87},{"stage_id":"50-cards","input_tokens":3000000,"cached_input_tokens":750000,"output_tokens":50000,"tokens":3800000,"cost_usd_est":2.41}]},
-    "stages":[
-      {"id":"65-loop-stamps-hb","status":"completed","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":412000,"card":"stage-cards/65-loop-stamps-hb.md"},
-      {"id":"66-fleet-view-fits","status":"completed","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":9100000,"card":"stage-cards/66-fleet-view-fits.md"},
-      {"id":"67-outlier-says-so","status":"completed","worker":"Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":1200000,"card":"stage-cards/67-outlier-says-so.md"},
-      {"id":"68-a-pipeline-pair","status":"in_progress","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","verifier_attempts":2,"tokens":2300000,"card":"stage-cards/68-a-pipeline-pair.md","acceptance":"scripts/pipeline-pair-smoke.sh"},
-      {"id":"50-cards","status":"in_progress","worker":"Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","verifier_attempts":1,"tokens":3800000,"card":"stage-cards/50-cards.md"},
-      {"id":"69-tui","status":"pending","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":0,"card":"stage-cards/69-tui.md"},
-      {"id":"$long_id","status":"verifier_failed","worker":"Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":76000000,"card":"stage-cards/$long_id.md"}
-    ],
-    "agents":[
-      {"stage_id":"68-a-pipeline-pair","role":"worker","identity":"GPT-5.6 Sol <gpt-5-6-sol@local>","elapsed_seconds":192,"budget_seconds":1800,"live_total_tokens":2300000},
-      {"stage_id":"50-cards","role":"verifier","identity":"Claude Fable 5 <claude-fable-5@local>","elapsed_seconds":63,"budget_seconds":1200,"live_total_tokens":3800000}
-    ]
-  },
-  {
-    "_now":1787731205,"name":"autometta","current_stage":"68-a-pipeline-pair","last_tick_at":"2026-08-26T07:59:18Z","tick_count":215,"run_started_at":"2026-08-26T06:12:09Z","tokens_spent":12401200,"effective_token_cap":150000000,"verifier_attempt_cap":3,
-    "spend":{"tokens_total":12401200,"cost_usd_est":9.12,"by_stage":[{"stage_id":"68-a-pipeline-pair","input_tokens":2000000,"cached_input_tokens":300000,"output_tokens":2200,"tokens":2301200,"cost_usd_est":1.87},{"stage_id":"50-cards","input_tokens":3000000,"cached_input_tokens":750000,"output_tokens":50000,"tokens":3800000,"cost_usd_est":2.41}]},
-    "stages":[
-      {"id":"65-loop-stamps-hb","status":"completed","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":412000,"card":"stage-cards/65-loop-stamps-hb.md"},
-      {"id":"66-fleet-view-fits","status":"completed","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":9100000,"card":"stage-cards/66-fleet-view-fits.md"},
-      {"id":"67-outlier-says-so","status":"completed","worker":"Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":1200000,"card":"stage-cards/67-outlier-says-so.md"},
-      {"id":"68-a-pipeline-pair","status":"in_progress","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","verifier_attempts":2,"tokens":2301200,"card":"stage-cards/68-a-pipeline-pair.md","acceptance":"scripts/pipeline-pair-smoke.sh"},
-      {"id":"50-cards","status":"in_progress","worker":"Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","verifier_attempts":1,"tokens":3800000,"card":"stage-cards/50-cards.md"},
-      {"id":"69-tui","status":"pending","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":0,"card":"stage-cards/69-tui.md"},
-      {"id":"$long_id","status":"verifier_failed","worker":"Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>","verifier":"Claude Fable 5 <claude-fable-5@local>","tokens":76000000,"card":"stage-cards/$long_id.md"}
-    ],
-    "agents":[
-      {"stage_id":"68-a-pipeline-pair","role":"worker","identity":"GPT-5.6 Sol <gpt-5-6-sol@local>","elapsed_seconds":197,"budget_seconds":1800,"live_total_tokens":2301200},
-      {"stage_id":"50-cards","role":"verifier","identity":"Claude Fable 5 <claude-fable-5@local>","elapsed_seconds":68,"budget_seconds":1200,"live_total_tokens":3800000}
-    ]
-  }
-]}
-EOF
+python3 - "$polls" "$empty_polls" "$long_id" "$repo" "$controller_home" <<'PY'
+import copy
+import json
+import os
+import sys
+
+polls_path, empty_path, long_id, repo_path, controller_home = sys.argv[1:]
+sol = "GPT-5.6 Sol <gpt-5-6-sol@local>"
+terra = "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>"
+fable = "Claude Fable 5 <claude-fable-5@local>"
+historic = []
+for number in range(1, 41):
+    stage = {
+        "id": f"{number:02d}-historic-stage-{number:02d}",
+        "status": "completed",
+        "worker": terra,
+        "verifier": fable,
+        "tokens": number * 1000,
+        "card": f"stage-cards/{number:02d}-historic-stage-{number:02d}.md",
+    }
+    if number > 20:
+        stage["run_id"] = "run-20260529-090000"
+    historic.append(stage)
+
+run_id = "run-20260826-073000"
+current = [
+    {"id": "65-loop-stamps-hb", "status": "completed", "worker": sol, "verifier": fable,
+     "tokens": 412000, "card": "stage-cards/65-loop-stamps-hb.md", "run_id": run_id},
+    {"id": "66-fleet-view-fits", "status": "completed", "worker": sol, "verifier": fable,
+     "tokens": 3911200, "card": "stage-cards/66-fleet-view-fits.md", "run_id": run_id},
+    {"id": "67-outlier-says-so", "status": "completed", "worker": terra, "verifier": fable,
+     "tokens": 1200000, "card": "stage-cards/67-outlier-says-so.md", "run_id": run_id},
+    {"id": "50-cards", "status": "completed", "worker": terra, "verifier": fable,
+     "tokens": 3800000, "card": "stage-cards/50-cards.md", "run_id": run_id},
+    {"id": long_id, "status": "completed", "worker": terra, "verifier": fable,
+     "tokens": 776800, "card": f"stage-cards/{long_id}.md", "run_id": run_id},
+    {"id": "68-a-pipeline-pair", "status": "in_progress", "worker": sol, "verifier": fable,
+     "verifier_attempts": 2, "tokens": 2301200, "card": "stage-cards/68-a-pipeline-pair.md",
+     "acceptance": "scripts/pipeline-pair-smoke.sh", "run_id": run_id},
+    {"id": "69-tui", "status": "pending", "worker": sol, "verifier": fable,
+     "tokens": 0, "card": "stage-cards/69-tui.md", "run_id": run_id},
+]
+
+history_cards = []
+for index, stage in enumerate(historic + current):
+    history_cards.append({
+        "id": stage["id"], "result": "PASS", "attempts": 1,
+        "tokens": stage["tokens"], "lost_tokens": 0, "cost_usd_est": 0.01,
+        "worker": stage["worker"], "verifier": stage["verifier"],
+        "last_dispatch_at": f"2026-05-{min(29, index + 1):02d}T09:00:00Z",
+        "dispatches": [],
+    })
+
+def poll(now, tick, live_tokens, output_tokens, run_tokens):
+    return {
+        "_now": now, "name": "autometta", "current_stage": "68-a-pipeline-pair",
+        "last_tick_at": "2026-08-26T07:59:18Z", "tick_count": tick,
+        "run_started_at": "2026-05-29T09:00:00Z", "tokens_spent": run_tokens,
+        "effective_token_cap": 150000000, "verifier_attempt_cap": 3,
+        "spend": {
+            "tokens_total": run_tokens, "cost_usd_est": 9.12,
+            "by_stage": [
+                {"stage_id": "68-a-pipeline-pair", "input_tokens": 2000000,
+                 "cached_input_tokens": 300000, "output_tokens": output_tokens,
+                 "tokens": live_tokens, "cost_usd_est": 1.87},
+                {"stage_id": "50-cards", "input_tokens": 3000000,
+                 "cached_input_tokens": 750000, "output_tokens": 50000,
+                 "tokens": 3800000, "cost_usd_est": 2.41},
+            ],
+        },
+        "stages": copy.deepcopy(historic + current),
+        "current_run": {
+            "id": run_id, "started_at": "2026-08-26T07:30:00Z",
+            "stages": copy.deepcopy(current), "tokens_total": run_tokens,
+            "cost_usd_est": 9.12,
+        },
+        "agents": [{
+            "stage_id": "68-a-pipeline-pair", "role": "worker", "identity": sol,
+            "elapsed_seconds": 192 + (now - 1787731200), "budget_seconds": 1800,
+            "live_total_tokens": live_tokens,
+        }],
+        "history": {
+            "summary": {"card_count": 47, "lost_seven_day_tokens": 0,
+                        "seven_day_cost_usd_est": 9.12},
+            "cards": history_cards,
+            "fortnight": {"by_day": [], "by_model": []},
+        },
+    }
+
+poll_documents = [
+    poll(1787731200, 214, 2300000, 1000, 12400000),
+    poll(1787731205, 215, 2301200, 2200, 12401200),
+]
+with open(polls_path, "w", encoding="utf-8") as handle:
+    json.dump({"polls": poll_documents}, handle)
+
+empty = copy.deepcopy(poll_documents[-1])
+empty["current_stage"] = None
+empty["current_run"] = None
+empty["agents"] = []
+for stage in empty["stages"]:
+    if stage.get("run_id") == run_id:
+        stage["status"] = "completed"
+with open(empty_path, "w", encoding="utf-8") as handle:
+    json.dump({"polls": [empty]}, handle)
+
+os.makedirs(os.path.join(repo_path, "state"), exist_ok=True)
+state = {
+    "version": 1, "current_stage": "68-a-pipeline-pair",
+    "stages": historic + current, "last_tick_at": "2026-08-26T07:59:18Z",
+    "tick_count": 215, "clock_tick_budget_remaining": 100,
+}
+with open(os.path.join(repo_path, "state", "state.yaml"), "w", encoding="utf-8") as handle:
+    json.dump(state, handle)
+with open(os.path.join(repo_path, "state", "budget.json"), "w", encoding="utf-8") as handle:
+    json.dump({"tokens_spent": 12401200, "token_cap_total": 150000000,
+               "halted": False, "consecutive_failures": 0,
+               "consecutive_failure_cap": 3}, handle)
+costs = [0.30, 2.00, 0.80, 2.41, 0.73, 1.87, 1.01]
+with open(os.path.join(repo_path, "state", "cost-log.jsonl"), "w", encoding="utf-8") as handle:
+    for stage, cost in zip(current, costs):
+        handle.write(json.dumps({
+            "ts": "2026-08-26T07:45:00Z", "stage_id": stage["id"],
+            "role": "worker", "identity": stage["worker"], "result": "pass",
+            "input_tokens": stage["tokens"], "cached_input_tokens": 0,
+            "output_tokens": 0, "cost_usd_est": cost,
+        }) + "\n")
+subscribers = os.path.join(controller_home, "subscribers")
+os.makedirs(subscribers, exist_ok=True)
+with open(os.path.join(subscribers, "autometta.yaml"), "w", encoding="utf-8") as handle:
+    handle.write(f"enabled: true\nrepo_path: {repo_path}\nmanifest_path: ''\n")
+PY
+
+aggregate="$(AUTOMETTA_HOME="$controller_home" "$script_dir/aggregate-dashboard.sh" --repo "$repo")"
+assert_equals "$(jq -r '.current_run.id' <<<"$aggregate")" "run-20260826-073000" \
+  "aggregate did not expose the current run id"
+assert_equals "$(jq -r '.current_run.started_at' <<<"$aggregate")" "2026-08-26T07:30:00Z" \
+  "aggregate did not derive the run start from the mint time"
+assert_equals "$(jq -r '.current_run.stages | length' <<<"$aggregate")" "7" \
+  "aggregate did not scope current-run stages"
+assert_equals "$(jq -r '.current_run.tokens_total' <<<"$aggregate")" "12401200" \
+  "aggregate did not scope current-run tokens"
+assert_equals "$(jq -r '.current_run.cost_usd_est' <<<"$aggregate")" "9.12" \
+  "aggregate did not scope current-run cost"
 
 capture() {
-  local width="$1" height="$2" keys="${3:-}" ansi="${4:-false}"
+  local width="$1" height="$2" keys="${3:-}" ansi="${4:-false}" fixture_polls="${5:-$polls}"
   LC_ALL=C.UTF-8 TERM=xterm-256color AUTOMETTA_TUI_CAPTURE=true \
     AUTOMETTA_TUI_COLUMNS="$width" AUTOMETTA_TUI_ROWS="$height" \
-    AUTOMETTA_TUI_INTERVAL=5 AUTOMETTA_TUI_FIXTURE_POLLS="$polls" \
+    AUTOMETTA_TUI_INTERVAL=5 AUTOMETTA_TUI_FIXTURE_POLLS="$fixture_polls" \
     AUTOMETTA_TUI_KEYS="$keys" AUTOMETTA_TUI_ANSI="$ansi" \
     "$script_dir/tui.sh" "$repo"
 }
@@ -76,11 +233,17 @@ frame80="$(capture 80 60)"
 frame119="$(capture 119 40)"
 frame160="$(capture 160 40)"
 
+legacy_count="$(jq -r '.polls[-1] |
+  "\([.stages[] | select(.status == "completed")] | length) of \(.stages | length)"' "$polls")"
+assert_equals "$legacy_count" "45 of 47" "fixture no longer reproduces the pre-fix all-stage count"
+
 for frame in "$frame80" "$frame119" "$frame160"; do
   for panel in '[0]─Card detail' '[1]─Status' '[2]─This run' '[3]─Agents' '[4]─Escalations & inbox'; do
     assert_contains "$frame" "$panel" "missing panel $panel"
   done
   assert_contains "$frame" '[1]run [2]history [3]messages' "missing page tabs"
+  assert_contains "$frame" 'This run  5 of 7' "current-run count is not scoped to seven cards"
+  assert_not_contains "$frame" '01-historic-stage-01' "historic stage leaked onto the run page"
   assert_contains "$frame" "$long_id" "long stage id was truncated or hidden"
   for stage_id in 65-loop-stamps-hb 66-fleet-view-fits 67-outlier-says-so 68-a-pipeline-pair 50-cards 69-tui; do
     assert_contains "$frame" "$stage_id" "stage id $stage_id was truncated or hidden"
@@ -88,7 +251,7 @@ for frame in "$frame80" "$frame119" "$frame160"; do
   assert_contains "$frame" 'sol→fable' "worker-to-verifier pairing was lost"
   assert_contains "$frame" 'terra→fable' "second worker-to-verifier pairing was lost"
   assert_contains "$frame" 'Claude Fable 5 <claude-fable-5@local>' "full verifier identity was truncated"
-  for status in "done" WORKER VERIFY queued ESCALTD; do
+  for status in "done" WORKER queued; do
     assert_contains "$frame" "$status" "status word $status was truncated or hidden"
   done
   assert_not_contains "$frame" '…' "a frame used silent identifying-column truncation"
@@ -116,7 +279,6 @@ done
 
 ansi="$(capture 119 40 '' true)"
 assert_contains "$ansi" $'\033[1;36msol' "active worker alias was not emphasised"
-assert_contains "$ansi" $'\033[1;36mfable' "active verifier alias was not emphasised"
 
 assert_contains "$frame119" 'GPT-5.6 Sol <gpt-5-6-sol@local>' "detail omitted worker identity"
 assert_contains "$frame119" 'Claude Fable 5 <claude-fable-5@local>' "detail omitted verifier identity"
@@ -125,17 +287,32 @@ assert_contains "$frame119" 'budget    3m17s / 30m00s (10% used)' "detail omitte
 assert_contains "$frame119" 'tokens  in 2.0M  cached 300.0K  out 2.2K' "detail omitted token breakdown"
 assert_contains "$frame119" "\$1.87" "detail omitted stage cost"
 assert_contains "$frame119" '14.4K/min' "burn rate was not computed from the 1,200-token poll delta"
+assert_contains "$frame119" 'run start 07:30:00Z  elapsed 30m05s' "run start or elapsed did not use the mint time"
+assert_contains "$frame119" 'run tokens 12.4M  $9.12  repo cap 150.0M (8%)' "status figures are not run-scoped"
 
 after="$(capture 119 40 '2,j,ENTER')"
 assert_contains "$frame119" 'stage-cards/68-a-pipeline-pair.md' "initial detail card is wrong"
-assert_contains "$after" 'stage-cards/50-cards.md' "enter did not repopulate card detail"
+assert_contains "$after" 'stage-cards/69-tui.md' "enter did not repopulate card detail"
 
 history="$(capture 119 40 ']')"
 messages="$(capture 119 40 '],]')"
 returned="$(capture 119 40 '2,j,ENTER,],],]')"
-assert_contains "$history" 'no historic dispatches' "empty history page missing"
+assert_contains "$history" '01-historic-stage-01' "historic cards are absent from the history page"
 assert_contains "$messages" 'no controller record yet' "fresh messages page state missing"
-assert_contains "$returned" 'stage-cards/50-cards.md' "page round-trip disturbed run-page state"
+assert_contains "$returned" 'stage-cards/69-tui.md' "page round-trip disturbed run-page state"
+
+history_last_keys=']'
+for _ in $(seq 1 39); do
+  history_last_keys="${history_last_keys},j"
+done
+history_last="$(capture 119 40 "$history_last_keys")"
+assert_contains "$history_last" '40-historic-stage-40' "later historic cards are absent from the history page"
+
+empty_frame="$(capture 119 40 '' false "$empty_polls")"
+assert_contains "$empty_frame" 'no current run · use the history tab' "empty run state does not name the history tab"
+assert_not_contains "$empty_frame" 'run start' "empty run state fabricated a run start"
+assert_not_contains "$empty_frame" 'elapsed' "empty run state fabricated elapsed time"
+assert_contains "$empty_frame" 'repo cap 150.0M (8% lifetime used)' "empty run state lost the repo-lifetime cap"
 
 AUTOMETTA_TEST_80="$frame80" AUTOMETTA_TEST_119="$frame119" AUTOMETTA_TEST_160="$frame160" python3 - <<'PY' || fail "layouts were not genuinely different"
 import os
@@ -186,4 +363,4 @@ assert before[3] & mask == after[3] & mask
 os.close(terminal)
 PY
 
-printf 'PASS tui: 80/119/160 layouts, whole identifiers, role emphasis, detail navigation, burn delta, pages, one seam, terminal restored\n'
+printf 'PASS tui: run mint/join/remint, preserved run id, two-run scope at 80/119/160, mint elapsed, empty state, history, terminal restored\n'

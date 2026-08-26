@@ -101,7 +101,7 @@ main() {
     exit 1
   fi
 
-  local stage_id worker_identity verifier_identity gate_type gate_stage_id gate_json path_claims_json path_claims_state_json exists_count
+  local stage_id worker_identity verifier_identity gate_type gate_stage_id gate_json path_claims_json path_claims_state_json exists_count run_id
   stage_id="$(extract_stage_id "$stage_card_path")"
   worker_identity="$(extract_identity "$stage_card_path" "Worker")"
   verifier_identity="$(extract_identity "$stage_card_path" "Verifier")"
@@ -126,10 +126,21 @@ main() {
     exit 0
   fi
 
+  # A run remains current while any of its stages are pending or in progress.
+  # Records from before run_id existed are historic and do not get backfilled.
+  run_id="$(yq -r '
+    .stages[]? |
+    select((.status == "pending" or .status == "in_progress") and .run_id != null) |
+    .run_id' "$state_path" | tail -n1)"
+  if [[ -z "$run_id" ]]; then
+    run_id="$(date -u +"run-%Y%m%d-%H%M%S")"
+  fi
+
   STAGE_ID="$stage_id" WORKER="$worker_identity" VERIFIER="$verifier_identity" \
-    GATE_JSON="$gate_json" PATH_CLAIMS_STATE_JSON="$path_claims_state_json" yq -i \
+    RUN_ID="$run_id" GATE_JSON="$gate_json" PATH_CLAIMS_STATE_JSON="$path_claims_state_json" yq -i \
     '.stages += [({
       "id": strenv(STAGE_ID),
+      "run_id": strenv(RUN_ID),
       "status": "pending",
       "worker": strenv(WORKER),
       "verifier": strenv(VERIFIER),

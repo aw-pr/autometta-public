@@ -194,11 +194,13 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   fi
 
   stages_json='[]'; state_error=null; last_tick_at=null; tick_count=0; current_stage=null; run_started_at=null
+  current_run_id=null; current_run_started_at=null; current_run_stages='[]'; current_run=null
   if [[ ! -r "$state_yaml" ]]; then
     state_error='"state.yaml unreadable"'
   elif state_doc="$(state_yaml_to_json "$state_yaml" 2>/dev/null)" \
     && stages_json="$(printf '%s' "$state_doc" | jq -c '[.stages[]? | {
-      id, status:(.status // "pending"), worker:(.worker // null), verifier:(.verifier // null),
+      id, run_id:(.run_id // null), status:(.status // "pending"),
+      worker:(.worker // null), verifier:(.verifier // null),
       started_at:(.started_at // null), completed_at:(.completed_at // null), tokens:(.tokens // 0),
       worker_tokens:(.worker_tokens // null), verifier_tokens:(.verifier_tokens // null),
       commit:(.commit // null), verifier_artefact:(.verifier_artefact // null),
@@ -237,6 +239,16 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       mv "${merged_file}.next" "$merged_file"
     done < <(printf '%s' "$stages_json" | jq -c '.[]')
     stages_json="$(jq -c '.' "$merged_file")"
+    current_run_id="$(printf '%s' "$stages_json" | jq -c '
+      [.[] | select((.status == "pending" or .status == "in_progress") and .run_id != null) |
+        .run_id] | last // null')"
+    if [[ "$current_run_id" != "null" ]]; then
+      current_run_stages="$(printf '%s' "$stages_json" | jq -c --argjson run_id "$current_run_id" \
+        '[.[] | select(.run_id == $run_id)]')"
+      current_run_started_at="$(jq -nc --argjson run_id "$current_run_id" '
+        $run_id as $id |
+        "\($id[4:8])-\($id[8:10])-\($id[10:12])T\($id[13:15]):\($id[15:17]):\($id[17:19])Z"')"
+    fi
   else
     stages_json='[]'; state_error='"state.yaml unparseable"'
   fi
@@ -257,7 +269,11 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       [[ -n "$registration" ]] || continue
       agent_pid="$(printf '%s' "$registration" | jq -r '.pid // 0')"
       [[ "$agent_pid" =~ ^[0-9]+$ ]] || continue
-      kill -0 "$agent_pid" 2>/dev/null || continue
+      if ! kill -0 "$agent_pid" 2>/dev/null; then
+        heartbeat_alive="$(printf '%s' "$heartbeat_json" | jq -r --argjson pid "$agent_pid" \
+          'any(.entries[]?; .pid == $pid and .alive == true)')"
+        [[ "$heartbeat_alive" == "true" ]] || continue
+      fi
       agent_log="$(printf '%s' "$registration" | jq -r '.log_path // empty')"
       agent_log_bytes=0
       if [[ -n "$agent_log" && -f "$agent_log" ]]; then
@@ -432,6 +448,23 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     ' "$cost_log_path" 2>/dev/null || printf '%s' "$spend")"
   fi
 
+  if [[ "$current_run_id" != "null" ]]; then
+    current_run="$(jq -nc \
+      --argjson id "$current_run_id" --argjson started_at "$current_run_started_at" \
+      --argjson stages "$current_run_stages" --argjson spend "$spend" '
+      {
+        id:$id,
+        started_at:$started_at,
+        stages:$stages,
+        tokens_total: ([$stages[] as $stage |
+          ([$spend.by_stage[]? | select(.stage_id == $stage.id)][0].tokens // $stage.tokens // 0)] |
+          add // 0),
+        cost_usd_est: ([$stages[] as $stage |
+          ([$spend.by_stage[]? | select(.stage_id == $stage.id)][0].cost_usd_est // 0)] |
+          add // 0)
+      }')"
+  fi
+
   repo_row="$(jq -nc \
     --arg name "$name" --arg repo_path "$repo_path" \
     --argjson enabled "$([[ "$enabled" == true ]] && printf true || printf false)" \
@@ -443,6 +476,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson paused_until "$paused_until" --argjson paused_reason "$paused_reason" \
     --argjson last_tick_at "$last_tick_at" --argjson tick_count "${tick_count:-0}" \
     --argjson current_stage "$current_stage" --argjson run_started_at "$run_started_at" \
+    --argjson current_run "$current_run" \
     --argjson verifier_attempt_cap 3 \
     --argjson stages "$stages_json" --argjson alerts "$alerts_json" --argjson agents "$agents_json" \
     --argjson queue "$queue_json" --argjson queue_counts "$queue_counts_json" \
@@ -460,6 +494,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      paused_until:$paused_until, paused_reason:$paused_reason,
      last_tick_at:$last_tick_at, tick_count:$tick_count, current_stage:$current_stage,
      run_started_at:$run_started_at, verifier_attempt_cap:$verifier_attempt_cap,
+     current_run:$current_run,
      state_error:$state_error, heartbeat_checked_at:$heartbeat_checked_at,
      heartbeat_baselines:$heartbeat_baselines, heartbeat_outlier_policy:$heartbeat_outlier_policy,
      drain_active:$drain_active, drain_cap:$drain_cap, drain_expires_at:$drain_expires_at,
