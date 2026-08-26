@@ -5,8 +5,10 @@ import curses
 import json
 import locale
 import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +20,47 @@ def payload_from_aggregator(aggregator, repo_root):
     result = subprocess.run(
         [aggregator, "--repo", repo_root], check=True, capture_output=True, text=True)
     return json.loads(result.stdout)
+
+
+_NO_PAYLOAD = object()
+
+
+def _poll(results, generation, started_at, aggregator, repo_root, payload):
+    try:
+        value = (payload_from_aggregator(aggregator, repo_root)
+                 if payload is _NO_PAYLOAD else payload)
+        error = None
+    except Exception as caught:
+        value = None
+        error = caught
+    results.put({
+        "generation": generation,
+        "started_at": started_at,
+        "payload": value,
+        "error": error,
+    })
+
+
+def start_poll(results, generation, started_at, aggregator, repo_root, payload=_NO_PAYLOAD):
+    thread = threading.Thread(
+        target=_poll,
+        args=(results, generation, started_at, aggregator, repo_root, payload),
+        name="autometta-tui-poll-%d" % generation,
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def apply_poll_result(state, result, latest_generation):
+    if result["generation"] != latest_generation:
+        return False
+    if result["error"] is not None:
+        state.poll_failed(str(result["error"]))
+    else:
+        state.update(result["payload"], observed_at=result["started_at"],
+                     data_started_at=result["started_at"])
+    return True
 
 
 def fixture_polls(path):
@@ -84,7 +127,7 @@ def curses_attr(attr):
     return curses.A_NORMAL
 
 
-def paint(stdscr, canvas):
+def paint(stdscr, canvas, frame_log=None):
     stdscr.erase()
     for y, (chars, attrs) in enumerate(zip(canvas.cells, canvas.attrs)):
         x = 0
@@ -99,11 +142,19 @@ def paint(stdscr, canvas):
                 pass
             x = end
     stdscr.refresh()
+    if frame_log is not None:
+        frame_log.write(json.dumps({"at": time.monotonic(), "text": canvas.text()}) + "\n")
+        frame_log.flush()
 
 
 def interactive(args):
     polls = fixture_polls(args.fixture) if args.fixture else None
     poll_index = 0
+    results = queue.Queue()
+    latest_generation = 0
+    in_flight_generation = None
+    frame_log_path = os.environ.get("AUTOMETTA_TUI_FRAME_LOG")
+    frame_log = open(frame_log_path, "w", encoding="utf-8") if frame_log_path else None
     stdscr = curses.initscr()
     configured = False
     try:
@@ -127,25 +178,35 @@ def interactive(args):
         dirty = True
         while True:
             now = time.monotonic()
-            if now >= next_poll:
+            if state.observe_time(now):
+                dirty = True
+            while True:
                 try:
-                    if polls:
-                        payload = polls[min(poll_index, len(polls) - 1)]
-                        poll_index += 1
-                    else:
-                        payload = payload_from_aggregator(args.aggregator, args.repo_root)
-                    state.update(payload, now)
-                    refresh_controller(state, args.repo_root)
+                    result = results.get_nowait()
+                except queue.Empty:
+                    break
+                if result["generation"] == in_flight_generation:
+                    in_flight_generation = None
+                if apply_poll_result(state, result, latest_generation):
+                    if result["error"] is None:
+                        refresh_controller(state, args.repo_root)
                     dirty = True
-                except (OSError, ValueError, subprocess.SubprocessError) as error:
-                    failed = dict(state.payload)
-                    failed["state_error"] = str(error)
-                    state.update(failed, now)
-                    dirty = True
-                next_poll = now + args.interval
+            if now >= next_poll and in_flight_generation is None:
+                latest_generation += 1
+                started_at = now
+                payload = _NO_PAYLOAD
+                if polls:
+                    payload = polls[min(poll_index, len(polls) - 1)]
+                    poll_index += 1
+                state.poll_started(started_at)
+                start_poll(results, latest_generation, started_at, args.aggregator,
+                           args.repo_root, payload)
+                in_flight_generation = latest_generation
+                next_poll = started_at + args.interval
+                dirty = True
             if dirty:
                 height, width = stdscr.getmaxyx()
-                paint(stdscr, render(state, width, height))
+                paint(stdscr, render(state, width, height), frame_log)
                 dirty = False
             key = stdscr.getch()
             if key == -1:
@@ -174,6 +235,8 @@ def interactive(args):
             except curses.error:
                 pass
         curses.endwin()
+        if frame_log is not None:
+            frame_log.close()
 
 
 def main():
