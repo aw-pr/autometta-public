@@ -322,11 +322,18 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     ' "$quota_path" 2>/dev/null || printf '%s' "$quota")"
   fi
 
-  spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"by_stage":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0}'
+  spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"by_stage":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0,"history":{"summary":{"card_count":0,"lost_seven_day_tokens":0,"lost_seven_day_marked":false,"seven_day_cost_usd_est":0,"seven_day_cost_marked":false},"cards":[],"fortnight":{"by_day":[],"by_model":[]}}}'
   if [[ -f "$cost_log_path" ]]; then
     spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" '
       def epoch: try (.ts | fromdateiso8601) catch 0;
       def tok: ((.input_tokens // 0) + (.cached_input_tokens // 0) + (.output_tokens // 0));
+      def dispatch_tokens: (.total_tokens // tok);
+      def dispatch_cost: (.total_cost_usd_est // .cost_usd_est // 0);
+      def zero_output_read:
+        (((.identity // "") | test("gpt|codex"; "i")) and
+         ((.usage_status // "recorded") == "recorded") and
+         (((.input_tokens // 0) + (.cached_input_tokens // 0)) > 0) and
+         ((.output_tokens // 0) == 0));
       def totals($rows): {
         input_tokens: ([$rows[] | .input_tokens // 0] | add // 0),
         cached_input_tokens: ([$rows[] | .cached_input_tokens // 0] | add // 0),
@@ -340,6 +347,9 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       [$rows[] | select((.result // "") != "pass")] as $lost |
       [$all[] | select(epoch >= ($today - 518400))] as $week_rows |
       [$week_rows[] | select((.result // "") != "pass")] as $lost_week |
+      [$all[] | select((.role // "") != "phat-controller")] as $dispatches |
+      [$dispatches[] | select(epoch >= ($today - 1123200))] as $fortnight_rows |
+      ([$fortnight_rows[] | dispatch_cost] | add // 0) as $fortnight_cost |
       (totals($rows)) as $t |
       {scope:"today_utc", input_tokens:$t.input_tokens,
        cached_input_tokens:$t.cached_input_tokens, output_tokens:$t.output_tokens,
@@ -364,7 +374,61 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
           tokens_lost:tok, cost_usd_est:(.cost_usd_est // 0)}] | sort_by(.ts) | reverse),
        last_dispatch_at: ([$all[] | select(epoch > 0) | .ts] | max // null),
        seven_day_cost_usd_est: ([$all[] | select(epoch >= ($today - 518400)) | .cost_usd_est // 0] | add // 0),
-       last_hour_tokens: ([$all[] | select(epoch >= ($now - 3600)) | tok] | add // 0)}
+       last_hour_tokens: ([$all[] | select(epoch >= ($now - 3600)) | tok] | add // 0),
+       history: {
+         summary: {
+           card_count: ([$dispatches[].stage_id] | unique | length),
+           lost_seven_day_tokens: ([$dispatches[] |
+             select(epoch >= ($today - 518400) and (.result // "") != "pass") |
+             dispatch_tokens] | add // 0),
+           lost_seven_day_marked: (any($dispatches[]?;
+             epoch >= ($today - 518400) and (.result // "") != "pass" and zero_output_read)),
+           seven_day_cost_usd_est: ([$dispatches[] |
+             select(epoch >= ($today - 518400)) | dispatch_cost] | add // 0),
+           seven_day_cost_marked: (any($dispatches[]?;
+             epoch >= ($today - 518400) and zero_output_read))
+         },
+         cards: ([$dispatches | group_by(.stage_id)[] | sort_by(.ts) as $stage_rows |
+           {
+             id: ($stage_rows[0].stage_id // "unknown"),
+             result: (($stage_rows[-1].result // "unknown") | ascii_upcase),
+             attempts: ([$stage_rows | group_by(.role)[] | length] | max // 0),
+             tokens: ([$stage_rows[] | dispatch_tokens] | add // 0),
+             tokens_marked: (any($stage_rows[]?; zero_output_read)),
+             lost_tokens: ([$stage_rows[] | select((.result // "") != "pass") |
+               dispatch_tokens] | add // 0),
+             lost_marked: (any($stage_rows[]?;
+               (.result // "") != "pass" and zero_output_read)),
+             cost_usd_est: ([$stage_rows[] | dispatch_cost] | add // 0),
+             cost_marked: (any($stage_rows[]?; zero_output_read)),
+             worker: ([$stage_rows[] | select(.role == "worker") | .identity] | last // null),
+             verifier: ([$stage_rows[] | select(.role == "verifier") | .identity] | last // null),
+             last_dispatch_at: ([$stage_rows[].ts] | max // null),
+             dispatches: ([$stage_rows[] | {
+               role: (.role // "unknown"), result: ((.result // "unknown") | ascii_upcase),
+               tokens: dispatch_tokens, tokens_marked: zero_output_read,
+               cost_usd_est: dispatch_cost, cost_marked: zero_output_read,
+               when: (.ts // null), identity: (.identity // null)
+             }] | sort_by(.when) | reverse)
+           }] | sort_by(.last_dispatch_at) | reverse),
+         fortnight: {
+           by_day: ([range(0; 14) as $offset |
+             ($today - ((13 - $offset) * 86400)) as $day |
+             {day: ($day | strftime("%Y-%m-%d")),
+              cost_usd_est: ([$fortnight_rows[] |
+                select(epoch >= $day and epoch < ($day + 86400)) | dispatch_cost] | add // 0),
+              marked: (any($fortnight_rows[]?;
+                epoch >= $day and epoch < ($day + 86400) and zero_output_read))}]),
+           by_model: ([$fortnight_rows | group_by(.identity)[] | . as $model_rows |
+             ([$model_rows[] | dispatch_cost] | add // 0) as $model_cost |
+             {identity: ($model_rows[0].identity // "unknown"),
+              cost_usd_est: $model_cost,
+              share_percent: (if $fortnight_cost > 0
+                then (($model_cost * 100 / $fortnight_cost) | round) else 0 end),
+              marked: (any($model_rows[]?; zero_output_read))}] |
+             sort_by(.cost_usd_est) | reverse)
+         }
+       }}
     ' "$cost_log_path" 2>/dev/null || printf '%s' "$spend")"
   fi
 
@@ -402,7 +466,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      vendor_stale:$vendor_stale, vendor_from:$vendor_from, vendor_current:$vendor_current,
      queue_depth:($queue|length), in_flight:([$stages[] | select(.status == "in_progress")] | length),
      alerts:$alerts, agents:$agents, active_agents:$agents, queue:$queue, queue_counts:$queue_counts,
-     stages:$stages, spend:$spend, quota:$quota,
+     stages:$stages, spend:$spend, history:$spend.history, quota:$quota,
      today_tokens:$spend.tokens_total, today_cost_usd_est:$spend.cost_usd_est,
      seven_day_cost_usd_est:$spend.seven_day_cost_usd_est,
      last_hour_tokens:$spend.last_hour_tokens, last_dispatch_at:$spend.last_dispatch_at}')"

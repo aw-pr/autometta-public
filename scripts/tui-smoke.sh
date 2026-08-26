@@ -133,7 +133,7 @@ assert_contains "$after" 'stage-cards/50-cards.md' "enter did not repopulate car
 history="$(capture 119 40 ']')"
 messages="$(capture 119 40 '],]')"
 returned="$(capture 119 40 '2,j,ENTER,],],]')"
-assert_contains "$history" 'arrives with card 70' "history placeholder missing"
+assert_contains "$history" 'no historic dispatches' "empty history page missing"
 assert_contains "$messages" 'arrives with card 71' "messages placeholder missing"
 assert_contains "$returned" 'stage-cards/50-cards.md' "page round-trip disturbed run-page state"
 

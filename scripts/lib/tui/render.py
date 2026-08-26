@@ -137,6 +137,8 @@ class TuiState:
         self.page = 1
         self.selection = {1: 0, 2: 0, 3: 0, 4: 0}
         self.pinned_stage = None
+        self.history_selection = 0
+        self.pinned_history_card = None
         self.history = {}
         self.now = int(time.time())
 
@@ -159,6 +161,14 @@ class TuiState:
             self.pinned_stage = preferred if preferred in ids else (ids[0] if ids else None)
         if self.pinned_stage in ids and not self.selection[2]:
             self.selection[2] = ids.index(self.pinned_stage)
+        history_ids = [row.get("id") for row in history_cards(self.payload)]
+        if history_ids:
+            self.history_selection = min(self.history_selection, len(history_ids) - 1)
+            if self.pinned_history_card not in history_ids:
+                self.pinned_history_card = history_ids[0]
+        else:
+            self.history_selection = 0
+            self.pinned_history_card = None
 
     def rows_for_focus(self):
         if self.focus == 2:
@@ -181,6 +191,15 @@ class TuiState:
             return
         if key in ("PAGE_PREV", "["):
             self.page = (self.page - 2) % 3 + 1
+            return
+        if self.page == 2:
+            rows = history_cards(self.payload)
+            if key in ("j", "DOWN") and rows:
+                self.history_selection = min(len(rows) - 1, self.history_selection + 1)
+            elif key in ("k", "UP") and rows:
+                self.history_selection = max(0, self.history_selection - 1)
+            elif key in ("ENTER", "\n", "\r") and rows:
+                self.pinned_history_card = rows[self.history_selection].get("id")
             return
         rows = self.rows_for_focus()
         if key in ("j", "DOWN") and rows:
@@ -218,6 +237,171 @@ def escalation_rows(payload):
 
 def content_line(text, spans=None):
     return text, spans or []
+
+
+def history_cards(payload):
+    return (payload.get("history") or {}).get("cards") or []
+
+
+def marked_tokens(value, marked=False):
+    return short_tokens(value or 0) + ("?" if marked else "")
+
+
+def marked_cost(value, marked=False):
+    return "$%.2f%s" % (value or 0, "?" if marked else "")
+
+
+def compact_when(stamp):
+    if not isinstance(stamp, str) or len(stamp) < 16:
+        return "?"
+    months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    try:
+        month = months[int(stamp[5:7]) - 1]
+        return "%s %s %s" % (stamp[8:10], month, stamp[11:16])
+    except (ValueError, IndexError):
+        return stamp
+
+
+def sparkline(values):
+    bars = "▁▂▃▄▅▆▇█"
+    peak = max(values or [0])
+    if peak <= 0:
+        return "▁" * len(values)
+    return "".join(bars[min(7, int((value or 0) * 7 / peak))] for value in values)
+
+
+def history_table_lines(state, inner_width, inner_height=None):
+    rows = history_cards(state.payload)
+    summary = (state.payload.get("history") or {}).get("summary") or {}
+    summary_text = "%d cards · %s lost 7d · %s cost 7d" % (
+        summary.get("card_count", len(rows)),
+        marked_tokens(summary.get("lost_seven_day_tokens", 0),
+                      summary.get("lost_seven_day_marked", False)),
+        marked_cost(summary.get("seven_day_cost_usd_est", 0),
+                    summary.get("seven_day_cost_marked", False)))
+    lines = [content_line(summary_text, [(0, len(summary_text), BOLD)])]
+    if summary.get("lost_seven_day_marked") or summary.get("seven_day_cost_marked"):
+        lines.append(content_line("? codex zero-output read: marked totals are undercounts", [(0, 1, ALERT)]))
+    if not rows:
+        lines.append(content_line("no historic dispatches", [(0, 21, DIM)]))
+        return lines
+
+    rendered_rows = []
+    for row in rows:
+        rendered_rows.append({
+            "card": row.get("id") or "?",
+            "result": row.get("result") or "UNKNOWN",
+            "attempts": str(row.get("attempts") or 0),
+            "tokens": marked_tokens(row.get("tokens", 0), row.get("tokens_marked", False)),
+            "lost": marked_tokens(row.get("lost_tokens", 0), row.get("lost_marked", False)),
+            "cost": marked_cost(row.get("cost_usd_est", 0), row.get("cost_marked", False)),
+            "pair": "%s→%s" % (identity_alias(row.get("worker")), identity_alias(row.get("verifier"))),
+            "when": compact_when(row.get("last_dispatch_at")),
+        })
+
+    order = ["card", "result", "attempts", "tokens", "lost", "cost", "pair", "when"]
+    if inner_width < 105:
+        order.remove("when")
+    if inner_width < 82:
+        order.remove("lost")
+    if inner_width < 68:
+        order.remove("attempts")
+    headings = {"card": "card", "result": "result", "attempts": "attempts", "tokens": "tokens",
+                "lost": "lost", "cost": "cost", "pair": "worker→verifier", "when": "when"}
+    widths = {name: max(len(headings[name]), max(len(row[name]) for row in rendered_rows)) for name in order}
+    aligns = {"attempts": "right", "tokens": "right", "lost": "right", "cost": "right"}
+    lines.append(content_line(""))
+    for heading_line in render_grouped_lines(headings, order, widths, aligns, inner_width, indent="  "):
+        lines.append(content_line(heading_line.rstrip(), [(0, len(heading_line.rstrip()), BOLD)]))
+    row_blocks = []
+    for index, row in enumerate(rendered_rows):
+        selected = index == state.history_selection
+        block = []
+        for row_line in render_grouped_lines(row, order, widths, aligns, inner_width, indent="  "):
+            row_line = row_line.rstrip()
+            block.append(content_line(row_line, [(0, len(row_line), REVERSE)] if selected else []))
+        row_blocks.append(block)
+
+    fortnight = (state.payload.get("history") or {}).get("fortnight") or {}
+    days = fortnight.get("by_day") or []
+    day_spark = sparkline([day.get("cost_usd_est", 0) for day in days])
+    models = fortnight.get("by_model") or []
+    shares = " ".join("%s %d%%%s" % (
+        identity_alias(model.get("identity")), model.get("share_percent", 0),
+        "?" if model.get("marked") else "") for model in models)
+    footer_lines = [content_line("spend 14d %s" % day_spark),
+                    content_line("by model: " + (shares or "no spend"))]
+    if inner_height is None:
+        return lines + [item for block in row_blocks for item in block] + footer_lines
+
+    row_capacity = max(1, inner_height - len(lines) - len(footer_lines) - 1)
+    selected = min(state.history_selection, len(row_blocks) - 1)
+    start = 0
+    while start < selected and sum(len(block) for block in row_blocks[start:selected + 1]) > row_capacity:
+        start += 1
+    end = start
+    used = 0
+    while end < len(row_blocks) and used + len(row_blocks[end]) <= row_capacity:
+        used += len(row_blocks[end])
+        end += 1
+    if end <= selected:
+        end = selected + 1
+    visible = [item for block in row_blocks[start:end] for item in block]
+    range_line = content_line("rows %d-%d of %d" % (start + 1, end, len(row_blocks)), [(0, 4, DIM)])
+    return lines + visible + [range_line] + footer_lines
+
+
+def history_detail_lines(state, inner_width):
+    card = next((row for row in history_cards(state.payload)
+                 if row.get("id") == state.pinned_history_card), None)
+    if not card:
+        return [content_line("No card selected", [(0, 16, DIM)])]
+    pair = "%s→%s" % (identity_alias(card.get("worker")), identity_alias(card.get("verifier")))
+    lines = [content_line(card.get("id") or "?", [(0, len(card.get("id") or "?"), BOLD)]),
+             content_line("%s · %s · %s" % (
+                 card.get("result") or "UNKNOWN", pair,
+                 marked_cost(card.get("cost_usd_est", 0), card.get("cost_marked", False)))),
+             content_line("")]
+    detail_headings = {"role": "role", "result": "result", "tokens": "tokens",
+                       "cost": "cost", "when": "when"}
+    detail_order = ["role", "result", "tokens", "cost", "when"]
+    detail_widths = {name: len(detail_headings[name]) for name in detail_order}
+    for heading_line in render_grouped_lines(
+            detail_headings, detail_order, detail_widths, {}, inner_width, indent="  "):
+        lines.append(content_line(heading_line.rstrip(), [(0, len(heading_line.rstrip()), BOLD)]))
+    for dispatch in card.get("dispatches") or []:
+        cells = {
+            "role": dispatch.get("role") or "?",
+            "result": dispatch.get("result") or "UNKNOWN",
+            "tokens": marked_tokens(dispatch.get("tokens", 0), dispatch.get("tokens_marked", False)),
+            "cost": marked_cost(dispatch.get("cost_usd_est", 0), dispatch.get("cost_marked", False)),
+            "when": compact_when(dispatch.get("when")),
+        }
+        order = ["role", "result", "tokens", "cost", "when"]
+        widths = {name: len(cells[name]) for name in order}
+        for detail_line in render_grouped_lines(cells, order, widths, {}, inner_width, indent="  "):
+            lines.append(content_line(detail_line.rstrip()))
+    return wrap_content_lines(lines, inner_width)
+
+
+def render_history(canvas, state, width, usable):
+    name = state.payload.get("name") or "repo"
+    table_title = "[0]─History: %s" % name
+    if width > 80:
+        left_width = min(width - 34, max(82, int(width * 0.70)))
+        right_x = left_width + 1
+        draw_box(canvas, (0, 0, left_width, usable), table_title,
+                 history_table_lines(state, left_width - 4, usable - 2))
+        draw_box(canvas, (right_x, 0, width - right_x, usable), "[0]─Card detail",
+                 history_detail_lines(state, width - right_x - 4))
+        return
+    detail_height = max(10, min(24, usable // 3))
+    table_height = usable - detail_height - 1
+    draw_box(canvas, (0, 0, width, table_height), table_title,
+             history_table_lines(state, width - 4, table_height - 2))
+    draw_box(canvas, (0, table_height + 1, width, detail_height), "[0]─Card detail",
+             history_detail_lines(state, width - 4))
 
 
 def draw_box(canvas, rect, title, lines, focused=False):
@@ -356,6 +540,29 @@ def sparkline_and_rate(state, stage_id):
     return spark, rate
 
 
+def wrap_content_lines(lines, inner_width):
+    wrapped = []
+    for text, spans in lines:
+        if len(text) <= inner_width or not text:
+            wrapped.append((text, spans))
+            continue
+        remaining = text
+        continuation = ""
+        while len(continuation) + len(remaining) > inner_width:
+            available = max(1, inner_width - len(continuation))
+            split_at = remaining.rfind(" ", 0, available + 1)
+            if split_at > 0:
+                piece = remaining[:split_at]
+                remaining = remaining[split_at + 1:]
+            else:
+                piece = remaining[:available]
+                remaining = remaining[available:]
+            wrapped.append(content_line(continuation + piece))
+            continuation = "  "
+        wrapped.append(content_line(continuation + remaining))
+    return wrapped
+
+
 def detail_lines(state, inner_width):
     stages = state.payload.get("stages") or []
     stage = next((item for item in stages if item.get("id") == state.pinned_stage), None)
@@ -394,22 +601,7 @@ def detail_lines(state, inner_width):
             short_tokens(usage.get("output_tokens", 0)), usage.get("cost_usd_est", 0) or 0)),
         content_line("%s  burn last 8 polls (%s/min)" % (spark, short_tokens(rate))),
     ])
-    wrapped = []
-    for text, spans in lines:
-        if len(text) <= inner_width or not text:
-            wrapped.append((text, spans))
-            continue
-        words = text.split(" ")
-        current = ""
-        for word in words:
-            candidate = word if not current else current + " " + word
-            if current and len(candidate) > inner_width:
-                wrapped.append(content_line(current))
-                current = "  " + word
-            else:
-                current = candidate
-        wrapped.append(content_line(current))
-    return wrapped
+    return wrap_content_lines(lines, inner_width)
 
 
 def fit_heights(desired, minimum, available, shrink_order):
@@ -447,10 +639,13 @@ def render(state, width, height):
         canvas.put(0, 0, "Autometta TUI: resize to at least 40x18", ALERT)
         footer(canvas, state)
         return canvas
+    if state.page == 2:
+        render_history(canvas, state, width, height - 1)
+        footer(canvas, state)
+        return canvas
     if state.page != 1:
-        title = "History" if state.page == 2 else "Messages"
-        draw_box(canvas, (0, 0, width, height - 1), "[%d] %s" % (state.page, title), [
-            content_line("arrives with card %d" % (70 if state.page == 2 else 71), [(0, 20, DIM)])])
+        draw_box(canvas, (0, 0, width, height - 1), "[3] Messages", [
+            content_line("arrives with card 71", [(0, 20, DIM)])])
         footer(canvas, state)
         return canvas
 
