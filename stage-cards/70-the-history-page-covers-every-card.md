@@ -147,3 +147,27 @@ and after.
 ## Family-specific notes
 
 None
+
+## Re-brief (attempt 2, 2026-08-26)
+
+Attempt 1 passed eight of nine and is preserved on
+`wip/70-the-history-page-covers-every-card-attempt-1` (`0d3624a`).
+**Restore that branch's tree and correct the one finding in place.** The shape of the
+solution is settled and is not in question; a re-brief that corrects a
+detail has cost a seventh of one that reshapes.
+
+The finding, criterion 2: the history table honours the whole-identifier
+rule, but the DETAIL pane heading truncates the pinned card's stage id
+(`12-history-card-identifier-is-d` at 119 columns,
+`...-deliberately-` at 160), because `history_detail_lines`
+(`scripts/lib/tui/render.py:355-359`) emits the id as a plain content line
+and `draw_box` hard-clips every line to the pane width. Page 1's detail
+pane already word-wraps overlong lines before `draw_box`
+(`render.py:581-596`); the history pane missed that existing wrap. Use the
+existing helper rather than a second wrapping implementation.
+
+The smoke gap that let it through: `tui-history-smoke.sh` asserts the
+whole-identifier rule on the table but not on the detail pane. Extend it to
+assert the pinned card's full id is present, wrapped not clipped, at 119
+and 160 columns, on the 63-character fixture id. The assertion must fail
+loudly if the id is absent or any line of it is cut.
