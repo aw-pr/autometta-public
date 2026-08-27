@@ -21,7 +21,28 @@ AUTOMETTA_MODEL_CODEX="gpt-5.6-sol"
 # model above. One place to bump when a faster or better-pulled local model
 # becomes the default; see codex_local_preflight below for the ollama checks
 # that gate a dispatch on this id actually being pulled.
-AUTOMETTA_MODEL_CODEX_LOCAL="gpt-oss:120b"
+AUTOMETTA_MODEL_CODEX_LOCAL="${AUTOMETTA_MODEL_CODEX_LOCAL:-gpt-oss:120b}"
+
+# Worker and verifier both read the id above, which makes the same weights
+# judge their own output. That is not an independent gate, and on one machine
+# it is also a scheduling problem: two roles on one model id contend for a
+# single loaded copy instead of running side by side. A repo that wants a
+# genuinely separate local verifier sets the per-role override. Unset roles
+# fall back to the shared default, so a repo that never sets one dispatches
+# exactly as it did before.
+AUTOMETTA_MODEL_CODEX_LOCAL_WORKER="${AUTOMETTA_MODEL_CODEX_LOCAL_WORKER:-}"
+AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER="${AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER:-}"
+
+# codex_local_model_for_role <worker|verifier>
+# Resolve the Ollama model id a role dispatches to. An unrecognised role gets
+# the shared default rather than failing: a typo should not cost a run.
+codex_local_model_for_role() {
+  case "$1" in
+    worker)   printf '%s' "${AUTOMETTA_MODEL_CODEX_LOCAL_WORKER:-$AUTOMETTA_MODEL_CODEX_LOCAL}" ;;
+    verifier) printf '%s' "${AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER:-$AUTOMETTA_MODEL_CODEX_LOCAL}" ;;
+    *)        printf '%s' "$AUTOMETTA_MODEL_CODEX_LOCAL" ;;
+  esac
+}
 
 # Both CLIs take the same effort vocabulary, so one card field serves both.
 AUTOMETTA_EFFORT_LEVELS="low medium high xhigh max"
