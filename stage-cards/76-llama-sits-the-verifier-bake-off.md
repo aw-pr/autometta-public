@@ -190,3 +190,18 @@ publish-ready methodology, recommendation) are the whole brief.
 Acceptance criteria 2 to 7 stand; criterion 1 is judged against the
 committed artefacts including the two recorded holes. The worker
 wall-clock drops to 45 minutes: it is a writing task.
+
+## Re-brief (attempt 4, 2026-08-27, 04:55)
+
+Attempt 3 passed six of seven; the substance is settled and is not to be
+re-derived. **Restore the preserved tree at
+`wip/76-llama-sits-the-verifier-bake-off-attempt-1` (`f0239a5`) and
+correct one thing in place: criterion 5's em-dash rule.** The document carries em
+dashes on 41 lines, three of them added by attempt 3 itself; the card
+and CLAUDE.md both say none. Replace each with the punctuation the
+sentence actually wants (a comma, a colon, a semicolon, parentheses, or
+a rewrite); do not sed them blindly into commas. Touch nothing else in
+the document, and nothing outside it. British English and the
+vocabulary rules already hold; keep them holding. Worker wall-clock: 20
+minutes. The verifier re-checks criterion 5 by grep and spot-checks
+that the figures and tables are undisturbed.
