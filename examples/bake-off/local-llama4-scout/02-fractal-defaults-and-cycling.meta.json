@@ -1,0 +1,15 @@
+{
+  "stage_id": "02-fractal-defaults-and-cycling",
+  "candidate": "local-llama4-scout",
+  "base_url": "http://localhost:11434/v1",
+  "model": "llama4:scout",
+  "elapsed_seconds": 950.14,
+  "request_count": 1,
+  "prompt_tokens": 16129,
+  "completion_tokens": 800,
+  "total_tokens": 16929,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 2753
+}

@@ -1,0 +1,46 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "verifier_identity": "Bake-off candidate: local-llama4-scout <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-llama4-scout --stage 30-markus-lyapunov-kernel",
+  "ran_at": "2026-08-27T04:12:14Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/package.json line:10"
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs passes",
+      "verdict": "PASS",
+      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/src/sims/markus-lyapunov/kernel.test.cjs line:1"
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke on /#markus-lyapunov renders a recognisable Markus\u2013Lyapunov fractal",
+      "verdict": "PASS",
+      "evidence": "screenshot: stable/chaotic boundary shape"
+    },
+    {
+      "id": 4,
+      "name": "Stable regions render on the yellow/brown ramp and chaotic regions render on the blue/black ramp",
+      "verdict": "PASS",
+      "evidence": "screenshot: color-sign split"
+    },
+    {
+      "id": 5,
+      "name": "Switching the sequence param visibly changes the fractal's shape",
+      "verdict": "PASS",
+      "evidence": "screenshot: sequence AB\u2192AABB at the same Zircon view"
+    },
+    {
+      "id": 6,
+      "name": "No files outside the deliverable list are modified, except this stage card",
+      "verdict": "PASS",
+      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/git status output"
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

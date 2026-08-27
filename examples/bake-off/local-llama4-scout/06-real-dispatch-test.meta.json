@@ -1,0 +1,15 @@
+{
+  "stage_id": "06-real-dispatch-test",
+  "candidate": "local-llama4-scout",
+  "base_url": "http://localhost:11434/v1",
+  "model": "llama4:scout",
+  "elapsed_seconds": 840.38,
+  "request_count": 1,
+  "prompt_tokens": 6682,
+  "completion_tokens": 1224,
+  "total_tokens": 7906,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 4757
+}
