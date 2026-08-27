@@ -1392,6 +1392,34 @@ pc_render_pass_prompt() {
   printf '%s\n' "$rendered"
 }
 
+# The controller is an agent like any other, and until it registered itself it
+# was the one role no viewer could see: the TUI's Agents pane reads
+# state/active-agents/, and a pass left nothing there. An operator watching a
+# run could see every worker and verifier but not the thing deciding what they
+# did next, which is the process most worth watching when a queue misbehaves.
+#
+# Registration is per-repo because the pane is per-repo, and it names the model
+# driving the pass, not the role, so the pane reports what is actually running.
+pc_register_pass_agent() {
+  local repo_root="$1" family log_path
+  family="$(agent_family_for_identity "$PC_AGENT_IDENTITY")"
+  log_path="$pc_log_dir/phat-controller-$(date -u +%F).log"
+  "$script_dir/register-agent.sh" "$repo_root" "$$" controller "$family" \
+    "$PC_AGENT_IDENTITY" "-" "$log_path" "${PC_PASS_BUDGET_SECONDS:-1800}" \
+    >/dev/null 2>&1 || true
+}
+
+# A pass that dies without clearing its registration would leave a controller
+# that looks live for ever, so the trap runs on every exit path, not just the
+# clean one.
+pc_deregister_pass_agents() {
+  local repo_root
+  for repo_root in "${PC_REGISTERED_REPOS[@]:-}"; do
+    [[ -n "$repo_root" ]] || continue
+    rm -f "$repo_root/state/active-agents/$$.json" 2>/dev/null || true
+  done
+}
+
 pc_pass() {
   for tool in yq jq; do
     command -v "$tool" >/dev/null 2>&1 || { log "phat-controller: ${tool} is required but missing"; return 1; }
@@ -1413,6 +1441,12 @@ pc_pass() {
     log "phat-controller: no repos to mind"
     return 0
   fi
+
+  PC_REGISTERED_REPOS=( "${repos[@]}" )
+  trap pc_deregister_pass_agents EXIT
+  for repo_root in "${repos[@]}"; do
+    pc_register_pass_agent "$repo_root"
+  done
 
   # The controller works inside its envelope or it stops (prohibition 4).
   # There is nobody to escalate to mid-run, so an exhausted authority halts
