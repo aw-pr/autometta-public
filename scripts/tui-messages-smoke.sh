@@ -138,7 +138,16 @@ assert '"phat-controller-inbox", "processed"' in messages
 assert '"phat-controller-outbox"' in messages
 PY
 
-[[ -z "$(git -C "$script_dir/.." diff -- scripts/phat-controller.sh)" ]] || \
-  fail "phat-controller.sh was modified"
+# The seam is a direction, not a frozen file. The TUI reads the controller's
+# bus; the controller must not reach back into the TUI. Asserting instead that
+# phat-controller.sh had no uncommitted diff tested the working tree rather
+# than the dependency: it passed the instant anything was committed, and it
+# failed on any unrelated edit to that file by anyone, which is what it did
+# when the controller learned to register itself as an agent. Comments may name
+# the TUI; only executable coupling is refused.
+if grep -vE '^[[:space:]]*#' scripts/phat-controller.sh \
+   | grep -qE '(source|\.|bash|exec|python3)[^#]*(lib/tui|tui\.sh)'; then
+  fail "phat-controller.sh executes TUI code; the controller must not depend on its viewer"
+fi
 
 printf 'PASS tui messages: 80/119/160 captures, interleaving, pending/refusal, compose parse, cancel, empty state, bounded journal, one reader seam\n'

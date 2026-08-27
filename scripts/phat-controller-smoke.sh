@@ -322,7 +322,12 @@ assert_contains "$card_after" "$ct_sha" "the re-brief cites the preserved commit
 assert_eq "$criteria_before" "$(awk '/^## Acceptance criteria/,/^## Budget/' "$card_ct")" "not one acceptance criterion moved"
 assert_eq "$card_before" "${card_after:0:${#card_before}}" "the card was appended to and never rewritten"
 [[ -z "$(git -C "$rct" status --porcelain -- "stage-cards/${stage_ct}.md")" ]] || fail "the re-brief was left uncommitted"
-assert_eq "$PC_GIT_IDENTITY" "$(git -C "$rct" log -1 --format='%an <%ae>' -- "stage-cards/${stage_ct}.md")" "the re-brief commit is attributed to the role"
+# Author is the model that drove the pass, not the role: the author field is
+# git shortlog's grouping key, and a role there invents a contributor that is
+# neither a person nor a model. The role travels in the Autometta-Controller
+# trailer, which is what this asserts instead.
+assert_eq "$PC_AGENT_IDENTITY" "$(git -C "$rct" log -1 --format='%an <%ae>' -- "stage-cards/${stage_ct}.md")" "the re-brief commit is authored by the driving model"
+assert_eq "$PC_GIT_IDENTITY" "$(git -C "$rct" log -1 --format='%(trailers:key=Autometta-Controller,valueonly)' -- "stage-cards/${stage_ct}.md" | head -1)" "the re-brief commit names the controller role in a trailer"
 printf 'PASS stalled stage re-briefed citing the preserved commit and requeued, no criterion touched\n'
 
 printf '   -- the diff proving no acceptance criterion moved --\n'
@@ -572,7 +577,8 @@ pc_merge_awaiting "$r2" >/dev/null 2>&1 || true
 assert_eq merged "$(yq -r ".stages[] | select(.id == \"$stage2\") | .integration.state" "$r2/state/state.yaml")" "integration state after clean merge"
 git -C "$r2" merge-base --is-ancestor "$run_tip" dev || fail "clean divergent run tip was not integrated into dev"
 assert_eq 2 "$(git -C "$r2" show -s --format='%P' dev | awk '{print NF}')" "divergent clean integration made a two-parent merge commit"
-assert_eq "$PC_GIT_IDENTITY" "$(git -C "$r2" show -s --format='%an <%ae>' dev)" "merge commit author"
+assert_eq "$PC_AGENT_IDENTITY" "$(git -C "$r2" show -s --format='%an <%ae>' dev)" "merge commit is authored by the driving model"
+assert_eq "$PC_GIT_IDENTITY" "$(git -C "$r2" show -s --format='%(trailers:key=Autometta-Controller,valueonly)' dev | head -1)" "merge commit names the controller role in a trailer"
 assert_eq acted "$(journal_of "$r2" | jq -r 'select(.phase == "outcome") | .result' | tail -n1)" "the merge is journalled"
 printf 'PASS clean divergent awaiting integration merged\n'
 
