@@ -78,6 +78,36 @@ pc_seed_path="${AUTOMETTA_CONTROLLER_SEED:-$controller_home/phat-controller-seed
 # read back later distinguishes the role from whichever model held it.
 PC_GIT_IDENTITY="Phat Controller <phat-controller@local>"
 
+# The model actually driving this pass. It is what git records as the author,
+# because the author field is `git shortlog`'s grouping key and a role there
+# invents a contributor that is neither a person nor a model. The role travels
+# in a trailer instead, so both facts stay queryable without splitting the
+# shortlog. A helper that cannot name the model falls back to the role, which
+# is no worse than what every controller commit recorded before this.
+pc_resolve_agent_identity() {
+  local ident
+  if ident="$(agent-whoami 2>/dev/null)" && [[ "$ident" =~ ^.+[[:space:]]\<.+\>$ ]]; then
+    printf '%s' "$ident"
+  else
+    printf '%s' "$PC_GIT_IDENTITY"
+  fi
+}
+PC_AGENT_IDENTITY="$(pc_resolve_agent_identity)"
+
+# The role record every controller commit carries. Co-Authored-By is the
+# git-native half the forge renders; Autometta-Controller is the machine-
+# readable half, matching tick.sh's Autometta-Worker / -Verifier keys. The role
+# is never folded into the author's display name: an annotated identity is a
+# second name for the same model and lists it twice. The Co-Authored-By line is
+# dropped when the author already is the role, so a fallback does not co-author
+# a commit with itself.
+pc_controller_trailers() {
+  if [[ "$PC_AGENT_IDENTITY" != "$PC_GIT_IDENTITY" ]]; then
+    printf 'Co-Authored-By: %s\n' "$PC_GIT_IDENTITY"
+  fi
+  printf 'Autometta-Controller: %s\n' "$PC_GIT_IDENTITY"
+}
+
 # Override tick.sh's log() (writes to tick-<date>.log) so every controller
 # line lands in its own file. An operator reading phat-controller-*.log must
 # not have to filter the tick's own chatter out of it, and a ticker or
@@ -850,7 +880,7 @@ pc_card_append() {
   rm -f "$backup"
 
   local rel_path="${card_path#"$repo_root"/}"
-  if ! ( cd "$repo_root" && git add -- "$rel_path" && git commit --author="$PC_GIT_IDENTITY" -m "$message" -- "$rel_path" ) >/dev/null 2>&1; then
+  if ! ( cd "$repo_root" && git add -- "$rel_path" && git commit --author="$PC_AGENT_IDENTITY" -m "$message" -m "$(pc_controller_trailers)" -- "$rel_path" ) >/dev/null 2>&1; then
     log "card-append: ${rel_path} appended but could not be committed (unexpected branch, or a dirty index in ${repo_root}); left on disk for review"
     release_repo_lock "$repo_root"
     return 1
@@ -1158,8 +1188,8 @@ pc_push() {
 pc_merge_clean() {
   local repo_root="$1" stage_id="$2" base_branch="$3" run_branch="$4" merge_tree="$5"
   local base_tip run_tip base_dir author_name author_email
-  author_name="${PC_GIT_IDENTITY% <*}"
-  author_email="${PC_GIT_IDENTITY##*<}"
+  author_name="${PC_AGENT_IDENTITY% <*}"
+  author_email="${PC_AGENT_IDENTITY##*<}"
   author_email="${author_email%>}"
   base_tip="$(git -C "$repo_root" rev-parse -q --verify "refs/heads/${base_branch}" 2>/dev/null || true)"
   run_tip="$(git -C "$repo_root" rev-parse -q --verify "refs/heads/${run_branch}" 2>/dev/null || true)"
@@ -1179,7 +1209,9 @@ pc_merge_clean() {
     (
       cd "$base_dir"
       GIT_AUTHOR_NAME="$author_name" GIT_AUTHOR_EMAIL="$author_email" \
-        git merge --no-ff --no-edit "$run_branch" >/dev/null 2>&1
+        git merge --no-ff -m "Merge branch '${run_branch}' into ${base_branch}
+
+$(pc_controller_trailers)" "$run_branch" >/dev/null 2>&1
     )
     return
   fi
@@ -1190,7 +1222,8 @@ pc_merge_clean() {
     GIT_AUTHOR_NAME="$author_name" \
     GIT_AUTHOR_EMAIL="$author_email" \
       git commit-tree "$merge_tree" -p "$base_tip" -p "$run_tip" \
-        -m "${stage_id}: phat-controller integrates ${run_branch} into ${base_branch}"
+        -m "${stage_id}: phat-controller integrates ${run_branch} into ${base_branch}" \
+        -m "$(pc_controller_trailers)"
   )" || return 1
   [[ -n "$merge_commit" ]] || return 1
   git -C "$repo_root" update-ref "refs/heads/${base_branch}" "$merge_commit" "$base_tip"
