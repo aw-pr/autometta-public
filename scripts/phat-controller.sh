@@ -78,19 +78,36 @@ pc_seed_path="${AUTOMETTA_CONTROLLER_SEED:-$controller_home/phat-controller-seed
 # read back later distinguishes the role from whichever model held it.
 PC_GIT_IDENTITY="Phat Controller <phat-controller@local>"
 
-# The model actually driving this pass. It is what git records as the author,
-# because the author field is `git shortlog`'s grouping key and a role there
-# invents a contributor that is neither a person nor a model. The role travels
-# in a trailer instead, so both facts stay queryable without splitting the
-# shortlog. A helper that cannot name the model falls back to the role, which
-# is no worse than what every controller commit recorded before this.
+# Who authors a controller commit depends on what drove the pass, and the two
+# cases have different right answers.
+#
+# An agent-driven pass (an orchestrator session running `phat-controller
+# rebrief`) should name that agent: the author field is `git shortlog`'s
+# grouping key, and a role there invents a contributor that is neither a person
+# nor a model.
+#
+# A scheduled pass has no model driving it at all. It is launchd running bash,
+# and the role IS the honest author. Calling `agent-whoami` bare there does not
+# report the driver, because there is no driver to report: it reads
+# ~/.codex/config.toml and answers with whatever that file happens to name. The
+# first live re-brief after this attribution changed was authored `Codex
+# GPT-5.6 Luna` for a pass written by Opus 5, from a config that knew nothing
+# about the invocation. A confident wrong author is the failure the global
+# rules single out as worse than a stopped commit.
+#
+# So the model identity is used only when it is asserted FOR THIS PASS, by an
+# explicit environment variable. A helper answering from ambient config is not
+# an assertion about the driver, and everything else falls back to the role.
 pc_resolve_agent_identity() {
-  local ident
-  if ident="$(agent-whoami 2>/dev/null)" && [[ "$ident" =~ ^.+[[:space:]]\<.+\>$ ]]; then
+  local ident="${AUTOMETTA_CONTROLLER_IDENTITY:-${AGENT_WHOAMI:-}}"
+  if [[ -n "$ident" && "$ident" =~ ^.+[[:space:]]\<.+\>$ ]]; then
     printf '%s' "$ident"
-  else
-    printf '%s' "$PC_GIT_IDENTITY"
+    return 0
   fi
+  if [[ -n "$ident" ]]; then
+    log "phat-controller: ignoring malformed controller identity '${ident}'; attributing to the role"
+  fi
+  printf '%s' "$PC_GIT_IDENTITY"
 }
 PC_AGENT_IDENTITY="$(pc_resolve_agent_identity)"
 

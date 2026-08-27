@@ -327,6 +327,34 @@ assert_eq "$card_before" "${card_after:0:${#card_before}}" "the card was appende
 # neither a person nor a model. The role travels in the Autometta-Controller
 # trailer, which is what this asserts instead.
 assert_eq "$PC_AGENT_IDENTITY" "$(git -C "$rct" log -1 --format='%an <%ae>' -- "stage-cards/${stage_ct}.md")" "the re-brief commit is authored by the driving model"
+
+# The two assertions above pass trivially when no driving model is asserted,
+# because PC_AGENT_IDENTITY then equals PC_GIT_IDENTITY. Exercise the resolver
+# itself so the two cases are actually distinguished.
+#
+# The point of the gate: a scheduled pass has no model driving it, so calling
+# agent-whoami bare would answer from ~/.codex/config.toml and name a model
+# that had nothing to do with the invocation. Only an explicit assertion counts.
+printf '\n== controller identity: asserted model, else the role ==\n' >&2
+_id_probe() {
+  ( PC_GIT_IDENTITY="Phat Controller <phat-controller@local>"
+    log() { :; }
+    eval "$(sed -n '/^pc_resolve_agent_identity() {/,/^}/p' "$script_dir/phat-controller.sh")"
+    pc_resolve_agent_identity )
+}
+assert_eq "Phat Controller <phat-controller@local>" \
+  "$(env -u AGENT_WHOAMI -u AUTOMETTA_CONTROLLER_IDENTITY bash -c "$(declare -f _id_probe); script_dir='$script_dir'; _id_probe")" \
+  "a pass with no asserted driver is attributed to the role"
+assert_eq "Claude Opus 5 <claude-opus-5@local>" \
+  "$(AGENT_WHOAMI='Claude Opus 5 <claude-opus-5@local>' bash -c "$(declare -f _id_probe); script_dir='$script_dir'; _id_probe")" \
+  "an asserted driver is attributed to that model"
+assert_eq "Claude Opus 5 <claude-opus-5@local>" \
+  "$(AGENT_WHOAMI='Claude Sonnet 5 <claude-sonnet-5@local>' AUTOMETTA_CONTROLLER_IDENTITY='Claude Opus 5 <claude-opus-5@local>' bash -c "$(declare -f _id_probe); script_dir='$script_dir'; _id_probe")" \
+  "AUTOMETTA_CONTROLLER_IDENTITY beats AGENT_WHOAMI"
+assert_eq "Phat Controller <phat-controller@local>" \
+  "$(AUTOMETTA_CONTROLLER_IDENTITY='not-an-identity' bash -c "$(declare -f _id_probe); script_dir='$script_dir'; _id_probe")" \
+  "a malformed asserted identity falls back to the role"
+printf 'PASS controller identity resolves to the asserted model, else the role\n' >&2
 assert_eq "$PC_GIT_IDENTITY" "$(git -C "$rct" log -1 --format='%(trailers:key=Autometta-Controller,valueonly)' -- "stage-cards/${stage_ct}.md" | head -1)" "the re-brief commit names the controller role in a trailer"
 printf 'PASS stalled stage re-briefed citing the preserved commit and requeued, no criterion touched\n'
 
