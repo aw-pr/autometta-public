@@ -421,3 +421,72 @@ Relative completion paths remain the contract because they are clone-safe and al
 A pre-spawn failure is recorded as `dispatch_configuration_fault` before an agent starts. A read-time failure gets the same diagnosis instead of `worker_envelope_missing_after_exit` or `aborted`; a verifier's reserved attempt is returned, so the counter is unchanged across the faulty dispatch. `scripts/run-worktree-state-symlink-smoke.sh` cuts a real temporary worktree, replaces the link with a directory, writes a valid verifier artefact into the misdirected path, and exercises both completion-file fault paths without auth, network, or token spend.
 
 The general rule: when one side writes a relative path and the other reads an anchored path, the filesystem link that makes them equivalent is part of the protocol. Assert it where the path is created, where the next role is dispatched, and before absence is interpreted as agent behaviour.
+
+## Headless gotcha 13: `codex exec --oss` refuses any local model without thinking support
+
+The free tier is codex-family only: `auth.codex.mode: local` dispatches through
+`codex exec --oss --local-provider=ollama -m <model>` against Ollama weights.
+On 2026-08-27, with `codex-cli 0.149.1`, every local model that is not from the
+gpt-oss family died mid-run with:
+
+```
+ERROR: stream disconnected before completion: "llama3.3:70b" does not support thinking
+```
+
+Measured across the pulled set that day:
+
+| Model | Result |
+|---|---|
+| `gpt-oss:120b` | runs |
+| `gpt-oss:20b` | runs |
+| `llama3.3:70b` | refused, no thinking |
+| `llama4:scout` | refused, no thinking |
+| `qwen3-coder:30b` | refused, no thinking |
+| `devstral:latest` | refused, no thinking |
+
+Four of those refusals are a regression, not a standing limitation. The
+verifier bake-off ran `qwen3-coder:30b`, `qwen3:32b`, `devstral` and
+`llama4:scout` to completion on 2026-08-24, three days earlier, on the same
+machine and the same weights. The Codex CLI changed underneath a documented
+result, which is the general shape worth remembering: a measured table about a
+third-party CLI has a shelf life, and nothing in the repo was watching for it
+to expire.
+
+The damage was not the refusal itself but where it landed. `codex_local_preflight`
+checked that ollama was serving and that the model was **pulled**, then let the
+dispatch go. Pulled is not usable: the stage was already marked `in_progress`
+with a registered pid before anything discovered the model could not run at
+all, so an infrastructure fact knowable in advance was paid for with a worker
+attempt, the same failure mode the sibling-`CODEX_HOME` gate exists to prevent
+for api mode.
+
+The capability is readable locally and for free. `ollama show <model>` prints a
+`Capabilities` block, and a usable model lists `thinking` in it:
+
+```
+$ ollama show gpt-oss:20b        $ ollama show llama3.3:70b
+  Capabilities                     Capabilities
+    completion                       completion
+    tools                            tools
+    thinking
+```
+
+`codex_local_preflight` now reads that block and refuses before the spawn. It
+fails **open** when the block cannot be read at all: a future ollama that
+renames or drops the section must not ground every local dispatch. The cost of
+a wrong guess in that direction is one failed attempt, exactly what happened
+before the check existed; the cost of a false negative is a route that cannot
+run at all.
+
+Two smaller things found alongside it. A noisy `failed to refresh available
+models: missing field 'models'` ERROR from `codex_models_manager` appears on
+every `--oss` run: codex expects `{"models": […]}` where ollama returns
+`{"object":"list","data":[…]}`. It is not fatal, runs complete through it, and
+it is easy to mistake for the real failure when reading a log. And the local
+route being codex-family only means the whole zero-cost tier now rests on one
+model family; there is no second local family to fall back to.
+
+The general rule: a preflight must check the property the dispatch actually
+depends on, not the nearest cheap proxy for it. "Is it downloaded" is a proxy
+for "can it run", and the gap between them is exactly where a wasted attempt
+lives.

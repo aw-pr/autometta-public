@@ -302,5 +302,24 @@ codex_local_preflight() {
     printf 'codex-local: model %s is not pulled; run '\''ollama pull %s'\'' before dispatching\n' "$model" "$model" >&2
     return 1
   fi
+  # Pulled is not the same as usable. codex exec --oss refuses any model
+  # without reasoning support, dying mid-run with `"<model>" does not support
+  # thinking` after the stage is already marked in_progress, which spends a
+  # worker attempt on a fact knowable before the spawn. `ollama show` reports
+  # the capability locally and for free, so ask it.
+  #
+  # Deliberately fail-open on an unreadable capability block: a future ollama
+  # that renames or drops the section must not ground every local dispatch. The
+  # cost of guessing wrong here is one failed attempt, the same as before this
+  # check existed; the cost of a false negative is a route that cannot run at
+  # all.
+  local capabilities
+  if capabilities="$(ollama show "$model" 2>/dev/null)" \
+     && printf '%s\n' "$capabilities" | grep -qiE '^[[:space:]]*capabilities[[:space:]]*$'; then
+    if ! printf '%s\n' "$capabilities" | grep -qiE '^[[:space:]]*thinking[[:space:]]*$'; then
+      printf 'codex-local: model %s is pulled but has no thinking capability, which codex exec --oss requires; pick a model whose `ollama show` lists thinking (the gpt-oss family does) or set auth.codex.mode to subscription/api\n' "$model" >&2
+      return 1
+    fi
+  fi
   return 0
 }

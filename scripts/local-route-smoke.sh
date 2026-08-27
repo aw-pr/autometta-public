@@ -82,6 +82,28 @@ cat >"$stub_dir/op-fetch" <<'STUB'
 STUB
 chmod +x "$stub_dir/op-fetch"
 
+ollama_stub_no_thinking() {
+  # ollama_stub_no_thinking <dir> <model> — the model is pulled, but its
+  # `ollama show` Capabilities block omits `thinking`. This is the shape
+  # codex exec --oss refuses at runtime (lessons.md gotcha 13).
+  local dir="$1" model="$2"
+  mkdir -p "$dir"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'if [[ "${1:-}" == "list" ]]; then\n'
+    printf '  printf "NAME\\tID\\tSIZE\\tMODIFIED\\n"\n'
+    printf '  printf "%s\\tabc123\\t1 GB\\t1 day ago\\n"\n' "$model"
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'if [[ "${1:-}" == "show" ]]; then\n'
+    printf '  printf "  Capabilities\\n    completion\\n    tools\\n\\n"\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'exit 1\n'
+  } >"$dir/ollama"
+  chmod +x "$dir/ollama"
+}
+
 ollama_stub_with_model() {
   # ollama_stub_with_model <dir> <model...> — writes a stub `ollama` that
   # answers `ollama list` with a NAME column containing each given model.
@@ -294,6 +316,19 @@ check "unpulled model: no verifier_pid written" \
   "$([[ -z "$(verifier_pid_written 53-model-unpulled)" ]] && printf 'ok\n' || printf 'no\n')"
 check "unpulled model: the failure names the model" \
   "$(grep -qF "$AUTOMETTA_MODEL_CODEX_LOCAL" "$tmp/spawn.log" && printf 'ok\n' || printf 'no\n')"
+
+nothink_ollama_dir="$tmp/ollama-nothinking"
+ollama_stub_no_thinking "$nothink_ollama_dir" "$AUTOMETTA_MODEL_CODEX_LOCAL"
+
+card="$repo/cards/53b-model-no-thinking.md"
+write_card "$card" "$codex_id" "$codex_id"
+argv="$(dispatch_local spawn-verifier.sh "$card" 53b-model-no-thinking "$nothink_ollama_dir")"
+check "no thinking capability: no op-fetch dispatch happened" \
+  "$([[ -z "$argv" ]] && printf 'ok\n' || printf 'no\n')"
+check "no thinking capability: no verifier_pid written" \
+  "$([[ -z "$(verifier_pid_written 53b-model-no-thinking)" ]] && printf 'ok\n' || printf 'no\n')"
+check "no thinking capability: the failure names the capability" \
+  "$(grep -qi 'thinking' "$tmp/spawn.log" && printf 'ok\n' || printf 'no\n')"
 
 # ---------------------------------------------------------------------------
 printf '\n== subscription / api dispatch unchanged (acceptance 5) ==\n' >&2
