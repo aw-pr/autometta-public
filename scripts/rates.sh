@@ -52,6 +52,7 @@ tier_for_identity() {
     *mini*)            printf 'T4\n' ;;
     *Flash*|*flash*)   printf 'T4\n' ;;
     *GPT-OSS*|*gpt-oss*) printf 'T5\n' ;;
+    *Llama*|*llama*)   printf 'T5\n' ;;
     *Sonnet*|*sonnet*) printf 'T2\n' ;;
     *GPT-5.6\ Terra*|*gpt-5.6-terra*) printf 'T2\n' ;;
     *GPT-5*|*gpt-5*|*Codex*|*codex*) printf 'T2\n' ;;

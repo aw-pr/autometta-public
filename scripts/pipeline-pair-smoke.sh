@@ -205,7 +205,29 @@ refusal_smoke() {
     "Codex One <codex-one@local>" "Codex Two <codex-two@local>"
   pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
     && fail "same-family workers formed a pair"
-  assert_log 'refused: worker families do not alternate'
+  assert_log 'refused: worker dispatch targets do not alternate'
+
+  # pipeline.pair_on defaults to family, so two distinct local models must
+  # still refuse until a repo opts in. This is the guard that keeps the new
+  # key from changing any existing repo's behaviour.
+  new_fixture local-models-default head.txt tail.txt \
+    "Codex Llama 3.3 70B <codex-llama-3-3-70b@local>" \
+    "Codex GPT-OSS 20B <codex-gpt-oss-20b@local>"
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
+    && fail "distinct local models paired without pipeline.pair_on: target"
+  assert_log 'refused: worker dispatch targets do not alternate'
+
+  # Same two identities under pair_on: target must get past the target gate.
+  # It still refuses, on the next gate down (no p95 history in a fresh
+  # fixture), which is what proves the target check itself let them through.
+  new_fixture local-models-target head.txt tail.txt \
+    "Codex Llama 3.3 70B <codex-llama-3-3-70b@local>" \
+    "Codex GPT-OSS 20B <codex-gpt-oss-20b@local>"
+  printf 'pipeline:\n  pair_on: target\n' >>"$fixture_repo/.autometta.local.yaml"
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
+    && true
+  grep -Fq 'refused: worker dispatch targets do not alternate' "$smoke_log" \
+    && fail "pair_on: target still refused two distinct local models on the target gate"
 
   new_fixture thin
   jq '.token_cap_total = 500' "$fixture_repo/state/budget.json" \

@@ -33,16 +33,55 @@ AUTOMETTA_MODEL_CODEX_LOCAL="${AUTOMETTA_MODEL_CODEX_LOCAL:-gpt-oss:120b}"
 AUTOMETTA_MODEL_CODEX_LOCAL_WORKER="${AUTOMETTA_MODEL_CODEX_LOCAL_WORKER:-}"
 AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER="${AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER:-}"
 
+# agent_family_for_identity <identity>
+# Map an identity string to the dispatch family, which selects WHICH CLI runs:
+# codex exec or claude -p. This is the one copy; spawn-worker.sh, spawn-
+# verifier.sh and cost-log.sh all delegate here rather than carrying their own,
+# which they did until they disagreed about nothing and duplicated a rule that
+# has to stay identical to be correct.
+#
+# Note what this is not: it is not a statement about the weights. Every local
+# Ollama model dispatches through codex exec --oss, so Llama weights are family
+# codex too. Anything that needs to tell two local models apart wants
+# codex_local_model_for_identity below, not this.
+agent_family_for_identity() {
+  local identity="$1"
+  if [[ "$identity" == *Codex* || "$identity" == *GPT* ]]; then
+    printf 'codex\n'
+  elif [[ "$identity" == *Claude* ]]; then
+    printf 'claude\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+# codex_local_model_for_identity <identity>
+# The inverse of agent-whoami for the local route: a card's declared identity
+# names the weights that role runs on. This is what lets the head and tail of a
+# pipeline pair use different local models, which a per-role manifest key
+# cannot express, both stages' workers being the same role. Prints nothing for
+# an identity that names no local model, which is every cloud identity.
+codex_local_model_for_identity() {
+  case "$1" in
+    *GPT-OSS\ 120B*|*gpt-oss-120b*)   printf 'gpt-oss:120b' ;;
+    *GPT-OSS\ 20B*|*gpt-oss-20b*)     printf 'gpt-oss:20b' ;;
+    *Llama\ 3.3\ 70B*|*llama-3-3-70b*) printf 'llama3.3:70b' ;;
+    *Llama\ 4\ Scout*|*llama-4-scout*) printf 'llama4:scout' ;;
+    *)                                 printf '' ;;
+  esac
+}
+
 # codex_local_model_for_role <worker|verifier> [repo-root]
 # Resolve the Ollama model id a role dispatches to. Resolution order, most
 # specific wins, mirroring resolve_codex_sandbox below:
 #   1. AUTOMETTA_MODEL_CODEX_LOCAL_WORKER / _VERIFIER env override
-#   2. codex.local_model.<role> in <repo>/.autometta.local.yaml
-#   3. AUTOMETTA_MODEL_CODEX_LOCAL (env, else the built-in default above)
+#   2. the identity's own weights, via codex_local_model_for_identity
+#   3. codex.local_model.<role> in <repo>/.autometta.local.yaml
+#   4. AUTOMETTA_MODEL_CODEX_LOCAL (env, else the built-in default above)
 # An unrecognised role gets the shared default rather than failing: a typo
 # should cost a role its override, not cost the run its dispatch.
 codex_local_model_for_role() {
-  local role="$1" repo_root="${2:-}"
+  local role="$1" repo_root="${2:-}" identity="${3:-}"
   local env_override="" manifest="" model=""
 
   case "$role" in
@@ -54,6 +93,17 @@ codex_local_model_for_role() {
   if [[ -n "$env_override" ]]; then
     printf '%s' "$env_override"
     return 0
+  fi
+
+  # A card that names its weights wins over the repo-wide per-role key: two
+  # stages paired in a pipeline are both workers, so the role key alone cannot
+  # give them different models.
+  if [[ -n "$identity" ]]; then
+    model="$(codex_local_model_for_identity "$identity")"
+    if [[ -n "$model" ]]; then
+      printf '%s' "$model"
+      return 0
+    fi
   fi
 
   manifest="$repo_root/.autometta.local.yaml"

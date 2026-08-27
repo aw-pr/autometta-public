@@ -56,13 +56,7 @@ extract_stage_id() {
 
 verifier_family() {
   local identity="$1"
-  if [[ "$identity" == *Codex* || "$identity" == *GPT* ]]; then
-    printf 'codex\n'
-  elif [[ "$identity" == *Claude* ]]; then
-    printf 'claude\n'
-  else
-    printf 'unknown\n'
-  fi
+  agent_family_for_identity "$identity"
 }
 
 render_prompt() {
@@ -348,7 +342,7 @@ main() {
       if [[ "$codex_mode" == "local" ]]; then
         # Fail closed before spawn: a dispatch that dies after model
         # negotiation with Ollama burns a verifier attempt on infrastructure.
-        local_model="$(codex_local_model_for_role verifier "$repo_root")"
+        local_model="$(codex_local_model_for_role verifier "$repo_root" "$verifier_identity")"
         if ! codex_local_preflight "$local_model"; then
           exit 1
         fi
