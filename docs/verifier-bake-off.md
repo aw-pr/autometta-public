@@ -137,8 +137,9 @@ Paid Grok is excluded per the card: no usable free API route exists for it.
 >
 > `scripts/models.sh:codex_local_preflight` now refuses a thinking-less model
 > before the spawn rather than after, reading the `Capabilities` block from
-> `ollama show`. Anyone re-running this harness should re-check candidate
-> viability first: `ollama show <model> | grep -i thinking`. See
+> `ollama show`. Anyone re-running this harness should first run
+> `scripts/candidate-viability.sh`, which checks every local row in the table.
+> See the [measurement shelf-life policy](measurement-shelf-life.md) and
 > `docs/lessons.md` gotcha 13.
 
 **Substitution note.** Card 46's candidate table named
