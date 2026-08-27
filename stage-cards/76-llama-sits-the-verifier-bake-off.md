@@ -162,3 +162,31 @@ it runs, do not narrate progress in place of finishing. The 150 minute
 worker wall-clock exists precisely to sit through ten local inferences
 at up to 420 seconds each plus reruns. Leaving the session before the
 batch returns is a failed attempt, whatever the log says.
+
+## Re-brief (attempt 3, 2026-08-27, 02:10)
+
+Attempt 2 backgrounded the batch and exited, repeating attempt 1's
+failure against an explicit instruction. The orchestrator has since run
+the batch itself; this attempt is **documentation only**. What stands
+committed on dev:
+
+- `examples/bake-off/local-llama4-scout/`: verdict plus metadata for
+  eight of ten stages, and metadata-only for two stages where the model
+  failed verdict discipline after its permitted rerun (15c echoed the
+  schema instead of an instance; 45 emitted invalid JSON). The holes
+  are results; document them as such.
+- `examples/bake-off/manifest.json` was repaired mid-run (five rows
+  pointed into card 46's dead run worktree and predated the card-50
+  move; commit history has the details). Mention the repair in the
+  caveats: roster rotation is not the only way this harness rots.
+- Timeout ladder, for the caveats and the operator's write-up: 420s
+  (card 46's local default) timed out all ten; 900s passed only the
+  369-token-prompt stage; 2400s passed eight. Prompt ingestion on a
+  67GB local model is the binding constraint, not generation.
+
+Deliverable 1 is satisfied by the committed artefacts; do not rerun the
+batch, do not touch Ollama. Deliverables 2 to 4 (results tables,
+publish-ready methodology, recommendation) are the whole brief.
+Acceptance criteria 2 to 7 stand; criterion 1 is judged against the
+committed artefacts including the two recorded holes. The worker
+wall-clock drops to 45 minutes: it is a writing task.
