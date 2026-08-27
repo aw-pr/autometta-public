@@ -5,16 +5,16 @@
 - **Authored:** 2026-08-27
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
 - **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
-- **Verifier:** Claude Fable 5 <claude-fable-5@local>
+- **Verifier:** Claude Opus 5 <claude-opus-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/80-long-stage-ids-line-up-in-the-run-table
 - **Worker effort:** medium
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Path claims:** scripts/lib/tui/render.py, scripts/tui-smoke.sh
-- **Pairing rationale:** the premium display pair. The deliverable is what an
-  operator sees, and a cheap tier writes a smoke that passes while the columns
-  are still wrong.
+- **Pairing rationale:** a display stage, so the verifier stays premium: a
+  cheap tier writes a smoke that passes while the columns are still wrong.
+  Opus rather than Fable, which is held back for the weekly allocation.
 
 ## Objective
 
