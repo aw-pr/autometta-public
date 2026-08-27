@@ -172,6 +172,7 @@ class TuiState:
         self.composing = False
         self.compose_buffer = ""
         self.compose_notice = ""
+        self.card_notice = ""
         self.history = {}
         self.now = int(time.time())
         self.monotonic_now = time.monotonic()
@@ -267,6 +268,20 @@ class TuiState:
             elif key and all(char.isprintable() for char in key):
                 self.compose_buffer += key
             return None
+        if key not in ("o", "O"):
+            self.card_notice = ""
+        if key in ("o", "O"):
+            # The card is the prompt the worker was given, so "why did it do
+            # that" is usually answered by reading it rather than by the detail
+            # pane's summary of it. Resolution happens in the app layer, which
+            # is the only part that knows about the terminal it is hosted in.
+            stage = next((item for item in ordered_run_stages(self.payload)
+                          if item.get("id") == self.pinned_stage), None)
+            if not stage:
+                self.card_notice = "no stage selected"
+                return None
+            path = stage.get("card") or "stage-cards/%s.md" % stage.get("id")
+            return "open_card", path
         if key in ("m", "M"):
             self.page = 3
             self.composing = True
@@ -629,8 +644,13 @@ def agent_lines(state):
         alias = identity_alias(agent.get("identity"))
         elapsed = short_secs(agent.get("elapsed_seconds") or 0)
         budget = short_secs(agent.get("budget_seconds") or 0)
-        text = "● %s %s  %s  %s / %s" % (
-            agent.get("stage_id") or "?", agent.get("role") or "?", alias, elapsed, budget)
+        role = agent.get("role") or "?"
+        # A controller minds the whole queue rather than one stage, so it
+        # registers no stage id. Printing the raw "-" reads as missing data.
+        scope = agent.get("stage_id") or "?"
+        if role == "controller" and scope in ("-", "?", ""):
+            scope = "queue"
+        text = "● %s %s  %s  %s / %s" % (scope, role, alias, elapsed, budget)
         spans = [(0, 1, ACTIVE)]
         if state.focus == 3 and state.selection[3] == index:
             spans.insert(0, (0, len(text), REVERSE))
@@ -828,10 +848,19 @@ def render_messages(canvas, state, width, usable):
 
 def footer(canvas, state):
     tabs = "[1]run [2]history [3]messages"
-    hints = "  j/k select · enter detail · [/] page · m message controller · q quit"
+    hints = "  j/k select · enter detail · [ ] page · o open card · m message controller · q quit"
     text = tabs + hints
     if len(text) > canvas.width:
         text = tabs + "  j/k select · enter detail · q quit"
+    # A card-open result replaces the hint line until the next keypress. The
+    # hints are always recoverable; a silent failure to open a card is not.
+    if getattr(state, "card_notice", ""):
+        notice = state.card_notice[:canvas.width]
+        canvas.put(0, canvas.height - 1, notice)
+        attr = ALERT if notice.startswith("could not") or notice.startswith("card not found") else DIM
+        for x in range(min(canvas.width, len(notice))):
+            canvas.attrs[canvas.height - 1][x] = attr
+        return
     canvas.put(0, canvas.height - 1, text[:canvas.width])
     label = "[%d]" % state.page
     start = text.find(label)

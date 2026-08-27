@@ -2,6 +2,7 @@
 """Polling and curses event loop for the Autometta TUI."""
 import argparse
 import curses
+import shlex
 import json
 import locale
 import os
@@ -76,11 +77,45 @@ def refresh_controller(state, repo_root):
     state.update_controller(read_bus(repo_root))
 
 
+def open_card(repo_root, card_path):
+    """Show a stage card. Returns a short notice for the footer.
+
+    Inside tmux the card opens as its own window, which is what an operator
+    watching a run actually wants: the TUI keeps painting, and the card is a
+    window switch away rather than a modal that has to be dismissed. Outside
+    tmux there is nowhere to put it, so fall back to suspending curses around
+    a pager. Never shell out to an editor: this is a read path, and a card the
+    worker is mid-dispatch on must not be editable by accident.
+    """
+    path = card_path if os.path.isabs(card_path) else os.path.join(repo_root, card_path)
+    if not os.path.exists(path):
+        return "card not found: %s" % card_path
+    if os.environ.get("TMUX"):
+        window_name = os.path.basename(path)[:20] or "card"
+        try:
+            subprocess.run(
+                ["tmux", "new-window", "-n", window_name,
+                 "%s %s" % (os.environ.get("PAGER", "less"), shlex.quote(path))],
+                check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError) as error:
+            return "could not open a tmux window: %s" % error
+        return "opened %s in a tmux window" % os.path.basename(path)
+    try:
+        curses.endwin()
+        subprocess.run([os.environ.get("PAGER", "less"), path], check=False)
+    except OSError as error:
+        return "could not page the card: %s" % error
+    return "viewed %s" % os.path.basename(path)
+
+
 def apply_key(state, key, repo_root):
     action = state.key(key)
     if not action:
         return
     kind, message = action
+    if kind == "open_card":
+        state.card_notice = open_card(repo_root, message)
+        return
     if kind != "submit":
         return
     try:
