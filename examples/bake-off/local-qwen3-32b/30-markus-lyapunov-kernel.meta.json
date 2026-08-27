@@ -1,0 +1,15 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "candidate": "local-qwen3-32b",
+  "base_url": "http://localhost:11434/v1",
+  "model": "qwen3:32b",
+  "elapsed_seconds": 343.46,
+  "request_count": 1,
+  "prompt_tokens": 12791,
+  "completion_tokens": 1876,
+  "total_tokens": 14667,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 2575
+}

@@ -1,0 +1,58 @@
+{
+  "stage_id": "02-fractal-defaults-and-cycling",
+  "verifier_identity": "Bake-off candidate: local-gpt-oss-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-gpt-oss-120b --stage 02-fractal-defaults-and-cycling",
+  "ran_at": "2026-08-24T12:40:53Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "FAIL",
+      "evidence": "No execution of `npm run verify` was observed and no test files were updated to reflect the required changes, so there is no evidence that the verification suite passes."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md unchanged",
+      "verdict": "PASS",
+      "evidence": "The diff of the working tree shows no modifications to docs/INTERFACE.md; the file is absent from the list of changed files."
+    },
+    {
+      "id": 3,
+      "name": "paramSchema palette default is \"inferno\"",
+      "verdict": "FAIL",
+      "evidence": "In src/sims/mandelbrot/kernel.ts the paramSchema entries (lines 124\u2011130) define a `palettePhase` descriptor but no descriptor with key \"palette\" or a default value of \"inferno\". Similarly, src/sims/julia-set/kernel.ts (lines 159\u2011166) and src/sims/burning-ship/kernel.ts (lines 131\u2011140) lack any palette\u2011related descriptor. Therefore the required default is not present."
+    },
+    {
+      "id": 4,
+      "name": "colour\u2011cycling\u2011speed default doubled",
+      "verdict": "FAIL",
+      "evidence": "Mandelbrot kernel defines DEFAULT_CYCLE_SPEED = 0.1 (line 41) and uses it as the default (no change). Julia\u2011Set kernel defines DEFAULT_CYCLE_SPEED = 0.1 (line 42) unchanged. Burning\u2011Ship kernel defines DEFAULT_CYCLE_SPEED = 0.35 (line 43) unchanged. The worker did not modify these values, so the defaults are not doubled."
+    },
+    {
+      "id": 5,
+      "name": "colour\u2011cycling\u2011speed schema max >= 5",
+      "verdict": "PASS",
+      "evidence": "Mandelbrot paramSchema entry for \"cycleSpeed\" has max: 5 (lines 138\u2011140). Julia\u2011Set entry has max: 5 (lines 174\u2011176). Burning\u2011Ship entry has max: 5 (lines 136\u2011138). All satisfy the requirement."
+    },
+    {
+      "id": 6,
+      "name": "Inferno palette renders on first load",
+      "verdict": "FAIL",
+      "evidence": "No runtime check or screenshot evidence was provided; the colormap implementation was not modified to select the Inferno palette, so the criterion cannot be verified."
+    },
+    {
+      "id": 7,
+      "name": "per\u2011slider override popover still works",
+      "verdict": "FAIL",
+      "evidence": "No functional test or manual verification evidence was supplied to demonstrate that the per\u2011slider override popover opens and persists values after the changes."
+    },
+    {
+      "id": 8,
+      "name": "no files outside deliverables modified",
+      "verdict": "PASS",
+      "evidence": "The only modified files in the working tree are src/sims/mandelbrot/kernel.ts, src/sims/julia-set/kernel.ts, and src/sims/burning-ship/kernel.ts, which are exactly the deliverables listed in the stage card. No other repository paths show changes."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "FAIL"
+}

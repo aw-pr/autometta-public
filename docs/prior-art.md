@@ -57,7 +57,7 @@ What everyone landed on, regardless of framework:
 
 - **Roll your own runtime, but stop calling it novel.** Your pass-29 cron-tick + `state.yaml` + passive tmux cockpit + spawn-worker/spawn-verifier is the consensus pattern with a personal accent. Extract it as-is; don't rebase on LangGraph or CrewAI.
 - **Adopt three things from Gas Town verbatim:** (i) git-backed ledger as the state store (Beads-style - you already have `state.yaml` + per-task JSON, formalise it), (ii) per-agent persistent identity with ephemeral sessions (already in `agent-whoami`), (iii) stall-detection as a first-class state ("mountain convoy" semantics). Don't pull in Gas Town the runtime - too heavy.
-- **Steal Aider's architect/coder split as the role taxonomy.** Map: architect -> Claude Opus/Sonnet, coder -> Codex GPT-5.3 worker, verifier -> cross-family Claude. You already do this implicitly; name it.
+- **Steal Aider's architect/coder split as the role taxonomy.** Map: architect -> Claude Opus/Sonnet, coder -> GPT-5.6 Sol worker, verifier -> cross-family Claude. You already do this implicitly; name it.
 - **Ignore LangGraph, CrewAI, AutoGen, OpenHands, the Kanban GUIs.** Wrong abstraction level (in-process LLM) or wrong audience (human-in-loop). Re-evaluate only if you grow past ~10 concurrent workers.
 - **Adopt MCP as the only integration boundary.** Workers expose tools via MCP; orchestrator consumes via MCP. No bespoke RPC. This is the bet Anthropic, OpenAI and Cline are all making.
 

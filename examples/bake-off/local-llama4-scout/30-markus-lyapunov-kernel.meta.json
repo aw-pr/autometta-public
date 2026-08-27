@@ -1,0 +1,15 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "candidate": "local-llama4-scout",
+  "base_url": "http://localhost:11434/v1",
+  "model": "llama4:scout",
+  "elapsed_seconds": 1206.51,
+  "request_count": 1,
+  "prompt_tokens": 13655,
+  "completion_tokens": 1304,
+  "total_tokens": 14959,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 4655
+}

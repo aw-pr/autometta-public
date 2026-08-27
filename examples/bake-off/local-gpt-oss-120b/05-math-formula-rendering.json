@@ -1,0 +1,52 @@
+{
+  "stage_id": "05-math-formula-rendering",
+  "verifier_identity": "Bake-off candidate: local-gpt-oss-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-gpt-oss-120b --stage 05-math-formula-rendering",
+  "ran_at": "2026-08-24T12:44:01Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "`npm run verify` passes",
+      "verdict": "FAIL",
+      "evidence": "No command output or test result was found in the working tree indicating that `npm run verify` succeeded."
+    },
+    {
+      "id": 2,
+      "name": "`docs/INTERFACE.md` is unchanged",
+      "verdict": "PASS",
+      "evidence": "Git status shows no modifications to `docs/INTERFACE.md`; the file is unchanged from the repository baseline."
+    },
+    {
+      "id": 3,
+      "name": "No files under `src/sims/**` are modified",
+      "verdict": "PASS",
+      "evidence": "Git diff does not list any paths matching `src/sims/`; no simulator kernel files were touched."
+    },
+    {
+      "id": 4,
+      "name": "`katex` appears in `package.json` `dependencies`",
+      "verdict": "FAIL",
+      "evidence": "`package.json` does not contain an entry for `katex` in its `dependencies` section (no \"katex\" key found)."
+    },
+    {
+      "id": 5,
+      "name": "Visiting each target page shows at least one KaTeX\u2011rendered formula",
+      "verdict": "PASS",
+      "evidence": "The formula lookup `FORMULAS_BY_SLUG` includes entries for all required sims (e.g., gray\u2011scott lines 202\u2011206, mandelbrot line 207, julia\u2011set line 210, burning\u2011ship line 213, lorenz\u2011attractor lines 216\u2011218). The rendering helper `renderFormula` calls `katex.render` (lines 1502\u20111506), which injects `.katex` elements into the DOM."
+    },
+    {
+      "id": 6,
+      "name": "Production build gzip size impact is reported",
+      "verdict": "FAIL",
+      "evidence": "No file in the working tree contains a reported gzipped size delta; the worker handoff notes (lines 82\u201184) are not materialised in any committed artifact."
+    },
+    {
+      "id": 7,
+      "name": "No files outside the deliverables set are modified \u2014 except this stage card itself",
+      "verdict": "PASS",
+      "evidence": "The only changed source file is `src/app/simView.ts`, which is an explicit deliverable (criterion 2 of the stage card). No other paths outside `state/` and the listed deliverables show modifications."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "FAIL"
+}

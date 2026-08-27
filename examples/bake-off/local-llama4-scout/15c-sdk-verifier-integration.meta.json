@@ -1,0 +1,15 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "candidate": "local-llama4-scout",
+  "base_url": "http://localhost:11434/v1",
+  "model": "llama4:scout",
+  "elapsed_seconds": 2292.14,
+  "request_count": 1,
+  "prompt_tokens": 16148,
+  "completion_tokens": 3499,
+  "total_tokens": 19647,
+  "parsed_ok": true,
+  "schema_ok": false,
+  "error": "<root>: Additional properties are not allowed ('$id', '$schema', 'additionalProperties', 'description', 'properties', 'required', 'title', 'type' were unexpected)",
+  "raw_text_len": 13110
+}

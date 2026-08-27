@@ -35,6 +35,43 @@ def identity_for_model(model: str) -> str:
         return f"Claude Haiku (SDK) <{model}@local>"
     return f"Claude Agent SDK verifier ({model}) <{model}@local>"
 
+
+# Capability ordering for the advisor precondition (issue #66714). The advisor
+# must not be weaker than the request model; a request on claude-fable-5 with an
+# advisor pinned to claude-opus-4-8 returns HTTP 400. Higher rank = stronger.
+# Unknown ids rank at the workhorse (sonnet) level so an unrecognised id never
+# silently outranks the advisor.
+_CAPABILITY_RANK = {"haiku": 0, "sonnet": 1, "opus": 2, "fable": 3}
+_UNKNOWN_RANK = _CAPABILITY_RANK["sonnet"]
+
+
+class AdvisorOrderingError(ValueError):
+    """Raised when the request model is stronger than its advisor (#66714)."""
+
+
+def capability_rank(model: str) -> int:
+    """Return a capability rank for a Claude model id (fable > opus > sonnet > haiku)."""
+    lowered = model.lower()
+    for marker, rank in _CAPABILITY_RANK.items():
+        if marker in lowered:
+            return rank
+    return _UNKNOWN_RANK
+
+
+def assert_advisor_ordering(request_model: str, advisor_model: str) -> None:
+    """Reject a request model stronger than its advisor before any API call.
+
+    The advisor must not be weaker than the request model (#66714). Enforcing
+    the ordering locally turns the API's HTTP 400 into a clear, pre-flight error.
+    """
+    if capability_rank(request_model) > capability_rank(advisor_model):
+        raise AdvisorOrderingError(
+            f"advisor ordering: request model '{request_model}' is stronger than "
+            f"advisor '{advisor_model}'; the advisor must not be weaker than the "
+            f"request model (see docs/design/advisor-verifier.md #66714). "
+            f"Put the cheap model on --model and the strong model on --advisor."
+        )
+
 # Stable guidance appended to the cacheable block so the block exceeds the
 # ~1024-token minimum for Sonnet prompt caching.
 _DISPATCH_CONTRACT_REMINDERS = """
@@ -72,9 +109,37 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--out", required=True, help="Path to write the verifier JSON artefact.")
     parser.add_argument(
+        "--worker-notes",
+        default=None,
+        help=(
+            "Notes from a handoff envelope whose status was partial, surfaced "
+            "to the verifier as a checklist of the criteria the worker "
+            "deferred. Goes in the per-stage variable block, never the "
+            "cacheable static block, since it differs on every stage."
+        ),
+    )
+    parser.add_argument(
         "--model",
         default=MODEL,
         help=f"Anthropic model to use for verification (default: {MODEL}).",
+    )
+    parser.add_argument(
+        "--effort",
+        default=None,
+        help="Optional Anthropic effort level supplied by the card's Verifier effort field.",
+    )
+    parser.add_argument(
+        "--advisor",
+        default=None,
+        help=(
+            "Optional stronger Anthropic advisor model consulted only at the "
+            "decision point (e.g. claude-fable-5) while --model does the bulk "
+            "reading. Must NOT be weaker than --model. SDK + api mode only. "
+            "DATA RETENTION: the advisor receives the stage card and artefacts, "
+            "which carry the org-wide 30-day retention commitment; do NOT point "
+            "it at a repo whose artefacts contain personal data (see "
+            "docs/design/advisor-verifier.md)."
+        ),
     )
     return parser.parse_args()
 
@@ -167,11 +232,26 @@ def build_variable_block(
     artefacts: list[Path],
     out: Path,
     verifier_identity: str = VERIFIER_IDENTITY,
+    worker_notes: str | None = None,
 ) -> str:
     """Return the per-stage, non-cached portion of the prompt."""
     artefact_sections = "\n".join(numbered(path, read_text(path)) for path in artefacts)
     if not artefact_sections:
         artefact_sections = "(no artefacts matched the supplied glob)\n"
+
+    # The static block's family-specific-notes slot is fixed at "None" so the
+    # cacheable prefix stays byte-identical across stages. A partial worker
+    # envelope is per-stage by definition, so it belongs here instead.
+    partial_section = ""
+    if worker_notes:
+        partial_section = (
+            "## Worker self-reported incomplete acceptance\n\n"
+            "The handoff envelope for this stage carried `status: partial`. That is "
+            "the worker's annotation, not a verdict: acceptability is yours to decide. "
+            "Treat the criteria it names as your checklist and verify each one "
+            "yourself rather than inheriting the worker's judgement about them.\n\n"
+            f"Worker notes: {worker_notes}\n\n"
+        )
 
     return (
         "## Stage-specific context\n\n"
@@ -181,6 +261,7 @@ def build_variable_block(
         f"- Verifier identity: `{verifier_identity}`\n"
         f"- Verifier invocation: `scripts/verify-sdk.py --stage-id {stage_id} "
         f"--card {card} --artefact-glob <redacted> --out {out}`\n\n"
+        f"{partial_section}"
         "## Stage card with line numbers\n\n"
         f"{numbered(card, read_text(card))}\n"
         "## Worker artefacts with line numbers\n\n"
@@ -222,13 +303,21 @@ def run_sdk(
     Anthropic: Any,
     validator: Any,
     model: str = MODEL,
+    advisor: str | None = None,
+    effort: str | None = None,
 ) -> dict[str, Any]:
-    """Call the Anthropic API with a cached static block and return the validated envelope."""
+    """Call the Anthropic API with a cached static block and return the validated envelope.
+
+    When ``advisor`` is set, the cheap ``model`` reads the (cache-controlled)
+    static block plus artefacts and drafts the verdicts, and the stronger
+    advisor is consulted only at the decision point to finalise the envelope.
+    The advisor consults over the same cached prefix, so its input is cached.
+    """
     client = Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model=model,
-        max_tokens=MAX_TOKENS,
-        messages=[
+    create_kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": MAX_TOKENS,
+        "messages": [
             {
                 "role": "user",
                 "content": [
@@ -244,7 +333,16 @@ def run_sdk(
                 ],
             }
         ],
-    )
+    }
+    if advisor:
+        # Confine the frontier model to the decision point. Passed via extra_body
+        # so the default (no-advisor) call is byte-identical to before.
+        create_kwargs["extra_body"] = {
+            "advisor": {"type": "advisor_20260301", "model": advisor}
+        }
+    if effort:
+        create_kwargs["output_config"] = {"effort": effort}
+    response = client.messages.create(**create_kwargs)
     usage = response.usage
     write = getattr(usage, "cache_creation_input_tokens", 0) or 0
     read = getattr(usage, "cache_read_input_tokens", 0) or 0
@@ -252,6 +350,16 @@ def run_sdk(
     out = getattr(usage, "output_tokens", 0) or 0
     print(f"cache: write={write} read={read} input={inp} output={out}", file=sys.stderr)
     print(f"Total tokens: {inp + out}", file=sys.stderr)
+    if advisor:
+        advisor_usage = getattr(usage, "advisor", None)
+        adv_in = adv_out = 0
+        if isinstance(advisor_usage, dict):
+            adv_in = advisor_usage.get("input_tokens", 0) or 0
+            adv_out = advisor_usage.get("output_tokens", 0) or 0
+        elif advisor_usage is not None:
+            adv_in = getattr(advisor_usage, "input_tokens", 0) or 0
+            adv_out = getattr(advisor_usage, "output_tokens", 0) or 0
+        print(f"advisor: model={advisor} input={adv_in} output={adv_out}", file=sys.stderr)
 
     if not response.content:
         raise ValueError("API returned no content")
@@ -262,6 +370,16 @@ def run_sdk(
 
 def main() -> int:
     args = parse_args()
+
+    # Enforce the #66714 precondition first, before any import or API call: the
+    # advisor must not be weaker than the request model. This path is reached
+    # only under the sdk transport, which spawn-verifier.sh already gates to
+    # auth.claude.mode: api (ANTHROPIC_API_KEY required below).
+    if args.advisor:
+        try:
+            assert_advisor_ordering(args.model, args.advisor)
+        except AdvisorOrderingError as exc:
+            return fail_env(str(exc))
 
     try:
         Anthropic = load_anthropic()
@@ -280,6 +398,8 @@ def main() -> int:
     card = Path(args.card)
     out = Path(args.out)
     model = args.model
+    advisor = args.advisor
+    effort = args.effort
     verifier_identity = identity_for_model(model)
 
     try:
@@ -292,9 +412,25 @@ def main() -> int:
 
         artefacts = find_artefacts(args.artefact_glob)
         static_block = build_static_block(verifier_identity=verifier_identity)
-        variable_block = build_variable_block(args.stage_id, card, artefacts, out, verifier_identity=verifier_identity)
+        variable_block = build_variable_block(
+            args.stage_id,
+            card,
+            artefacts,
+            out,
+            verifier_identity=verifier_identity,
+            worker_notes=args.worker_notes,
+        )
         validator = Validator(verifier_schema())
-        envelope = run_sdk(static_block, variable_block, anthropic_api_key, Anthropic, validator, model=model)
+        envelope = run_sdk(
+            static_block,
+            variable_block,
+            anthropic_api_key,
+            Anthropic,
+            validator,
+            model=model,
+            advisor=advisor,
+            effort=effort,
+        )
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
         return 0 if envelope["overall"] == "PASS" else 1

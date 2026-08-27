@@ -59,7 +59,11 @@ else
 fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root, not the resolved root: this check answers whether the tree it was launched from is
+# complete, so pointing it at a different root would defeat the check.
+autometta_root="$(autometta_self_root "$script_dir")"
 if [[ -d "$autometta_root/templates" && -d "$autometta_root/scripts" && -x "$autometta_root/bin/autometta" ]]; then
   pass "autometta-root" "$autometta_root"
 else

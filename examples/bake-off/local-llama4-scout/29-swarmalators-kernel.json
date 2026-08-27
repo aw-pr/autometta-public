@@ -1,0 +1,46 @@
+{
+  "stage_id": "29-swarmalators-kernel",
+  "verifier_identity": "Bake-off candidate: local-llama4-scout <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-llama4-scout --stage 29-swarmalators-kernel",
+  "ran_at": "2026-08-27T03:52:07Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "/Users/AnthonyWest/repos/autometta/examples/bake-off/local-llama4-scout/verify.log:10"
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs passes",
+      "verdict": "PASS",
+      "evidence": "/Users/AnthonyWest/repos/emergence-lab/src/sims/swarmalators/kernel.test.cjs:10"
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke on /#/swarmalators renders a legible particle swarm",
+      "verdict": "PASS",
+      "evidence": "/Users/AnthonyWest/repos/autometta/examples/bake-off/local-llama4-scout/smoke-29-swarmalators-kernel.png:1"
+    },
+    {
+      "id": 4,
+      "name": "Each preset matches its qualitative description",
+      "verdict": "PASS",
+      "evidence": "/Users/AnthonyWest/repos/autometta/examples/bake-off/local-llama4-scout/smoke-29-swarmalators-*.png:1-5"
+    },
+    {
+      "id": 5,
+      "name": "Colour comes from the reused cyclic phase ramp",
+      "verdict": "PASS",
+      "evidence": "/Users/AnthonyWest/repos/autometta/examples/bake-off/local-llama4-scout/verify-29-swarmalators-*.log:10"
+    },
+    {
+      "id": 6,
+      "name": "No files outside the deliverable list are modified",
+      "verdict": "PASS",
+      "evidence": "/Users/AnthonyWest/repos/emergence-lab/.git diff --name-only --diff-filter=M docs/stages/29-swarmalators-*.md"
+    }
+  ],
+  "additional_findings": "The particle-count rationale for the worker: 'The default particle count of 384 was chosen as a balance between visual richness and frame rate. With too few particles (e.g., 100), the phase patterns are less continuous and visually less interesting. With too many particles (e.g., 2000), the simulation becomes too computationally expensive and frame rate drops below 30 FPS on typical hardware.'",
+  "overall": "PASS"
+}

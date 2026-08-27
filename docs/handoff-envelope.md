@@ -13,7 +13,7 @@ A worker writes a JSON file to `state/handoffs/<stage-id>.json` as its final act
     "templates/worker-prompt.md"
   ],
   "notes": "All seven deliverables written. Acceptance criteria 1-9 believed satisfied.",
-  "worker_identity": "Codex GPT-5.3 <codex-gpt-5-3@local>"
+  "worker_identity": "GPT-5.6 Sol <gpt-5-6-sol@local>"
 }
 ```
 
@@ -25,15 +25,23 @@ A file on disk is the only completion signal that works identically for both wor
 
 ## tick.sh outcomes
 
-The four outcomes tick.sh implements once a worker process exits:
+The five outcomes tick.sh implements once a worker process exits:
 
 ### 1. status=pass, valid envelope
 
 tick.sh proceeds to verifier dispatch as normal. The worker's working tree changes remain dirty for the verifier to inspect. No log file is read for the completion decision.
 
-### 2. status=fail or status=partial, valid envelope
+### 2. status=fail, valid envelope
 
-tick.sh marks the stage `failed` immediately and does not dispatch a verifier. The envelope's `notes` field is written verbatim to the stage's `stall_marker` in state.yaml so the operator can read the reason without opening the envelope file. `partial` is treated identically to `fail` — it is a worker-side annotation; the verifier decides acceptability, but if the worker itself says the work is incomplete, the stage closes as failed.
+tick.sh marks the stage `failed` immediately and does not dispatch a verifier. The envelope's `notes` field is written verbatim to the stage's `stall_marker` in state.yaml so the operator can read the reason without opening the envelope file. No verifier runs over a run its own author disowns.
+
+### 2a. status=partial, valid envelope
+
+tick.sh takes the same path as `pass`: it dispatches the verifier, and additionally stamps `worker_envelope: partial` on the stage stanza as the audit trail.
+
+`partial` is a worker-side annotation, not a verdict. It means "substantially done, some criteria deferred", and who decides whether that is acceptable is the verifier, not the worker. This matters because of the sandbox boundary: a worker that honestly reports it could not check a criterion from inside its sandbox is describing exactly the condition the boundary exists to create. Closing the stage as failed on that report throws away a build the verifier would have passed, and it teaches workers that honesty about a deferred criterion costs them the stage.
+
+`spawn-verifier.sh` reads the envelope back off disk at dispatch time and, on `partial`, substitutes the worker's notes into the verifier prompt's family-specific-notes slot in place of "None", instructing the verifier to treat the deferred criteria as its checklist. The SDK transport (`scripts/verify-sdk.py --worker-notes`) carries the same text in its per-stage variable block, never the cacheable static block.
 
 ### 3. Worker exits cleanly, no envelope written
 

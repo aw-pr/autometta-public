@@ -2,9 +2,21 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
 controller_log_dir="$controller_home/log"
+status_width="${AUTOMETTA_TICKER_COLUMNS:-${COLUMNS:-$(tput cols 2>/dev/null || printf 120)}}"
+
+print_compact_repo() {
+  local repo="$1" enabled="$2" stage="$3" status="$4" budget="$5" process="$6"
+  printf '%-*.*s %s %.*s\n' "$((status_width > 12 ? status_width - 12 : 1))" \
+    "$((status_width > 12 ? status_width - 12 : 1))" "$repo" "$enabled" 8 "$stage"
+  printf '  %-12.12s %-14.14s %.*s\n' "$status" "$budget" \
+    "$((status_width > 31 ? status_width - 31 : 1))" "$process"
+}
 
 read_field() {
   local file_path="$1"
@@ -47,6 +59,26 @@ state_value() {
   yq -r "$filter" "$state_file" 2>/dev/null || printf '-'
 }
 
+# A stage whose run branch could not be fast-forwarded into base is
+# completed but not integrated: the commit exists only on autometta/<stage>
+# and a person has to merge it. That is the common outcome whenever the
+# operator commits to base during a session, and until it was printed here
+# the only trace was one appended line in HANDOFF.md. Printed under the
+# repo's row rather than in it, because there can be several and the
+# operator needs the branch name to act on.
+print_awaiting_integration() {
+  local state_file="$1"
+  [[ -f "$state_file" ]] || return 0
+  yq -r '
+    .stages[]
+    | select(.integration.state == "awaiting")
+    | "    awaiting integration: " + .id
+      + " -> merge " + (.integration.run_branch // "?")
+      + " into " + (.integration.base_branch // "?")
+      + " (pushed to origin: " + (.integration.pushed // false | tostring) + ")"
+  ' "$state_file" 2>/dev/null || true
+}
+
 print_repo() {
   local subscriber_file="$1"
   local enabled repo_root repo_name state_file budget_file current_stage halted halt_reason tick_count failures status worker_pid verifier_pid pid_summary log_path
@@ -58,12 +90,14 @@ print_repo() {
   budget_file="$repo_root/state/budget.json"
 
   if [[ "$enabled" != "true" ]]; then
-    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "off" "-" "-" "-" "-"
+    if (( status_width < 80 )); then print_compact_repo "$repo_name" off - - - -
+    else printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "off" "-" "-" "-" "-"; fi
     return 0
   fi
 
   if [[ ! -f "$state_file" ]]; then
-    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "missing" "-" "-" "-" "$state_file"
+    if (( status_width < 80 )); then print_compact_repo "$repo_name" missing - - - "$state_file"
+    else printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "missing" "-" "-" "-" "$state_file"; fi
     return 0
   fi
 
@@ -102,10 +136,50 @@ print_repo() {
     status="halted:${halt_reason}"
   fi
 
-  printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "on" "$current_stage" "$status" "ticks:${tick_count}/fail:${failures}" "$pid_summary $log_path"
+  if (( status_width < 80 )); then
+    print_compact_repo "$repo_name" on "$current_stage" "$status" "tick:${tick_count}/fail:${failures}" "$pid_summary"
+  else
+    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "$repo_name" "on" "$current_stage" "$status" "ticks:${tick_count}/fail:${failures}" "$pid_summary $log_path"
+  fi
+  print_awaiting_integration "$state_file"
+}
+
+usage() {
+  printf 'Usage: %s [--repo <path>]\n' "$(basename "$0")" >&2
+  exit 1
+}
+
+resolve_path() {
+  local input_path="$1"
+  if command -v realpath >/dev/null 2>&1; then
+    realpath "$input_path" 2>/dev/null || printf '%s' "$input_path"
+  else
+    python3 - "$input_path" <<'PY' 2>/dev/null || printf '%s' "$input_path"
+import os
+import sys
+print(os.path.realpath(sys.argv[1]))
+PY
+  fi
 }
 
 main() {
+  local filter_repo=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo)
+        [[ $# -ge 2 ]] || usage
+        filter_repo="$(resolve_path "$2")"
+        shift 2
+        ;;
+      -*)
+        usage
+        ;;
+      *)
+        usage
+        ;;
+    esac
+  done
+
   if [[ ! -d "$subscribers_dir" ]]; then
     printf 'MISSING subscribers dir %s\n' "$subscribers_dir" >&2
     exit 1
@@ -119,7 +193,7 @@ main() {
     exit 1
   fi
 
-  printf 'phat-controller home: %s\n' "$controller_home"
+  printf 'autometta home: %s\n' "$controller_home"
   if [[ -d "$controller_log_dir" ]]; then
     local latest_log candidate
     latest_log=""
@@ -129,16 +203,36 @@ main() {
     done
     printf 'latest controller log: %s\n' "${latest_log:-"-"}"
   fi
+  if [[ -n "$filter_repo" ]]; then
+    printf 'scoped to repo: %s\n' "$filter_repo"
+  fi
   printf '\n'
-  printf '%-24s %-8s %-18s %-14s %-18s %s\n' "repo" "enabled" "stage" "status" "budget" "process/log"
-  printf '%-24s %-8s %-18s %-14s %-18s %s\n' "------------------------" "--------" "------------------" "--------------" "------------------" "-----------"
+  if (( status_width < 80 )); then
+    printf '%.*s\n' "$status_width" 'repo / enabled / stage; status / budget / process'
+    printf '%*s\n' "$status_width" '' | tr ' ' '-'
+  else
+    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "repo" "enabled" "stage" "status" "budget" "process/log"
+    printf '%-24s %-8s %-18s %-14s %-18s %s\n' "------------------------" "--------" "------------------" "--------------" "------------------" "-----------"
+  fi
 
-  local subscriber_file
+  local subscriber_file matched=0
   for subscriber_file in "$subscribers_dir"/*.yaml; do
     [[ -e "$subscriber_file" ]] || continue
     [[ "$(basename "$subscriber_file")" == "template.yaml" ]] && continue
+    if [[ -n "$filter_repo" ]]; then
+      local sub_repo_path sub_repo_resolved
+      sub_repo_path="$(read_field "$subscriber_file" "repo_path")"
+      [[ -n "$sub_repo_path" ]] || continue
+      sub_repo_resolved="$(resolve_path "$sub_repo_path")"
+      [[ "$sub_repo_resolved" == "$filter_repo" ]] || continue
+      matched=1
+    fi
     print_repo "$subscriber_file"
   done
+
+  if [[ -n "$filter_repo" && "$matched" -eq 0 ]]; then
+    printf '(no subscriber matches --repo %s)\n' "$filter_repo"
+  fi
 }
 
 main "$@"

@@ -30,16 +30,29 @@ to verifier handoff to commit. Driven by a human in an orchestrator session.
   `templates/verifier-prompt.md`, `templates/orchestrator-checklist.md`.
 - Design: `docs/dispatch-contract.md`. Gate model: `docs/verification.md`.
 
-### Layer 2 - Autonomous loop (phat-controller, pass 2)
+### Layer 2 - Autonomous tick loop (pass 2)
 
 A cron or launchd driven tick that reads `state/state.yaml`, dispatches one
 worker and/or verifier, writes the next state, and exits. The budget file is
 the only safety: a hard stop on bounded spend, with no retries or backoff.
+Two adjacent stages with declared, disjoint path claims may run as a pipeline
+pair, while verification and landing remain in queue order.
 
 - Runtime: `scripts/tick.sh`, `scripts/spawn-worker.sh`,
   `scripts/spawn-verifier.sh`, `scripts/budget.sh`.
+- Housekeeping: `scripts/reap-worktrees.sh` collects run worktrees
+  (`../<repo>-run-<stage>`) that no stage still needs, after every tick.
+  Run it by hand with `--dry-run` to see what it would do.
 - Schemas: `schemas/state.yaml.json`, `schemas/budget.json`.
-- Design: `docs/phat-controller.md`. Operator setup: `docs/setup.md`.
+- Design: `docs/tick-loop.md`. Operator setup: `docs/setup.md`.
+
+The tick never moves `repo_root`'s HEAD. It snapshots state onto the
+`autometta/state` ref with git plumbing rather than checking that
+branch out, and it fast-forwards a base branch by moving the ref rather than
+checking base out. Both used to run `git checkout` in the shared tree, which
+put an operator commit on the wrong branch on 2026-08-23. See
+`docs/tick-loop.md` section (j); `scripts/state-branch-smoke.sh` is the
+offline proof, and it replays the race rather than arguing about it.
 
 The loop sits on top of the dispatch contract and never bypasses it. You can
 use the dispatch contract without the loop; you cannot use the loop without the
@@ -62,7 +75,7 @@ Catches silent agent deaths in both manual and loop dispatches.
 
 ### Cross-cutting features shipped
 
-- **Auth routing (subscription vs API key).** Per-family billing route
+- **Auth routing (subscription vs API key vs free).** Per-family billing route
   resolved per repo, with a fail-closed `op-fetch` path. See section 5 and
   `docs/setup.md` section 7.
 - **SDK verifier route with prompt caching.** The Claude verifier can run via
@@ -77,6 +90,9 @@ Catches silent agent deaths in both manual and loop dispatches.
 - **Dashboard.** A static HTML dashboard regenerated from subscriber state.
   `scripts/dashboard.sh`, `scripts/aggregate-dashboard.sh`. See
   `docs/dashboard.md`.
+- **Terminal UI.** A live run, history and controller-message view over the
+  same per-repo dashboard aggregate. Run `autometta tui [repo-path]`; see
+  section 6.
 - **Publish workflow.** A private `dev` line and a clean public `publish`
   line, with a fail-closed git gate and publish-guard hooks. See section 7 and
   `docs/PUBLISH-WORKFLOW.md`.
@@ -94,25 +110,42 @@ to one backing script.
 | Command | What it does |
 |---|---|
 | `autometta --version` | Print the installed version (from `VERSION`, falling back to the git short SHA). |
-| `autometta init-host` | One-time host setup: create the controller home (`~/.phat-controller` by default) and its subdirectories. |
+| `autometta init-host` | One-time host setup: create the Autometta home (`~/.autometta` by default) and its subdirectories. |
 | `autometta init [repo-path]` | Subscribe a repo and prepare it: runs `init-host`, subscribes the repo, and ensures a tmux viewer. Defaults to the current directory. Then review and commit the generated `.gitignore`, `state/state.yaml`, `state/budget.json`. |
 | `autometta subscribe [repo-path]` | Subscribe a repo to the controller without the full init flow. Defaults to the current directory. |
-| `autometta add-stage <repo-path> <stage-card-path>` | Append a stage to a subscribed repo's `state.yaml` from a stage card. |
-| `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. |
-| `autometta attach [repo-path] [--dry-run]` | Open or re-attach the tmux viewer (`autometta-<repo>`): status ticker, work pane, and agent ticker. `--dry-run` prints what it would do. `--ensure` (used internally by `init`) creates the session only if absent. |
-| `autometta tick [--repair\|--reset-halt]` | Run one controller tick across subscribers: read state, dispatch one worker and/or verifier, write next state, exit. `--reset-halt` clears `halted`/`halt_reason` on the budget file. `--repair` is a reserved no-op. |
+| `autometta refresh-repo <repo-path> [--dry-run] [--adopt]` | Refresh one subscriber's vendored dispatch contract from the resolved Autometta root. It refuses dirty vendored paths and in-flight work; `--adopt` creates the vendor stamp for a first refresh. |
+| `autometta refresh-all-repos [--dry-run]` | Refresh the vendored dispatch contract across every enabled subscriber, naming every skip or refusal. |
+| `autometta add-stage <repo-path> <stage-card-path>` | Append a stage to a subscribed repo's `state.yaml` from a stage card. It inherits the active `run_id` from the most recent pending or in-progress stage, or starts a new UTC timestamped run when none is active; historic rows are not backfilled. |
+| `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Any stage whose run branch is still waiting to be merged into its base branch gets an `awaiting integration` line under the repo's row, naming the branch to merge. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. `scripts/status.sh --repo <path>` narrows the table to one subscriber; the tmux status pane uses it so an attached dash shows the repo you attached to. |
+| `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`). An ordinary subscriber gets `repo` (full-window repo ticker) and `log` windows. The `autometta-autometta` control-plane session adds `status` and `fleet`, but still lands on the repo-scoped page. An interactive attach replaces an existing viewer so ticker changes take effect; `--dry-run` prints the commands and `--ensure` (used by `init`) creates only when absent. A separate job refreshes fleet `data.json` every 120 seconds. Orphaned viewers whose subscriber is disabled or gone are reported. |
+| `autometta tui [repo-path]` | Open the full-screen terminal UI for one repo, defaulting to the current directory. It polls the shared per-repo dashboard aggregate every five seconds. |
+| `autometta detach [repo-path\|--all]` | Remove one tmux viewer, defaulting to the current repo, or tear down every `autometta-*` viewer with `--all`. Other tmux sessions are never touched. |
+| `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one tick across subscribers: read state, dispatch one worker and/or verifier, write next state, snapshot state onto `autometta/state`, sweep retention and stale run worktrees, exit. A declared pipeline pair may dispatch worker N+1 while verifier N is live, but landing remains ordered and overlap escalates. It never changes the branch checked out in a subscriber's own checkout. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` requeues every stalled or failed stage across all enabled subscribers, via the same reset `scripts/requeue-stage.sh` performs by hand; it leaves `in_progress` and `verifier_failed` alone, refuses a stage whose card no longer resolves (`stall_marker: card_missing`), skips a repo still over a spend cap, and stops at `repair_attempts` 2 per stage (`AUTOMETTA_REPAIR_ATTEMPT_CAP`). |
+| `autometta phat-controller <verb> [args]` | Run a queue-minder verb. `pass` dispatches one controller pass; the remaining verbs inspect, preserve, rebrief, requeue, integrate, message, journal or escalate work under the controller's guards. `autometta warden ...` is the deprecated one-release alias. |
+| `autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]` | Render the phat-controller context seed and mirror its machine-readable spend authority into the mandate. Refuses to write without explicit spend authority. |
+| `autometta drain start [--cap N\|--lift] [--hours H] [--repo PATH] [--reason TEXT]`, `autometta drain status`, `autometta drain end` | Start, inspect or end a bounded, self-expiring host-level drain that temporarily raises the effective token cap without editing repo budgets. |
 | `autometta check-deps` | Verify required tooling is present (bash, git, jq, yq, tmux, the CLI families, op-fetch, etc.). |
+| `autometta check-build` | Compare the installed build with the source checkout file by file and report which root the loaded fleet tick runs. |
 | `autometta dashboard [--open]` | Regenerate the static dashboard under the controller home; `--open` opens it in the default browser. |
+| `autometta failures (<repo-path>\|--fleet) [--json]` | Itemised failures history on demand: every terminal-status stage and every non-pass dispatch, with tokens lost. Moved out of the live ticker panes so they stop competing for space; `--fleet` covers every enabled subscriber instead of one repo. Reads the same aggregated JSON the pane it reports for reads, so the two never disagree. |
+| `autometta retro-grade [--last N] [--dry-run]` | Build and optionally submit an Anthropic Message Batch that re-runs the current verifier rubric over recent completed stages. |
 | `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
 | `autometta uninstall-launchagent <repo-path>` | macOS: remove the per-repo LaunchAgent. |
-| `autometta install-homebrew-local [--dry-run] [--tap owner/name]` | Render and install the local Homebrew tap from the working tree. Rerun after every `git pull` of this repo. |
-| `autometta auth status` | Per-family table: mode (subscription or api), provenance (env, manifest, default), and ref status. Also prints which `op-refs.local.sh` was loaded, whether `op-fetch` is on PATH, and the sibling `CODEX_HOME` state. No token spend. |
-| `autometta auth check <codex\|claude>` | Probe the route plumbing for one family without spending a token. `subscription` returns no-key-fetch; `api` resolves the ref via `op-fetch --print` and returns `PASS` with a redacted credential or `FAIL` with the error path. For codex it also checks the sibling `CODEX_HOME` has `auth_mode: apikey`. |
+| `autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--window-reserve-percent N] [--window-reserve-action hold\|observe]` | macOS: install the singleton phat-controller LaunchAgent with explicit spend authority and provider-window policy. |
+| `autometta uninstall-launchagent-phat-controller` | macOS: unload and remove the phat-controller LaunchAgent. |
+| `autometta install-homebrew-local [--dry-run]` | Render and install the local Homebrew tap from the working tree. Rerun after every `git pull` of this repo. |
+| `autometta auth status` | Per-family table: mode (`subscription`, `api`, or codex-only `local`), provenance (env, manifest, default), and ref status. Also prints which `op-refs.local.sh` was loaded, whether `op-fetch` is on PATH, and the sibling `CODEX_HOME` state. No token spend. |
+| `autometta auth check <codex\|claude>` | Probe one family without spending a token. `subscription` reports no-key-fetch; `api` resolves the ref via `op-fetch --print` and, for codex, checks the sibling `CODEX_HOME`; codex `local` runs the Ollama server/model preflight. Each route returns `PASS`, `FAIL`, or the explicit subscription result. |
+| `autometta panel <stage-id> [repo-path]` | Dispatch the read-only verifier panel for a stage card resolved from the repo's canonical or legacy card locations. |
 
 Notes:
 
-- The controller home is `$PHAT_CONTROLLER_HOME` (default `~/.phat-controller`).
+- The Autometta home is `$AUTOMETTA_HOME` (default `~/.autometta`). The old
+  `$PHAT_CONTROLLER_HOME` spelling is a deprecated one-release fallback.
   Subscribers live in `<home>/subscribers/*.yaml`; tick logs in `<home>/log/`.
+- After the one-time home migration, rerun `autometta install-launchagent
+  <repo>` at a queue gap so the installed plist adopts the new working
+  directory.
 - `tick` halts the loop (writes `budget.json.halted = true`) on any cap or
   blocking condition rather than retrying. See section 4 for halt reasons.
 
@@ -127,12 +160,12 @@ No `scripts/`, no `tick.sh`, no cron. This is the dispatch contract by hand.
    Codex CLI; the orchestrator role is family-agnostic).
 3. Copy three templates into the target repo:
    ```sh
-   mkdir -p docs/stages
-   cp <Autometta>/templates/stage-card.md docs/stages/01-my-first-stage.md
+   mkdir -p stage-cards
+   cp <Autometta>/templates/stage-card.md stage-cards/01-my-first-stage.md
    cp <Autometta>/templates/worker-prompt.md /tmp/worker-prompt.md
    cp <Autometta>/templates/orchestrator-checklist.md /tmp/checklist.md
    ```
-4. Fill in `docs/stages/01-my-first-stage.md`: one objective, one deliverable,
+4. Fill in `stage-cards/01-my-first-stage.md`: one objective, one deliverable,
    one acceptance command. Walk the checklist in `/tmp/checklist.md` as you go.
 5. Dispatch a worker from the orchestrator session and give it the stage card
    path. The worker writes code; you run the acceptance command yourself; if it
@@ -162,7 +195,7 @@ autometta attach /path/to/target-repo
 Author your stage cards and queue them:
 
 ```sh
-autometta add-stage /path/to/target-repo docs/stages/02-next-stage.md
+autometta add-stage /path/to/target-repo stage-cards/02-next-stage.md
 ```
 
 Put the tick under a heartbeat. On macOS, prefer the LaunchAgent (it has
@@ -178,7 +211,8 @@ morning with `autometta status`, `state/state.yaml`, and the controller log.
 ### State lifecycle
 
 Each stage in `state/state.yaml` carries a `status`, one of:
-`pending`, `in_progress`, `completed`, `failed`, `stalled`, `verifier_failed`.
+`pending`, `in_progress`, `completed`, `failed`, `stalled`, `verifier_failed`,
+`superseded`.
 
 On worker exit, the tick reads the handoff envelope and branches:
 
@@ -198,7 +232,11 @@ tick writes `halted: true` with one of these canonical `halt_reason` values:
 
 - `token-cap` - tokens spent reached the total cap.
 - `wall-clock-cap` - wall-clock elapsed reached the cap.
-- `tick-cap` - clock ticks used reached `clock_tick_cap`.
+- `tick-cap` - work ticks used reached `clock_tick_cap`. Only ticks that
+  dispatched, reaped or supervised an agent count; a tick that found nothing
+  to do charges `idle_ticks_used`, which halts nothing unless the optional
+  `idle_tick_cap` is set.
+- `idle-tick-cap` - idle ticks used reached `idle_tick_cap`, where one is set.
 - `failure-cap` - consecutive failures reached `consecutive_failure_cap`.
 - `dirty-working-tree` - tree was not clean when the tick tried to advance
   state (note: a worker is allowed to leave the tree dirty while
@@ -209,20 +247,31 @@ tick writes `halted: true` with one of these canonical `halt_reason` values:
 Clear a halt once you have fixed the cause:
 
 ```sh
-autometta tick --reset-halt
+autometta tick --reset-halt                  # clears the flag and the tick / failure counters
+autometta tick --reset-halt --reset-tokens   # ... and the spend counters too
 ```
 
+`--reset-halt` clears `clock_ticks_used`, `idle_ticks_used` and
+`consecutive_failures` alongside the flag, because clearing the flag alone
+left the counter that caused the halt in place and the next tick simply
+re-halted. It will not zero `tokens_spent` unless you ask: that is real spend
+against a real cap, not a polling artefact. If a spend cap is still over after
+the counters are cleared, the halt stays latched against that cap and the
+command says so, rather than unlatching the only safety for one tick and
+letting you find out afterwards.
+
 There is no retry, no exponential backoff, and no circuit breaker by design.
-See `docs/phat-controller.md` for the full FSM and token accounting.
+See `docs/tick-loop.md` for the full FSM and token accounting.
 
 ---
 
-## 5. Auth routes (subscription vs API key)
+## 5. Auth routes (subscription vs API key vs free)
 
-Every dispatched worker or verifier runs on either an OAuth subscription
-(Claude Pro / ChatGPT plan) or an API key. Resolver fallback with no manifest
-is `subscription` for both families. The shipped template recommends
-`codex: api` + `claude: subscription`. Flip per repo or per dispatch.
+Every dispatched worker or verifier uses an OAuth subscription (Claude Pro /
+ChatGPT plan), an API key, or the free local Ollama route for the codex family.
+Resolver fallback with no manifest is `subscription` for both families. The
+shipped template recommends `codex: api` + `claude: subscription`. Flip per
+repo or per dispatch.
 
 Every launch goes through `op-fetch`, which exec's the child via `env -i` plus
 an allowlist plus only the named refs. Subscription mode still goes through
@@ -233,7 +282,7 @@ shell is stripped rather than silently flipping you to API billing.
 
 ```
 op-refs.sh                                  # committed - placeholder op:// refs
-op-refs.local.sh.example                    # committed - template
+templates/op-refs.local.sh.tpl                    # committed - template
 ~/.config/autometta/op-refs.local.sh        # gitignored - your real op:// refs
 ```
 
@@ -244,7 +293,7 @@ subscribed repo:
 
 ```sh
 mkdir -p ~/.config/autometta
-cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
+cp templates/op-refs.local.sh.tpl ~/.config/autometta/op-refs.local.sh
 chmod 600 ~/.config/autometta/op-refs.local.sh
 # then edit it with the real op:// refs
 ```
@@ -261,9 +310,9 @@ carries only the mode, never keys:
 ```yaml
 auth:
   codex:
-    mode: api          # subscription | api
+    mode: api          # subscription | api | local
   claude:
-    mode: subscription
+    mode: subscription # subscription | api
 ```
 
 Dispatch-time override beats the manifest:
@@ -301,6 +350,61 @@ The spawn fails closed on a missing `op-fetch`, an unset `OP_REF_*`, or an
 unresolved placeholder. Full surface: `docs/setup.md` section 7 and the
 `auth-route-security` skill.
 
+### Free verifier tier: flip, read and identify
+
+The measured default is the codex-family local route (`gpt-oss:120b`) for
+mechanical-acceptance stages, with a frontier verifier retained for
+judgement-heavy criteria. See `docs/verifier-bake-off.md` for the evidence.
+
+**Flip a repo onto the free verifier route.** Install, start and populate
+Ollama as described in `docs/setup.md` section 7, then set the repo's
+gitignored `.autometta.local.yaml`:
+
+```yaml
+auth:
+  codex:
+    mode: local
+```
+
+For one dispatch, use `AUTOMETTA_CODEX_MODE=local autometta tick` instead.
+There is no Claude-family local mode, and the measured cloud-free candidates
+are available only through `scripts/verifier-bake-off.sh`, not as manifest
+modes.
+
+**Read a local verifier in the cost log.** Route and tier are independent.
+`auth_route` comes from the auth resolver; `tier` comes only from the stage's
+identity string (`scripts/cost-log.sh:212-215`, `scripts/rates.sh:40-59`). An
+identity containing `GPT-OSS` maps to T5, whose rate row is zero
+(`scripts/rates.sh:64-72`). A local route using a Terra, Sol or other identity
+keeps that identity's tier and estimate; local mode does not rewrite it to T5.
+Inspect all three facts together, including the actual tokens captured from
+the role log:
+
+```sh
+jq -r 'select(.role=="verifier" and .auth_route=="local")
+  | "\(.stage_id): identity=\(.identity) tier=\(.tier) tokens=\([.input_tokens,.cached_input_tokens,.output_tokens]|add) estimate=$\(.cost_usd_est)"' \
+  state/cost-log.jsonl
+```
+
+For a correctly named local GPT-OSS verifier this prints `tier=T5` and
+`estimate=$0`; the token total remains real and non-zero. Codex total-only logs
+put the total in `input_tokens`, while routes with a full usage breakdown fill
+all three buckets, so summing them works for both shapes. The checked-in
+fixture behaviour is exercised by `scripts/cost-log-smoke.sh`.
+
+**Identify a running verifier's route.** `autometta auth status` shows the
+current per-family resolution from env override, repo manifest, then default,
+which is the same precedence used at launch (`scripts/auth-route.sh`). For a
+running codex verifier, `ps -p <pid> -o command=` identifies the local route by
+`--oss --local-provider=ollama`; API and subscription both use `--model`
+(`scripts/spawn-verifier.sh:338-362`). For Claude, the
+`verifier-transport: cli|sdk` log line reports the harness, not the billing
+route. CLI accepts subscription or API, while SDK requires API
+(`scripts/spawn-verifier.sh:307-320,365-380`). The running-agent registry does
+not expose a separate billing-route field, so for a Claude CLI verifier use
+the launch-time auth resolution; after reap, read `auth_route` in its cost-log
+line.
+
 ---
 
 ## 6. Observability
@@ -309,12 +413,34 @@ The observability layer plugs into both manual and loop dispatches. Any
 dispatcher registers an agent; the heartbeat and ticker read that registry
 without further coupling.
 
+### Terminal UI
+
+`autometta tui [repo-path]` opens three pages over one repo. **Run** shows the
+current run, live agents, escalations, spend and card detail. **History** shows
+completed card outcomes and the fourteen-day spend view. **Messages** joins
+the phat-controller decision journal to its inbox and outbox, and can queue an
+operator message for the next controller pass.
+
+Use `[` and `]` to change page, `j`/`k` or the arrow keys to move, and Enter to
+pin a card or start a message. On the run page, `1` to `4` select a panel and
+Tab cycles them. `m` opens message composition from any page, Esc cancels it,
+and `q` quits when no message is being composed.
+
+The TUI polls `scripts/aggregate-dashboard.sh --repo <path>` asynchronously
+every five seconds, so a slow read never freezes keyboard input and every
+operator view shares the same data definitions. For deterministic rendering
+and smoke tests, set `AUTOMETTA_TUI_CAPTURE=true`; optional
+`AUTOMETTA_TUI_COLUMNS`, `AUTOMETTA_TUI_ROWS`, `AUTOMETTA_TUI_KEYS` and
+`AUTOMETTA_TUI_ANSI` control the single captured frame.
+
 - **Register** a dispatched agent so the watchdog can see it:
   ```sh
-  scripts/register-agent.sh <repo_root> <pid> <role> <family> <identity> <card> <log> [budget_secs]
+  scripts/register-agent.sh <repo_root> <pid> <role> <family> <identity> <card> <log> [budget_secs] [working_dir]
   ```
   role is `worker` or `verifier`; family is `codex` or `claude`. Idempotent on
-  the same pid; writes `state/active-agents/<pid>.json`.
+  the same pid; writes `state/active-agents/<pid>.json`. Dispatchers record the
+  launch working directory so the ticker can identify the matching harness
+  transcript without reconstructing a worktree path.
 
 - **Heartbeat** walks `state/active-agents/`, checks liveness and budget, and
   writes `state/heartbeat.json`. It moves dead entries to `state/recent-agents/`
@@ -325,13 +451,35 @@ without further coupling.
   scripts/watch-agent.sh <repo_root> <pid> [label]
   ```
   Exit 0 = clean, 2 = STUCK (silent past the grace window), 3 = bad input.
-  Tunable via `PHAT_CONTROLLER_WATCH_POLL` (default 60s) and
-  `PHAT_CONTROLLER_WATCH_STALL_GRACE` (default 120s).
+  Tunable via `AUTOMETTA_WATCH_POLL` (default 60s) and
+  `AUTOMETTA_WATCH_STALL_GRACE` (default 120s).
 
-- **Viewer**: `autometta attach <repo>` opens the tmux session with a status
-  ticker, a work pane, and the agent ticker (`scripts/agent-ticker.sh`). The
-  ticker's ALERTS panel is the load-bearing FAIL signal; it reads `state.yaml`
-  and the verifier artefacts.
+- **Viewer**: `autometta attach <repo>` opens a two-window tmux session. The
+  `repo` window is a full-window repo ticker with NOW, NEXT, ESCALATIONS, SPEND
+  AND LOSS and FRESHNESS; the `log` window tails controller lines for that
+  repo. Switch with `tmux next-window`. Run `autometta detach --all` to tear
+  down all Autometta viewers.
+
+- **Fleet viewer**: `autometta attach /path/to/autometta` opens
+  `autometta-autometta` landing on the repo-scoped fleet page for autometta
+  itself (TOTALS and ESCALATIONS, no REPOS table). The fleet-wide page --
+  every enabled subscriber, its operational state and why, queue depth,
+  today's spend and spend against the cap that binds, plus one ESCALATIONS
+  row per halted, paused, attempt-capped, stale-vendor or over-budget
+  condition -- is a `tmux next-window` away, sourced from the same read-only
+  dashboard `data.json`. Completed roles are excluded from provider-limit
+  scans so source text and commit subjects cannot cry wolf. The itemised
+  failures list and per-role spend breakdown are reachable with
+  `autometta failures --fleet` rather than rendered live. A separate job
+  reuses the existing aggregator every 120 seconds, while the ticker only
+  reads the snapshot. The pane states the exact generation time and still
+  labels genuinely stale data. Fleet, status and agent headers name the
+  running `autometta <sha>`; a
+  mismatch between the installed command and checkout HEAD is shown as build
+  drift and rechecked at most once a minute.
+  Override the refresh interval with `AUTOMETTA_FLEET_REFRESH_INTERVAL`.
+  The control-plane repo's original three-pane view remains in the `repo`
+  window.
 
 A family asymmetry to remember: `claude -p` does not stream its log; the file
 stays at 0 bytes until the run completes. So log-mtime staleness is not a stuck
@@ -397,7 +545,7 @@ These are the failure modes that will bite you. Full write-up in
   and runs to completion. See `docs/lessons.md` gotcha 9.
 
 For the dated session log and the current backlog, see `HANDOFF.md` and
-`examples/self-host/PLAN.md`.
+`stage-cards/PLAN.md`.
 
 ---
 
@@ -408,7 +556,7 @@ For the dated session log and the current backlog, see `HANDOFF.md` and
 | Design philosophy, scope, non-goals | `docs/philosophy.md` |
 | Dispatch contract (the seven steps) | `docs/dispatch-contract.md` |
 | Verification / gate model | `docs/verification.md` |
-| Autonomous loop design (FSM, accounting) | `docs/phat-controller.md` |
+| Autonomous loop design (FSM, accounting) | `docs/tick-loop.md` |
 | Operator setup, cron, auth section 7 | `docs/setup.md` |
 | Observability model | `docs/observability.md` |
 | SDK verifier route + prompt caching | `docs/sdk-verifier.md` |

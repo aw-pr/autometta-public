@@ -1,13 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://autometta.local/schemas/budget.json",
-  "title": "phat-controller per-repo budget file",
+  "title": "Autometta per-repo budget file",
   "description": "Per-repo failure budget for the autometta pass-2 autonomous loop. Stored at state/budget.json in the repo it governs. Read on every tick; any cap exhaustion halts the loop for this repo without retry. Per memory/decision-failure-budget-clock-tick.md, the clock-tick count is the primary safety; token and wall-clock caps are secondary belt-and-braces.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "version",
-    "token_cap_total",
     "tokens_spent",
     "wall_clock_cap_seconds",
     "wall_clock_elapsed_seconds",
@@ -23,9 +22,9 @@
       "description": "Schema major version."
     },
     "token_cap_total": {
-      "type": "integer",
+      "type": ["integer", "null"],
       "minimum": 0,
-      "description": "Hard cap on total tokens consumed by workers and verifiers dispatched against this repo. Tick halts when tokens_spent >= cap."
+      "description": "This repo's own hard cap on total tokens consumed by workers and verifiers dispatched against it. Optional since card 47, and absent means inherit rather than unlimited: scripts/budget.sh resolves the cap that binds as active drain, then this field, then token_cap_total in the controller config.yaml, then the AUTOMETTA_TOKEN_CAP_FLOOR floor. Set it only where this repo genuinely differs from the host default; the fleet once carried four different numbers here with nothing recording why any of them held. Tick halts when tokens_spent >= the resolved cap."
     },
     "tokens_spent": {
       "type": "integer",
@@ -45,12 +44,22 @@
     "clock_tick_cap": {
       "type": "integer",
       "minimum": 1,
-      "description": "Primary safety. Maximum number of cron-tick fires the controller may consume on this repo. Halt when clock_ticks_used >= cap. Bounds wall-clock independent of how expensive individual workers were."
+      "description": "Primary safety. Maximum number of WORK ticks the controller may consume on this repo. Halt when clock_ticks_used >= cap. Bounds wall-clock independent of how expensive individual workers were. It does not bound polling: see idle_tick_cap."
     },
     "clock_ticks_used": {
       "type": "integer",
       "minimum": 0,
-      "description": "Number of ticks that have done work on this repo. Incremented when a tick transitions the state."
+      "description": "Number of ticks that have done work on this repo: supervised a stage in flight, reaped or killed an agent, transitioned a stage, or dispatched a queued one. A tick that finds nothing to do charges idle_ticks_used instead. Until 2026-08-23 this counter was advanced on the unconditional fall-through at the end of every per-repo tick, so an idle repo reached its cap on a fixed schedule: five of six enabled subscribers were halted on tick-cap having spent zero tokens and zero seconds."
+    },
+    "idle_ticks_used": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of ticks that found nothing to do -- no stage in flight and nothing pending. An odometer, not a cap: it answers how much of the window went on polling an empty queue, and halts nothing unless idle_tick_cap is set. Zeroed at the window boundary alongside the other counters. Absent on a budget file predating this field; treat as zero."
+    },
+    "idle_tick_cap": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Optional bound on idle polling, halting with idle-tick-cap when idle_ticks_used >= cap. Absent (the default) means idle polling is unbounded, which is deliberate: an empty queue is not a fault, and a cap whose only reachable effect is to halt an idle repo converts 'nothing to do' into 'cannot work when there is'. Set it only where a repo polling an empty queue is itself the thing to catch."
     },
     "consecutive_failure_cap": {
       "type": "integer",
@@ -67,14 +76,77 @@
       "default": false,
       "description": "Mirror of state.yaml.halted. Set when any cap is exhausted. tick.sh sets this before exiting; subsequent ticks read it and exit immediately."
     },
+    "lifetime_tokens_spent": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonic total tokens ever charged to this repo. Incremented alongside tokens_spent and never reset, including by the window reset. tokens_spent answers how much of the current window's cap remains; this answers what the repo has actually cost. Absent on a budget file predating this field; treat as unknown, not zero."
+    },
     "halt_reason": {
       "type": ["string", "null"],
-      "description": "Which cap exhausted. One of: token_cap | wall_clock_cap | clock_tick_cap | consecutive_failure_cap | operator. Null until halted is true."
+      "description": "Which cap exhausted. One of: token-cap | wall-clock-cap | tick-cap | idle-tick-cap | failure-cap, or an operational reason (yq-missing, state-corrupt, invalid-stage-id, operator-*). The first hit only; see halt_reasons for the full set. Null until halted is true."
+    },
+    "halt_reasons": {
+      "type": ["array", "null"],
+      "items": { "type": "string" },
+      "description": "Every cap that was over on the read that halted the loop, in priority order. halt_reason is its first element. Recorded separately because the caps are tested in a fixed order and the first match used to be the only one written: emergence-lab-gpu halted with clock_ticks_used 470 against a clock_tick_cap of 400 and the file said only token-cap, so the tick breach was never surfaced."
+    },
+    "breaches": {
+      "type": "array",
+      "description": "Append-only record of cap breaches, oldest first, bounded to the most recent 50. Written both when a cap halts the loop and, crucially, immediately before budget_ensure_window zeroes the counters at a window boundary. Without it a breach leaves no trace once the window rolls: the counters that prove it are exactly the ones the reset clears.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "at": { "type": "string", "format": "date-time" },
+          "cleared_by": {
+            "type": "string",
+            "enum": ["halt", "window-reset", "reset-halt"],
+            "description": "halt: recorded as the loop latched. window-reset: recorded as the daily reset was about to erase the counters. reset-halt: recorded as an operator's `tick.sh --reset-halt` was about to erase them."
+          },
+          "reasons": { "type": "array", "items": { "type": "string" } },
+          "window_started_at": { "type": ["string", "null"] },
+          "tokens_spent": { "type": "integer" },
+          "token_cap_total": { "type": "integer", "description": "The cap that actually bound at the moment of the breach, after resolution: a drain, this repo's own cap, the host default, or the floor." },
+          "wall_clock_elapsed_seconds": { "type": "integer" },
+          "wall_clock_cap_seconds": { "type": "integer" },
+          "clock_ticks_used": { "type": "integer" },
+          "clock_tick_cap": { "type": "integer" },
+          "idle_ticks_used": { "type": "integer" },
+          "idle_tick_cap": { "type": ["integer", "null"] },
+          "consecutive_failures": { "type": "integer" },
+          "consecutive_failure_cap": { "type": "integer" }
+        }
+      }
     },
     "halted_at": {
       "type": ["string", "null"],
       "format": "date-time",
       "description": "ISO 8601 timestamp when the halt was triggered."
+    },
+    "halt_logged_at": {
+      "type": ["integer", "null"],
+      "description": "Unix epoch seconds of the last time tick.sh emitted the 'reason already recorded' log line for the current halt_reason. Used to dedupe the halt-log spam, at most once per AUTOMETTA_HALT_LOG_INTERVAL seconds (default 3600). Cleared by budget_halt so a fresh halt always logs immediately."
+    },
+    "halt_logged_reason": {
+      "type": ["string", "null"],
+      "description": "The halt_reason value halt_logged_at corresponds to. A reason change always logs immediately regardless of the interval."
+    },
+    "dash_active_at": {
+      "type": ["integer", "null"],
+      "description": "Unix epoch seconds of the last tick where current_stage was non-null. Stamped by tick.sh's ensure_tmux_viewer, read by its idle-dash reaper to decide whether an autometta-<slug> tmux session has been idle (no in-flight stage) for more than AUTOMETTA_DASH_IDLE_HOURS (default 24). last_tick_at and tick_count advance on every tick regardless of dispatch, so state.yaml's own mtime is not a usable idle signal; this field is written only when a stage is genuinely in flight."
+    },
+    "paused_until": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Epoch seconds until which dispatch is suspended because the provider refused for a limit reason (subscription window exhausted, 429, overload). A pause is not a halt: no cap was breached, no stage failed, and the loop resumes by itself once the clock passes this value. Ticks still fire and still perform bookkeeping while paused; they simply do not dispatch. Null when not paused."
+    },
+    "paused_reason": {
+      "type": ["string", "null"],
+      "description": "The provider refusal line that caused the pause, recorded verbatim for the dashboard and the operator. Null when not paused."
+    },
+    "window_started_at": {
+      "type": ["string", "null"],
+      "format": "date",
+      "description": "UTC calendar date (YYYY-MM-DD) of the current run window. tick.sh compares this to today's date at the start of every tick; a mismatch means a new window has begun, so a halted-or-at-cap budget is auto-reset (all counters zeroed, caps unchanged, halted cleared) instead of staying terminal across windows. consecutive_failures resets only at this boundary -- the failure cap still halts mid-window. Null on a budget file predating this field; treated as always-a-new-window until first written."
     }
   }
 }

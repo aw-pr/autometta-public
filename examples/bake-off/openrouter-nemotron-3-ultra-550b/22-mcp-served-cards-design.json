@@ -1,0 +1,70 @@
+{
+  "stage_id": "22-mcp-served-cards-design",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-ultra-550b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-ultra-550b --stage 22-mcp-served-cards-design",
+  "ran_at": "2026-08-24T12:16:59Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "docs/design/mcp-cards.md exists with eight required sections",
+      "verdict": "PASS",
+      "evidence": "File exists at docs/design/mcp-cards.md. Contains all eight required sections: Problem statement (lines 5-8), URI scheme (lines 9-23), Server responsibilities (lines 25-32), Consumption by tick.sh (lines 34-41), Relationship to filesystem-is-the-message-bus (lines 43-45), Multi-machine implications (lines 47-49), Migration path (lines 51-53), Smallest-possible-prototype card outline (lines 55-62)."
+    },
+    {
+      "id": 2,
+      "name": "Relationship to filesystem-is-the-message-bus section reaches explicit conclusion",
+      "verdict": "PASS",
+      "evidence": "Section at lines 43-45 explicitly concludes: 'Conclusion: MCP-served cards refine card delivery; the filesystem remains the message bus for everything the agents emit.' This is a clear 'refinement' position with reasoning."
+    },
+    {
+      "id": 3,
+      "name": "URI scheme is concrete with literal example",
+      "verdict": "PASS",
+      "evidence": "URI scheme defined at lines 13-14: 'stage://<repo>/<stage-id>@<version>'. Literal example at line 20: 'stage://autometta/22-mcp-served-cards-design@30faa66'."
+    },
+    {
+      "id": 4,
+      "name": "Fallback-to-filesystem path described for tick.sh patching",
+      "verdict": "PASS",
+      "evidence": "Lines 36-41 describe the helper `scripts/resolve-card.sh` with two-path logic: MCP transport reads via resources/read and writes to /tmp/autometta-card-<stage-id>.md; any failure (server down, timeout, unknown URI) falls back to existing `stage_card_for_id`. Explicitly states 'The fallback is not optional. A failed MCP resolution must never stall a stage; it degrades to the filesystem path that works today.'"
+    },
+    {
+      "id": 5,
+      "name": "Smallest-possible-prototype card outline fits on one page and is liftable",
+      "verdict": "PASS",
+      "evidence": "Lines 55-62 present a concise prototype outline with Objective, Deliverables (5 items), Acceptance (4 testable criteria), and Out of scope (4 items). Fits within ~10 lines of structured content, clearly liftable to a future implementation card."
+    },
+    {
+      "id": 6,
+      "name": "memory/decision-mcp-cards.md follows decision-memo format and links to decision-sweep-stage",
+      "verdict": "FAIL",
+      "evidence": "File memory/decision-mcp-cards.md does not exist in the working tree. git status shows no such file; ls memory/ confirms only .gitkeep present. Required deliverable missing."
+    },
+    {
+      "id": 7,
+      "name": "docs/philosophy.md edit \u22643 lines, additive only",
+      "verdict": "FAIL",
+      "evidence": "docs/philosophy.md shows no changes in git diff. The required additive edit (\u22643 lines adding MCP-cards as 'considered, deferred' under load-bearing beliefs) is absent."
+    },
+    {
+      "id": 8,
+      "name": "Total prose under 1500 words",
+      "verdict": "PASS",
+      "evidence": "Word count of docs/design/mcp-cards.md is approximately 520 words. Even with the missing decision memo (0 words) and philosophy edit (0 words), total is well under 1500 words."
+    },
+    {
+      "id": 9,
+      "name": "No em dashes; no banned vocabulary",
+      "verdict": "PASS",
+      "evidence": "Scanned docs/design/mcp-cards.md: no em dashes (\u2014) found; no instances of 'delve', 'leverage', 'seamless', 'robust', 'crucial', 'pivotal'. British English spelling observed (e.g., 'behaviour', 'authored')."
+    },
+    {
+      "id": 10,
+      "name": "No code change; all scripts byte-identical",
+      "verdict": "PASS",
+      "evidence": "git status shows only docs/design/mcp-cards.md as new file. No modifications to scripts/, bin/, or any schema files. All code files remain byte-identical to HEAD."
+    }
+  ],
+  "additional_findings": "Two of three deliverables are missing: memory/decision-mcp-cards.md does not exist, and docs/philosophy.md has not been edited. The design document itself (criterion 1) is well-structured and meets all its section requirements. The missing deliverables are mandatory per the Deliverables list (items 2 and 3).",
+  "overall": "FAIL"
+}

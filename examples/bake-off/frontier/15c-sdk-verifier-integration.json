@@ -1,0 +1,70 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "verifier_identity": "Codex GPT-5.3 <codex-gpt-5-3@local>",
+  "verifier_invocation": "codex exec -C /Users/AnthonyWest/repos/autometta --sandbox workspace-write <verifier prompt for stage 15c>",
+  "ran_at": "2026-05-27T16:03:46Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "CLI transport is default or manifest-selected and uses the existing claude prompt route",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:95-113 resolves AUTOMETTA_CLAUDE_TRANSPORT first, then verifier.claude.transport from the manifest, then defaults to cli; scripts/spawn-verifier.sh:248 logs verifier-transport: <transport> (provenance: <source>); scripts/spawn-verifier.sh:262-265 sends cli transport through op-fetch ... claude --model ... --dangerously-skip-permissions -p \"$prompt\". A temp-repo stub dispatch of examples/self-host/15a-sdk-verifier-probe.md logged 'verifier-transport: cli (provenance: default)' with no manifest and 'verifier-transport: cli (provenance: manifest)' with verifier.claude.transport: cli."
+    },
+    {
+      "id": 2,
+      "name": "SDK transport with claude subscription mode fails closed before invoking any process",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:233-238 checks claude_transport == sdk and absence of ANTHROPIC_API_KEY in auth_pairs, then logs 'verifier.claude.transport=sdk requires auth.claude.mode=api' and exits 1 before the op-fetch branches at scripts/spawn-verifier.sh:250-265. scripts/auth-route.sh:72-85 shows subscription mode for claude emits only CLAUDE_CODE_OAUTH_TOKEN, if available, not ANTHROPIC_API_KEY. A temp-repo stub dispatch with auth.claude.mode: subscription and verifier.claude.transport: sdk exited 1 and made no new op-fetch call."
+    },
+    {
+      "id": 3,
+      "name": "SDK transport with claude api mode invokes verify-sdk.py via op-fetch with derived card and artefact arguments",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:250-261 derives artefact_glob from the stage card, sets sdk_out to repo_root plus state/verifiers/<stage-id>.json, and invokes op-fetch $auth_pairs -- python3 \"$sdk_script\" --stage-id \"$stage_id\" --card \"$card_path\" --artefact-glob \"$artefact_glob\" --out \"$sdk_out\". scripts/auth-route.sh:97-106 emits ANTHROPIC_API_KEY=<op ref> in api mode. A temp-repo stub dispatch logged op-fetch args containing ANTHROPIC_API_KEY=op://TEST/anthropic/credential, python3, scripts/verify-sdk.py, --stage-id 15a-sdk-verifier-probe, --card <card>, --artefact-glob **, and --out <repo>/state/verifiers/15a-sdk-verifier-probe.json."
+    },
+    {
+      "id": 4,
+      "name": "AUTOMETTA_CLAUDE_TRANSPORT=cli overrides a manifest sdk setting and logs env provenance",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:100-103 gives AUTOMETTA_CLAUDE_TRANSPORT precedence over the manifest read at scripts/spawn-verifier.sh:103-110, and scripts/spawn-verifier.sh:248 emits the selected transport and provenance. A temp-repo stub dispatch with manifest verifier.claude.transport: sdk and AUTOMETTA_CLAUDE_TRANSPORT=cli logged 'verifier-transport: cli (provenance: env)' and used the op-fetch ... claude ... -p branch."
+    },
+    {
+      "id": 5,
+      "name": "SDK transport falls back to cli when scripts/verify-sdk.py is missing and warns with the missing path",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:240-246 sets sdk_script to scripts/verify-sdk.py, checks for its absence when sdk transport is selected, logs 'verifier-transport: warning; <path> not found; falling back to cli', and resets the route to cli. scripts/spawn-verifier.sh:248-265 then logs the cli route and dispatches through claude -p. A temp-repo stub dispatch with verify-sdk.py temporarily renamed logged the warning with the full temp path and then 'verifier-transport: cli (provenance: default)'."
+    },
+    {
+      "id": 6,
+      "name": "register-agent.sh receives the same family, role, and identity fields regardless of route",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:177-180 computes verifier_identity, stage_id, family, and log_path once before route selection; scripts/spawn-verifier.sh:273-286 captures the background pid after either dispatch branch and calls register-agent.sh with \"$repo_root\" \"$pid\" \"verifier\" \"$family\" \"$verifier_identity\" \"$card_path\" \"$log_path\" \"$budget_secs\" outside the route-specific if/else. Temp-repo active-agent JSON produced by both cli and sdk stub dispatches carried family=claude, role=verifier, and identity='Claude Opus 4.7 <claude-opus-4-7@local>'."
+    },
+    {
+      "id": 7,
+      "name": "Stage 14 rerun under SDK route produces schema-valid state/verifiers/<stage-id>.json with overall=PASS",
+      "verdict": "FAIL",
+      "evidence": "examples/self-host/15c-sdk-verifier-integration.md:75 requires the worker to run the smoke test against stage 14 under sdk and cli routes, and examples/self-host/15c-sdk-verifier-integration.md:60 states the smoke target is stage 14. The dirty tree contains no state/verifiers/14-auth-route-toggle.json or other state/verifiers/14*.json, while state/verifiers/15c-sdk-verifier-integration-smoke.json exists and reports stage_id '15c-sdk-verifier-integration'. state/logs/15c-sdk-verifier-integration-worker.log says 'AC7 (SDK smoke test against stage 15c produced schema-valid overall=PASS artefact)', confirming the submitted smoke run did not target stage 14. In addition, schemas/verifier.json is absent from the working tree even though examples/self-host/15c-sdk-verifier-integration.md:25 lists it as an input from 15b, so there is no external schema artefact to validate a stage-14 smoke result against."
+    },
+    {
+      "id": 8,
+      "name": "No regressions in stages 06-14 by rerunning stage 14 verifier under both routes and diffing artefacts",
+      "verdict": "FAIL",
+      "evidence": "examples/self-host/15c-sdk-verifier-integration.md:61 requires rerunning stage 14's verifier under both routes and diffing the artefacts with differences limited to wording, not overall or per-criterion status; examples/self-host/15c-sdk-verifier-integration.md:75 repeats that verifier handoff expectation. The dirty tree contains no state/verifiers/14-auth-route-toggle.json and no paired cli/sdk stage-14 artefacts under state/verifiers/. state/logs/15c-sdk-verifier-integration-worker.log says 'AC8 confirmed by git diff showing the original claude -p line untouched', which is not the requested stage-14 rerun-and-diff evidence. git diff -- scripts/spawn-worker.sh bin/autometta scripts/tick.sh is empty, so the out-of-scope files were not changed, but the literal acceptance test for criterion 8 was not performed."
+    },
+    {
+      "id": 9,
+      "name": ".autometta.local.yaml.example documents the flag, env override, and fail-closed condition",
+      "verdict": "PASS",
+      "evidence": ".autometta.local.yaml.example:49-74 adds the verifier transport section, documents cli as the default path and sdk as the opt-in route, states that sdk requires auth.claude.mode: api and fails closed with subscription mode, gives the opt-in steps, and shows AUTOMETTA_CLAUDE_TRANSPORT plus AUTOMETTA_CLAUDE_MODE for A/B route comparison."
+    },
+    {
+      "id": 10,
+      "name": "The cd-fix at 9e282f3 is not reverted",
+      "verdict": "PASS",
+      "evidence": "git show 9e282f3 identifies the regression guard as adding codex exec -C \"$repo_root\" and wrapping claude dispatch in cd \"$repo_root\". The dirty scripts/spawn-verifier.sh preserves codex exec -C \"$repo_root\" at scripts/spawn-verifier.sh:227-230, wraps the new sdk route in cd \"$repo_root\" at scripts/spawn-verifier.sh:255-261, and wraps the cli claude route in cd \"$repo_root\" at scripts/spawn-verifier.sh:263-265."
+    }
+  ],
+  "additional_findings": "Deliverables are otherwise present: scripts/spawn-verifier.sh implements the route, .autometta.local.yaml.example documents it, docs/sdk-verifier.md:54-107 adds the integration section, memory/decision-sdk-verifier-integration.md:8-30 records the required rationale, and CLAUDE.md:127 adds the manual-dispatch note. Two related gaps are worth operator attention: schemas/verifier.json and scripts/validate-verifier-artefacts.sh from the prior 15b card are absent in this dirty tree, and stage 14's card currently names its verifier as 'deferred to operator review at commit' at examples/self-host/14-auth-route-toggle.md:8, so a direct spawn-verifier.sh rerun of that card would not exercise the claude transport without an updated verifier identity or a dedicated smoke harness.",
+  "overall": "FAIL"
+}

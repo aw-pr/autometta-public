@@ -1,0 +1,15 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "candidate": "local-gpt-oss-120b",
+  "base_url": "http://localhost:11434/v1",
+  "model": "gpt-oss:120b",
+  "elapsed_seconds": 95.01,
+  "request_count": 1,
+  "prompt_tokens": 11570,
+  "completion_tokens": 2656,
+  "total_tokens": 14226,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 3597
+}

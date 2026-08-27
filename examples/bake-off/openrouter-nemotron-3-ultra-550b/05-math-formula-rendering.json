@@ -1,0 +1,52 @@
+{
+  "stage_id": "05-math-formula-rendering",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-ultra-550b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-ultra-550b --stage 05-math-formula-rendering",
+  "ran_at": "2026-08-24T12:15:07Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "FAIL",
+      "evidence": "Unable to run npm run verify in this environment. The verification requires executing the build/test suite which is not available in this context. The worker's handoff claims verification passes, but I cannot independently confirm."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md unchanged",
+      "verdict": "PASS",
+      "evidence": "git diff docs/INTERFACE.md shows no changes. The file is unmodified in the working tree."
+    },
+    {
+      "id": 3,
+      "name": "No files under src/sims/** modified",
+      "verdict": "PASS",
+      "evidence": "git diff --name-only src/sims/ returns no output, confirming no kernel files were modified. Formulas live in the UI layer (simView.ts) as required."
+    },
+    {
+      "id": 4,
+      "name": "katex appears in package.json dependencies",
+      "verdict": "PASS",
+      "evidence": "package.json line 18 shows \"katex\": \"^0.16.10\" in dependencies. package-lock.json also updated accordingly."
+    },
+    {
+      "id": 5,
+      "name": "Five required sims show KaTeX-rendered formulas",
+      "verdict": "PASS",
+      "evidence": "simView.ts lines 201-219 define FORMULAS_BY_SLUG with formulas for all five required sims: gray-scott (lines 202-205, two PDEs), mandelbrot (line 207), julia-set (line 210), burning-ship (line 213), lorenz-attractor (lines 216-219, three ODEs). The renderFormula function (lines 1490-1508) uses katex.render with displayMode: false. The formulas are inserted into the 'The maths' section of the about panel (lines 1448-1452). All five required sims have at least one formula string defined."
+    },
+    {
+      "id": 6,
+      "name": "Production build gzip size impact reported",
+      "verdict": "FAIL",
+      "evidence": "No bundle size measurement found in the working tree. The worker's handoff should include 'Bundle size delta (gzipped production build before/after)' but no such report exists in git diff or commit message. Cannot verify the <80 kB gzipped soft cap."
+    },
+    {
+      "id": 7,
+      "name": "No files outside deliverables set modified",
+      "verdict": "FAIL",
+      "evidence": "git diff --name-only shows modifications to src/app/about.ts (new file) and src/app/formulas.ts (not in deliverables). The deliverables list only allows: package.json, package-lock.json, simView.ts, styles.css, a per-sim data file (worker chose inline in simView.ts), and KaTeX CSS import. The new about.ts file and formulas.ts (if exists) are outside the declared deliverables. Additionally, styles.css changes not confirmed."
+    }
+  ],
+  "additional_findings": "Worker added formulas for 13 sims (exceeds minimum 5), which is allowed per 'worker may add more if obvious'. The formulas appear mathematically correct for each kernel (e.g., Gray-Scott uses Du, Dv, F, k matching kernel params; Lorenz uses sigma, rho, beta; Burning Ship uses |Re| + i|Im|). KaTeX CSS import not verified in main.ts or styles.css. The renderFormula function correctly uses katex.render with throwOnError: false. The about.ts file appears to be a new module for the 'About this simulation' content, which may be a refactoring but is outside declared deliverables.",
+  "overall": "FAIL"
+}

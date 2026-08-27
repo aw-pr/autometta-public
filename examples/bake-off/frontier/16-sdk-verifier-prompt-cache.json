@@ -1,0 +1,64 @@
+{
+  "stage_id": "16-sdk-verifier-prompt-cache",
+  "verifier_identity": "Codex GPT-5.3 <codex-gpt-5-3@local>",
+  "verifier_invocation": "codex verifier prompt for stage 16-sdk-verifier-prompt-cache",
+  "ran_at": "2026-05-28T13:36:18Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "verify-sdk help still works",
+      "verdict": "PASS",
+      "evidence": "`python3 scripts/verify-sdk.py --help` exited 0 and printed argparse usage for --stage-id, --card, --artefact-glob, and --out; scripts/verify-sdk.py:28-40 defines those arguments."
+    },
+    {
+      "id": 2,
+      "name": "Cold cache smoke logs write and read=0",
+      "verdict": "FAIL",
+      "evidence": "The stage requires scripts/sdk-cache-smoke.sh for the cold-cache assertion at examples/self-host/16-sdk-verifier-prompt-cache.md:46, but `nl scripts/sdk-cache-smoke.sh` reported no such file. scripts/verify-sdk.py:195-201 writes the verifier artefact without emitting any cache log line."
+    },
+    {
+      "id": 3,
+      "name": "Second smoke run reports cache read hit",
+      "verdict": "FAIL",
+      "evidence": "The required smoke script is specified at examples/self-host/16-sdk-verifier-prompt-cache.md:30 and acceptance requires read>0 at examples/self-host/16-sdk-verifier-prompt-cache.md:47, but scripts/sdk-cache-smoke.sh is absent. scripts/verify-sdk.py:144-153 calls query(prompt=prompt, options=options) with one prompt string rather than cacheable message blocks."
+    },
+    {
+      "id": 4,
+      "name": "Cached block mutation busts cache",
+      "verdict": "FAIL",
+      "evidence": "Acceptance requires a post-mutation read=0 check at examples/self-host/16-sdk-verifier-prompt-cache.md:48, but the smoke script is absent and `rg cache_control scripts docs memory` found no implementation. scripts/verify-sdk.py:105-130 builds one interpolated prompt string with no cache boundary."
+    },
+    {
+      "id": 5,
+      "name": "Cached and non-cached artefacts validate against schema",
+      "verdict": "FAIL",
+      "evidence": "The schema validator contract exists at schemas/verifier.json:8-16 and scripts/verify-sdk.py:197-200 validates and writes one SDK result, but no cached/non-cached smoke outputs were produced because scripts/sdk-cache-smoke.sh is absent despite being required at examples/self-host/16-sdk-verifier-prompt-cache.md:30."
+    },
+    {
+      "id": 6,
+      "name": "Cached and non-cached stage 14 overall values match",
+      "verdict": "FAIL",
+      "evidence": "Acceptance requires comparing cached and non-cached overall values for stage 14 at examples/self-host/16-sdk-verifier-prompt-cache.md:50. No comparison script or output exists: scripts/sdk-cache-smoke.sh is absent, and scripts/verify-sdk.py:195-201 performs only a single verifier run."
+    },
+    {
+      "id": 7,
+      "name": "Prompt caching documentation covers TTL, cached block, and bust boundary",
+      "verdict": "FAIL",
+      "evidence": "The stage requires a Prompt caching section at examples/self-host/16-sdk-verifier-prompt-cache.md:31 and acceptance repeats the required contents at examples/self-host/16-sdk-verifier-prompt-cache.md:51. docs/sdk-verifier.md:67-121 contains Integration into spawn-verifier.sh sections only, and `rg \"Prompt caching\" docs/sdk-verifier.md` found no match."
+    },
+    {
+      "id": 8,
+      "name": "Decision memo links to prior SDK verifier integration decision",
+      "verdict": "FAIL",
+      "evidence": "The stage requires memory/decision-sdk-verifier-prompt-cache.md at examples/self-host/16-sdk-verifier-prompt-cache.md:32 and acceptance requires a [[decision-sdk-verifier-integration]] link at examples/self-host/16-sdk-verifier-prompt-cache.md:52, but `nl memory/decision-sdk-verifier-prompt-cache.md` reported no such file."
+    },
+    {
+      "id": 9,
+      "name": "No files outside deliverables modified",
+      "verdict": "PASS",
+      "evidence": "The deliverables list is limited to scripts/verify-sdk.py, scripts/sdk-cache-smoke.sh, docs/sdk-verifier.md, and memory/decision-sdk-verifier-prompt-cache.md at examples/self-host/16-sdk-verifier-prompt-cache.md:29-32. Before this verifier artefact was written, `git status --short --untracked-files=all` returned no paths."
+    }
+  ],
+  "additional_findings": "The dirty working tree contains no worker changes for this stage; git diff --stat and git diff --name-only returned empty output before the verifier artefact was written.",
+  "overall": "FAIL"
+}

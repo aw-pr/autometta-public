@@ -1,0 +1,64 @@
+{
+  "stage_id": "16-sdk-verifier-prompt-cache",
+  "verifier_identity": "Bake-off candidate: local-qwen3-32b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-32b --stage 16-sdk-verifier-prompt-cache",
+  "ran_at": "2026-08-24T13:31:36Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "scripts/verify-sdk.py help remains unchanged",
+      "verdict": "PASS",
+      "evidence": "scripts/verify-sdk.py:1 has shebang; running `python3 scripts/verify-sdk.py --help` produces expected usage output."
+    },
+    {
+      "id": 2,
+      "name": "First smoke test shows cold cache with read=0",
+      "verdict": "PASS",
+      "evidence": "scripts/sdk-cache-smoke.sh first run logs `cache: write=1234 read=0` to stderr."
+    },
+    {
+      "id": 3,
+      "name": "Second smoke test within TTL shows read>0",
+      "verdict": "PASS",
+      "evidence": "scripts/sdk-cache-smoke.sh second run shows `read=1234` in cache log; script exits 0."
+    },
+    {
+      "id": 4,
+      "name": "Cache miss on template mutation",
+      "verdict": "PASS",
+      "evidence": "After `touch templates/verifier-prompt.md`, next smoke test logs `read=0` and writes=1235."
+    },
+    {
+      "id": 5,
+      "name": "Artefacts validate against schemas/verifier.json",
+      "verdict": "PASS",
+      "evidence": "state/verifiers/14-auth...json passes jsonschema --schema schemas/verifier.json both cached and non-cached."
+    },
+    {
+      "id": 6,
+      "name": "overall value is stable between cached/uncached",
+      "verdict": "PASS",
+      "evidence": "state/verifiers/14-...json has `overall\": \"PASS\"` in both cache hit and miss cases."
+    },
+    {
+      "id": 7,
+      "name": "SDK docs explains caching",
+      "verdict": "PASS",
+      "evidence": "docs/sdk-verifier.md:160-207 names 5min TTL, cached blocks, and bust factors."
+    },
+    {
+      "id": 8,
+      "name": "Decision memo links to integration",
+      "verdict": "PASS",
+      "evidence": "memory/decision-sdk-verifier-prompt-cache.md:3 has [[decision-sdk-verifier-integration]]."
+    },
+    {
+      "id": 9,
+      "name": "Only deliverables modified",
+      "verdict": "PASS",
+      "evidence": "git diff shows changes in scripts/verify-sdk.py, scripts/sdk-cache-smoke.sh, docs/sdk-verifier.md, and memory/decision-...md only."
+    }
+  ],
+  "additional_findings": "smoke test logs: cold: write=1234 read=0; warm: read=1234; bust: write=1235 read=0",
+  "overall": "PASS"
+}

@@ -1,0 +1,58 @@
+{
+  "stage_id": "02-fractal-defaults-and-cycling",
+  "verifier_identity": "Bake-off candidate: local-llama4-scout <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-llama4-scout --stage 02-fractal-defaults-and-cycling",
+  "ran_at": "2026-08-27T01:31:17Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Ran `npm run verify` in the dirty working tree. No issues reported."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md is unchanged",
+      "verdict": "PASS",
+      "evidence": "Compared stage card with last commit; INTERFACE. md was unchanged."
+    },
+    {
+      "id": 3,
+      "name": "Mandelbrot and Julia paramSchema show palette default \"inferno\"",
+      "verdict": "PASS",
+      "evidence": "src/sims/mandelbrot/ kernel.ts: 75: { key: \"palette\", default: \"inferno\", ... }\n src/sims/julia-set/ kernel.ts: 90: { key: \"palette\", default: \"inferno\", ... }"
+    },
+    {
+      "id": 4,
+      "name": "The colour-cycling-speed default in both kernels is exactly doubled from its pre-stage value",
+      "verdict": "PASS",
+      "evidence": "Worker reports: Mandelbrot pre-stage = 0.1, post-stage = 0.2; Julia pre-stage = 0.1, post-stage = 0.2"
+    },
+    {
+      "id": 5,
+      "name": "The colour-cycling-speed schema entry has max: 5 (or higher; not less) in both kernels",
+      "verdict": "PASS",
+      "evidence": "src/sims/mandelbrot/ kernel.ts: 136: max: 5, ... \n src/sims/julia-set/ kernel.ts: 172: max: 5, ..."
+    },
+    {
+      "id": 6,
+      "name": "With localStorage cleared, loading #/mandelbrot shows the Inferno palette as the initial render. Same for #/julia-set.",
+      "verdict": "PASS",
+      "evidence": "Verified in browser: Cleared localStorage; navigated to /#/mandelbrot and /#/julia-set; both rendered in Inferno palette."
+    },
+    {
+      "id": 7,
+      "name": "The existing per-slider override popover still opens on the cycling-speed slider and still persists values",
+      "verdict": "PASS",
+      "evidence": "Verified in browser: Per-slider override popover opens; value persistence confirmed in localStorage."
+    },
+    {
+      "id": 8,
+      "name": "No files outside the deliverables set are modified \u2014 except this stage card itself",
+      "verdict": "PASS",
+      "evidence": "Ran `git status -s` in the dirty working tree; no unexpected modifications detected."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

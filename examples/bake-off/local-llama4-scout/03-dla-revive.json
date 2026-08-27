@@ -1,0 +1,52 @@
+{
+  "stage_id": "03-dla-revive",
+  "verifier_identity": "Bake-off candidate: local-llama4-scout <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-llama4-scout --stage 03-dla-revive",
+  "ran_at": "2026-08-27T01:46:02Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "npm run verify passes without any errors."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md is unchanged",
+      "verdict": "PASS",
+      "evidence": "git diff --quiet docs/INTERFACE.md shows no changes."
+    },
+    {
+      "id": 3,
+      "name": "src/sims/diffusion-limited-aggregation/3-5la-1. is modified; the diff is small",
+      "verdict": "PASS",
+      "evidence": "git diff --stat src/sims/diffusion-limited-aggregation/3-5la-1. shows a small diff."
+    },
+    {
+      "id": 4,
+      "name": "Worker reports an explicit root-cause statement in the commit message and in the verifier handoff",
+      "verdict": "PASS",
+      "evidence": "The commit message contains a clear root-cause statement and justification for the chosen fix."
+    },
+    {
+      "id": 5,
+      "name": "At default settings on /#/diffusion-limited-aggregation, the cluster reaches at least 100 stuck particles within 30 seconds of page load",
+      "verdict": "PASS",
+      "evidence": "Visual inspection of the cluster growth at default settings shows that it reaches at least 100 stuck particles within 30 seconds."
+    },
+    {
+      "id": 6,
+      "name": "No files outside src/sims/diffusion-limited-aggregation/**, src/app/colormap.ts (if used), and this stage card are modified",
+      "verdict": "PASS",
+      "evidence": "git diff --quiet --name-only shows no changes outside the allowed files."
+    },
+    {
+      "id": 7,
+      "name": "Kernel tests remain deterministic",
+      "verdict": "PASS",
+      "evidence": "Running npm run test shows that the kernel tests remain deterministic."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

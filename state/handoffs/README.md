@@ -16,9 +16,11 @@ Worker completion envelopes. Every worker writes `<stage-id>.json` here as its f
 |---|---|
 | Envelope present, `status=pass`, valid schema | Dispatch verifier; proceed normally |
 | Envelope present, `status=fail`, valid schema | Mark stage `failed`; include envelope `notes` in stall marker; do not dispatch verifier |
-| Envelope present, `status=partial`, valid schema | Treat as `fail` (partial is a worker-side annotation; the verifier decides acceptability) |
+| Envelope present, `status=partial`, valid schema | Dispatch verifier, as for `pass`; stamp `worker_envelope: partial` on the stage stanza and hand the envelope `notes` to the verifier as its checklist |
 | Envelope present but schema-invalid | Mark stage `stalled` with marker `worker_envelope_invalid`; move bad file to `<stage-id>.invalid.json` |
 | Worker exits cleanly, no envelope written within poll timeout | Mark stage `stalled` with marker `worker_envelope_missing_after_exit` |
+
+`partial` is a worker-side annotation, not a verdict. It means the worker believes the work is substantially done but deferred some criteria, most often because its sandbox stopped it checking them. The verifier decides whether that is acceptable, so the stage goes to the verifier rather than closing as failed. See `docs/handoff-envelope.md`.
 
 ## Legacy stages
 

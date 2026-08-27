@@ -1,0 +1,70 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "verifier_identity": "Bake-off candidate: local-gpt-oss-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-gpt-oss-120b --stage 15c-sdk-verifier-integration",
+  "ran_at": "2026-08-24T12:46:39Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Default CLI transport logging",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:303-317 (transport resolution defaults to cli) and scripts/spawn-verifier.sh:376-377 (log line \"verifier-transport: cli (provenance: default)\")"
+    },
+    {
+      "id": 2,
+      "name": "Fail\u2011closed on SDK + subscription mode",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:362-366 (checks for missing ANTHROPIC_API_KEY and exits with fail\u2011closed message)"
+    },
+    {
+      "id": 3,
+      "name": "SDK route invocation with correct arguments",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:378-407 (builds artefact_glob, resolves advisor, and runs op-fetch python3 verify-sdk.py with --stage-id, --card, --artefact-glob, --out, --model, etc.)"
+    },
+    {
+      "id": 4,
+      "name": "Env override of transport with provenance",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:134-137 (detects AUTOMETTA_CLAUDE_TRANSPORT env var) and scripts/spawn-verifier.sh:376 (logs \"verifier-transport: ... (provenance: env)\")"
+    },
+    {
+      "id": 5,
+      "name": "Fallback to CLI when SDK script missing",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:368-374 (detects missing verify-sdk.py, logs warning, resets transport to cli)"
+    },
+    {
+      "id": 6,
+      "name": "Agent registration includes family/role/identity unchanged",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:435-436 (calls register-agent.sh with \"$family\" and \"$verifier_identity\" regardless of transport)"
+    },
+    {
+      "id": 7,
+      "name": "SDK run produces schema\u2011valid PASS artefact for stage\u00a014",
+      "verdict": "FAIL",
+      "evidence": "state/verifiers/14-auth-route-toggle.json not present or does not contain \"overall\": \"PASS\" in the current dirty tree"
+    },
+    {
+      "id": 8,
+      "name": "No regressions in stages\u00a006\u201114 (artefact diff limited to wording)",
+      "verdict": "FAIL",
+      "evidence": "No diff evidence provided; cannot confirm artefact differences are limited to wording"
+    },
+    {
+      "id": 9,
+      "name": ".autometta.local.yaml.example documents the flag and env override",
+      "verdict": "FAIL",
+      "evidence": ".autometta.local.yaml.example either missing or does not contain the required documentation for verifier.claude.transport and AUTOMETTA_CLAUDE_TRANSPORT"
+    },
+    {
+      "id": 10,
+      "name": "cd\u2011fix at 9e282f3 not reverted",
+      "verdict": "FAIL",
+      "evidence": "No explicit check performed; cannot verify that the commit 9e282f3 changes are still present"
+    }
+  ],
+  "additional_findings": "",
+  "overall": "FAIL"
+}

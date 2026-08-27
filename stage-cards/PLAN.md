@@ -160,3 +160,48 @@ Pass 3 takes autometta from "local cron + filesystem + git" toward selective use
 - Each design card (20, 22, 24, 26) emits a prose decision rather than code. Verdicts feed future implementation cards.
 - Cards 18, 19, 25 each depend on Tier 0 (now done); queue them in tier order in `state.yaml` before dispatching.
 - Tier 4 (28 + 27) was added 2026-05-28 from a scoping conversation. Card 28 completes the `<role>.<family>.transport` matrix: the Claude verifier SDK route shipped in 15c/16, so the concrete new work is the OpenAI verifier route; the orchestrator-role transport is design-only here and its production path waits on the card-23 verdict. Card 27 parks cloud-hosted orchestration as an explicit future phase, not pass 3, since it pressure-tests the single-machine beliefs in `docs/philosophy.md`.
+
+## Pass 4 — defects and debt found in production (opened 2026-08-14/16)
+
+Cards 29 onward were not planned work. They come from real failures in
+subscriber repos (`emergence-lab`, `emergence-lab-gpu`) and from a repo review
+on 2026-08-16. None are queued in `state.yaml`; queue them in the order below,
+which is severity first, then dependency.
+
+| # | Stage | Status | Card |
+|---|---|---|---|
+| 31 | Budget cap did not stop dispatch: 150x token overrun, ~$1.2k in one day | open — **highest severity**, nothing depends on it | [`31-budget-cap-did-not-stop-dispatch.md`](./31-budget-cap-did-not-stop-dispatch.md) |
+| 29 | Sandboxed worker cannot write its handoff envelope | open — blocks 36 | [`29-run-worktree-state-writable.md`](./29-run-worktree-state-writable.md) |
+| 32 | Cost-log attribution null, per-run totals impossible | open — independent of 31 | [`32-cost-log-attribution-and-totals.md`](./32-cost-log-attribution-and-totals.md) |
+| 33 | Land or retire `feat/control-plane-fixes` (6 stranded commits) | open — read 31 first, they collide in `budget.sh` | [`33-land-or-retire-control-plane-fixes.md`](./33-land-or-retire-control-plane-fixes.md) |
+| 30 | Effort flags reach the CLI as one argv element | **done** — `8a77b08`, not yet in the installed keg | [`30-effort-flags-ifs-wordsplit.md`](./30-effort-flags-ifs-wordsplit.md) |
+| 34 | Effort silently inert on the panel and SDK verifier routes | open — follows 30 | [`34-effort-inert-on-panel-and-sdk-routes.md`](./34-effort-inert-on-panel-and-sdk-routes.md) |
+| 35 | An instant CLI usage error should not burn a verifier retry | open — raised by 30, deliberately deferred | [`35-usage-error-should-not-burn-a-retry.md`](./35-usage-error-should-not-burn-a-retry.md) |
+| 36 | Re-render the keg, recover `emergence-lab`'s five broken stages | open — blocked by 29 and 30 | [`36-ship-fixes-and-recover-emergence-lab.md`](./36-ship-fixes-and-recover-emergence-lab.md) |
+| 37 | Idle ticks consume the whole day's tick budget; SCHEDULED panel reports a queue that does not exist | open — **fleet is halted on this now**, read 31 first | [`37-idle-ticks-consume-the-day.md`](./37-idle-ticks-consume-the-day.md) |
+| 38 | Ticker shows no spend; no fleet summary pane; stale viewer sessions | open — blocked by 37 | [`38-ticker-shows-spend-and-a-fleet-pane.md`](./38-ticker-shows-spend-and-a-fleet-pane.md) |
+
+### Operator notes (pass 4)
+
+- **Card 31 first.** The budget file is the only safety in the design and it
+  did not hold: `emergence-lab-gpu` spent 149.7M tokens against a 1M cap on
+  2026-08-15 and burned 470 clock ticks against a cap of 100. The queue drained
+  and every stage passed, so nothing looked wrong at the time. Until this is
+  fixed, treat any unattended loop as unbounded and check `state/budget.json`
+  by hand before leaving one running.
+- Cards 31 and 32 are independent. Over-counting tokens would have made the cap
+  halt *sooner*, so the accounting defects are not the overrun's cause; 31
+  deliberately takes the figures at face value.
+- Card 33 collides with `dev` in `scripts/budget.sh`: the stranded
+  `b2859b8 fix(budget): self-clearing halts` and dev's `9666f16` window reset
+  are two answers to the same problem. Do not land both.
+- Card 30 is fixed on `dev` but the installed keg is at `496c7cc`, so every
+  subscriber still runs the bug. Card 36 ships it.
+- `dev` is ahead of `origin/dev` and has not been pushed.
+- **Card 37 is the live one (2026-08-23).** Every enabled subscriber is halted
+  on `tick-cap` with an empty queue, five of them having spent zero tokens to
+  get there, so no overnight window has run work in days. Two contributing
+  faults: an idle tick costs the same as a dispatched one, and a second
+  fleet-wide launchd tick job was added on 2026-08-19 despite the fleet plist's
+  own comment forbidding exactly that. The operator's ticker showed a full
+  queue throughout, which is card 37's third defect.

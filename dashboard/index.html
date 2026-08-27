@@ -11,10 +11,32 @@
     <h1>autometta cost dashboard</h1>
     <div class="meta">
       <span id="generated-at">loading...</span>
+      <span id="drain-banner"></span>
     </div>
   </header>
 
   <main>
+    <section class="panel" id="panel-agents">
+      <h2>Agents and queue</h2>
+      <div id="agents-table-wrap"></div>
+    </section>
+
+    <section class="panel" id="panel-failures">
+      <h2>Failures</h2>
+      <div id="failures-table-wrap"></div>
+    </section>
+
+    <section class="panel" id="panel-spend">
+      <h2>Spend</h2>
+      <p id="spend-total"></p>
+      <div id="spend-table-wrap"></div>
+    </section>
+
+    <section class="panel" id="panel-quota">
+      <h2>Provider windows</h2>
+      <div id="quota-table-wrap"></div>
+    </section>
+
     <section class="panel" id="panel-repos">
       <h2>Per repo</h2>
       <div id="repos-grid" class="grid"></div>
@@ -46,6 +68,7 @@
     </section>
   </main>
 
+  <script src="data.js"></script>
   <script src="vendor/chart.min.js"></script>
   <script src="dashboard.js"></script>
 </body>

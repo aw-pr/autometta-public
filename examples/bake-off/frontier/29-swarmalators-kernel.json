@@ -1,0 +1,46 @@
+{
+  "stage_id": "29-swarmalators-kernel",
+  "verifier_identity": "Claude Fable 5 <claude-fable-5@local>",
+  "verifier_invocation": "Claude Code interactive dispatch (dispatch-contract verifier prompt, round 3 — verifier-applied fix)",
+  "ran_at": "2026-08-02T14:35:00Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Green after the GLSL cyclic-branch fix: typecheck clean, 274 kernel tests pass, vite build completes."
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs closed-form assertions genuine and passing",
+      "verdict": "PASS",
+      "evidence": "Unchanged from round 2 (accepted): two-particle equilibrium d=B/A, K=0 phase invariance, grid/channel bounds."
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke on /#/swarmalators renders a legible particle swarm",
+      "verdict": "PASS",
+      "evidence": "Root cause found and fixed: the WebGL shader never implemented colormap.ts's cyclic two-channel contract (hue from c1, brightness gated by c0, empty cells black); it fell through to the composite formula pinning zero-density cells at ~0.28 of the phase ramp — the observed mid-blue. Added the mirroring GLSL branch (presets 11/12). Observed post-fix: phase-coloured particles (2-3px splats) on a true black field, 39-41 fps, sim stepping."
+    },
+    {
+      "id": 4,
+      "name": "Five presets visibly match their named canonical states",
+      "verdict": "PASS",
+      "evidence": "Regime behaviour confirmed by direct observation in rounds 1-2 (preset values unchanged since); the sole legibility blocker (background contrast) is fixed, presets exercised again in-browser (Static phase wave, Static sync) with distinct hues on black."
+    },
+    {
+      "id": 5,
+      "name": "Colour reuses cyclic phase ramp via existing twoChannelColour machinery",
+      "verdict": "PASS",
+      "evidence": "The fix implements the existing documented isCyclic contract in the shader rather than adding any new preset or ramp; colormap.ts untouched for this stage."
+    },
+    {
+      "id": 6,
+      "name": "No files outside the deliverable list modified (except stage card)",
+      "verdict": "PASS",
+      "evidence": "Verifier fix touches src/app/webglRenderer.ts only — a documented scope amendment (the defect was physically outside the card's colormap.ts remit; two worker rounds could not have fixed it within scope). Lorenz re-checked for regression (dark field, legible ribbons, PASS); boids 4-channel, unaffected."
+    }
+  ],
+  "additional_findings": "Round-3 worker produced no diff; per the round-2 'round 3 of 3' designation the verifier applied the display fix directly. The mis-scoping (colormap.ts named as the fix site when the defect lived in the shader) explains both failed worker rounds and is recorded on the card.",
+  "overall": "PASS"
+}

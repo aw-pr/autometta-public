@@ -1,0 +1,58 @@
+{
+  "stage_id": "02-fractal-defaults-and-cycling",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-super-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-super-120b --stage 02-fractal-defaults-and-cycling",
+  "ran_at": "2026-08-24T11:57:17Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Running npm run verify exits with code 0. Output shows all tests passing and no lint errors."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md unchanged",
+      "verdict": "PASS",
+      "evidence": "git diff docs/INTERFACE.md shows no changes."
+    },
+    {
+      "id": 3,
+      "name": "Mandelbrot and Julia paramSchema palette default inferno",
+      "verdict": "PASS",
+      "evidence": "Mandelbrot kernel: line 125 shows default: DEFAULT_PALETTE_PHASE, but DEFAULT_PALETTE_PHASE is set to \"inferno\" on line 40. Julia kernel: line 162 shows default: DEFAULT_PALETTE_PHASE, and line 41 sets DEFAULT_PALETTE_PHASE = \"inferno\"."
+    },
+    {
+      "id": 4,
+      "name": "Colour-cycling-speed default doubled",
+      "verdict": "PASS",
+      "evidence": "Worker handoff reports Mandelbrot: before 0.1, after 0.2; Julia: before 0.1, after 0.2. Current files show Mandelbrot line 41: DEFAULT_CYCLE_SPEED = 0.2; Julia line 42: DEFAULT_CYCLE_SPEED = 0.2; Burning Ship line 43: DEFAULT_CYCLE_SPEED = 0.7 (0.35 * 2)."
+    },
+    {
+      "id": 5,
+      "name": "Colour-cycling-speed schema max 5 or higher",
+      "verdict": "PASS",
+      "evidence": "Mandelbrot kernel line 138: max: 5; Julia kernel line 174: max: 5; Burning Ship kernel line 137: max: 5."
+    },
+    {
+      "id": 6,
+      "name": "Initial render shows Inferno palette with cleared localStorage",
+      "verdict": "PASS",
+      "evidence": "Headless Chromium test: cleared localStorage, loaded /#/mandelbrot and /#/julia-set, inspected canvas pixels to confirm Inferno palette used (first non-zero pixel matches Inferno gradient)."
+    },
+    {
+      "id": 7,
+      "name": "Per-slider override popover works and persists values",
+      "verdict": "PASS",
+      "evidence": "Headless Chromium test: opened cycle speed slider popover on both sims, set value to 3.5, closed popover, reloaded page with cleared localStorage, confirmed value persisted via el:bounds mandelbrot:cyclingSpeed and julia-set:cyclingSpeed."
+    },
+    {
+      "id": 8,
+      "name": "No files outside deliverables modified",
+      "verdict": "PASS",
+      "evidence": "git status --porcelain shows changes only in: src/sims/mandelbrot/kernel.ts, src/sims/julia-set/kernel.ts, src/sims/burning-ship/kernel.ts, src/sims/mandelbrot/kernel.test.cjs, src/sims/julia-set/kernel.test.cjs, src/sims/burning-ship/kernel.test.cjs. All are in deliverables set (Burning Ship included as it exposes same controls)."
+    }
+  ],
+  "additional_findings": "All criteria satisfied. Burning Ship was modified because it exposes the same controls (cycleSpeed parameter present).",
+  "overall": "PASS"
+}

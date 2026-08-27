@@ -53,25 +53,46 @@ auth_route_for_family() {
     mode="$(yq -r ".auth.${family}.mode // \"\"" "$manifest" 2>/dev/null || true)"
   fi
   case "${mode:-subscription}" in
-    api) printf 'api\n' ;;
-    *)   printf 'subscription\n' ;;
+    api)   printf 'api\n' ;;
+    local) printf 'local\n' ;;
+    *)     printf 'subscription\n' ;;
   esac
 }
 
-# Parse a worker/verifier log into an "INPUT CACHED OUTPUT" token triple.
+# Parse a worker/verifier dispatch into an "INPUT CACHED OUTPUT" token triple.
 #
-# Fidelity depends on what the route emits (see docs/cost-log.md):
+# When work_dir and family are supplied and a matching harness transcript
+# exists, the transcript wins outright: every route below reads stdout,
+# which for `claude -p --output-format json` is written only on a clean exit,
+# so a role killed at the dispatch timeout parsed as zero. The transcript is
+# appended per turn and survives the kill. since_epoch scopes the sum to this
+# dispatch so a reused worktree does not re-bill an earlier stage.
+#
+# Otherwise fidelity depends on what the route emits (see docs/cost-log.md):
 #   - SDK verifier route:  `cache: write=W read=R input=I output=O`
 #       -> input = I + W (fresh input, cache writes folded in), cached = R,
-#          output = O. This is the one route with a true breakdown today.
+#          output = O.
 #   - claude --output-format json: a usage object carrying input_tokens,
 #       output_tokens, cache_creation_input_tokens, cache_read_input_tokens.
-#   - codex / claude text: total-only ("tokens used\n<N>" or
-#       "Total tokens: <N>") -> the total lands in INPUT, cached/output 0.
+# Total-only stdout is deliberately not converted into a false breakdown.
+# costlog_append records that separately with usage_status=total_only.
 #
 # Prints the triple on success, an empty line when nothing could be parsed.
 costlog_parse_breakdown() {
   local log_path="$1"
+  local work_dir="${2:-}"
+  local since_epoch="${3:-0}"
+  local family="${4:-claude}"
+
+  if [[ -n "$work_dir" ]]; then
+    local from_transcript
+    from_transcript="$(budget_parse_dispatch_tokens_from_transcript "$work_dir" "$since_epoch" "$family")"
+    if [[ -n "$from_transcript" ]]; then
+      printf '%s\n' "$from_transcript"
+      return 0
+    fi
+  fi
+
   if [[ ! -f "$log_path" ]]; then
     printf '\n'
     return 0
@@ -121,20 +142,46 @@ PY
     return 0
   fi
 
-  # Total-only fallback: reuse the audited awk parser from budget.sh.
-  local total
-  total="$(budget_parse_tokens_from_log "$log_path")"
-  if [[ -n "$total" && "$total" =~ ^[0-9]+$ ]]; then
-    printf '%s 0 0\n' "$total"
-  else
-    printf '\n'
-  fi
+  printf '\n'
+}
+
+# Parse the advisor line verify-sdk.py emits when --advisor is used:
+#   "advisor: model=<m> input=<I> output=<O>"
+# Prints "MODEL INPUT OUTPUT" when present, nothing otherwise. The advisor is
+# a distinct (stronger) tier from the request model — historically its tokens
+# were dropped on the floor because costlog_parse_breakdown returns on the
+# request model's `cache:` line and never reads this one, so the most
+# expensive tier's spend was invisible to FinOps. costlog_append costs it
+# separately at its own tier rate.
+costlog_parse_advisor() {
+  local log_path="$1"
+  [[ -f "$log_path" ]] || return 0
+  python3 - "$log_path" <<'PY'
+import re
+import sys
+
+try:
+    text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+except OSError:
+    sys.exit(0)
+
+# Last occurrence wins, mirroring costlog_parse_breakdown's "last cache: line".
+matches = re.findall(r"advisor:\s*model=(\S+)\s+input=(\d+)\s+output=(\d+)", text)
+if matches:
+    model, inp, out = matches[-1]
+    print(f"{model} {inp} {out}")
+PY
 }
 
 # Append one cost-log line for a dispatched role.
 #
 # Args:
 #   repo_root stage_id role identity log_path wall_clock_s result
+#   [work_dir] [since_epoch]
+#
+# work_dir/since_epoch are optional. When given, family selects the matching
+# Claude Code or Codex transcript reader. Both survive a killed role better
+# than terminal output and both expose the full token breakdown.
 #
 # role:   worker | verifier
 # result: pass | fail | partial | stalled | aborted | no-artefact (free-form;
@@ -151,6 +198,8 @@ costlog_append() {
   local log_path="$5"
   local wall_clock_s="${6:-0}"
   local result="${7:-unknown}"
+  local work_dir="${8:-}"
+  local since_epoch="${9:-0}"
 
   local family tier auth_route repo_name out_file ts breakdown
   family="$(costlog_family_for_identity "$identity")"
@@ -160,16 +209,28 @@ costlog_append() {
   out_file="$repo_root/state/cost-log.jsonl"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  breakdown="$(costlog_parse_breakdown "$log_path")"
-  local input_tokens cached_tokens output_tokens
+  breakdown="$(costlog_parse_breakdown "$log_path" "$work_dir" "$since_epoch" "$family")"
+  local input_tokens cached_tokens output_tokens total_tokens usage_status
   if [[ -n "$breakdown" ]]; then
     # Explicit space IFS: callers (budget.sh) set IFS=$'\n\t', which would
     # otherwise leave the whole triple in the first variable.
     IFS=' ' read -r input_tokens cached_tokens output_tokens <<<"$breakdown"
+    total_tokens=$(( input_tokens + cached_tokens + output_tokens ))
+    usage_status="recorded"
+  else
+    total_tokens="$(budget_parse_tokens_from_log "$log_path")"
+    if [[ -n "$total_tokens" && "$total_tokens" =~ ^[0-9]+$ ]]; then
+      usage_status="total_only"
+    else
+      total_tokens="null"
+      usage_status="unknown"
+      printf 'WARNING: usage unknown for %s/%s (%s); cost-log row records null token fields\n' \
+        "$stage_id" "$role" "$identity" >&2
+    fi
+    input_tokens="null"
+    cached_tokens="null"
+    output_tokens="null"
   fi
-  input_tokens="${input_tokens:-0}"
-  cached_tokens="${cached_tokens:-0}"
-  output_tokens="${output_tokens:-0}"
 
   if [[ ! "$wall_clock_s" =~ ^[0-9]+$ ]]; then
     wall_clock_s=0
@@ -179,31 +240,66 @@ costlog_append() {
   rates="$(rate_for_tier "$tier")"
   IFS=' ' read -r rin rcached rout <<<"$rates"
 
+  # Advisor (Fable et al.) is a separate, stronger tier consulted at the
+  # decision point. Cost it at its own tier rate so the priciest tokens in
+  # the run are not invisible. No cache breakdown is emitted for the advisor,
+  # so its input is billed at the plain input rate (cached rate unused).
+  local advisor_raw adv_model adv_in adv_out adv_tier adv_rates arin arout
+  advisor_raw="$(costlog_parse_advisor "$log_path")"
+  if [[ -n "$advisor_raw" ]]; then
+    IFS=' ' read -r adv_model adv_in adv_out <<<"$advisor_raw"
+    adv_tier="$(tier_for_identity "$adv_model")"
+    adv_rates="$(rate_for_tier "$adv_tier")"
+    IFS=' ' read -r arin _ arout <<<"$adv_rates"
+  fi
+  adv_model="${adv_model:-}"
+  adv_in="${adv_in:-0}"
+  adv_out="${adv_out:-0}"
+  adv_tier="${adv_tier:-}"
+  arin="${arin:-0}"
+  arout="${arout:-0}"
+
   mkdir -p "$repo_root/state"
   if ! python3 - "$out_file" "$ts" "$repo_name" "$stage_id" "$role" "$identity" \
       "$tier" "$auth_route" "$input_tokens" "$cached_tokens" "$output_tokens" \
-      "$wall_clock_s" "$result" "$rin" "$rcached" "$rout" <<'PY'
+      "$total_tokens" "$usage_status" "$wall_clock_s" "$result" "$rin" "$rcached" "$rout" \
+      "$adv_model" "$adv_tier" "$adv_in" "$adv_out" "$arin" "$arout" <<'PY'
 import json
 import sys
 
 (out_file, ts, repo, stage_id, role, identity, tier, auth_route,
- input_tokens, cached_tokens, output_tokens, wall_clock_s, result,
- rin, rcached, rout) = sys.argv[1:]
+ input_tokens, cached_tokens, output_tokens, total_tokens, usage_status,
+ wall_clock_s, result,
+ rin, rcached, rout,
+ adv_model, adv_tier, adv_in, adv_out, arin, arout) = sys.argv[1:]
 
-input_tokens = int(input_tokens)
-cached_tokens = int(cached_tokens)
-output_tokens = int(output_tokens)
+def optional_int(value):
+    return None if value == "null" else int(value)
+
+input_tokens = optional_int(input_tokens)
+cached_tokens = optional_int(cached_tokens)
+output_tokens = optional_int(output_tokens)
+total_tokens = optional_int(total_tokens)
 wall_clock_s = int(wall_clock_s)
 rin, rcached, rout = float(rin), float(rcached), float(rout)
 
-cost = (
-    input_tokens * rin
-    + cached_tokens * rcached
-    + output_tokens * rout
-) / 1_000_000.0
+cost = None
+if usage_status == "recorded":
+    cost = (
+        input_tokens * rin
+        + cached_tokens * rcached
+        + output_tokens * rout
+    ) / 1_000_000.0
 
-total_input = input_tokens + cached_tokens
-cache_hit_rate = (cached_tokens / total_input) if total_input > 0 else 0.0
+adv_in = int(adv_in)
+adv_out = int(adv_out)
+arin, arout = float(arin), float(arout)
+advisor_cost = (adv_in * arin + adv_out * arout) / 1_000_000.0
+
+cache_hit_rate = None
+if usage_status == "recorded":
+    total_input = input_tokens + cached_tokens
+    cache_hit_rate = (cached_tokens / total_input) if total_input > 0 else 0.0
 
 line = {
     "ts": ts,
@@ -216,9 +312,17 @@ line = {
     "input_tokens": input_tokens,
     "cached_input_tokens": cached_tokens,
     "output_tokens": output_tokens,
+    "total_tokens": total_tokens,
+    "usage_status": usage_status,
     "wall_clock_s": wall_clock_s,
-    "cost_usd_est": round(cost, 6),
-    "cache_hit_rate": round(cache_hit_rate, 4),
+    "cost_usd_est": round(cost, 6) if cost is not None else None,
+    "advisor_model": adv_model or None,
+    "advisor_tier": adv_tier or None,
+    "advisor_input_tokens": adv_in,
+    "advisor_output_tokens": adv_out,
+    "advisor_cost_usd_est": round(advisor_cost, 6),
+    "total_cost_usd_est": round(cost + advisor_cost, 6) if cost is not None else None,
+    "cache_hit_rate": round(cache_hit_rate, 4) if cache_hit_rate is not None else None,
     "result": result,
 }
 with open(out_file, "a", encoding="utf-8") as fh:
@@ -230,7 +334,11 @@ PY
     return 0
   fi
 
-  printf 'costlog_append: %s %s tier=%s route=%s in=%s cached=%s out=%s result=%s\n' \
-    "$stage_id" "$role" "$tier" "$auth_route" "$input_tokens" "$cached_tokens" \
-    "$output_tokens" "$result" >&2
+  printf 'costlog_append: %s %s tier=%s route=%s usage=%s in=%s cached=%s out=%s total=%s result=%s\n' \
+    "$stage_id" "$role" "$tier" "$auth_route" "$usage_status" "$input_tokens" "$cached_tokens" \
+    "$output_tokens" "$total_tokens" "$result" >&2
+  if [[ -n "$adv_model" ]]; then
+    printf 'costlog_append:   advisor=%s tier=%s in=%s out=%s\n' \
+      "$adv_model" "$adv_tier" "$adv_in" "$adv_out" >&2
+  fi
 }

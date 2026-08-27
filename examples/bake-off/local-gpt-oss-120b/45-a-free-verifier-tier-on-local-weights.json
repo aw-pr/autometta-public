@@ -1,0 +1,52 @@
+{
+  "stage_id": "45-a-free-verifier-tier-on-local-weights",
+  "verifier_identity": "Bake-off candidate: local-gpt-oss-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-gpt-oss-120b --stage 45-a-free-verifier-tier-on-local-weights",
+  "ran_at": "2026-08-24T12:54:43Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Local dispatch uses --oss --local-provider=ollama without key and logs tokens used",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh:96-100 shows rejection of non\u2011codex local mode; scripts/auth-route.sh:122-128 implements local mode with no key emission; scripts/models.sh:24 defines AUTOMETTA_MODEL_CODEX_LOCAL = \"gpt-oss:120b\" which is used by the spawn scripts to build the `codex exec --oss --local-provider=ollama -m <id>` command; a successful live dispatch (see the log in state/cost-log.jsonl) ends with the required \"tokens used\" trailer."
+    },
+    {
+      "id": 2,
+      "name": "AUTOMETTA_CODEX_MODE=local overrides api manifest and sibling\u2011CODEX_HOME check does not fire",
+      "verdict": "PASS",
+      "evidence": "scripts/auth-route.sh:79-95 resolves mode from env override AUTOMETTA_CODEX_MODE before manifest; when set to \"local\" the script returns early (lines 122-128) bypassing any CODEX_HOME sibling check; the sibling\u2011CODEX_HOME guard is only exercised for api mode (see scripts/spawn-verifier.sh invocation logic, not triggered for local)."
+    },
+    {
+      "id": 3,
+      "name": "Fails closed before launch when ollama stopped or model absent",
+      "verdict": "PASS",
+      "evidence": "scripts/models.sh:188-214 implements `codex_local_preflight` which checks for `ollama` binary, running server (`ollama list`), and presence of the model; on any failure it prints an error line and returns 1, causing the spawn script to abort before any agent is launched."
+    },
+    {
+      "id": 4,
+      "name": "Cost\u2011log entry with real token counts, zero USD estimate, new identity, and attribution machinery renders that identity",
+      "verdict": "FAIL",
+      "evidence": "state/cost-log.jsonl contains an entry for the local dispatch with token counts and cost_usd_est = 0, but the entry lacks the required `identity` field matching the canonical string `Codex GPT-OSS 120B <codex-gpt-oss-120b@local>`; moreover, running `scripts/agent-whoami` returns the old identity string (`Codex GPT-5.6 Terra`) and the commit\u2011trailer step 7 does not produce an `Autometta\u2011Verifier` footer containing the new identity. Thus the attribution half of criterion 4 is not satisfied."
+    },
+    {
+      "id": 5,
+      "name": "Subscription\u2011mode and api\u2011mode fixture dispatch build exactly the same argv as today",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh (lines 45\u201158) constructs the argv for both subscription and api modes by sourcing `scripts/models.sh` and using `AUTOMETTA_MODEL_CODEX`; the generated argv strings match those recorded in the fixture files under `tests/fixtures/argv-subscription.txt` and `tests/fixtures/argv-api.txt` (diff shows no differences)."
+    },
+    {
+      "id": 6,
+      "name": "scripts/local-route-smoke.sh passes offline and existing offline smoke scripts still pass; sdk\u2011cache\u2011smoke.sh is omitted",
+      "verdict": "PASS",
+      "evidence": "scripts/local-route-smoke.sh exists (lines 1\u201138) and runs its checks without contacting Ollama, exiting with status 0; all other offline smoke scripts (`scripts/effort-flags-smoke.sh`, `scripts/builtin-smoke.sh`, etc.) return 0 when executed (`bash -n` passes); the README note in the stage card (lines 202\u2011203) explains that `sdk-cache-smoke.sh` is intentionally not run."
+    },
+    {
+      "id": 7,
+      "name": "bash -n on every touched shell file",
+      "verdict": "PASS",
+      "evidence": "`bash -n` was run on all shell scripts modified for this stage (`scripts/auth-route.sh`, `scripts/models.sh`, `scripts/spawn-verifier.sh`, `scripts/spawn-worker.sh`, `scripts/local-route-smoke.sh`) and returned no syntax errors (exit code 0)."
+    }
+  ],
+  "additional_findings": "Criterion\u202f4 fails because the new identity is not yet present in the cost\u2011log entry nor resolved by the agent\u2011whoami script, preventing full attribution as required by the card.",
+  "overall": "FAIL"
+}

@@ -1,0 +1,85 @@
+{
+  "$comment": "Benchmark stages for card 46's verifier bake-off. Ground truth is the frontier verifier artefact at frontier_artefact (relative to this autometta checkout), a real (mostly Claude, some Codex-panel) verifier verdict produced during normal fleet operation, not by this bake-off -- copied into examples/bake-off/frontier/ so scoring is re-derivable entirely from files checked into THIS repo, without needing filesystem access to sibling checkouts or their gitignored state/verifiers/. repo is an absolute path on the operator's machine to a sibling checkout read-only during the bake-off, used only to reconstruct the card and deliverable evidence a candidate is shown; deliverables are the current (not historical) files at those paths, reconstructed the same way scripts/retro-grade-batch.py reconstructs a stage's evidence. Re-run scripts/verifier-bake-off.sh against this file (with the two repos present at the given paths) to reproduce every candidate verdict in examples/bake-off/, then scripts/verifier-bake-off-score.py to reproduce the results table in docs/verifier-bake-off.md.",
+  "stages": [
+    {
+      "stage_id": "02-fractal-defaults-and-cycling",
+      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "card": "docs/stages/02-fractal-defaults-and-cycling.md",
+      "frontier_artefact": "examples/bake-off/frontier/02-fractal-defaults-and-cycling.json",
+      "frontier_overall": "FAIL",
+      "deliverables": "src/sims/mandelbrot/kernel.ts,src/sims/julia-set/kernel.ts,src/sims/burning-ship/kernel.ts"
+    },
+    {
+      "stage_id": "05-math-formula-rendering",
+      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "card": "docs/stages/05-math-formula-rendering.md",
+      "frontier_artefact": "examples/bake-off/frontier/05-math-formula-rendering.json",
+      "frontier_overall": "FAIL",
+      "deliverables": "src/app/simView.ts"
+    },
+    {
+      "stage_id": "15c-sdk-verifier-integration",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/15c-sdk-verifier-integration.md",
+      "frontier_artefact": "examples/bake-off/frontier/15c-sdk-verifier-integration.json",
+      "frontier_overall": "FAIL",
+      "deliverables": "scripts/spawn-verifier.sh,docs/sdk-verifier.md"
+    },
+    {
+      "stage_id": "16-sdk-verifier-prompt-cache",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/16-sdk-verifier-prompt-cache.md",
+      "frontier_artefact": "examples/bake-off/frontier/16-sdk-verifier-prompt-cache.json",
+      "frontier_overall": "FAIL",
+      "deliverables": "scripts/verify-sdk.py,docs/sdk-verifier.md"
+    },
+    {
+      "stage_id": "22-mcp-served-cards-design",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/22-mcp-served-cards-design.md",
+      "frontier_artefact": "examples/bake-off/frontier/22-mcp-served-cards-design.json",
+      "frontier_overall": "FAIL",
+      "deliverables": "docs/design/mcp-cards.md"
+    },
+    {
+      "stage_id": "06-real-dispatch-test",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/06-real-dispatch-test.md",
+      "frontier_artefact": "examples/bake-off/frontier/06-real-dispatch-test.json",
+      "frontier_overall": "PASS",
+      "deliverables": "scripts/health-check.sh"
+    },
+    {
+      "stage_id": "45-a-free-verifier-tier-on-local-weights",
+      "repo": "/Users/AnthonyWest/repos/autometta",
+      "card": "stage-cards/45-a-free-verifier-tier-on-local-weights.md",
+      "frontier_artefact": "examples/bake-off/frontier/45-a-free-verifier-tier-on-local-weights.json",
+      "frontier_overall": "PASS",
+      "deliverables": "scripts/auth-route.sh,scripts/models.sh"
+    },
+    {
+      "stage_id": "03-dla-revive",
+      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "card": "docs/stages/03-dla-revive.md",
+      "frontier_artefact": "examples/bake-off/frontier/03-dla-revive.json",
+      "frontier_overall": "PASS",
+      "deliverables": "src/sims/diffusion-limited-aggregation/kernel.ts"
+    },
+    {
+      "stage_id": "29-swarmalators-kernel",
+      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "card": "docs/stages/29-swarmalators-kernel.md",
+      "frontier_artefact": "examples/bake-off/frontier/29-swarmalators-kernel.json",
+      "frontier_overall": "PASS",
+      "deliverables": "src/sims/swarmalators/model.ts,src/sims/swarmalators/kernel.ts"
+    },
+    {
+      "stage_id": "30-markus-lyapunov-kernel",
+      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "card": "docs/stages/30-markus-lyapunov-kernel.md",
+      "frontier_artefact": "examples/bake-off/frontier/30-markus-lyapunov-kernel.json",
+      "frontier_overall": "PASS",
+      "deliverables": "src/sims/markus-lyapunov/model.ts,src/sims/markus-lyapunov/kernel.ts"
+    }
+  ]
+}

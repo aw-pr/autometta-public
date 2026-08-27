@@ -3,7 +3,13 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root, not the resolved root: the plist template and the fallback binary are assets of
+# the tree this script is part of. Which root the installed tick then runs is
+# the plist's own AUTOMETTA_ROOT, an operator decision, not this script's.
+autometta_root="$(autometta_self_root "$script_dir")"
+controller_home="$(autometta_controller_home)"
 default_interval=300
 
 usage() {
@@ -134,7 +140,8 @@ mkdir -p "$HOME/Library/LaunchAgents" "$log_dir"
 plist_file="$HOME/Library/LaunchAgents/${label}.plist"
 path_value="${AUTOMETTA_LAUNCHAGENT_PATH:-$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 
-replace_placeholder REPO_PATH "$repo_path" < "$repo_template" \
+replace_placeholder AUTOMETTA_HOME "$controller_home" < "$repo_template" \
+  | replace_placeholder REPO_PATH "$controller_home" \
   | replace_placeholder LABEL "$label" \
   | replace_placeholder INTERVAL_SECONDS "$interval" \
   | replace_placeholder AUTOMETTA_BIN "$autometta_bin" \

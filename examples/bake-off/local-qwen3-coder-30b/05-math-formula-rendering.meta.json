@@ -1,0 +1,15 @@
+{
+  "stage_id": "05-math-formula-rendering",
+  "candidate": "local-qwen3-coder-30b",
+  "base_url": "http://localhost:11434/v1",
+  "model": "qwen3-coder:30b",
+  "elapsed_seconds": 95.6,
+  "request_count": 1,
+  "prompt_tokens": 27386,
+  "completion_tokens": 712,
+  "total_tokens": 28098,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 2451
+}

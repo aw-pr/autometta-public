@@ -10,7 +10,7 @@
 # Fixed panel composition for v1:
 #   panel-0: Claude Opus 4.8  via SDK (scripts/verify-sdk.py --model claude-opus-4-8)
 #   panel-1: Claude Sonnet 4.6 via SDK (scripts/verify-sdk.py --model claude-sonnet-4-6)
-#   panel-2: Codex GPT-5.3    via codex exec
+#   panel-2: GPT-5.6 Sol      via codex exec
 #
 # Requires: auth.claude.mode: api (ANTHROPIC_API_KEY must be in claude auth_pairs).
 # A panellist crash (no artefact returned) counts as no-vote.
@@ -20,13 +20,15 @@ IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
+# shellcheck source=resolve-root.sh
+source "$script_dir/resolve-root.sh"
 source "$script_dir/budget.sh"
 # shellcheck source=./models.sh
 source "$script_dir/models.sh"
 
 PANELLIST_OPUS="Claude Opus 4.8 <claude-opus-4-8@local>"
 PANELLIST_SONNET="Claude Sonnet 4.6 <claude-sonnet-4-6@local>"
-PANELLIST_CODEX="Codex GPT-5.3 <codex-gpt-5-3@local>"
+PANELLIST_CODEX="GPT-5.6 Sol <gpt-5-6-sol@local>"
 
 QUORUM_REQUIRED=2
 POLL_INTERVAL=10
@@ -77,6 +79,14 @@ budget_secs_from_card() {
   printf '%s\n' "$budget_secs"
 }
 
+resolve_panel_codex_sandbox() {
+  local repo_root="$1"
+  local card_path="$2"
+  local requires_gui
+  requires_gui="$(sed -n 's/^- \*\*Requires GUI:\*\* //p' "$card_path" | head -n1)"
+  resolve_codex_sandbox_for_card "$repo_root" "$requires_gui"
+}
+
 main() {
   local read_only=0
   local card_path="" repo_root=""
@@ -105,6 +115,21 @@ main() {
 
   local stage_id
   stage_id="$(extract_stage_id "$card_path")"
+  local effort
+  effort="$(sed -n 's/^- \*\*Verifier effort:\*\* //p' "$card_path" | head -n1)"
+
+  local claude_effort_argv=() codex_effort_argv=()
+  effort_argv_for_family claude "$effort"
+  if [[ ${#AUTOMETTA_EFFORT_ARGV[@]} -gt 0 ]]; then
+    claude_effort_argv=("${AUTOMETTA_EFFORT_ARGV[@]}")
+  fi
+  effort_argv_for_family codex "$effort"
+  if [[ ${#AUTOMETTA_EFFORT_ARGV[@]} -gt 0 ]]; then
+    codex_effort_argv=("${AUTOMETTA_EFFORT_ARGV[@]}")
+  fi
+  if [[ -n "$effort" ]]; then
+    log_msg "panel verifier effort: ${effort} (${stage_id})"
+  fi
   local artefact_glob
   artefact_glob="$(derive_artefact_glob "$card_path")"
 
@@ -113,7 +138,8 @@ main() {
 
   # Resolve auth routes via op-fetch auth-route-security pattern.
   local autometta_root
-  autometta_root="$(cd "$script_dir/.." && pwd)"
+  # Self root: op-refs.sh sits beside this script, in whichever tree it is.
+  autometta_root="$(autometta_self_root "$script_dir")"
   if [[ -f "$autometta_root/op-refs.sh" ]]; then
     # shellcheck source=/dev/null
     source "$autometta_root/op-refs.sh"
@@ -177,6 +203,7 @@ main() {
         --artefact-glob "$artefact_glob" \
         --out "$p0_out" \
         --model "$AUTOMETTA_MODEL_OPUS" \
+        ${claude_effort_argv[@]+"${claude_effort_argv[@]}"} \
       </dev/null >"$p0_log" 2>&1 ) &
   local p0_pid=$!
 
@@ -189,6 +216,7 @@ main() {
         --artefact-glob "$artefact_glob" \
         --out "$p1_out" \
         --model "$AUTOMETTA_MODEL_SONNET" \
+        ${claude_effort_argv[@]+"${claude_effort_argv[@]}"} \
       </dev/null >"$p1_log" 2>&1 ) &
   local p1_pid=$!
 
@@ -216,12 +244,12 @@ main() {
     fi
     # shellcheck disable=SC2086
     CODEX_HOME="$codex_home_override" op-fetch $codex_auth_pairs --pass CODEX_HOME -- \
-      codex exec -C "$repo_root" --sandbox workspace-write "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   else
     # shellcheck disable=SC2086
     op-fetch $codex_auth_pairs -- \
-      codex exec -C "$repo_root" --sandbox workspace-write "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   fi
   local p2_pid=$!
@@ -236,11 +264,11 @@ main() {
   [[ "$budget_secs" -eq 0 ]] && budget_secs=2700  # default 45 min
 
   "$script_dir/register-agent.sh" "$repo_root" "$p0_pid" verifier claude \
-    "$PANELLIST_OPUS" "$card_path" "$p0_log" "$budget_secs" >/dev/null 2>&1 || true
+    "$PANELLIST_OPUS" "$card_path" "$p0_log" "$budget_secs" "$repo_root" >/dev/null 2>&1 || true
   "$script_dir/register-agent.sh" "$repo_root" "$p1_pid" verifier claude \
-    "$PANELLIST_SONNET" "$card_path" "$p1_log" "$budget_secs" >/dev/null 2>&1 || true
+    "$PANELLIST_SONNET" "$card_path" "$p1_log" "$budget_secs" "$repo_root" >/dev/null 2>&1 || true
   "$script_dir/register-agent.sh" "$repo_root" "$p2_pid" verifier codex \
-    "$PANELLIST_CODEX" "$card_path" "$p2_log" "$budget_secs" >/dev/null 2>&1 || true
+    "$PANELLIST_CODEX" "$card_path" "$p2_log" "$budget_secs" "$repo_root" >/dev/null 2>&1 || true
 
   # Poll for all three artefacts until budget_secs deadline.
   local deadline=$(( $(date +%s) + budget_secs ))

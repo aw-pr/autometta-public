@@ -5,10 +5,35 @@ Orchestrator pre-dispatch checklist, part of the dispatch-contract pattern libra
 
 Run through every item below before dispatching a worker. A stage card that fails this checklist will likely produce a failed or incomplete stage, which costs more to recover than to prevent.
 
-## 0. Working-tree pre-flight
+## 0. Worktree dispatch pre-flight
 
-- [ ] `git status -s` shows no unrelated modifications. Acceptance criteria of the form "no files outside the deliverables set are modified" treat the operator's full working tree as the worker's; any pre-existing dirty file will surface as a false-positive FAIL. Stash, revert, or commit on a different branch before dispatch.
-- [ ] If a gitignored file is still tracked (the classic `.DS_Store` case), either revert it or untrack it permanently with `git rm --cached <file>` and commit.
+The shared checkout is never dispatched into and its dirtiness is never a
+precondition. Every stage runs in its own ephemeral worktree, cut from the
+card's declared base branch, so an unrelated dirty file (an uncommitted
+HANDOFF.md, a stray `.DS_Store`) can no longer false-positive a stage or
+block dispatch. See `memory/adopters/emergence-viewer/feedback-worktree-dispatch-thinned-preflight.md`
+for the pilot this backports.
+
+- [ ] The stage card declares `Base branch` and `Run branch` (`autometta/<stage-id>`) in its Metadata section. Pin both to branch names, never a commit SHA (no `expected_head`) — the run branch is cut from the base branch fresh at dispatch time, so a SHA pin is stale the moment the base moves.
+- [ ] Remove any worktree or branch left standing by a prior attempt at this stage before cutting a new one:
+
+  ```sh
+  git worktree remove --force ../<repo>-run-<stage-id> 2>/dev/null || true
+  git branch -D autometta/<stage-id> 2>/dev/null || true
+  ```
+
+- [ ] Cut the run worktree as a sibling of the repo, not a subdirectory, so `../sibling-repo`-style card inputs still resolve the same way they do from the main checkout:
+
+  ```sh
+  git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>
+  ```
+
+- [ ] Dispatch the worker and verifier into that worktree. All work — reads, writes, the dirty tree the verifier evaluates — happens there. The main checkout is never modified by dispatch and its working-tree state is irrelevant to this stage.
+- [ ] **Budget window auto-reset.** At the start of a run window, if `state/budget.json` is `halted` or any counter sits at its cap, reset the counters to zero (caps unchanged) and log the reset, rather than treating a stale halt from a prior window as terminal for this one. See `docs/plans/2026-08-01-control-plane-review.md` and the pilot note for the incident this fixes (a three-week-old tick-cap halt blocking every later window).
+- [ ] **Codex seat probe.** Before a Codex dispatch, run one trivial `codex exec` ping. On failure, skip the Codex seat for this stage and substitute another worker/verifier family — never attempt an interactive login unattended.
+- [ ] **On PASS:** fast-forward-merge the run branch into the base branch if the base hasn't moved since the worktree was cut. If the base has moved, push the run branch instead and note the unmerged branch in HANDOFF for manual integration.
+- [ ] **On FAIL:** leave the run branch and worktree standing for operator inspection. Do not delete either; re-running the stage removes and recuts them (first checklist item above).
+- [ ] If a gitignored file is still tracked in the shared checkout (the classic `.DS_Store` case), either revert it or untrack it permanently with `git rm --cached <file>` and commit — this is now a hygiene item, not a dispatch blocker.
 
 ## 1. Stage card completeness
 
@@ -19,6 +44,7 @@ Run through every item below before dispatching a worker. A stage card that fail
 - [ ] All input paths are relative to repo root. No absolute paths, no `/Users/...`, no `~`. Cards must remain portable across clones and machines.
 - [ ] The "Deliverables" section lists specific file paths, not vague descriptions.
 - [ ] Each deliverable has enough description that the worker could produce it without asking a follow-up question.
+- [ ] Every file the implementation must plausibly touch is in the Deliverables list, not just Inputs. Walk the data path end to end (e.g. a new shader uniform needs the CPU-side struct and the per-frame population, not just the shader). A correct worker will refuse the stage rather than edit an input-only file, burning a dispatch on a card fix.
 - [ ] The "Constraints" section lists hard rules the worker must not violate (language, naming, placeholder syntax, etc.).
 
 ## 2. Acceptance criteria
@@ -55,6 +81,8 @@ Run through every item below before dispatching a worker. A stage card that fail
 - [ ] **Log path:** the worker's log path is predictable and stated in the card or the worker prompt. Do not rely on harness-generated task IDs that change between runs.
 - [ ] **Sandbox boundary:** verify that the verifier's environment is genuinely outside the worker's sandbox. A verifier that runs inside the same sandbox cannot observe side-effects the worker was prevented from making.
 - [ ] **Prior-gate regression:** if acceptance criteria overlap with those of an earlier stage, running the verifier for this stage may surface a regression in that earlier stage. Note any such overlap and decide in advance whether a regression here is a blocker.
+- [ ] **No artefacts outside the repo:** every file a headless run must read exists inside the repo (or the run home) before dispatch. Copy external inputs in at scheduling time, while an interactive session still holds the macOS privacy (TCC) grants — a launchd-spawned agent reading Desktop/Documents/Downloads or CloudStorage paths raises a consent dialog nobody can click and blocks silently until the next interactive wake. If copying in is genuinely inappropriate, flag the external dependency on the card/brief at creation and pre-test read access from a non-interactive context.
+- [ ] **Headless orchestrators block on child dispatches:** a `claude -p` orchestrator exits the moment its final turn ends, and its exit kills any background children it spawned. Inside a headless orchestrator, worker and verifier dispatches must run as foreground (blocking) commands; "dispatch in background, reap next turn" is only valid in interactive sessions that outlive the child.
 
 ## 7. Integration plan
 

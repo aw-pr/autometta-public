@@ -4,6 +4,19 @@ This is the load-bearing document for Autometta pass 1. It describes the protoco
 
 The contract is family-agnostic. The same shape works for a Claude Code worker, a Codex CLI worker, or any future CLI worker. Where a step is genuinely family-specific, it is called out under a family-specific notes heading rather than hard-coded into the protocol.
 
+## Contract version
+
+**Contract version: 2** (2026-08-24).
+
+A change to the shape of the contract is a versioned decision, so the shape carries a number and a reason. Anything that alters what the roles owe each other, what a stage card must carry, or the set of states a stage can be in, bumps it. Wording, examples and typo fixes do not.
+
+| Version | Date | What changed |
+|---|---|---|
+| 1 | up to 2026-08-23 | The seven steps, contract tests, the pass-2 stage lifecycle with `pending, in_progress, completed, failed, stalled, verifier_failed`. Unnumbered at the time; recorded here as the shape everything before card 43 was written against. |
+| 2 | 2026-08-24 | Adds the terminal `superseded` stage status: a card an operator has decided should not run, which is not a failure. See [Stage statuses](#stage-statuses). |
+
+Version 2 is additive. A `state.yaml` written against version 1 validates and ticks identically under version 2; there is no migration step.
+
 ## Why a contract, and not a framework
 
 Frameworks assume the worker is an in-process LLM call. In Autometta the worker is a CLI subprocess and the state lives on the filesystem. A contract that fits this shape needs to be prose plus templates, not code. Every step below maps to a markdown file you can read, edit, and commit; there is no runtime to install, no DSL to learn, and no service to keep alive.
@@ -24,7 +37,7 @@ The protocol runs in this order. Each step has one owner and one deliverable. If
 
 ### Step 1: Stage card authoring
 
-The orchestrator authors a stage card from `templates/stage-card.md` and writes it to a path that will survive the dispatch. In Autometta, cards for the self-host plan live in `examples/self-host/`; in your own repo they can live anywhere stable.
+The orchestrator authors a stage card from `templates/stage-card.md` and writes it to a path that will survive the dispatch. Stage cards live in `stage-cards/` at the repository root in Autometta and its subscribers.
 
 The card is the brief. It names the worker, names the verifier, lists inputs, lists deliverables, lists constraints, lists acceptance criteria, lists what is out of scope, and states a wall-clock budget. Anything the worker needs to know that is not in the card is a contract violation.
 
@@ -66,17 +79,25 @@ If the diff is correct and acceptance has passed, the stage is done. If either i
 
 The commit is atomic and follows the per-agent author attribution rule laid down in `~/.claude/rules/mcp-hub-dev-rules.md`: committer is the human user; author is the canonical agent identity of the primary worker. A co-author trailer is added when a second agent contributed non-trivially. The stage card is committed alongside the deliverables so the audit trail is in git, not in chat.
 
-A dispatch involves three roles in at least two model families, so the commit records all three. The author is the worker, the coder, which keeps `git shortlog` and `git blame` attributing the code to the model that wrote it, at model-version granularity. The orchestrator and verifier are kept as `Co-Authored-By` trailers for git-native tooling, with each role shown in the display name (git and GitHub key co-authorship off the email, so the parenthetical is display-only). On top of that, all three roles are recorded as role-keyed trailers carrying the clean canonical identity, so later analysis can ask which model performs best in each role:
+A dispatch involves three roles in at least two model families, so the commit records all three. The author is the worker, the coder, which keeps `git shortlog` and `git blame` attributing the code to the model that wrote it, at model-version granularity. The orchestrator and verifier are kept as `Co-Authored-By` trailers for git-native tooling, each carrying its plain canonical identity. On top of that, all three roles are recorded as role-keyed trailers carrying the clean canonical identity, so later analysis can ask which model performs best in each role:
 
 ```
-Author: Codex GPT-5.3 <codex-gpt-5-3@local>
+Author: GPT-5.6 Sol <gpt-5-6-sol@local>
 
-Co-Authored-By: Claude Opus 4.8 (orchestrator) <claude-opus-4-8@local>
-Co-Authored-By: Claude Sonnet 4.6 (verifier) <claude-sonnet-4-6@local>
-Autometta-Orchestrator: Claude Opus 4.8 <claude-opus-4-8@local>
-Autometta-Worker: Codex GPT-5.3 <codex-gpt-5-3@local>
-Autometta-Verifier: Claude Sonnet 4.6 <claude-sonnet-4-6@local>
+Co-Authored-By: Claude Opus 5 <claude-opus-5@local>
+Co-Authored-By: Claude Sonnet 5 <claude-sonnet-5@local>
+Autometta-Orchestrator: Claude Opus 5 <claude-opus-5@local>
+Autometta-Worker: GPT-5.6 Sol <gpt-5-6-sol@local>
+Autometta-Verifier: Claude Sonnet 5 <claude-sonnet-5@local>
 ```
+
+A `Co-Authored-By` carries an identity, never a role: an annotated
+`Claude Opus 5 (orchestrator)` is a different display name from a plain
+`Claude Opus 5`, so the forge lists one model as two people and `git shortlog`
+splits it. The role belongs in the `Autometta-*` trailers below, which is what
+they are for. The `commit-msg` attribution hook strips a trailing parenthetical
+from an `@local` identity, so an older card that still emits one is corrected
+rather than honoured.
 
 The orchestrator identity is read from the stage card's `Orchestrator` metadata line (it is fixed at card-authoring time); the worker and verifier come from `state.yaml`. Query one role with `git log --format='%(trailers:key=Autometta-Worker,valueonly)'` (the `Autometta-*` trailers hold the unannotated identity, so they group cleanly), and join against `state/cost-log.jsonl` for cost and token context per role. The autonomous loop emits these automatically (`scripts/tick.sh`); a manual orchestrator commit should pass the same trailer block.
 
@@ -85,6 +106,13 @@ The orchestrator identity is read from the stage card's `Orchestrator` metadata 
 - `overall: PASS` — orchestrator stages the non-state working-tree changes and commits with `--author=<worker-identity>`, role-named `Co-Authored-By` trailers for the orchestrator and verifier, and the `Autometta-Orchestrator` / `Autometta-Worker` / `Autometta-Verifier` role trailers (see the attribution note above). The commit subject is `<stage-id>: <headline>`, where the headline comes from the verifier artefact's `headline` field if present, otherwise from the stage card's title line. The stage moves to `completed`; the commit SHA is recorded in `state/state.yaml`.
 - `overall: FAIL` (or a missing / malformed `overall` field, treated as FAIL by the orchestrator) — no commit. The stage moves to `verifier_failed`, `current_stage` is cleared, and the dirty working tree is left intact for the operator to inspect, amend the stage card, and re-run, or revert.
 - Backward-compat — if a worker on an older prompt self-committed before the verifier ran, the working tree on a PASS artefact will be clean. The tick logs a deprecated-path warning and marks the stage `completed` without erroring. New stages should rely on the orchestrator commit path so the `Co-Authored-By: <verifier>` trailer appears in `git log`.
+
+**Committed is not integrated.** The commit lands on the stage's run branch, inside its own worktree. Whether it reaches the base branch depends on whether base moved between dispatch and PASS, and during an active session it usually has: any orchestrator commit to base produces it. Both outcomes are written to the stage's `integration` record in `state/state.yaml`.
+
+- `integration.state: merged`. Base had not moved, the run branch was fast-forwarded into it, and the run worktree was removed. Nothing outstanding.
+- `integration.state: awaiting`. Base had moved. The run branch is pushed to `origin` (the record's `pushed` field says whether that worked) and it, and its worktree, are left standing for a person to merge. `autometta status` prints an `awaiting integration` line for the stage until the merge happens, and `scripts/reap-worktrees.sh` will not remove the worktree while it stands; once the run branch is contained in base, the next sweep closes the record out and collects the worktree.
+
+Neither path checks a branch out in the shared checkout at `repo_root`. See `docs/tick-loop.md` section (j).
 
 This concentrates the commit decision at the one point where the verifier verdict is known. A worker that self-committed before the verifier ran would land its diff with an unknown verifier identity (the cross-family co-author trailer would be missing on every commit) and would force a `git revert` whenever the verifier later said FAIL. See [[memory/decision-orchestrator-commits-on-verifier-pass]] for the full rationale and rejected alternatives.
 
@@ -109,7 +137,7 @@ This three-way split is stronger than worker-writes-and-verifier-checks, because
 The assertions live between two markers in the test file. The BEGIN marker names the card it belongs to:
 
 ```
-# AUTOMETTA-CONTRACT-BEGIN card=examples/self-host/NN-foo.md
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/NN-foo.md
 assert double(2) == 4
 # AUTOMETTA-CONTRACT-END
 ```
@@ -184,13 +212,107 @@ The dispatch contract is for one stage. Anything that spans stages is out of sco
 
 ## Pass-2 layer
 
-The autonomous loop now exists as `phat-controller`. It is still layered on this contract:
+The autonomous tick loop is layered on this contract:
 
 - `autometta tick`: one cron-safe pass-2 tick.
+- `autometta phat-controller`: one cron-safe queue-minding pass that performs at most one of a closed set of remediations; see `docs/tick-loop.md` section (k).
 - `state/state.yaml`: per-repo queue state.
 - `state/budget.json`: per-repo budget and halt state.
 - `schemas/`: JSON schemas for the state and budget files.
 - `autometta status` and `autometta attach`: read-only operator views.
+
+### Stage statuses
+
+A stage in `state/state.yaml` carries one of seven statuses. The enum lives in `schemas/state.yaml.json`; this is what each one means to an operator.
+
+| Status | Terminal | Counts as a failure | Meaning |
+|---|---|---|---|
+| `pending` | no | n/a | Queued. The next tick with capacity dispatches the first one in order. |
+| `in_progress` | no | n/a | A worker or verifier owns it. `current_stage` names it. |
+| `completed` | yes | no | The verifier passed it and the orchestrator committed. |
+| `failed` | yes | yes | The dispatch itself failed: no envelope, an invalid envelope, a dead agent. |
+| `stalled` | yes | yes | The stage ran past its wall-clock budget plus grace, or its verifier never produced an artefact within the attempt cap. |
+| `verifier_failed` | yes | yes | The verifier artefact reported `overall: FAIL`. A verdict, not a casualty. |
+| `superseded` | yes | **no** | An operator decided the card should not run. |
+
+`failed` and `stalled` are infrastructure casualties, which is why `tick.sh --repair` puts them back in the queue and `verifier_failed` and `superseded` are left alone: one is a verdict that needs the card re-briefing, the other is a decision that needs no further work at all.
+
+#### `superseded`: a card that should not run, and that is not a failure
+
+`superseded` says the card has been retired. Later work overtook its acceptance criteria, the thing it asked for was deliberately reverted, or the problem stopped existing. It is terminal, and the tick will not move a stage out of it:
+
+- **Never dispatched.** Dispatch selects on `pending` alone, so a superseded stage sitting ahead of a pending one is stepped over.
+- **Never reaped.** A superseded stage that is still `current_stage` is released, not stalled: `current_stage` is cleared, no stall marker is written.
+- **Never counted.** `budget_record_failure` ignores it, so it cannot increment `consecutive_failures` and cannot contribute to a failure-cap halt.
+- **Never alerted on.** It is absent from the alert-worthy set in `scripts/alert-statuses.sh`, which is the one definition every renderer reads.
+- **Not re-queued by accident.** `scripts/requeue-stage.sh` refuses a superseded stage non-zero and names the status; `--force` is required, because re-queueing contradicts a decision someone recorded.
+
+**The reason belongs on the card, not only in the ledger.** The status says a person decided; only the card can say why. A retirement with no recorded reason is indistinguishable next month from a failure someone hid, and the ledger row alone cannot tell those apart.
+
+**Worked example: emergence-lab, 2026-08-23.** Four stages were sitting terminal in that subscriber's ledger and raising an alert on every refresh of every panel:
+
+```
+! 05-math-formula-rendering verifier_failed crit 6
+! 14-fractal-colour-cycle-pacing verifier_failed crit 4
+! 15-boids-density-motion-tuning stalled
+! 16-sandpile-larger-slower failed
+```
+
+Cards 14, 15 and 16 had been overtaken by later work, and 16's own implementation was deliberately reverted ten days after it landed. None of that is failure, but `failed`, `stalled` and `verifier_failed` were the only terminal statuses available, so the ledger recorded three failures that misstate what happened and `consecutive_failures` counted them against the halt cap. Card 05 is the one to be careful with: card 40's disposition table records it as a genuine failure to leave alone, while the operator later counted it among the retired four. One of those is out of date, and which one is a question for the card, answered on the card, before its status changes.
+
+An alert panel showing four decisions the operator has already made is the cry-wolf failure card 41 fixed for the fleet pane in another form. That is what `superseded` is for.
+
+### Retiring a card in a running subscriber
+
+The procedure below is what an operator runs in a subscriber repo whose loop is live. It changes one field, writes one reason, and confirms the alert has gone. Run it from the subscriber's repo root, one stage at a time.
+
+**1. Write the reason on the card first.** Before any status changes, add a retirement note to the stage card (`stage-cards/<stage-id>.md`) and commit it:
+
+```markdown
+## Retired
+
+- **Retired:** 2026-08-24 by <operator>
+- **Reason:** superseded by <what overtook it>, which landed in <commit or card>.
+- **Not a failure:** the acceptance criteria below were overtaken, not missed.
+```
+
+If the ledger and the card disagree about why a stage is terminal, as emergence-lab 05 does, settle that here. A status change made before the reason is written loses the reason.
+
+**2. Stop anything still running for that stage.** If the stage is in flight, its agent and run worktree go first, otherwise the next tick supervises work nobody wants:
+
+```sh
+pkill -F state/active-agents/<pid>.json 2>/dev/null || true   # only if one is live
+scripts/requeue-stage.sh --worktree-only . <stage-id>
+```
+
+**3. Set the status.** One field, via the same yq to jq round-trip the tick uses, so the rest of the file is untouched:
+
+```sh
+tmp="$(mktemp)"
+yq -o=json '.' state/state.yaml | jq --arg id "<stage-id>" '
+  .current_stage = (if .current_stage == $id then null else .current_stage end)
+  | (.stages[] | select(.id == $id)).status = "superseded"' | yq -P '.' > "$tmp"
+mv "$tmp" state/state.yaml
+```
+
+**4. Clear the failure it recorded, if it recorded one.** Retiring a stage that had been counted as a failure is the operator saying that failure is dealt with, exactly as a re-queue is. It does not clear a halt whose spend caps are still blown; that is `autometta tick --reset-halt`'s job and a separate decision:
+
+```sh
+jq '.consecutive_failures = 0' state/budget.json > state/budget.json.tmp
+mv state/budget.json.tmp state/budget.json
+```
+
+**5. Confirm the alert has gone.** The dashboard data is a cache, so refresh it before reading any pane, or the alert appears to persist for another refresh interval:
+
+```sh
+scripts/aggregate-dashboard.sh
+AUTOMETTA_FLEET_ONCE=true scripts/attach.sh --fleet-ticker | sed -n '/^ESCALATIONS/,$p'
+scripts/agent-ticker.sh . --once | sed -n '/^ALERTS/,/^$/p'
+```
+
+The retired stage should appear in neither. Every other alert should still be there: a pane that went quiet altogether means the filter is wrong, not that the fleet is healthy. `scripts/superseded-status-smoke.sh` asserts both directions offline.
+
+Repeat per stage. Four retirements are four runs of this procedure, four reasons written, and one confirmation at the end.
 
 ### Canonical `halt_reason` values
 
@@ -201,14 +323,28 @@ and nothing else overwrites a pre-existing reason on subsequent ticks:
 
 - `token-cap` — `tokens_spent >= token_cap_total`.
 - `wall-clock-cap` — `wall_clock_elapsed_seconds >= wall_clock_cap_seconds`.
-- `tick-cap` — `clock_ticks_used >= clock_tick_cap`.
+- `tick-cap` — `clock_ticks_used >= clock_tick_cap`. Work ticks only: a
+  tick that found nothing to do charges `idle_ticks_used` instead.
+- `idle-tick-cap` — `idle_ticks_used >= idle_tick_cap`. Only reachable
+  where an operator has set `idle_tick_cap`; it is absent by default.
 - `failure-cap` — `consecutive_failures >= consecutive_failure_cap`.
-- `dirty-working-tree` — the repo working tree was not clean when the
-  tick attempted to advance state.
 - `yq-missing` — the `yq` binary required to read `state/state.yaml`
   was not on PATH.
 - `invalid-stage-id` — `current_stage` (or a referenced stage id) failed
   the id-format validator.
+- `controller-escalation` - phat-controller raised a blocking escalation: a
+  repeated failure past the mandate's cap, a spend authority exhausted, or an
+  unexpected provider-payment signal. It requires operator review.
+  `warden-escalation` is the same reason under its card-54 name and may
+  appear in a ledger written before card 58.
+
+`dirty-working-tree` is retired as of the worktree-per-run backport (see
+below): dispatch happens in an ephemeral sibling worktree, never
+`repo_root`, so `commit_state_branch` no longer guards on a clean tree
+before committing state files. Any budget file with this reason recorded
+from before the backport is historical only; `budget_ensure_window`
+clears it at the start of the next run window regardless of reason (see
+"Budget window auto-reset" below), so it is not sticky.
 
 `budget_check_caps` distinguishes "real cap hit this tick" (return code
 1; one of the first four strings is selected via the
@@ -216,9 +352,178 @@ and nothing else overwrites a pre-existing reason on subsequent ticks:
 tick" (return code 2; caller must preserve the recorded reason rather
 than overwrite it).
 
+**`budget_ensure_window` is the only thing that clears a halt.** Nothing
+else in the loop unlatches one, by design: two clearing paths in one file
+is how a halt stops meaning anything, and the budget file is the only
+safety the design has. An operator clears a halt by editing
+`state/budget.json`, or `scripts/requeue-stage.sh` clears a `failure-cap`
+halt as part of re-queueing (and refuses, non-zero, if a spend cap is
+still blown). A halt whose cause is no longer true is not re-tested
+mid-window; it holds until the window rolls.
+
+The rc-2 log line is rate-limited rather than emitted every tick.
+`budget_should_log_halt` (`scripts/budget.sh`) allows one line per
+`halt_reason` per `AUTOMETTA_HALT_LOG_INTERVAL` seconds (default
+3600), always logs immediately on a change of reason, and stamps
+`halt_logged_at` / `halt_logged_reason` in the budget file. It decides
+what is written to the log and nothing else — it never clears a halt.
+
+### Worktree-per-run dispatch
+
+Backported from the emergence-viewer stage-44 pilot (`memory/adopters/
+emergence-viewer/feedback-worktree-dispatch-thinned-preflight.md`). Each
+stage dispatches into an ephemeral sibling worktree (`../<repo>-run-<stage-id>`,
+branch `autometta/<stage-id>`) cut from a base branch resolved by
+`resolve_base_branch` in `tick.sh` (the subscriber/manifest `base_branch`
+field if set, else the repo's current branch at dispatch time). The stage's
+`base_branch` is persisted to `state/state.yaml` at dispatch so a later PASS
+can detect whether the base moved in the meantime.
+
+`repo_root`'s `state/` directory stays the single source of truth for
+`state.yaml`, `budget.json`, logs, handoff envelopes, and verifier
+artefacts — the worktree gets a symlink (`state -> ../<repo>/state`) rather
+than its own copy, so a worker or verifier writing to a `state/...`-relative
+path (as the worker/verifier prompt templates already instruct) lands in
+the shared location without any template change.
+
+On PASS, `tick.sh` commits the worker's non-state changes on the run branch
+inside the worktree, then fast-forwards the base branch to it if the base
+hasn't moved; if the base has moved, it pushes the run branch to `origin`
+instead and appends a note to `HANDOFF.md`, leaving branch and worktree
+standing for manual integration. On verifier FAIL, `tick.sh` automatically
+commits the non-state diff on the run branch with the worker as author, pins
+the commit at `wip/<stage>-attempt-<n>`, and records that ref and SHA as
+`wip_branch` and `wip_commit` in the stage record. A clean worktree has
+nothing to preserve. A preservation error is loud but non-fatal: the tick
+leaves the worktree standing and completes the FAIL transition.
+
+Before re-dispatch, amend the card with the prior FAIL evidence and cite the
+stage record's `wip_commit` in the re-brief. `scripts/requeue-stage.sh` removes
+the ephemeral worktree and `autometta/<stage>` branch, prints the preserved
+SHA, and leaves every `wip/` ref standing. Those refs are per-attempt and are
+not garbage-collected automatically.
+
+phat-controller (`scripts/phat-controller.sh`, `docs/tick-loop.md` section
+(k)) performs this re-brief-and-requeue step unattended. It is an agent
+seeded at configure time, not a script choosing from a list: it reads the
+verifier artefact and the `wip_commit` diff, decides whether the FAIL is a
+work defect or a card defect, and either appends a re-brief and requeues, or
+appends a `PROPOSED-AMENDMENT` block and requeues nothing. Only an operator
+or an interactive orchestrator turns a proposal into an actual criterion
+change.
+
+The same role covers the case where there is no verifier artefact at all: a
+stage that went `stalled` because its worker exited without a handoff
+envelope still has its work preserved (`phat-controller.sh preserve`), its
+stall marker recorded, and a re-brief citing the preserved commit before it
+is requeued.
+
+Its authority is bounded by a short negative list rather than an action
+enumeration, because the recoverable actions do not need enumerating and the
+unrecoverable ones are few. The governing distinction is that it may change
+**what is recorded and where**, never **what was asked for or whether it was
+met**. Forbidden without exception: editing a card's acceptance criteria,
+objective or specification; verifying its own dispatches; rewriting history,
+pushing non-fast-forward, or moving a publish branch outward; lifting its own
+spend caps; resolving a merge conflict. The list is owned by
+`docs/proposals/orchestrator-role-review.md` and carried verbatim into every
+rendered seed. An interactive orchestrator may step outside it only while the
+operator is in the conversation and explicitly authorises it; a scheduled
+pass never may.
+
+Two of the five are enforced mechanically. Re-briefs and proposed amendments
+go through an append-only guard that restores the card and refuses if the
+write would have changed a single existing byte, and pushing inherits
+`git-push-check`'s verdict rather than adding policy: `PUSH` act, `ASK`
+escalate and carry on with other work, `HOLD` stop and report.
+
+### Budget window auto-reset
+
+`budget_ensure_window` (in `scripts/budget.sh`) runs at the start of
+`_process_repo_locked`, before `budget_check_caps`. It compares
+`state/budget.json`'s `window_started_at` (a UTC calendar date) to today;
+on a mismatch, a *halted or at-cap* budget has every counter — including
+`consecutive_failures` — zeroed, `halted`/`halt_reason`/`halted_at`
+cleared, and caps left untouched, with a log line recording the reset. A
+healthy budget crossing the same boundary is only re-stamped, not zeroed,
+so an in-progress run spanning midnight UTC is unaffected. Within a
+window this is a no-op: a halt or cap hit (including `failure-cap`) still
+holds, and `consecutive_failures` keeps accumulating and can still halt
+the loop mid-window.
+
+### Which token cap binds: host default, repo override, drain
+
+The daily token cap is a host decision. It is written once by
+`scripts/init-host.sh` into `~/.autometta/config.yaml` as
+`token_cap_total`, and every subscribed repo inherits it. A repo sets its own
+`token_cap_total` in `state/budget.json` only where it genuinely differs.
+
+`budget_effective_token_cap` (in `scripts/budget.sh`) is the single place that
+answers the question, and every token comparison in that file goes through it.
+First hit wins:
+
+| Order | Source | Where |
+|---|---|---|
+| 1 | An active drain | `~/.autometta/drain.json`, while unexpired |
+| 2 | The repo's own cap | `state/budget.json` `token_cap_total`, when present |
+| 3 | The host default | `token_cap_total:` in the controller `config.yaml` |
+| 4 | The floor | `AUTOMETTA_TOKEN_CAP_FLOOR`, 20,000,000 by default |
+
+Rule 4 is why the resting state is never unlimited. A repo with no cap of its
+own, on a host whose config predates this, is still capped; the floor is small
+enough to be noticed rather than large enough to be harmless.
+`budget_cap_source` names the winning rule for the log and the dashboard, and
+`AUTOMETTA_HOST_TOKEN_CAP` overrides the config file for one invocation.
+
+The spread this replaced was accumulated history, not policy: five subscribers
+carried 3,000,000 / 8,000,000 / 100,000,000 / 150,000,000 between them and
+nothing recorded why any of them held its number.
+
+### Drain mode: the deliberate overnight run
+
+A daily cap catches a runaway. An overnight drain is the opposite intent:
+spend the provider window down on purpose and stop when the *provider* stops,
+around 01:00. The two used to be the same number. On 2026-08-23
+emergence-lab spent 104,942,068 against its 100,000,000 cap during a
+deliberate drain: the gate refused a verifier dispatch at 00:01 with a
+finished worker sitting on a passing envelope, re-halted through two attempts
+to clear it, and released only when the midnight window reset zeroed the
+counter at 01:01. The cap was doing its job; the number did not describe the
+intent.
+
+A drain is host-level, per run, and self-expiring:
+
+```sh
+autometta drain start --cap 400000000 --hours 8 --reason "weekly window drain"
+autometta drain start --lift --hours 6          # up to AUTOMETTA_DRAIN_LIFT_CAP
+autometta drain start --cap 400000000 --repo /path/to/repo   # repeatable; default is all
+autometta drain status
+autometta drain end
+```
+
+- **Explicit.** `--cap N` or `--lift` is required; a drain with no stated cap
+  is not a decision. `--lift` resolves to `AUTOMETTA_DRAIN_LIFT_CAP`
+  (1,000,000,000), an integer rather than a null, because every cap comparison
+  is a numeric test and `tokens_spent >= null` is not a safety.
+- **Visible.** `tick.sh` logs `drain active for <repo>: token cap N until
+  <time>` on every tick a drain is in force. A cap that moved silently is
+  indistinguishable from a cap that was never there.
+- **Self-expiring.** `expires_at` is enforced on read: the first caller past it
+  moves `drain.json` to `drain.expired.json` and the resting cap applies again.
+  Default 8 hours, maximum 12 (`AUTOMETTA_DRAIN_MAX_SECONDS`). There is no path
+  where a drain keeps binding past its own clock.
+- **Non-destructive.** No repo's `budget.json` is edited, so there is nothing
+  to remember to put back.
+- **Not a halt clearer.** A halt already latched survives the drain with its
+  original `halt_reason`. Raising a cap is not a licence to unlatch a halt that
+  was correctly taken; that stays `tick.sh --reset-halt`.
+
+`scripts/cap-resolution-smoke.sh` asserts all of the above offline, including
+the expiry and the refusal from the incident.
+
 ### Token accounting
 
-`state/budget.json` carries `tokens_spent` and `token_cap_total`. The
+`state/budget.json` carries `tokens_spent` and an optional `token_cap_total`. The
 loop increments `tokens_spent` after each worker and verifier phase by
 parsing the captured CLI log; `token-cap` then becomes an enforceable
 halt reason rather than a decorative field.
@@ -257,7 +562,236 @@ halt reason rather than a decorative field.
   `wall-clock-cap` and `tick-cap` paths still provide a backstop.
 - **Cap enforcement is automatic.** The next `budget_check_caps` after
   the increment will surface the `token-cap` halt reason if
-  `tokens_spent >= token_cap_total`. No new gate is added.
+  `tokens_spent >= budget_effective_token_cap`. No new gate is added.
+
+## Which autometta runs: root resolution
+
+There are two autometta trees on a working machine: the Homebrew install under
+`Cellar/autometta/<sha>/libexec`, and the git checkout it was packaged from.
+Every invocation picks one. Until card 42 each entry point picked for itself,
+and on 2026-08-23 that produced two wrong answers in a single day: a committed
+fix was live for the fleet tick while the installed build still held the old
+file, and `autometta --version` reported whichever root the caller happened to
+land on, so it could not be used to settle the question either.
+
+### The rule
+
+One rule, in `scripts/resolve-root.sh`, and nowhere else. Two functions, for
+two different questions.
+
+`autometta_resolve_root` answers "whose `scripts/` will this dispatch run?".
+First hit wins:
+
+| Precedence | Source | Typical setter |
+|---|---|---|
+| 1 | `AUTOMETTA_ROOT` in the environment | an operator, or the fleet LaunchAgent |
+| 2 | `autometta_root:` in `$AUTOMETTA_HOME/config.yaml` | `scripts/init-host.sh`, at host bootstrap |
+| 3 | the tree the running command is part of | nothing; it is the floor |
+
+Rules 1 and 2 are honoured only when they name a directory that actually holds
+a `scripts/` directory. A stale config entry pointing at a moved or deleted
+checkout falls through to the floor instead of yielding a root with no code in
+it. Rule 3 is always available, so resolution terminates without ever needing a
+hardcoded home-directory path.
+
+`autometta_self_root` answers a different question: "which tree am I part of?".
+Packaging and host bootstrap act on themselves, so `install-homebrew-local.sh`
+and `init-host.sh` use this one. An installer that honoured `AUTOMETTA_ROOT`
+would package a tree it was never pointed at.
+
+Every entry point that needs a root sources `resolve-root.sh` and calls one of
+the two. None of them restates the rule inline, so there is exactly one place
+to change it and exactly one place to read it.
+
+| Uses `autometta_resolve_root` (the effective root) | Why |
+|---|---|
+| `bin/autometta` | dispatches every subcommand into the resolved tree's `scripts/` |
+| `scripts/attach.sh` | the tmux panes run autometta scripts, and a viewer watching a different tree than the tick executes is the split itself |
+| `scripts/subscribe-repo.sh` | records `autometta_root:` in the subscriber manifest, which is the tree that will run that repo's dispatches. It used to carry its own copy of the config-then-self precedence |
+
+| Uses `autometta_self_root` (the tree it is part of) | Why |
+|---|---|
+| `scripts/install-homebrew-local.sh` | packages the checkout it lives in |
+| `scripts/init-host.sh` | writes its own path into the controller config |
+| `scripts/install-launchagent.sh` | reads its own plist template; which root the installed tick then runs is the plist's `AUTOMETTA_ROOT`, an operator decision |
+| `scripts/dashboard.sh` | copies dashboard sources out of its own tree |
+| `scripts/auth.sh`, `scripts/spawn-worker.sh`, `scripts/spawn-verifier.sh`, `scripts/spawn-verifier-panel.sh` | `op-refs.sh` sits beside them |
+| `scripts/retro-grade.sh` | cd's into its own tree and sources that tree's `op-refs.sh` |
+| `scripts/check-deps.sh` | answers whether the tree it was launched from is complete, so pointing it elsewhere would defeat the check |
+| the `*-smoke.sh` harnesses | a smoke test exercises the tree it ships in |
+
+Scripts that compute a `repo_root` for their own fixtures
+(`validate-handoff-envelope.sh`, `validate-verifier-artefacts.sh`,
+`sdk-cache-smoke.sh`, `idle-tick-smoke.sh`, `superseded-status-smoke.sh`) are
+not resolving a dispatch root and are left alone.
+
+Checkout detection compares physical paths on both sides. `git rev-parse
+--show-toplevel` reports a physical path, so a root reached through a symlinked
+parent (on macOS `/tmp` is `/private/tmp`) would otherwise compare unequal to
+its own toplevel, be called "not a checkout", and have its uncommitted edits go
+unreported. That is the same class of silent wrong answer as the original split.
+
+`scripts/autometta-vendor-check.sh` keeps its own `${AUTOMETTA_ROOT:-~/repos/autometta}`
+lookup on purpose. It runs inside a *subscriber* repo, where `scripts/resolve-root.sh`
+does not exist, and it is locating the canonical upstream checkout rather than
+resolving its own root.
+
+### Telling the truth about it
+
+`autometta --version` now names the root, the rule that chose it, the sha, and
+whether the working tree is dirty:
+
+```
+autometta 384c394
+  root:   ~/repos/autometta
+  origin: controller config ~/.autometta/config.yaml
+  sha:    384c394 (git checkout)
+  state:  DIRTY 1 tracked file(s) modified under scripts/
+            scripts/tick.sh
+  warning: uncommitted edits in this root run on the next tick.
+```
+
+Dirty means tracked files under `scripts/` differing from `HEAD`, staged or
+not. Untracked files are excluded: a scratch file in `scripts/` is not code a
+dispatch runs, whereas an edited tracked script is. A root that is not a git
+checkout reports its `VERSION` stamp and `state: installed build, immutable`.
+
+Detection is deliberately exact about what counts as a checkout: `git -C` searches
+upward, and the Homebrew prefix is itself a git repository, so a naive rev-parse
+inside `libexec` reports Homebrew's HEAD and calls the installed build a clean
+checkout. The root must be the top level of the working tree, not merely inside one.
+
+### The dirty-checkout exposure
+
+With the checkout as the resolved root, the working tree is production. Any
+half-finished edit to a tracked file under `scripts/` is load-bearing for every
+subscribed repo at the next tick, with no commit, no review and no verifier
+between the edit and the fleet. That is the sharper half of the split, and it is
+why the dirty state is on the face of `--version` rather than something an
+operator has to think to check.
+
+The fleet LaunchAgent currently sets `AUTOMETTA_ROOT` to the checkout, which is
+rule 1, so this exposure is live. Moving the tick onto the installed build is an
+operator decision, not a code change: it means deleting that key from
+`com.autometta.tick.fleet.plist` and accepting that a fix is live only after a
+reinstall. Nothing in the repo repoints a running fleet.
+
+### Checking the split
+
+`scripts/check-installed-build.sh` compares the two trees file by file and then
+states, from the LaunchAgent's own environment rather than from assumption,
+which root the fleet tick will run. Exit 0 when they agree, 1 on drift naming
+each differing file, 2 when either side is missing. It is also
+`autometta check-build`, and `scripts/health-check.sh` runs it on every doctor
+pass so the split is surfaced without anyone having to remember to ask. The
+doctor reports it but does not fail on it: drift is an ordinary operator state,
+and clearing it replaces files a running tick is executing, so it should be
+cleared when no dispatch is in flight.
+
+## Pushing a release to the subscribers
+
+Work happens in autometta. A subscriber holds a vendored copy of the contract,
+and until card 48 there was no way to push an update to it: the copy was made
+once by hand from the `autometta-setup` skill, and thereafter it could only
+drift. Nothing said when a subscriber was behind either. emergence-lab's stamp
+read `vendored_from: 496c7cc` while autometta's HEAD had moved on. It happened
+to still match, and nothing would have reported it either way.
+
+### The vendored set
+
+Six files travel to every subscriber: the four templates in `templates/`, plus
+`scripts/check-contract-test-gate.sh` and `scripts/autometta-vendor-check.sh`.
+
+The list itself lives in `scripts/vendor-set.sh` and nowhere else. The push
+reads it to know what to copy and the freshness check reads it to know what to
+compare, so the two cannot come to different views of what is vendored. Adding
+a file to the set is one edit there followed by a fleet push.
+
+The freshness check takes the set from upstream rather than from the
+subscriber's own stamp, deliberately. A stamp records the set as it stood when
+that copy was made, so a file added upstream since would never be looked at,
+and the check would call a repo current that was in fact missing part of the
+contract. A file the stamp lists that upstream has since retired is reported as
+`RETIRED` and is not drift.
+
+### The stamp
+
+`.autometta-vendor` at the subscriber's root is provenance, and it is committed
+there alongside the files it describes:
+
+```
+# Autometta vendor stamp. Refresh with: autometta refresh-repo .
+source_repo: autometta
+vendored_from: 26213a5
+vendored_at: 2026-08-24
+file: templates/worker-prompt.md
+...
+```
+
+`vendored_from` is the short sha of the autometta root the copy came from, as
+that root reports it: a checkout's `HEAD`, an installed build's `VERSION`. It
+is written by the refresh and by nothing else, so a stamp that names a sha is a
+claim the refresh made rather than a note somebody left.
+
+### The two commands
+
+```sh
+autometta refresh-repo <repo-path> [--dry-run] [--adopt]
+autometta refresh-all-repos [--dry-run]
+```
+
+`refresh-repo` re-vendors the set into one subscriber and rewrites its stamp.
+`refresh-all-repos` does the same across every enabled subscriber in the
+registry, in weight order, through the same code path, so a fleet push and a
+single push cannot behave differently. `--dry-run` reports exactly what would
+change and writes nothing. `--adopt` vendors a repo that has never held the
+contract before, which is how a first adoption is done; a fleet push never
+adopts, it only refreshes what has already opted in.
+
+Neither command commits. Changes are left unstaged in the subscriber for its
+operator to review: autometta pushes files, and a commit in somebody else's
+repository is not autometta's to make.
+
+### What a refresh refuses
+
+The refusals are the substance of the feature. Writing into other repositories
+is the most destructive thing autometta does, and each of these is a way it
+could destroy something quietly.
+
+| Condition | Verdict |
+|---|---|
+| A template whose `<<placeholder>>` slots have been filled downstream | `FILLED`, preserved byte for byte, never overwritten |
+| Uncommitted changes on a vendored path, staged, unstaged or untracked | `REFUSE`, naming the path |
+| A stage `in_progress`, a live agent, or a tick holding the repo lock | `SKIP`, naming what is running |
+| `repo_path` not on disk, or not a git repository | `SKIP` |
+| The autometta source repository itself, including through a run worktree | `SKIP` |
+| No stamp, and `--adopt` not passed | `SKIP`, saying how to adopt |
+| Subscriber disabled, or a `.yaml.disabled` registry entry | `SKIP`, named in the run's summary |
+
+A filled placeholder is the template working as designed, so it is the one
+thing a push must never clobber; `scripts/vendor-set.sh` holds the single
+implementation of that test, shared by the push and the check. Everything
+skipped is named with its reason. A fleet command that quietly omitted the
+retired entries and the repo with a worker in flight would read as "covered
+everything" when it had covered two of nine.
+
+`scripts/refresh-smoke.sh` drives every case above against a disposable
+controller home and four throwaway repos under `$TMPDIR`, and writes nothing
+outside it.
+
+### The staleness warning
+
+The tick warns, once per repo per pass, when a subscriber's stamp lags the sha
+of the autometta root the tick is running from:
+
+```
+stale vendor: /path/to/repo holds the contract from 496c7cc, autometta is at 26213a5; run: autometta refresh-repo /path/to/repo
+```
+
+It is a warning and only a warning. The stage still dispatches. Taking a
+release is the operator's decision, and a tick that refused to work until
+someone ran a refresh would turn a housekeeping note into an outage. A
+subscriber with a current stamp, or with no stamp at all, says nothing.
 
 ## Reading order for a new operator
 
@@ -268,4 +802,4 @@ halt reason rather than a decorative field.
 5. `docs/lessons.md` (stage 1): the gotchas in more detail, with incident notes from the source projects.
 6. `docs/verification.md` (stage 1): the gate model, in more detail than the acceptance section here.
 7. `docs/setup.md`, `docs/deployment.md`, and `docs/observability.md`: pass-2 operator flow.
-8. `examples/self-host/`: real stage cards used to build Autometta itself.
+8. `stage-cards/`: real stage cards used to build Autometta itself.

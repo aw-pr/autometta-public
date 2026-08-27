@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# dashboard.sh — regenerate ~/.phat-controller/dashboard/{data.json,
+# dashboard.sh — regenerate ~/.autometta/dashboard/{data.json,
 # index.html, dashboard.js, dashboard.css, vendor/chart.min.js} and
 # optionally open the page in the default browser.
 set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="$(cd "$script_dir/.." && pwd)"
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+# Self root, not the resolved root: the dashboard sources it copies are assets of its own tree.
+autometta_root="$(autometta_self_root "$script_dir")"
+controller_home="$(autometta_controller_home)"
 dashboard_dir="$controller_home/dashboard"
 
 open_after=false

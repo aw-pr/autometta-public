@@ -1,0 +1,52 @@
+{
+  "stage_id": "05-math-formula-rendering",
+  "verifier_identity": "Bake-off candidate: local-qwen3-coder-30b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-coder-30b --stage 05-math-formula-rendering",
+  "ran_at": "2026-08-24T14:22:48Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "package.json contains a \"verify\" script that runs eslint and tsc, and these commands were successful in the working tree."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md is unchanged",
+      "verdict": "PASS",
+      "evidence": "git diff shows no changes to docs/INTERFACE.md."
+    },
+    {
+      "id": 3,
+      "name": "No files under src/sims/** are modified",
+      "verdict": "PASS",
+      "evidence": "git status -s shows no modifications to any files under src/sims/."
+    },
+    {
+      "id": 4,
+      "name": "katex appears in package.json dependencies",
+      "verdict": "PASS",
+      "evidence": "package.json has \"katex\": \"^0.16.11\" in the dependencies section."
+    },
+    {
+      "id": 5,
+      "name": "Visiting the listed sim pages shows KaTeX-rendered formulas",
+      "verdict": "PASS",
+      "evidence": "Browser checks on /#/gray-scott, /#/mandelbrot, /#/julia-set, /#/burning-ship, and /#/lorenz-attractor confirmed that each page has at least one element with class 'katex'."
+    },
+    {
+      "id": 6,
+      "name": "Production build gzip size impact is reported",
+      "verdict": "PASS",
+      "evidence": "Worker's commit message includes the bundle size delta of +4.7 KB gzipped."
+    },
+    {
+      "id": 7,
+      "name": "No files outside deliverables set are modified",
+      "verdict": "PASS",
+      "evidence": "git status -s shows modifications only to package.json, src/app/simView.ts, src/app/main.ts, and src/app/styles.css \u2014 all within the deliverables set."
+    }
+  ],
+  "additional_findings": "Worker added KaTeX as a dependency in package.json, rendered formulas using katex.render() in simView.ts for the specified simulations, and added minimal CSS styling. Bundle size impact was reported as +4.7 KB gzipped.",
+  "overall": "PASS"
+}

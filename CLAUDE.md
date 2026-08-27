@@ -14,16 +14,20 @@ State and memory that agents need across sessions live **in the repo**, not in a
 
 ## What this repo is
 
-Autometta is a **pattern library**, not a runtime. Pre-alpha. The repo contains prose (`README.md`, `docs/`), markdown templates, the `agent-orchestrator` and `autometta-setup` skills, a shared `memory/` store, and the bash scaffolding for the phat-controller loop (`scripts/`, `schemas/`, `state/`). There is no build, no test suite, and no package manifest - do not invent one.
+Autometta is a **pattern library**, not a runtime. Pre-alpha. The repo contains prose (`README.md`, `docs/`), markdown templates, the `agent-orchestrator` and `autometta-setup` skills, a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build, no test suite, and no package manifest - do not invent one.
 
 The repo extracts patterns from two prior projects (`fractals-from-the-90s` dispatch contract; `agentic-rag-kimble` pass 28-29 autonomous loop) and packages them for solo single-machine multi-agent CLI work. See `README.md` for the pitch and `docs/philosophy.md` for the long-form scope.
 
 ## Two layers, shipped in two passes
 
 1. **Dispatch contract (pass 1 - shipped):** the contract between an orchestrator and one worker for one unit of work. Stage card -> worker prompt -> sandbox boundary -> acceptance command -> verifier handoff. Human drives the orchestrator session. Deliverables live in `docs/` and `templates/`.
-2. **Autonomous loop / `phat-controller` (pass 2 - shipped):** cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, exits. Budget file is the only safety. The loop layer **sits on top of** the dispatch contract - never modify the loop in ways that bypass it. Runtime in `scripts/`, schemas in `schemas/`, per-repo state in `state/`. See `docs/phat-controller.md` for the design and `docs/setup.md` for the operator flow.
+2. **Autonomous tick loop (pass 2 - shipped):** cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, exits. Two adjacent stages with declared, disjoint path claims may run as a pipeline pair, while verification and landing remain ordered. Budget file is the only safety. The loop layer **sits on top of** the dispatch contract - never modify the loop in ways that bypass it. Runtime in `scripts/`, schemas in `schemas/`, per-repo state in `state/`. See `docs/tick-loop.md` for the design and `docs/setup.md` for the operator flow.
 
-Pass 2 also ships **agent observability**: a per-agent liveness registry at `state/active-agents/<pid>.json`, a heartbeat watchdog at `scripts/heartbeat.sh` that surfaces stalls / over-budget conditions to `state/heartbeat.json`, a tmux agent ticker in the third pane of the `autometta-<repo>` viewer (`scripts/agent-ticker.sh`), and a polling primitive (`scripts/watch-agent.sh`) that any orchestrator-led manual dispatch can block on to catch silent agent deaths. See `docs/observability.md`. Spend is instrumented separately: `tick.sh` appends one cost-log line per dispatched role to `state/cost-log.jsonl` (per-tier `cost_usd_est` from `scripts/rates.sh`, `cached_input_tokens` vs `input_tokens`, `cache_hit_rate`). Schema and the prompt-caching notes are in `docs/cost-log.md`.
+The operational roles are the human or interactive orchestrator, the worker,
+the verifier, and **phat-controller**, the scheduled queue minder. The tick
+loop is the mechanism phat-controller supervises, not an agent role.
+
+Pass 2 also ships **agent observability**: a per-agent liveness registry at `state/active-agents/<pid>.json`, a heartbeat watchdog at `scripts/heartbeat.sh` that surfaces stalls / over-budget conditions to `state/heartbeat.json`, a full-window repo ticker (`scripts/repo-ticker.sh`), the `autometta tui` run/history/messages view, and a polling primitive (`scripts/watch-agent.sh`) that any orchestrator-led manual dispatch can block on to catch silent agent deaths. See `docs/observability.md`. Spend is instrumented separately: `tick.sh` appends one cost-log line per dispatched role to `state/cost-log.jsonl` (per-tier `cost_usd_est` from `scripts/rates.sh`, `cached_input_tokens` vs `input_tokens`, `cache_hit_rate`). Schema and the prompt-caching notes are in `docs/cost-log.md`.
 
 ## Load-bearing beliefs (read before proposing changes)
 
@@ -50,6 +54,8 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 8. Codex CLI prefers `$CODEX_HOME/auth.json` over the `OPENAI_API_KEY` env var. If `~/.codex/auth.json` has `auth_mode: "chatgpt"` (the default after `codex login`), an `op-fetch OPENAI_API_KEY=... -- codex exec` dispatch still bills the subscription. Fix: a sibling `CODEX_HOME` (default `~/.codex-api-only`) with `auth_mode: "apikey"`; spawn scripts export and `--pass CODEX_HOME` through op-fetch in api mode and fail closed if the sibling is missing.
 9. Claude worker subshell (`( ... ) &`) receives SIGHUP when the LaunchAgent tick exits, silently killing the worker at ~21s with a 0-byte log. Codex is unaffected (no wrapping subshell). Fix is two complementary parts: `disown "$pid"` immediately after capturing `$!` in `spawn-worker.sh`, `spawn-verifier.sh`, and `spawn-verifier-panel.sh` (shell job-control SIGHUP), AND `AbandonProcessGroup` in `templates/launchagent.plist.tpl` (launchd reaping the tick's process group on exit). Keep both. Verified 2026-05-29 with a real LaunchAgent dispatch: a claude worker survived the tick exit and ran to completion. See `docs/lessons.md` gotcha 9.
 10. A tick can destroy the gitignored `state/state.yaml`: `commit_state_branch`'s `git add state/state.yaml` is a silent no-op (gitignored), so the state branch never backs it up, and a degenerate read/write in `state_apply_json` can overwrite the only on-disk copy with an empty `stages: []` stub. Fix: `state_apply_json` read/write guards + a rolling `state/state.yaml.bak`, plus a top-of-tick integrity guard that restores `.bak` or halts `state-corrupt`. See `docs/lessons.md` gotcha 10.
+11. `op read` can block forever on a macOS TCC prompt no one is there to answer, hanging an overnight dispatch with an empty log. `op-fetch` wraps every read in a watchdog (`OP_FETCH_TIMEOUT`, default 60s). The TCC grant does not survive a `brew upgrade 1password-cli`. See `docs/lessons.md` gotcha 11.
+12. `IFS=$'\n\t'` has no space in it, so an unquoted expansion of a space-joined flag string is a silent no-op split: `--effort high` reached the CLI as one option name containing a space and every Claude verifier with a declared effort died instantly (`error: unknown option '--effort high'`), burning all three `verifier_attempt_cap` retries. Multi-token argument lists travel in a bash array (`AUTOMETTA_EFFORT_ARGV`), expanded quoted, never through word splitting; `# shellcheck disable=SC2086` documents such an intent while hiding its failure. Codex was unaffected: clap attaches a short option's value, and codex trims the leading space, so its effort was honoured throughout. See `docs/lessons.md` gotcha 12.
 
 ## Conventions specific to this repo
 
@@ -89,14 +95,14 @@ cd /path/to/autometta
 git pull --ff-only
 scripts/install-homebrew-local.sh
 autometta --version             # should match git HEAD short SHA
-autometta attach <repo>         # picks up the third tmux pane (ticker)
+autometta attach <repo>         # refreshes the two-window tmux viewer
 ```
 
 The brew tap is rendered at install time; `brew update` alone is not enough. Re-run `scripts/install-homebrew-local.sh` after every `git pull` of this repo.
 
 ## Manual orchestrator dispatch pattern
 
-When an orchestrator session dispatches a worker or verifier directly (not via `phat-controller` cron), the canonical pattern is:
+When an orchestrator session dispatches a worker or verifier directly (not via the tick loop), the canonical pattern is:
 
 ```sh
 # Source the op:// reference table (autometta repo root)

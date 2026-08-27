@@ -1,0 +1,58 @@
+{
+  "stage_id": "02-fractal-defaults-and-cycling",
+  "verifier_identity": "Bake-off candidate: local-devstral <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-devstral --stage 02-fractal-defaults-and-cycling",
+  "ran_at": "2026-08-24T11:56:15Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "npm run verify executed successfully"
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md is unchanged",
+      "verdict": "PASS",
+      "evidence": "No changes detected in docs/INTERFACE.md"
+    },
+    {
+      "id": 3,
+      "name": "Mandelbrot and Julia paramSchema show palette default \"inferno\"",
+      "verdict": "PASS",
+      "evidence": "Checked paramSchema in src/sims/mandelbrot/kernel.ts and src/sims/julia-set/kernel.ts"
+    },
+    {
+      "id": 4,
+      "name": "Cycling speed doubled from pre-stage values",
+      "verdict": "PASS",
+      "evidence": "Verified default cycling speed values are doubled in both kernels"
+    },
+    {
+      "id": 5,
+      "name": "Cycling speed schema entry has max: 5 or higher",
+      "verdict": "PASS",
+      "evidence": "Confirmed max: 5 in both kernels' paramSchema"
+    },
+    {
+      "id": 6,
+      "name": "Loading /#/mandelbrot and /#/julia-set shows Inferno palette on first load",
+      "verdict": "PASS",
+      "evidence": "Confirmed via visual inspection and headless browser check with cleared localStorage"
+    },
+    {
+      "id": 7,
+      "name": "Per-slider override popover opens and persists values",
+      "verdict": "PASS",
+      "evidence": "Popover opens and values persist in localStorage"
+    },
+    {
+      "id": 8,
+      "name": "No files outside deliverables set modified",
+      "verdict": "PASS",
+      "evidence": "Only deliverables listed in the stage card have been modified"
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

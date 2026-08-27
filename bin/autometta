@@ -3,7 +3,21 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-autometta_root="${AUTOMETTA_ROOT:-$(cd "$script_dir/.." && pwd)}"
+
+# The resolution rule lives in scripts/resolve-root.sh and nowhere else. It is
+# sourced from the tree this launcher is physically part of, because that is
+# the only tree guaranteed to exist before a root has been resolved; the root
+# it then resolves may well be a different one.
+self_root="$(cd "$script_dir/.." && pwd)"
+resolver="$self_root/scripts/resolve-root.sh"
+if [[ ! -f "$resolver" ]]; then
+  printf 'MISSING %s\n' "$resolver" >&2
+  exit 1
+fi
+# shellcheck source=../scripts/resolve-root.sh
+. "$resolver"
+autometta_resolve_root "$self_root"
+autometta_root="$AUTOMETTA_ROOT_RESOLVED"
 
 usage() {
   cat <<'USAGE'
@@ -12,15 +26,37 @@ Usage:
   autometta init-host
   autometta init [repo-path]
   autometta subscribe [repo-path]
+  autometta refresh-repo <repo-path> [--dry-run] [--adopt]
+  autometta refresh-all-repos [--dry-run]
   autometta add-stage <repo-path> <stage-card-path>
   autometta status
   autometta attach [repo-path] [--dry-run]
-  autometta tick [--repair|--reset-halt]
+  autometta tui [repo-path]
+  autometta detach [repo-path|--all]
+  autometta tick [--repair|--reset-halt [--reset-tokens]]
+  autometta phat-controller <verb> [args]   # pass | picture | preserve |
+                                            # rebrief | propose-amendment |
+                                            # requeue | stale-halt |
+                                            # merge-awaiting | smokes | push |
+                                            # queue-card | escalate | journal |
+                                            # inbox | inbox-reply | inbox-refuse |
+                                            # transcript-for-decision |
+                                            # prune-transcripts
+  autometta phat-controller --print-mandate | --print-seed
+  autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]
+  autometta warden ...                      # deprecated alias for one release
+  autometta drain start [--cap N|--lift] [--hours H] [--repo PATH] [--reason TEXT]
+  autometta drain status
+  autometta drain end
   autometta check-deps
+  autometta check-build
   autometta dashboard [--open]
+  autometta failures <repo-path> [--json]
   autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]
   autometta uninstall-launchagent <repo-path>
+  autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--window-reserve-percent N] [--window-reserve-action hold|observe]
+  autometta uninstall-launchagent-phat-controller
   autometta install-homebrew-local [--dry-run]
   autometta auth status
   autometta auth check <codex|claude>
@@ -51,13 +87,36 @@ case "$command_name" in
     usage
     ;;
   --version|version)
-    version_file="$autometta_root/VERSION"
-    if [[ -s "$version_file" ]]; then
-      printf 'autometta %s\n' "$(head -n 1 "$version_file" | tr -d '[:space:]')"
-    elif git -C "$autometta_root" rev-parse --short HEAD >/dev/null 2>&1; then
-      printf 'autometta %s\n' "$(git -C "$autometta_root" rev-parse --short HEAD)"
+    # A bare sha was the whole of this output until card 42, and it could not
+    # be trusted: it named whichever root the caller happened to resolve, with
+    # nothing on the line to say which one that was. A human and the fleet tick
+    # got different answers from the same command on the same day. So the root,
+    # the rule that chose it, and its working-tree state are all on the face of
+    # the output now, never inferred.
+    root_sha="$(autometta_root_sha "$autometta_root")"
+    printf 'autometta %s\n' "$root_sha"
+    printf '  root:   %s\n' "$autometta_root"
+    printf '  origin: %s\n' "$AUTOMETTA_ROOT_ORIGIN"
+    if autometta_root_is_checkout "$autometta_root"; then
+      dirty_files="$(autometta_root_dirty_scripts "$autometta_root")"
+      if [[ -n "$dirty_files" ]]; then
+        dirty_count="$(printf '%s\n' "$dirty_files" | wc -l | tr -d '[:space:]')"
+        printf '  sha:    %s (git checkout)\n' "$root_sha"
+        printf '  state:  DIRTY %s tracked file(s) modified under scripts/\n' "$dirty_count"
+        while IFS= read -r dirty_file; do
+          [[ -n "$dirty_file" ]] && printf '            %s\n' "$dirty_file"
+        done <<< "$dirty_files"
+        printf '  warning: uncommitted edits in this root run on the next tick.\n'
+      else
+        printf '  sha:    %s (git checkout)\n' "$root_sha"
+        printf '  state:  clean, no tracked scripts/ edits\n'
+      fi
+    elif [[ -s "$autometta_root/VERSION" ]]; then
+      printf '  sha:    %s (VERSION file; root is not a git checkout)\n' "$root_sha"
+      printf '  state:  installed build, immutable\n'
     else
-      printf 'autometta local\n'
+      printf '  sha:    unknown (no git checkout and no VERSION file)\n'
+      printf '  state:  unknown\n'
     fi
     ;;
   init-host)
@@ -83,6 +142,16 @@ case "$command_name" in
     fi
     run_script subscribe-repo.sh "$repo_path"
     ;;
+  refresh-repo)
+    if [[ $# -lt 1 ]]; then
+      printf 'usage: autometta refresh-repo <repo-path> [--dry-run] [--adopt]\n' >&2
+      exit 1
+    fi
+    run_script refresh-repo.sh "$@"
+    ;;
+  refresh-all-repos)
+    run_script refresh-all-repos.sh "$@"
+    ;;
   add-stage)
     if [[ $# -ne 2 ]]; then
       printf 'usage: autometta add-stage <repo-path> <stage-card-path>\n' >&2
@@ -96,11 +165,40 @@ case "$command_name" in
   attach)
     run_script attach.sh "$@"
     ;;
+  tui)
+    if [[ $# -gt 1 ]]; then
+      printf 'usage: autometta tui [repo-path]\n' >&2
+      exit 1
+    fi
+    run_script tui.sh "${1:-.}"
+    ;;
+  detach)
+    if [[ $# -eq 1 && "$1" == "--all" ]]; then
+      run_script attach.sh --detach-all
+    elif [[ $# -le 1 ]]; then
+      run_script attach.sh --detach "${1:-.}"
+    else
+      printf 'usage: autometta detach [repo-path|--all]\n' >&2
+      exit 1
+    fi
+    ;;
   tick)
     run_script tick.sh "$@"
     ;;
+  phat-controller|warden)
+    run_script phat-controller.sh "$@"
+    ;;
+  controller-seed)
+    run_script render-controller-seed.sh "$@"
+    ;;
+  drain)
+    run_script drain.sh "$@"
+    ;;
   check-deps)
     run_script check-deps.sh "$@"
+    ;;
+  check-build)
+    run_script check-installed-build.sh "$@"
     ;;
   dashboard)
     run_script dashboard.sh "$@"
@@ -122,11 +220,32 @@ case "$command_name" in
     fi
     run_script uninstall-launchagent.sh "$@"
     ;;
+  install-launchagent-phat-controller|install-launchagent-warden)
+    if [[ $# -lt 1 ]]; then
+      printf 'usage: autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--window-reserve-percent N] [--window-reserve-action hold|observe]\n' >&2
+      exit 1
+    fi
+    run_script install-launchagent-phat-controller.sh "$@"
+    ;;
+  uninstall-launchagent-phat-controller|uninstall-launchagent-warden)
+    if [[ $# -ne 0 ]]; then
+      printf 'usage: autometta uninstall-launchagent-phat-controller\n' >&2
+      exit 1
+    fi
+    run_script uninstall-launchagent-phat-controller.sh "$@"
+    ;;
   install-homebrew-local)
     run_script install-homebrew-local.sh "$@"
     ;;
   auth)
     run_script auth.sh "$@"
+    ;;
+  failures)
+    if [[ $# -lt 1 ]]; then
+      printf 'usage: autometta failures (<repo-path> | --fleet) [--json]\n' >&2
+      exit 1
+    fi
+    run_script failures-history.sh "$@"
     ;;
   panel)
     if [[ $# -lt 1 ]]; then
@@ -137,9 +256,11 @@ case "$command_name" in
     repo_path_arg="${2:-.}"
     shift $#
     # Find the card for the given stage-id using the stage_card_globs from
-    # .autometta.local.yaml, falling back to examples/self-host/ convention.
+    # .autometta.local.yaml, falling back to the canonical and legacy homes.
     card_file=""
     for pattern in \
+      "${repo_path_arg}/stage-cards/${stage_id_arg}.md" \
+      "${repo_path_arg}/docs/stages/${stage_id_arg}.md" \
       "${repo_path_arg}/examples/self-host/${stage_id_arg}.md" \
       "${repo_path_arg}/examples/**/${stage_id_arg}.md" \
       "${repo_path_arg}/${stage_id_arg}.md"; do

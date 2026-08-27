@@ -1,0 +1,15 @@
+{
+  "stage_id": "03-dla-revive",
+  "candidate": "local-llama4-scout",
+  "base_url": "http://localhost:11434/v1",
+  "model": "llama4:scout",
+  "elapsed_seconds": 883.9,
+  "request_count": 1,
+  "prompt_tokens": 11006,
+  "completion_tokens": 946,
+  "total_tokens": 11952,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 3544
+}

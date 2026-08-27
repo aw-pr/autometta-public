@@ -138,12 +138,14 @@ def parse_state(path: Path = STATE) -> list[Stage]:
 
 
 def card_for_stage(stage_id: str) -> Path:
-    path = Path("examples/self-host") / f"{stage_id}.md"
-    if path.is_file():
-        return path
-    matches = sorted(Path("examples/self-host").glob(f"*{stage_id}*.md"))
-    if matches:
-        return matches[0]
+    # Legacy fallbacks for subscribers that have not migrated their cards yet.
+    for directory in (Path("stage-cards"), Path("docs/stages"), Path("examples/self-host")):
+        path = directory / f"{stage_id}.md"
+        if path.is_file():
+            return path
+        matches = sorted(directory.glob(f"*{stage_id}*.md"))
+        if matches:
+            return matches[0]
     raise FileNotFoundError(f"stage card not found for {stage_id}")
 
 

@@ -43,7 +43,7 @@ Initialise the host controller home once per machine:
 autometta init-host
 ```
 
-This creates `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}` with:
+This creates `${AUTOMETTA_HOME:-$HOME/.autometta}` with:
 
 - `subscribers/`
 - `log/`
@@ -53,6 +53,12 @@ This creates `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}` with:
 `config.yaml` records the installed Autometta root as `autometta_root`. For a
 checkout run, that is the source checkout; for the Homebrew-local install, that
 is the packaged install root. The script is idempotent and safe to re-run.
+
+On an existing host, the first run moves `~/.phat-controller` to
+`~/.autometta` when the new home does not yet exist, then leaves the relative
+symlink `~/.phat-controller -> .autometta` for one release. `AUTOMETTA_HOME`
+overrides the home. `PHAT_CONTROLLER_HOME` remains a deprecated fallback for
+the same compatibility window.
 
 ## 3. Per-repo subscription
 
@@ -68,7 +74,7 @@ Example:
 autometta init .
 ```
 
-This creates repo-local state under `state/` and a subscriber file under `${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers/`.
+This creates repo-local state under `state/` and a subscriber file under `${AUTOMETTA_HOME:-$HOME/.autometta}/subscribers/`.
 It also creates a gitignored `.autometta.local.yaml` manifest that points back
 to the installed Autometta root. If `tmux` is installed, it also starts a
 detached read-only viewer named `autometta-<project-name>`.
@@ -82,6 +88,23 @@ git add .gitignore state/state.yaml state/budget.json
 git commit -m "Initialise Autometta"
 ```
 
+### Queueing path claims
+
+Serial dispatch needs no extra metadata. To opt two adjacent cards into a
+pipeline pair, give both cards a comma-separated metadata line of repo-relative
+file or directory paths:
+
+```markdown
+- **Path claims:** scripts/report.sh, docs/report.md
+```
+
+`autometta add-stage` stores valid claims in the stage record. Absolute paths,
+`.` or `..` segments, empty entries, and characters outside letters, digits,
+`.`, `_`, `/` and `-` are refused at queue time. Omitting the line keeps the
+stage serial and produces no pairing log. Claims are a dispatch precondition,
+not a landing guarantee: after N passes, the tick checks both actual diffs and
+escalates rather than rebasing on any file overlap or conflict.
+
 ## 4. Scheduling
 
 macOS uses one LaunchAgent per subscribed repo. `autometta subscribe <repo>`
@@ -93,6 +116,12 @@ that template if you need a different interval or log layout, then re-run:
 autometta install-launchagent <path-to-repo>
 ```
 
+After upgrading from the former home name, wait for a queue gap and rerun
+`autometta install-launchagent <path-to-repo>` once for each subscribed repo.
+This is the only manual migration step: it reloads the plist with
+`~/.autometta` as its working directory. Do not reload it while a worker or
+verifier is in flight.
+
 The installed plist is written to `~/Library/LaunchAgents/` and is not committed.
 It runs `autometta tick` in the user's Aqua session so CLI credentials stored in
 the login keychain are available to workers and verifiers.
@@ -101,7 +130,7 @@ Non-macOS hosts keep the cron heartbeat model. Sample cron entry to run every 5
 minutes:
 
 ```sh
-*/5 * * * * autometta tick >> "$HOME/.phat-controller/log/cron.log" 2>&1
+*/5 * * * * autometta tick >> "$HOME/.autometta/log/cron.log" 2>&1
 ```
 
 Migration from the old global cron sample:
@@ -124,8 +153,8 @@ launchctl list | grep com.autometta.tick.<repo-name>
 Check host files:
 
 ```sh
-ls -la "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
-ls -la "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers"
+ls -la "${AUTOMETTA_HOME:-$HOME/.autometta}"
+ls -la "${AUTOMETTA_HOME:-$HOME/.autometta}/subscribers"
 ```
 
 Check repo state files:
@@ -143,10 +172,22 @@ Check the controller at a glance:
 autometta status
 ```
 
+Check that the installed build matches the checkout:
+
+```sh
+autometta check-build
+```
+
 Open or create the tmux viewer:
 
 ```sh
 autometta attach .
+```
+
+Open the full-screen terminal UI:
+
+```sh
+autometta tui .
 ```
 
 Lint scripts without executing setup actions:
@@ -171,9 +212,9 @@ The hooks block (a) any commit that contains a personal-pattern string from `.pu
 
 For a deeper introduction or to retrofit a repo that pre-dates this pattern, use the `repo-publish-workflow` skill directly.
 
-## 7. Auth routes (subscription vs API key)
+## 7. Auth routes: subscription, API key and free
 
-Every dispatched agent (worker or verifier) runs on either its OAuth subscription session (Claude Pro / ChatGPT plan) or its API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude). Resolver fallback (no manifest) is `subscription` for both families; the shipped `.autometta.local.yaml.example` recommends `codex: api` + `claude: subscription`. Aligned to the `auth-route-security` skill: every launch goes through `op-fetch`, which exec's the child with `env -i` + an allowlist + named refs only — so no stray API key from your parent shell can accidentally redirect billing.
+Every dispatched agent (worker or verifier) runs on its OAuth subscription session (Claude Pro / ChatGPT plan), its API key (`OPENAI_API_KEY` for Codex, `ANTHROPIC_API_KEY` for Claude), or, codex family only, local Ollama weights with no provider at all. Resolver fallback (no manifest) is `subscription` for both families; the shipped `.autometta.local.yaml.example` recommends `codex: api` + `claude: subscription`. Aligned to the `auth-route-security` skill: every launch goes through `op-fetch`, which exec's the child with `env -i` + an allowlist + named refs only, so no stray API key from your parent shell can accidentally redirect billing.
 
 ### One-time setup
 
@@ -181,7 +222,7 @@ Every dispatched agent (worker or verifier) runs on either its OAuth subscriptio
 2. Plant the real op:// references at `~/.config/autometta/op-refs.local.sh` (gitignored; machine-wide). Use the template:
    ```sh
    mkdir -p ~/.config/autometta
-   cp op-refs.local.sh.example ~/.config/autometta/op-refs.local.sh
+   cp templates/op-refs.local.sh.tpl ~/.config/autometta/op-refs.local.sh
    chmod 600 ~/.config/autometta/op-refs.local.sh
    ```
 3. **For Codex API mode** — set up a sibling `CODEX_HOME` once. Codex prefers its `auth.json` over the `OPENAI_API_KEY` env var, so an api-mode dispatch needs an isolated codex dir whose `auth.json` says `auth_mode: "apikey"`:
@@ -194,15 +235,81 @@ Every dispatched agent (worker or verifier) runs on either its OAuth subscriptio
    Override the path globally with `AUTOMETTA_CODEX_HOME=/some/other/dir`. Verify with `cat ~/.codex-api-only/auth.json | python3 -m json.tool | head -3` — `auth_mode` must be `"apikey"`. Your main `~/.codex/auth.json` stays untouched.
 4. In the **subscribed repo** (the one whose dispatches you are routing), copy `.autometta.local.yaml.example` to `.autometta.local.yaml` and set the `auth.<family>.mode` per family.
 
+### Local weights (codex family only, `auth.codex.mode: local`)
+
+A third codex route: `codex exec --oss --local-provider=ollama -m <model>` against weights served by a local Ollama install. Zero marginal cost, no rate limits, no provider to exhaust: useful when the week's Codex API budget is gone and cross-family verification (Codex verifying Claude workers) still needs to happen without falling back to same-family verification. It is codex-family only: `auth.claude.mode: local` is refused with a clear message, since a Claude-family local route would be a different CLI and a different piece of work.
+
+One-time host setup:
+
+```sh
+# macOS
+brew install ollama
+brew services start ollama
+
+# Linux: install, then keep `ollama serve` running in another terminal or
+# under the host's service supervisor.
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve
+```
+
+After the server is running:
+
+```sh
+ollama pull gpt-oss:120b   # the default; scripts/models.sh:AUTOMETTA_MODEL_CODEX_LOCAL
+ollama list                # confirm it shows in the NAME column
+```
+
+Keeping the server running is the operator's job, not autometta's: `ollama serve` (or the `brew services` equivalent) must already be up before any dispatch that resolves `local`, and it stays up independently of any tick or worktree. Autometta never starts, stops, or supervises it; a spawn against a stopped server fails closed with a clear message rather than launching one for you. `brew services start ollama` is the lowest-effort way to make that true across reboots on macOS; on Linux, run it under whichever supervisor keeps other long-lived local services alive on that host.
+
+Then set the mode:
+
+```yaml
+auth:
+  codex:
+    mode: local
+```
+
+or override at dispatch time with `AUTOMETTA_CODEX_MODE=local`. No `OP_REF_*` and no sibling `CODEX_HOME` are needed: the spawn scripts fetch no key for this route (op-fetch still runs, so any stray `OPENAI_API_KEY` in your shell is stripped rather than silently billing the API). If `ollama` is not on `PATH`, is not serving, or the model is not pulled, the spawn fails closed before launching an agent and names the missing piece; autometta never runs `ollama serve` on your behalf.
+
+Local weights are a real step down in capability from a frontier verifier. Prefer this route for stages whose acceptance is mechanical (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria: a FAIL from a weaker verifier still blocks the merge, but a PASS is only as trustworthy as the acceptance commands it actually ran. `gpt-oss:120b` is the measured default (77% FAIL recall against a 10-stage benchmark, tied for best of eight candidates measured; see `docs/verifier-bake-off.md`); `qwen3-coder:30b` is faster but effectively a rubber stamp (15% FAIL recall) and should not be substituted for the default without accepting that trade. Cold model load is on the order of a minute; warm dispatches are faster.
+
+### Cloud free tier (measured, not a selectable dispatch mode)
+
+A second free route exists at two cloud providers, Groq and OpenRouter, each with a free API tier. It is not wired into `auth-route.sh` or `spawn-verifier.sh`: there is no `auth.<family>.mode: cloud-free` a stage card can select. It is exercised today only by the standalone bake-off harness, `scripts/verifier-bake-off.sh`, which measured it against the same benchmark set as the local candidates (results and methodology in `docs/verifier-bake-off.md`). Run one measured candidate by hand with:
+
+```sh
+scripts/verifier-bake-off.sh run \
+  --candidate openrouter-nemotron-3-ultra-550b \
+  --stage <stage-id>
+```
+
+The harness sources `op-refs.sh`, selects the one provider ref and invokes `op-fetch` itself. Do not wrap this command in a second `op-fetch` call.
+
+Plant the two extra refs at the same live file as the paid keys, using the names `op-refs.sh` already declares:
+
+```sh
+# in ~/.config/autometta/op-refs.local.sh
+export OP_REF_GROQ_API_KEY="op://<your-vault>/groq-api-key/credential"
+export OP_REF_OPENROUTER_API_KEY="op://<your-vault>/openrouter-api-key/credential"
+```
+
+**Route isolation.** Each cloud candidate's caller (`scripts/verifier-bake-off-caller.py`) reads exactly one `--api-key-env` value; no code path reads `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`. `scripts/verifier-bake-off.sh` resolves exactly one `NAME=ref` pair per candidate and hands it to `op-fetch`, whose `env -i` plus allowlist strips the paid refs from the child even when they are exported in the parent shell. Verified live: with `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` exported in the parent shell, `op-fetch GROQ_API_KEY=$OP_REF_GROQ_API_KEY -- env` showed only `GROQ_API_KEY` in the child. `scripts/verifier-bake-off-route-smoke.sh` turns the same property into an offline, credential-free check (stubbed `op-fetch` capturing argv); run it after touching the harness rather than re-verifying by hand.
+
+**Data-sharing constraint.** Every cloud call ships the stage card and the deliverable files it evaluates to a third party (Groq or OpenRouter). Nothing from `.autometta.local.yaml`, `op-refs.local.sh`, or the controller home directory is included, but the card and diff themselves leave the machine. A repo whose diffs must not reach a third party stays on the local candidates only.
+
+**Measured recommendation.** Of the eight candidates measured (five local, Groq, two OpenRouter), `local-gpt-oss-120b` and `openrouter-nemotron-3-ultra-550b` tie at 77% FAIL recall, the only two that clear a defensible bar. `local-gpt-oss-120b` is the better default (same recall, better artefact discipline, $0 with no daily cap); the cloud candidate is a fallback for when the local machine is busy or a stage's evidence is too large for local wall-clock patience, and only for a repo already cloud-eligible. The one-time $10 OpenRouter unlock (50 to 1,000 requests/day) is not worth taking for this purpose: the free local candidate already matches its FAIL recall at $0. Groq's free tier cannot complete this comparison at all: its 8,000 tokens/minute cap is smaller than this verifier's prompt on most stages, a capacity fact rather than a quality one. Full table and per-candidate evidence: `docs/verifier-bake-off.md`.
+
+A genuine third CLI family (Gemini CLI's free tier) was investigated and stays out of scope: it would need a new spawn branch, a new log format, and a new registry/heartbeat family value.
+
 ### Two committed files, one user-config file
 
 ```
 op-refs.sh                                  # COMMITTED — placeholder refs, sources the override
-op-refs.local.sh.example                    # COMMITTED — template
+templates/op-refs.local.sh.tpl                    # COMMITTED — template
 ~/.config/autometta/op-refs.local.sh        # GITIGNORED — your actual op:// references
 ```
 
-`op-refs.sh` declares `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` with `op://YOUR_VAULT/...` placeholders, then searches for an override in this order: `$AUTOMETTA_LOCAL_REFS`, `~/.config/autometta/op-refs.local.sh` (XDG, recommended), then `<repo-root>/op-refs.local.sh` (dev checkout only). The XDG location is the one location both the brew-installed CLI and the dev checkout can both see.
+`op-refs.sh` declares `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`, plus the two cloud free-tier refs `OP_REF_GROQ_API_KEY` and `OP_REF_OPENROUTER_API_KEY` (see "Cloud free tier" above), all with `op://YOUR_VAULT/...` placeholders, then searches for an override in this order: `$AUTOMETTA_LOCAL_REFS`, `~/.config/autometta/op-refs.local.sh` (XDG, recommended), then `<repo-root>/op-refs.local.sh` (dev checkout only). The XDG location is the one location both the brew-installed CLI and the dev checkout can both see.
 
 ### Per-repo mode toggle
 
@@ -211,9 +318,9 @@ op-refs.local.sh.example                    # COMMITTED — template
 ```yaml
 auth:
   codex:
-    mode: api          # subscription | api
+    mode: api          # subscription | api | local
   claude:
-    mode: subscription
+    mode: subscription  # subscription | api (local is codex-family only)
 ```
 
 Override at dispatch time without editing the manifest:
@@ -227,15 +334,15 @@ AUTOMETTA_CLAUDE_MODE=api autometta tick
 
 ```sh
 autometta auth status            # mode + ref provenance per family
-autometta auth check codex       # PASS / FAIL / subscription with redacted credential
+autometta auth check codex       # also preflights Ollama when mode=local
 autometta auth check claude
 ```
 
-`auth check` calls `op-fetch --print` against the configured ref — if the service-account token resolves it, the dispatch path will too. The resolved key is redacted in the report and never written to disk.
+In API mode, `auth check` calls `op-fetch --print` against the configured ref. If the service-account token resolves it, the dispatch path will too; the resolved key is redacted and never written to disk. Subscription mode reports that no key fetch is needed. Codex local mode runs the same Ollama server and model preflight as the spawn scripts.
 
 ### How it dispatches
 
-`scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` source `op-refs.sh`, ask `scripts/auth-route.sh <family>` for the NAME=ref pair (empty when subscription), then invoke `op-fetch <pairs> -- codex exec ...` / `op-fetch <pairs> -- claude -p ...`. In subscription mode no key is fetched but the child still gets the sanitised env. In api mode a single key is fetched and injected with nothing else from the parent shell.
+`scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` source `op-refs.sh`, ask `scripts/auth-route.sh <family>` for the NAME=ref pair (empty when subscription or codex local), then invoke `op-fetch <pairs> -- codex exec ...` / `op-fetch <pairs> -- claude -p ...`. In subscription mode no key is fetched but the child still gets the sanitised env. In api mode a single key is fetched and injected with nothing else from the parent shell. For codex, the spawn scripts additionally ask `scripts/auth-route.sh codex --print-mode` for the resolved mode word so they can pick the `--oss --local-provider=ollama -m <model>` argv when it resolves `local`.
 
 For **codex in api mode**, the spawn script also exports `CODEX_HOME=$AUTOMETTA_CODEX_HOME` (default `~/.codex-api-only`) and passes it through op-fetch via `--pass CODEX_HOME`. Without that isolation, codex prefers `~/.codex/auth.json` (`auth_mode: "chatgpt"`) and silently bills the subscription regardless of the injected `OPENAI_API_KEY`. The spawn fails closed if the sibling CODEX_HOME is missing or has the wrong `auth_mode`.
 
@@ -263,13 +370,13 @@ Remove one subscriber:
 
 ```sh
 autometta uninstall-launchagent <path-to-repo>
-rm "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}/subscribers/<repo-slug>.yaml"
+rm "${AUTOMETTA_HOME:-$HOME/.autometta}/subscribers/<repo-slug>.yaml"
 ```
 
 Remove the whole host setup:
 
 ```sh
-rm -rf "${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+rm -rf "${AUTOMETTA_HOME:-$HOME/.autometta}"
 ```
 
 Optional repo cleanup:

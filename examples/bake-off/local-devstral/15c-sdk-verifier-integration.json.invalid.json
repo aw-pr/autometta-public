@@ -1,0 +1,16 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "verifier_identity": "Bake-off candidate: local-devstral <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-devstral --stage 15c-sdk-verifier-integration",
+  "ran_at": "2026-08-24T14:08:41Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "<criterion name>",
+      "verdict": "PASS|FAIL",
+      "evidence": "<file:line-backed evidence>"
+    }
+  ],
+  "additional_findings": "<extra findings or empty string>",
+  "overall": "PASS|FAIL"
+}

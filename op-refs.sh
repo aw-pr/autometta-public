@@ -4,7 +4,7 @@
 #
 # Per the auth-route-security skill: no real op:// string, vault name, or
 # username appears anywhere in this committed file. Operator copies
-# op-refs.local.sh.example -> op-refs.local.sh (gitignored) and replaces
+# templates/op-refs.local.sh.tpl -> op-refs.local.sh (gitignored) and replaces
 # YOUR_VAULT / YOUR_ITEM placeholders with the real values.
 #
 # Wrappers source this file and pass the named refs to op-fetch:
@@ -14,6 +14,11 @@
 : "${OP_REF_OPENAI_API_KEY:=op://YOUR_VAULT/openai-api-key/credential}"
 : "${OP_REF_ANTHROPIC_API_KEY:=op://YOUR_VAULT/anthropic-api-key/credential}"
 : "${OP_REF_CLAUDE_CODE_OAUTH_TOKEN:=op://YOUR_VAULT/claude-code-oauth-token/credential}"
+
+# Free verification routes (card 46). Each caller names ONLY its own ref,
+# so the paid keys are structurally absent from a free route's child env.
+: "${OP_REF_OPENROUTER_API_KEY:=op://YOUR_VAULT/openrouter-api-key/credential}"
+: "${OP_REF_GROQ_API_KEY:=op://YOUR_VAULT/groq-api-key/credential}"
 
 # Resolution order for op-refs.local.sh (first existing file wins):
 #   1. $AUTOMETTA_LOCAL_REFS  — explicit operator override.
@@ -40,3 +45,4 @@ done
 unset _xdg_dir _script_dir _candidate
 
 export OP_REF_OPENAI_API_KEY OP_REF_ANTHROPIC_API_KEY OP_REF_CLAUDE_CODE_OAUTH_TOKEN
+export OP_REF_OPENROUTER_API_KEY OP_REF_GROQ_API_KEY

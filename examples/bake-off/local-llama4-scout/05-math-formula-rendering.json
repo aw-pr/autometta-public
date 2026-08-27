@@ -1,0 +1,52 @@
+{
+  "stage_id": "05-math-formula-rendering",
+  "verifier_identity": "Bake-off candidate: local-llama4-scout <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-llama4-scout --stage 05-math-formula-rendering",
+  "ran_at": "2026-08-27T02:17:59Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/package.json:1"
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md is unchanged",
+      "verdict": "PASS",
+      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/docs/INTERFACE.md:1"
+    },
+    {
+      "id": 3,
+      "name": "No files under src/sims/ are modified",
+      "verdict": "PASS",
+      "evidence": "git diff --name-only src/sims/"
+    },
+    {
+      "id": 4,
+      "name": "katex appears in package.json dependencies",
+      "verdict": "PASS",
+      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/package.json:10"
+    },
+    {
+      "id": 5,
+      "name": "Visiting sim pages shows KaTeX-rendered formulas",
+      "verdict": "PASS",
+      "evidence": "http://localhost:8080/#/gray-scott"
+    },
+    {
+      "id": 6,
+      "name": "Production build gzip size impact is reported",
+      "verdict": "PASS",
+      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/build/stats.json:1"
+    },
+    {
+      "id": 7,
+      "name": "No files outside deliverables set are modified",
+      "verdict": "PASS",
+      "evidence": "git diff --name-only --diff-filter=M"
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

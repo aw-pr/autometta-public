@@ -39,7 +39,7 @@
     },
     "worker_identity": {
       "type": "string",
-      "description": "Optional. The canonical identity string of the worker agent, e.g. 'Codex GPT-5.3 <codex-gpt-5-3@local>'. Redundant with state.yaml but useful when reading the envelope in isolation."
+      "description": "Optional. The canonical identity string of the worker agent, e.g. 'GPT-5.6 Sol <gpt-5-6-sol@local>'. Redundant with state.yaml but useful when reading the envelope in isolation."
     }
   }
 }

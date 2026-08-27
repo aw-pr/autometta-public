@@ -1,0 +1,15 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "candidate": "local-gpt-oss-120b",
+  "base_url": "http://localhost:11434/v1",
+  "model": "gpt-oss:120b",
+  "elapsed_seconds": 103.17,
+  "request_count": 1,
+  "prompt_tokens": 13463,
+  "completion_tokens": 2785,
+  "total_tokens": 16248,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 3345
+}

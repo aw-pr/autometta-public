@@ -1,0 +1,46 @@
+{
+  "stage_id": "29-swarmalators-kernel",
+  "verifier_identity": "Bake-off candidate: local-qwen3-coder-30b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-coder-30b --stage 29-swarmalators-kernel",
+  "ran_at": "2026-08-24T14:25:59Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Command `npm run verify` executed successfully with no failures detected in the test suite for the swarmalators kernel."
+    },
+    {
+      "id": 2,
+      "name": "kernel.test.cjs passes with all assertions including closed-form tests",
+      "verdict": "PASS",
+      "evidence": "File `src/sims/swarmalators/kernel.test.cjs` runs without errors and includes the required two-particle equilibrium test (lines 100-105) and K=0/frequencySpread=0 phase-invariance assertion (lines 106-111), both passing as per stage requirements."
+    },
+    {
+      "id": 3,
+      "name": "Browser smoke on /#/swarmalators renders legible particle swarm",
+      "verdict": "PASS",
+      "evidence": "Testing in headless Chromium confirmed that the browser rendering at `/#/swarmalators` shows visible particle swarms rather than blank or single-pixel fields, with particles rendered as discernible discs (as per round 2 of the worker handoff)."
+    },
+    {
+      "id": 4,
+      "name": "Each preset visibly matches its named state's qualitative description",
+      "verdict": "PASS",
+      "evidence": "Five presets were tested in sequence using headless browser checks: static-sync (uniform color, closed disc), static-async (rainbow ring, frozen in space), static-phase-wave (color wave around a fixed ring), splintered-phase-wave (ring fragments into rotating clusters), active-phase-wave (moving swarm with continuous phase wave). All presets rendered as described."
+    },
+    {
+      "id": 5,
+      "name": "Colour comes from reused cyclic phase ramp via existing twoChannelColour machinery",
+      "verdict": "PASS",
+      "evidence": "The `src/app/colormap.ts` file contains a case for 'swarmalators' that inherits the existing cyclic phase preset (lines 186-188), confirming no new colormap or preset function was added as specified in the card."
+    },
+    {
+      "id": 6,
+      "name": "No files outside deliverables are modified",
+      "verdict": "PASS",
+      "evidence": "Only files under `src/sims/swarmalators/` plus registry entry, presets.ts entry, and colormap.ts case were changed. No other files in the repository received modifications beyond what was required by the stage card."
+    }
+  ],
+  "additional_findings": "All verification criteria have been successfully passed. The swarmalators kernel implementation correctly implements the O'Keeffe-Hong-Strogatz model with all deliverables as specified in the stage card, including deterministic simulations, proper handling of phase and position dynamics, and correct rendering via the existing two-channel color mapping infrastructure.",
+  "overall": "PASS"
+}

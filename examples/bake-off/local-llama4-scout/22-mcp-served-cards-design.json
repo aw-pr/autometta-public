@@ -1,0 +1,70 @@
+{
+  "stage_id": "22-mcp-served-cards-design",
+  "verifier_identity": "Bake-off candidate: local-llama4-scout <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-llama4-scout --stage 22-mcp-served-cards-design",
+  "ran_at": "2026-08-27T03:33:49Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "docs/design/mcp-cards.md exists with required sections",
+      "verdict": "PASS",
+      "evidence": "File exists with required sections"
+    },
+    {
+      "id": 2,
+      "name": "Relationship to filesystem-is-the-message-bus section",
+      "verdict": "PASS",
+      "evidence": "Section exists and provides a clear conclusion"
+    },
+    {
+      "id": 3,
+      "name": "URI scheme is concrete",
+      "verdict": "PASS",
+      "evidence": "Literal example provided"
+    },
+    {
+      "id": 4,
+      "name": "Fallback-to-filesystem path described",
+      "verdict": "PASS",
+      "evidence": "Clear description of fallback mechanism"
+    },
+    {
+      "id": 5,
+      "name": "Smallest-possible-prototype card outline fits on one page",
+      "verdict": "PASS",
+      "evidence": "Outline is concise and transferable"
+    },
+    {
+      "id": 6,
+      "name": "memory/decision-mcp-cards.md follows format and links to sibling design card",
+      "verdict": "FAIL",
+      "evidence": "File does not seem to follow expected format or contain required link"
+    },
+    {
+      "id": 7,
+      "name": "docs/philosophy.md edit is at most three lines and additive",
+      "verdict": "PASS",
+      "evidence": "Edit is minimal and additive"
+    },
+    {
+      "id": 8,
+      "name": "Total prose under 1500 words",
+      "verdict": "PASS",
+      "evidence": "Total prose is under 1500 words"
+    },
+    {
+      "id": 9,
+      "name": "No em dashes or specified AI-tell vocabulary",
+      "verdict": "PASS",
+      "evidence": "Deliverables do not contain em dashes or specified vocabulary"
+    },
+    {
+      "id": 10,
+      "name": "No code change",
+      "verdict": "PASS",
+      "evidence": "Criterion confirmed and met"
+    }
+  ],
+  "additional_findings": "The verifier noted that memory/decision-mcp-cards.md seems not to follow the expected format or contain the required link.",
+  "overall": "FAIL"
+}

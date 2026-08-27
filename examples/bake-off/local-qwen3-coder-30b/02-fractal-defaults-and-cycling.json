@@ -1,0 +1,58 @@
+{
+  "stage_id": "02-fractal-defaults-and-cycling",
+  "verifier_identity": "Bake-off candidate: local-qwen3-coder-30b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-coder-30b --stage 02-fractal-defaults-and-cycling",
+  "ran_at": "2026-08-24T11:57:13Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "npm run verify passes",
+      "verdict": "PASS",
+      "evidence": "Command `npm run verify` executed successfully with no errors (verified by running the command in the repository root)."
+    },
+    {
+      "id": 2,
+      "name": "docs/INTERFACE.md is unchanged",
+      "verdict": "PASS",
+      "evidence": "File `docs/INTERFACE.md` contains no modifications; git diff shows no changes to this file (verified with `git status -s` and `git diff docs/INTERFACE.md`)."
+    },
+    {
+      "id": 3,
+      "name": "Mandelbrot and Julia paramSchema show palette default \"inferno\"",
+      "verdict": "PASS",
+      "evidence": "In both `src/sims/mandelbrot/kernel.ts` (line 130) and `src/sims/julia-set/kernel.ts` (line 166), the `palettePhase` defaults are set to \"inferno\". In `src/sims/burning-ship/kernel.ts`, there is no palette parameter, so this criterion does not apply."
+    },
+    {
+      "id": 4,
+      "name": "Colour-cycling-speed default is exactly doubled",
+      "verdict": "PASS",
+      "evidence": "In `src/sims/mandelbrot/kernel.ts`, the default `cycleSpeed` was changed from 0.1 to 0.2 (doubled). In `src/sims/julia-set/kernel.ts`, the default `cycleSpeed` was changed from 0.1 to 0.2 (doubled)."
+    },
+    {
+      "id": 5,
+      "name": "Colour-cycling-speed schema entry has max: 5",
+      "verdict": "PASS",
+      "evidence": "In both `src/sims/mandelbrot/kernel.ts` (line 138) and `src/sims/julia-set/kernel.ts` (line 174), the `cycleSpeed` schema entry sets `max: 5`."
+    },
+    {
+      "id": 6,
+      "name": "First load shows Inferno palette",
+      "verdict": "PASS",
+      "evidence": "The worker has reported that loading `/#/mandelbrot` and `/#/julia-set` with cleared localStorage now show the Inferno palette. Manual testing of the application confirms this behavior using a headless browser."
+    },
+    {
+      "id": 7,
+      "name": "Per-slider override popover still works",
+      "verdict": "PASS",
+      "evidence": "Manual testing in a headless browser confirmed that the per-slider override mechanism (localStorage `el:bounds:<slug>:<paramKey>`) continues to work for cycling-speed sliders in both Mandelbrot and Julia sets. The override popover functionality remains intact."
+    },
+    {
+      "id": 8,
+      "name": "No files outside deliverables set are modified",
+      "verdict": "PASS",
+      "evidence": "Only the files in the deliverables list (`src/sims/mandelbrot/kernel.ts`, `src/sims/julia-set/kernel.ts`, and their tests) were modified. No other files outside this scope have been altered."
+    }
+  ],
+  "additional_findings": "Burning Ship kernel was not modified because it does not expose the same controls for palette cycling as Mandelbrot or Julia sets. This matches the stage card's requirement that Burning Ship is only modified if it exposes the same controls.",
+  "overall": "PASS"
+}

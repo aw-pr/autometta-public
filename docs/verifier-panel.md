@@ -18,13 +18,15 @@ Set `Verifier panel: true` in the stage card's Metadata section, or export `AUTO
 
 When panel mode is on, `spawn-verifier.sh` delegates immediately to `spawn-verifier-panel.sh`. The single-verifier path is not exercised.
 
+If the card declares `Verifier effort`, the panel applies it to every member. The two Claude SDK calls receive `--effort <level>`, and the Codex CLI call receives `-c model_reasoning_effort=<level>`, using the same argv helper as single-verifier dispatch. If the field is omitted, every member keeps its transport default.
+
 ## Panel composition (v1, fixed)
 
 | Panellist | Route | Identity |
 |---|---|---|
 | 0 | Claude Opus 4.8 via SDK | `Claude Opus 4.8 <claude-opus-4-8@local>` |
 | 1 | Claude Sonnet 4.6 via SDK | `Claude Sonnet 4.6 <claude-sonnet-4-6@local>` |
-| 2 | Codex GPT-5.3 via `codex exec` | `Codex GPT-5.3 <codex-gpt-5-3@local>` |
+| 2 | GPT-5.6 Sol via `codex exec --model gpt-5.6-sol` | `GPT-5.6 Sol <gpt-5-6-sol@local>` |
 
 The two Claude panellists require `auth.claude.mode: api` in `.autometta.local.yaml`. If the API key is not available, the panel fails closed with an explicit error — it does not fall back to subscription or to a single verifier.
 

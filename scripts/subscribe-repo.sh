@@ -3,10 +3,10 @@ set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-default_autometta_root="$(cd "$script_dir/.." && pwd)"
-controller_home="${PHAT_CONTROLLER_HOME:-$HOME/.phat-controller}"
+# shellcheck source=resolve-root.sh
+. "$script_dir/resolve-root.sh"
+controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
-config_file="$controller_home/config.yaml"
 
 usage() {
   printf 'Usage: %s <repo-path>\n' "$(basename "$0")" >&2
@@ -32,7 +32,8 @@ fi
 
 repo_path="$(resolve_path "$1")"
 
-if [[ ! -d "$repo_path/.git" ]]; then
+# -e, not -d: a linked git worktree has a .git *file* pointing at the parent.
+if [[ ! -e "$repo_path/.git" ]]; then
   printf 'MISSING git repo %s\n' "$repo_path" >&2
   exit 1
 fi
@@ -52,17 +53,12 @@ budget_file="$state_dir/budget.json"
 gitignore_file="$repo_path/.gitignore"
 manifest_file="$repo_path/.autometta.local.yaml"
 
-autometta_root="$default_autometta_root"
-if [[ -f "$config_file" ]]; then
-  configured_root="$(sed -n 's/^autometta_root:[[:space:]]*//p' "$config_file" | head -n1 || true)"
-  configured_root="${configured_root%\"}"
-  configured_root="${configured_root#\"}"
-  configured_root="${configured_root%\'}"
-  configured_root="${configured_root#\'}"
-  if [[ -n "$configured_root" ]]; then
-    autometta_root="$configured_root"
-  fi
-fi
+# The root recorded in the subscriber file is the tree that will run this
+# repo's dispatches, so it is the resolved root. This script used to carry its
+# own copy of the config-then-self precedence; it now defers to the one rule,
+# which also honours an explicit AUTOMETTA_ROOT.
+autometta_resolve_root "$(autometta_self_root "$script_dir")"
+autometta_root="$AUTOMETTA_ROOT_RESOLVED"
 
 mkdir -p "$state_dir" "$verifiers_dir" "$logs_dir"
 printf 'PASS state dirs ready %s\n' "$state_dir"
@@ -86,11 +82,18 @@ fi
 if [[ -f "$budget_file" ]]; then
   printf 'PASS budget exists %s\n' "$budget_file"
 else
+  # No token_cap_total: the daily cap is a host decision, set once by
+  # init-host.sh in the controller config.yaml and inherited here. Seeding a
+  # number per repo is how the fleet came to carry four different ones with
+  # nothing recording why. Add the field to this file only where this repo
+  # genuinely differs; absent means inherit, never unlimited. Resolution order
+  # is in scripts/budget.sh.
   cat > "$budget_file" <<'JSON'
 {
   "version": 1,
-  "token_cap_total": 1000000,
   "tokens_spent": 0,
+  "lifetime_tokens_spent": 0,
+  "breaches": [],
   "wall_clock_cap_seconds": 3600,
   "wall_clock_elapsed_seconds": 0,
   "clock_tick_cap": 100,
@@ -123,7 +126,7 @@ else
 state/logs/
 .autometta.local.yaml
 EOF_GITIGNORE
-  printf 'PASS gitignore created with phat-controller local entries\n'
+  printf 'PASS gitignore created with Autometta local entries\n'
 fi
 
 if [[ -f "$manifest_file" ]]; then
@@ -134,8 +137,7 @@ version: 1
 autometta_root: "$autometta_root"
 state_dir: state
 stage_card_globs:
-  - docs/stages/*.md
-  - examples/self-host/*.md
+  - stage-cards/*.md
 templates_mode: upstream
 YAML
   printf 'PASS manifest created %s\n' "$manifest_file"

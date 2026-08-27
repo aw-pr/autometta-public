@@ -1,0 +1,15 @@
+{
+  "stage_id": "16-sdk-verifier-prompt-cache",
+  "candidate": "local-qwen3-coder-30b",
+  "base_url": "http://localhost:11434/v1",
+  "model": "qwen3-coder:30b",
+  "elapsed_seconds": 41.75,
+  "request_count": 1,
+  "prompt_tokens": 13342,
+  "completion_tokens": 985,
+  "total_tokens": 14327,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 3374
+}

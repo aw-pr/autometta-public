@@ -1,0 +1,15 @@
+{
+  "stage_id": "30-markus-lyapunov-kernel",
+  "candidate": "openrouter-nemotron-3-super-120b",
+  "base_url": "https://openrouter.ai/api/v1",
+  "model": "nvidia/nemotron-3-super-120b-a12b:free",
+  "elapsed_seconds": 19.35,
+  "request_count": 1,
+  "prompt_tokens": 13205,
+  "completion_tokens": 2270,
+  "total_tokens": 15475,
+  "parsed_ok": true,
+  "schema_ok": true,
+  "error": "",
+  "raw_text_len": 2234
+}

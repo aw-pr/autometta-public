@@ -1,0 +1,15 @@
+{
+  "stage_id": "06-real-dispatch-test",
+  "candidate": "groq-gpt-oss-120b",
+  "base_url": "https://api.groq.com/openai/v1",
+  "model": "openai/gpt-oss-120b",
+  "elapsed_seconds": 2.9,
+  "request_count": 1,
+  "prompt_tokens": 5477,
+  "completion_tokens": 998,
+  "total_tokens": 6475,
+  "parsed_ok": false,
+  "schema_ok": false,
+  "error": "unbalanced braces: no matching close for the first '{'",
+  "raw_text_len": 2203
+}

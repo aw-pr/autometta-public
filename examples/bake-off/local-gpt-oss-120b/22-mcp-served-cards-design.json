@@ -1,0 +1,70 @@
+{
+  "stage_id": "22-mcp-served-cards-design",
+  "verifier_identity": "Bake-off candidate: local-gpt-oss-120b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-gpt-oss-120b --stage 22-mcp-served-cards-design",
+  "ran_at": "2026-08-24T12:50:01Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Design document sections",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:5-6 \"## Problem statement\"\ndocs/design/mcp-cards.md:9-10 \"## URI scheme\"\ndocs/design/mcp-cards.md:25-26 \"## Server responsibilities\"\ndocs/design/mcp-cards.md:34-35 \"## Consumption by tick.sh (with fallback to filesystem)\"\ndocs/design/mcp-cards.md:43-44 \"## Relationship to \\\"filesystem is the message bus\\\"\"\ndocs/design/mcp-cards.md:47-48 \"## Multi-machine implications\"\ndocs/design/mcp-cards.md:51-52 \"## Migration path\"\ndocs/design/mcp-cards.md:55-56 \"## Smallest-possible-prototype card outline\""
+    },
+    {
+      "id": 2,
+      "name": "Relationship section conclusion",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:43-46 \"## Relationship to \\\"filesystem is the message bus\\\" ... This is a refinement, not a contradiction. ... Conclusion: MCP-served cards refine card delivery; the filesystem remains the message bus for everything the agents emit.\""
+    },
+    {
+      "id": 3,
+      "name": "Concrete URI scheme with example",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:11-21 \"stage://<repo>/<stage-id>@<version>\" and literal example \"stage://autometta/22-mcp-served-cards-design@30faa66\""
+    },
+    {
+      "id": 4,
+      "name": "Fallback\u2011to\u2011filesystem description",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:36-40 \"If the repo manifest sets `cards.transport: mcp` ... helper issues an MCP `resources/read` ... writes to /tmp/... and prints that path. If the manifest is unset ... or the MCP call fails ... the helper falls back to the existing `stage_card_for_id` lookup and prints the on-disk path. The fallback is not optional.\""
+    },
+    {
+      "id": 5,
+      "name": "Prototype outline size",
+      "verdict": "PASS",
+      "evidence": "docs/design/mcp-cards.md:55-63 \"## Smallest-possible-prototype card outline\" followed by a concise bullet list that fits on a single page (\u2248 30 lines)."
+    },
+    {
+      "id": 6,
+      "name": "Decision memo format and link",
+      "verdict": "FAIL",
+      "evidence": "File `memory/decision-mcp-cards.md` not found in the working tree (git status shows no such path)."
+    },
+    {
+      "id": 7,
+      "name": "Philosophy edit size and additivity",
+      "verdict": "FAIL",
+      "evidence": "File `docs/philosophy.md` unchanged from repository baseline; no added lines referencing MCP\u2011cards. Hence violates the \u22643\u2011line additive edit requirement."
+    },
+    {
+      "id": 8,
+      "name": "Total prose under 1500 words",
+      "verdict": "PASS",
+      "evidence": "Word count (approx.): docs/design/mcp-cards.md \u2248 460 words; memory/decision-mcp-cards.md missing (0 words); docs/philosophy.md unchanged (\u2248 120 words). Total well under 1500."
+    },
+    {
+      "id": 9,
+      "name": "No forbidden wording or em\u2011dashes",
+      "verdict": "PASS",
+      "evidence": "Search across all deliverable files shows no occurrence of the em\u2011dash character (\u2014) and none of the banned terms (delve, leverage, seamless, robust, crucial, pivotal)."
+    },
+    {
+      "id": 10,
+      "name": "No code changes",
+      "verdict": "PASS",
+      "evidence": "git diff --name-only reports no modifications under `scripts/`, `schemas/`, or `bin/autometta`. All script and schema files are byte\u2011identical to repository baseline."
+    }
+  ],
+  "additional_findings": "Missing decision memo (`memory/decision-mcp-cards.md`) and missing philosophy edit prevent full compliance with the stage card. These are the only failures; all other criteria are satisfied.",
+  "overall": "FAIL"
+}

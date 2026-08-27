@@ -1,0 +1,64 @@
+{
+  "stage_id": "16-sdk-verifier-prompt-cache",
+  "verifier_identity": "Bake-off candidate: openrouter-nemotron-3-ultra-550b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate openrouter-nemotron-3-ultra-550b --stage 16-sdk-verifier-prompt-cache",
+  "ran_at": "2026-08-24T12:16:25Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "verify-sdk.py --help works",
+      "verdict": "PASS",
+      "evidence": "scripts/verify-sdk.py:100-144 defines argparse with --help; running it shows usage without error"
+    },
+    {
+      "id": 2,
+      "name": "First smoke run logs write>0 read=0",
+      "verdict": "FAIL",
+      "evidence": "scripts/sdk-cache-smoke.sh does not exist in the working tree (git status shows only verify-sdk.py, docs/sdk-verifier.md changed; smoke script and decision memo missing)"
+    },
+    {
+      "id": 3,
+      "name": "Second smoke run logs read>0 exits 0",
+      "verdict": "FAIL",
+      "evidence": "scripts/sdk-cache-smoke.sh missing; cannot run smoke test to verify cache hit"
+    },
+    {
+      "id": 4,
+      "name": "Cache bust on template change logs read=0",
+      "verdict": "FAIL",
+      "evidence": "scripts/sdk-cache-smoke.sh missing; cannot verify cache-bust behavior"
+    },
+    {
+      "id": 5,
+      "name": "Artefact validates against schema",
+      "verdict": "PASS",
+      "evidence": "schemas/verifier.json exists and verify-sdk.py validates against it (lines 152-159, 272-280, 423-424); envelope shape unchanged"
+    },
+    {
+      "id": 6,
+      "name": "Overall identical between cached/non-cached runs",
+      "verdict": "FAIL",
+      "evidence": "Cannot verify without smoke script; no cached/non-cached comparison possible"
+    },
+    {
+      "id": 7,
+      "name": "docs/sdk-verifier.md has Prompt caching section with TTL, cached block, bust boundary",
+      "verdict": "PASS",
+      "evidence": "docs/sdk-verifier.md:159-214 contains Prompt caching section with TTL (5-minute), cached block contents (rubric, schema, reminders), bust boundary (per-stage card+artefacts)"
+    },
+    {
+      "id": 8,
+      "name": "Decision memo links to decision-sdk-verifier-integration",
+      "verdict": "FAIL",
+      "evidence": "memory/decision-sdk-verifier-prompt-cache.md does not exist in working tree (git status shows no new memory file)"
+    },
+    {
+      "id": 9,
+      "name": "No files outside deliverables modified",
+      "verdict": "FAIL",
+      "evidence": "git status would show only verify-sdk.py and docs/sdk-verifier.md changed (per user context), but deliverables list includes 4 files; smoke script and decision memo are missing entirely, not just unmodified"
+    }
+  ],
+  "additional_findings": "Worker delivered only 2 of 4 required deliverables. scripts/verify-sdk.py correctly implements prompt caching with cache_control: ephemeral on static block (lines 197-226, 320-333) and logs cache usage (line 351). docs/sdk-verifier.md has comprehensive Prompt caching section. However, scripts/sdk-cache-smoke.sh and memory/decision-sdk-verifier-prompt-cache.md are absent. Without the smoke script, criteria 2-4 and 6 cannot be verified. The decision memo criterion 8 fails due to missing file. Criterion 9 fails because deliverables are incomplete (missing files count as scope violation per dispatch contract: deliverables list defines expected output set).",
+  "overall": "FAIL"
+}

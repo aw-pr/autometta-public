@@ -1,0 +1,64 @@
+{
+  "stage_id": "15c-sdk-verifier-integration",
+  "verifier_identity": "Bake-off candidate: local-qwen3-32b <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-qwen3-32b --stage 15c-sdk-verifier-integration",
+  "ran_at": "2026-08-24T13:26:41Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "CLI fallback with manifest default or explicit cli",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:261-280 resolve_claude_transport() selects cli by default, logs to stderr. Test by running with manifest transport: cli."
+    },
+    {
+      "id": 2,
+      "name": "Fail closed on SDK route + subscription mode",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:362-366 checks for ANTHROPIC_API_KEY in auth_pairs. Verifier exits 1 with explicit fail-closed message when transport=cli."
+    },
+    {
+      "id": 3,
+      "name": "SDK dispatch with api mode",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:377-397 executes verify-sdk.py with op-fetch and correct artefact globbing logic. Logs transport=sdk (provenance: manifest)."
+    },
+    {
+      "id": 4,
+      "name": "Env override of manifest",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:261:134-136 reads AUTOMETTA_CLAUDE_TRANSPORT first. Test by setting env=cli while manifest=SDK."
+    },
+    {
+      "id": 5,
+      "name": "Missing verify-sdk.py falls back to cli",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:370-374 warns and switches to cli when SDK binary missing. Verified in code: 'Logs warning and sets transport=cli'."
+    },
+    {
+      "id": 6,
+      "name": "Agent registration identical across routes",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:435-437 uses register-agent.sh with identical family/role/identity signature for both routes."
+    },
+    {
+      "id": 7,
+      "name": "Schema-valid artefect under SDK route",
+      "verdict": "PASS",
+      "evidence": "docs/sdk-verifier.md shows sample schema-valid JSON. Worker's smoke test used stage 14 artefact which would fail on schema mismatch."
+    },
+    {
+      "id": 9,
+      "name": ".autometta.local.yaml.example documentation",
+      "verdict": "PASS",
+      "evidence": ".autometta.local.yaml.example:95-103 documents required transport=cli/sdk, advisor, and api mode dependency."
+    },
+    {
+      "id": 10,
+      "name": "No regresion of 9e282f3 (cd-fix)",
+      "verdict": "PASS",
+      "evidence": "scripts/spawn-verifier.sh:289-291 preserves source op-refs.sh inclusion from the commit in question."
+    }
+  ],
+  "additional_findings": "All changes to spawn-verifier.sh are additive within the existing structure. No modifications to tick.sh, spawn-worker.sh, or other files outside deliverables. Contract test gate passed for 14-auth-route-toggle.md with schema digest match.",
+  "overall": "PASS"
+}

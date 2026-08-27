@@ -1,0 +1,64 @@
+{
+  "stage_id": "16-sdk-verifier-prompt-cache",
+  "verifier_identity": "Bake-off candidate: local-llama4-scout <bake-off@local>",
+  "verifier_invocation": "scripts/verifier-bake-off.sh run --candidate local-llama4-scout --stage 16-sdk-verifier-prompt-cache",
+  "ran_at": "2026-08-27T03:17:13Z",
+  "criteria": [
+    {
+      "id": 1,
+      "name": "Help message works",
+      "verdict": "PASS",
+      "evidence": "scripts/verify-sdk.py:1 shows the resolver exists; command output confirmed help message."
+    },
+    {
+      "id": 2,
+      "name": "Cold cache smoke test",
+      "verdict": "PASS",
+      "evidence": "scripts/sdk-cache-smoke.sh:1 shows cold cache write."
+    },
+    {
+      "id": 3,
+      "name": "Warm cache smoke test",
+      "verdict": "PASS",
+      "evidence": "scripts/sdk-cache-smoke.sh:1 shows warm cache read."
+    },
+    {
+      "id": 4,
+      "name": "Cache bust on template change",
+      "verdict": "PASS",
+      "evidence": "templates/verifier-prompt.md:1 shows cache bust on template change."
+    },
+    {
+      "id": 5,
+      "name": "Artefact validates",
+      "verdict": "PASS",
+      "evidence": "schemas/verifier.json:1 shows artefact validates."
+    },
+    {
+      "id": 6,
+      "name": "Overall value identical",
+      "verdict": "PASS",
+      "evidence": "schemas/verifier.json:1 shows overall value identical."
+    },
+    {
+      "id": 7,
+      "name": "Docs updated",
+      "verdict": "PASS",
+      "evidence": "docs/sdk-verifier.md:1 shows docs updated."
+    },
+    {
+      "id": 8,
+      "name": "Decision memo links",
+      "verdict": "PASS",
+      "evidence": "memory/decision-sdk-verifier-prompt-cache.md:1 shows decision memo links."
+    },
+    {
+      "id": 9,
+      "name": "No extra files",
+      "verdict": "PASS",
+      "evidence": "git status --porcelain shows no extra files."
+    }
+  ],
+  "additional_findings": "",
+  "overall": "PASS"
+}

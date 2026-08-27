@@ -12,10 +12,13 @@ python3 scripts/verify-sdk.py --help
 op-fetch ANTHROPIC_API_KEY="$OP_REF_ANTHROPIC_API_KEY" -- \
   python3 scripts/verify-sdk.py \
     --stage-id 14-auth-route-toggle \
-    --card examples/self-host/14-auth-route-toggle.md \
+    --card stage-cards/14-auth-route-toggle.md \
     --artefact-glob 'scripts/auth*.sh' \
-    --out state/verifiers/14-auth-route-toggle.json
+    --out state/verifiers/14-auth-route-toggle.json \
+    --effort high
 ```
+
+`--effort` is optional. The pinned `anthropic==0.100.0` client exposes the same `low`, `medium`, `high`, `xhigh`, and `max` vocabulary through `output_config.effort`. `spawn-verifier.sh` passes a declared card `Verifier effort` to this option. With no declaration, it omits `output_config` and preserves the SDK default.
 
 Exit codes:
 
@@ -30,7 +33,7 @@ The output envelope intentionally matches the existing verifier artefact shape:
 {
   "stage_id": "14-auth-route-toggle",
   "verifier_identity": "Claude Agent SDK verifier <claude-agent-sdk@local>",
-  "verifier_invocation": "scripts/verify-sdk.py --stage-id 14-auth-route-toggle --card examples/self-host/14-auth-route-toggle.md --artefact-glob <redacted> --out state/verifiers/14-auth-route-toggle.json",
+  "verifier_invocation": "scripts/verify-sdk.py --stage-id 14-auth-route-toggle --card stage-cards/14-auth-route-toggle.md --artefact-glob <redacted> --out state/verifiers/14-auth-route-toggle.json",
   "ran_at": "2026-05-27T12:00:00Z",
   "criteria": [
     {
@@ -99,6 +102,37 @@ verifier:
 
 See `.autometta.local.yaml.example` for the full template and comments.
 
+### Fable-as-advisor (optional)
+
+A verifier on the SDK route can consult a stronger advisor model only at the
+decision point instead of running a frontier model across the whole prompt. The
+cheap request model (`--model`, e.g. `claude-sonnet-4-6`) reads the
+cache-controlled static block and the artefacts and drafts the verdicts; the
+advisor (`--advisor`, e.g. `claude-fable-5`) finalises the JSON envelope. The
+advisor consults over the same cached prefix, so its input is cached. Design:
+[`docs/design/advisor-verifier.md`](design/advisor-verifier.md).
+
+Resolution order (most specific wins): `AUTOMETTA_CLAUDE_ADVISOR` env var, then
+`verifier.claude.advisor` in `.autometta.local.yaml`, then off. The advisor sits
+under the `sdk` branch only and inherits its `auth.claude.mode: api` gate.
+
+```yaml
+verifier:
+  claude:
+    transport: sdk
+    advisor: claude-fable-5
+```
+
+**Ordering precondition (#66714):** the advisor must not be weaker than the
+request model. A request on `claude-fable-5` with an advisor on
+`claude-opus-4-8` returns HTTP 400. `verify-sdk.py` enforces the capability
+ordering (`fable > opus > sonnet > haiku`) locally and exits `2` before any API
+call on an inverted pair. Offline check: `scripts/advisor-order-smoke.sh`.
+
+**Data retention:** the advisor receives the stage card and artefacts, which
+carry the org-wide 30-day retention commitment. Do not point it at a repo whose
+artefacts contain personal data.
+
 ### Fail-closed conditions
 
 | Condition | Outcome |
@@ -107,6 +141,8 @@ See `.autometta.local.yaml.example` for the full template and comments.
 | `transport` value other than `cli` or `sdk` | Exits non-zero before spawning any process. |
 | `transport: sdk` + `scripts/verify-sdk.py` missing | Logs a warning and falls back to `cli`. |
 | `transport: sdk` + SDK package missing | `verify-sdk.py` exits `2`; logged to the stage log. |
+| `transport: sdk` + declared `Verifier effort` | Passes the level through `output_config.effort`; it is not discarded. |
+| `advisor` weaker than `--model` (inverted #66714 pair) | `verify-sdk.py` exits `2` before any API call, naming both models. |
 
 ### Artefact glob derivation
 

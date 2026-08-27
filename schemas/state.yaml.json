@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://autometta.local/schemas/state.yaml.json",
-  "title": "phat-controller state file",
+  "title": "Autometta tick-loop state file",
   "description": "Per-repo state for the autometta pass-2 autonomous loop. Stored at state/state.yaml in the repo it describes. Written only by scripts/tick.sh; humans should treat it as read-only.",
   "type": "object",
   "additionalProperties": false,
@@ -21,7 +21,43 @@
     },
     "current_stage": {
       "type": ["string", "null"],
-      "description": "Stage id currently in_progress, or null if no stage is active. Must match an entry in stages[].id when non-null."
+      "description": "Ordered landing head, or null if no stage is active. During a pipeline pair the tail is also in_progress and is named by pipeline_pair.tail. Must match an entry in stages[].id when non-null."
+    },
+    "pipeline_pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["head", "tail", "base_tip", "phase", "rebase_required"],
+      "properties": {
+        "head": {
+          "type": "string",
+          "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$"
+        },
+        "tail": {
+          "type": "string",
+          "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$"
+        },
+        "base_tip": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["workers-overlapped", "head-landed", "head-failed", "tail-rebased", "controller-escalation"]
+        },
+        "rebase_required": {
+          "type": "boolean"
+        }
+      },
+      "description": "At most one adjacent two-stage pipeline pair. current_stage remains the ordered landing head; each member's own stage record holds its live PIDs."
+    },
+    "pairing_disabled_stage": {
+      "type": "string",
+      "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+      "description": "Stage whose active-pair failure latched this repo to serial dispatch. Cleared when that stage's re-brief lands."
+    },
+    "pairing_disabled_reason": {
+      "type": "string",
+      "description": "Machine-readable reason pairing is latched off for this repo."
     },
     "stages": {
       "type": "array",
@@ -34,12 +70,17 @@
           "id": {
             "type": "string",
             "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
-            "description": "Stage id; convention is NN[a-z*]-kebab-slug matching the card filename in examples/self-host/ or wherever cards live for this repo. Optional lowercase letters between the NN prefix and the first dash allow sub-stages like 05a, 05b, 05c."
+            "description": "Stage id; convention is NN[a-z*]-kebab-slug matching the card filename in stage-cards/. Optional lowercase letters between the NN prefix and the first dash allow sub-stages like 05a, 05b, 05c."
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^run-[0-9]{8}-[0-9]{6}$",
+            "description": "Queue-time run identity minted at a queue-empty boundary as run-YYYYMMDD-HHMMSS UTC. Later stages added while that run remains outstanding inherit it. Absent on historic records created before run identity was introduced."
           },
           "status": {
             "type": "string",
-            "enum": ["pending", "in_progress", "completed", "failed", "stalled", "verifier_failed"],
-            "description": "Stage lifecycle status. Transitions: pending -> in_progress -> completed | failed | stalled | verifier_failed. failed, stalled, and verifier_failed are terminal until a human re-briefs. verifier_failed means the verifier artefact reported overall=FAIL (or was malformed and treated as FAIL); the worker's working-tree changes have NOT been committed, and the operator decides whether to amend the stage card and re-run or revert."
+            "enum": ["pending", "in_progress", "completed", "failed", "stalled", "verifier_failed", "superseded"],
+            "description": "Stage lifecycle status. Transitions: pending -> in_progress -> completed | failed | stalled | verifier_failed; pending -> superseded by operator decision. failed, stalled, and verifier_failed are terminal until a human re-briefs. verifier_failed means the verifier artefact reported overall=FAIL (or was malformed and treated as FAIL); when possible the tick commits the worker diff and pins it on the stage record's wip_branch before the operator decides whether to amend the stage card and re-run or revert. superseded is terminal and is NOT a failure: it records an operator decision that the card should not run, because later work overtook its acceptance criteria or its implementation was deliberately reverted. The tick never dispatches it, never reaps it as stalled and never leaves it on its own; it does not increment consecutive_failures and cannot contribute to a failure-cap halt; and it raises no alert in any renderer. The reason belongs on the stage card itself -- a retirement with no recorded reason is indistinguishable next month from a failure someone hid."
           },
           "worker": {
             "type": "string",
@@ -48,6 +89,40 @@
           "verifier": {
             "type": "string",
             "description": "Verifier identity string at dispatch time. Same format as worker."
+          },
+          "gate": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional dispatch precondition parsed from the stage card by add-stage.sh. An unmet gate leaves the stage pending while tick.sh considers later stages.",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["stage_completed", "queue_empty"]
+              },
+              "stage_id": {
+                "type": "string",
+                "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+                "description": "Full prerequisite stage id. Present only when type is stage_completed."
+              }
+            },
+            "allOf": [
+              {
+                "if": {"properties": {"type": {"const": "stage_completed"}}},
+                "then": {"required": ["stage_id"]},
+                "else": {"not": {"required": ["stage_id"]}}
+              }
+            ]
+          },
+          "path_claims": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._/-]+$"
+            },
+            "description": "Optional repo-relative file or directory claims parsed at queue time. Two adjacent claimed stages may pipeline only when these claims are disjoint."
           },
           "started_at": {
             "type": ["string", "null"],
@@ -63,6 +138,16 @@
             "type": ["string", "null"],
             "pattern": "^[0-9a-f]{7,40}$",
             "description": "Git commit SHA of the stage's atomic commit. Null until step 7 of the dispatch contract executes."
+          },
+          "wip_commit": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{7,40}$",
+            "description": "Commit SHA of the latest verifier-FAILed attempt preserved automatically by tick.sh. Retained across requeue so the next card re-brief can cite it."
+          },
+          "wip_branch": {
+            "type": ["string", "null"],
+            "pattern": "^wip/[0-9]{2}[a-z]*-[a-z0-9-]+-attempt-[1-9][0-9]*$",
+            "description": "Append-only local branch pinning wip_commit for the latest verifier-FAILed attempt. Requeue and retention never delete wip refs."
           },
           "worker_pid": {
             "type": ["integer", "null"],
@@ -80,11 +165,69 @@
             "type": "integer",
             "minimum": 0,
             "default": 0,
-            "description": "Count of verifier dispatches that have completed without producing an artefact. Tick.sh increments before each dispatch; stage moves to stalled when this hits the cap (currently 3)."
+            "description": "Count of verifier dispatches reserved or completed without producing an artefact. Tick.sh increments before each dispatch and returns the reservation if the process exits instantly with a classified dispatch-configuration fault. A genuine verifier failure keeps the attempt, and the stage moves to stalled when the count hits the cap (currently 3)."
           },
           "stall_marker": {
             "type": ["string", "null"],
-            "description": "Free-text marker written by tick.sh when stalling a stage; carries the stall reason and pid."
+            "description": "Free-text marker written by tick.sh when stalling a stage; carries the stall reason and pid. `card_missing` means `tick.sh --repair` found no resolvable stage card and refused to requeue."
+          },
+          "worker_envelope": {
+            "type": ["string", "null"],
+            "description": "Set to 'partial' when the worker's handoff envelope reported status=partial. The stage still proceeds to verifier dispatch — partial is the worker's annotation, not a verdict — and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
+          },
+          "repair_attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Count of times `tick.sh --repair` has requeued this stage from stalled/failed back to pending. Capped at AUTOMETTA_REPAIR_ATTEMPT_CAP (default 2): a stage that stalls twice after repair stays down for the operator. Absent or missing is treated as 0."
+          },
+          "worker_envelope": {
+            "type": ["string", "null"],
+            "description": "Set to 'partial' when the worker's handoff envelope reported status=partial. The stage still proceeds to verifier dispatch \u2014 partial is the worker's annotation, not a verdict \u2014 and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
+          },
+          "integration": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "description": "What happened to this stage's run branch on PASS, written by tick.sh and read by scripts/status.sh and scripts/reap-worktrees.sh. Absent for a stage that has not passed, or one dispatched before worktree-per-run landed.",
+            "required": ["state"],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": ["merged", "awaiting"],
+                "description": "merged: the run branch was fast-forwarded into base_branch and the worktree removed, nothing outstanding. awaiting: base_branch had moved since dispatch, so the commit sits on the run branch only and a person has to merge it. reap-worktrees.sh will not remove a worktree while this reads awaiting, and closes the record out to merged once the run branch is contained in base."
+              },
+              "base_branch": {
+                "type": ["string", "null"],
+                "description": "Branch the run branch was to be integrated into."
+              },
+              "run_branch": {
+                "type": ["string", "null"],
+                "description": "The stage's run branch, autometta/<stage-id>."
+              },
+              "head": {
+                "type": ["string", "null"],
+                "pattern": "^[0-9a-f]{7,40}$",
+                "description": "Run branch tip at the time the record was written."
+              },
+              "pushed": {
+                "type": ["boolean", "null"],
+                "description": "Whether the run branch reached origin on the awaiting path. Null on the merged path, where nothing is pushed."
+              },
+              "recorded_at": {
+                "type": ["string", "null"],
+                "format": "date-time",
+                "description": "ISO 8601 timestamp the record was written."
+              }
+            }
+          },
+          "base_branch": {
+            "type": ["string", "null"],
+            "description": "Base branch this stage's run worktree (autometta/<id>) was cut from, resolved at dispatch time by resolve_base_branch in tick.sh: the subscriber/manifest 'base_branch' field if set, else the repo's current branch at dispatch. Null for a stage dispatched before worktree-per-run landed (deprecated repo_root-commit path). Persisted rather than re-resolved so a PASS can detect whether base moved since dispatch."
+          },
+          "pair_rebased_onto": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{7,40}$",
+            "description": "Head-stage commit onto which this pipeline tail's uncommitted worker diff was mechanically rebased before verification."
           }
         }
       }
