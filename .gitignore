@@ -36,3 +36,4 @@ HANDOFF.md
 # Local-by-design files (audit report states "Not committed by design"; .mcp.json is machine-local MCP config)
 FABLE-SECURITY-AUDIT.md
 .mcp.json
+examples/bake-off/batch.log
