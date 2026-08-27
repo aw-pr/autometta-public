@@ -422,7 +422,7 @@ A pre-spawn failure is recorded as `dispatch_configuration_fault` before an agen
 
 The general rule: when one side writes a relative path and the other reads an anchored path, the filesystem link that makes them equivalent is part of the protocol. Assert it where the path is created, where the next role is dispatched, and before absence is interpreted as agent behaviour.
 
-## Headless gotcha 13: `codex exec --oss` refuses any local model without thinking support
+## Headless gotcha 19: `codex exec --oss` refuses any local model without thinking support
 
 The free tier is codex-family only: `auth.codex.mode: local` dispatches through
 `codex exec --oss --local-provider=ollama -m <model>` against Ollama weights.
