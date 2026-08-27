@@ -44,7 +44,7 @@ We keep autometta's version for now because:
 
 ## Two families, one tree
 
-This repo is designed for Claude Code and Codex CLI to work in the same tree without prejudice. State and memory that agents need across sessions lives in the repo (`memory/`, `state/`, stage cards under `examples/`), not in any one harness's private directory. Every agent picks up the same context.
+This repo is designed for Claude Code and Codex CLI to work in the same tree without prejudice. State and memory that agents need across sessions lives in the repo (`memory/`, `state/`, `stage-cards/`), not in any one harness's private directory. Every agent picks up the same context.
 
 Not a framework. Not a runtime. Not a hosted service. A set of contracts, templates, and (eventually) thin shell scaffolding for running Claude Code + Codex CLI workers unattended, with cross-family verification, on a solo developer's laptop.
 
@@ -82,7 +82,7 @@ Autometta packages the contracts that make this work without surprise.
 ## What this is not for
 
 - Teams. The patterns assume one human, one machine, one OAuth session per agent family.
-- Production agent systems. No SLA, no observability, no retry semantics beyond what the FSM provides.
+- Production agent systems. No SLA or retry semantics beyond what the FSM provides.
 - LLM-call orchestration inside a single process. Use LangGraph, CrewAI, or the Claude Agent SDK directly. Autometta is for the case where the worker is a CLI subprocess and the state lives on the filesystem.
 
 ## Two layers
@@ -90,7 +90,7 @@ Autometta packages the contracts that make this work without surprise.
 | Layer                 | What it is                                                                                                                                                 | Driver                       | Status             |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------ |
 | **Dispatch contract** | The contract between an orchestrator and a worker for one unit of work. Stage card, worker prompt, acceptance command, sandbox boundary, verifier handoff. | Human (orchestrator session) | Pass 1 - this repo |
-| **Autonomous loop**   | A cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, and exits. Budget file is the only safety.       | `cron` + `tick.sh`           | Pass 2 - shipped   |
+| **Autonomous loop**   | A cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, and exits. Declared two-stage pipeline pairs may overlap work while landing remains ordered. Budget file is the only safety. | `cron` + `tick.sh` | Pass 2 - shipped |
 | **Agent observability** | Per-agent liveness registry (`state/active-agents/`), heartbeat watchdog (`scripts/heartbeat.sh`), tmux agent ticker (`scripts/agent-ticker.sh`), polling primitive (`scripts/watch-agent.sh`). Catches silent agent deaths in both manual and loop dispatches. | `scripts/heartbeat.sh` + tmux | Shipped (on top of pass 2) |
 
 The loop layer is built on top of the dispatch layer. You can use dispatch without the loop. You cannot use the loop without dispatch. The agent observability layer plugs into both: any dispatcher registers via `scripts/register-agent.sh`, and the heartbeat + ticker surface that registry without further coupling.
@@ -148,13 +148,13 @@ autometta/
 │   ├── worker-prompt.md      # the prompt the worker reads
 │   ├── verifier-prompt.md    # the prompt the verifier reads
 │   └── orchestrator-checklist.md
-├── scripts/                  # pass 2 runtime + observability: tick, spawn-worker, spawn-verifier,
-│                             #   register-agent, heartbeat, watch-agent, agent-ticker, list-cards,
-│                             #   install-launchagent, uninstall-launchagent, install-homebrew-local,
-│                             #   install-guards, publish-guard git-hooks, status, attach, add-stage
+├── scripts/                  # pass 2 runtime and operator surfaces: tick, dispatch, pipeline pairs,
+│                             #   controller, observability, TUI, dashboard, build and vendor checks,
+│                             #   setup, refresh, launchd, retention and publish guards
 ├── packaging/                # local Homebrew formula template
 ├── schemas/                  # state.yaml + budget.json schemas
 ├── state/                    # per-repo runtime state (gitignored content)
+├── stage-cards/              # self-host stage cards and PLAN.md
 ├── memory/                   # cross-session agent memory (in-repo)
 ├── skills/                   # skills hosted by this repo
 │   ├── agent-orchestrator/   # canonical home (mcp-hub copy is a symlink back)
@@ -162,7 +162,7 @@ autometta/
 └── examples/
     ├── fractals-stage-cards/ # real cards as illustrations
     ├── benchmarks/           # end-to-end benchmark runs (e.g. bench-005)
-    └── self-host/            # the cards Autometta used to build itself
+    └── bake-off/             # verifier bake-off fixtures and scored artefacts
 ```
 
 ## Reading order
@@ -216,8 +216,9 @@ cd /path/to/autometta
 git pull --ff-only
 scripts/install-homebrew-local.sh
 autometta --version        # should match `git rev-parse --short HEAD`
+autometta check-build      # file-by-file installed-build versus checkout check
 autometta status
-autometta attach /path/to/target-repo   # picks up the third tmux pane (agent ticker)
+autometta attach /path/to/target-repo   # refreshes the two-window tmux viewer
 ```
 
 You do not normally rerun `autometta init` for the target repo unless its
@@ -230,6 +231,11 @@ session's `$PATH`-resolved `autometta` and its child scripts are still
 pinned to the old Cellar version. Re-source the shell or restart the
 session after `install-homebrew-local.sh` to pick up new scripts
 (`heartbeat`, `watch-agent`, `agent-ticker`, `install-launchagent`, etc.).
+
+The repo ticker, fleet viewer and TUI show a build-drift warning when the
+heartbeat's cached comparison finds that the installed build and checkout do
+not match. Run `autometta check-build` for the file-by-file diagnosis before
+reinstalling, and wait for a queue gap before replacing a build in use.
 
 ## Billing routes: three tiers
 
@@ -254,7 +260,7 @@ different piece of work.
 
 ### The measured recommendation
 
-`docs/verifier-bake-off.md` retro-grades every free candidate (four local
+`docs/verifier-bake-off.md` retro-grades every free candidate (five local
 Ollama models, Groq, two OpenRouter models) against ten benchmark stages that
 already carry a frontier verdict, scoring FAIL recall (does the candidate
 catch a real failure) and PASS agreement. Full methodology, gotchas and the
@@ -269,13 +275,16 @@ regenerate command are in that doc; this table is its bottom line.
 **Do not trust as a primary verifier at any tier:** `local-devstral` (0% FAIL
 recall, a rubber stamp), `local-qwen3-32b` (8%), `local-qwen3-coder-30b`
 (15%, and its speed makes the rubber-stamp failure mode more dangerous, not
-less), `openrouter-nemotron-3-super-120b` (0%), and `groq-gpt-oss-120b` (not
+less), `local-llama4-scout` (0%, with 80% artefact discipline and the slowest
+mean wall clock measured), `openrouter-nemotron-3-super-120b` (0%), and
+`groq-gpt-oss-120b` (not
 a quality verdict: its 8,000 tokens/minute cap cannot fit this verifier's
 prompt shape at all, so it completed only 1 of 10 benchmark attempts). See
 `docs/verifier-bake-off.md` for the full results table and per-candidate
-evidence.
+evidence, and the [overnight run report](docs/incidents/2026-08-27-the-llama-bake-off-overnight.md)
+for how the final candidate completed the matrix.
 
-**Trust generally, unqualified:** none of the seven. Every candidate's FAIL
+**Trust generally, unqualified:** none of the eight. Every candidate's FAIL
 recall sits at 77% or worse against the 10-stage sample, which is not a
 tolerable false-negative rate for a gate that decides whether broken work
 merges. Free-tier verification lowers cost on mechanical stages; it does not
@@ -387,6 +396,7 @@ The spawn scripts and the manual dispatch pattern both export `CODEX_HOME=$AUTOM
 |---|---|---|
 | Dispatch contract (pass 1) | shipped | Self-hosted through stage 6. |
 | Agent observability | shipped | Registry, heartbeat, ticker, watch primitive. |
+| Terminal UI | shipped | `autometta tui`: live run, history and controller-message pages over the shared dashboard data seam. |
 | Auth routing (subscription / API / local) | shipped | `op-fetch`, fail-closed, per-family toggle. |
 | Free verifier tier, local (codex `auth.codex.mode: local`) | shipped | Zero-cost Ollama route, measurement-backed default (`gpt-oss:120b`). See "Billing routes" above. |
 | Free verifier tier, cloud bake-off | measured, not dispatch-wired | `docs/verifier-bake-off.md`; run manually via `scripts/verifier-bake-off.sh`, not a stage-card-selectable mode yet. |
@@ -396,6 +406,13 @@ The spawn scripts and the manual dispatch pattern both export `CODEX_HOME=$AUTOM
 | OpenAI SDK verifier route | planned | Card 28; codex parallel to the Claude route. |
 | Per-role, per-family SDK transport matrix | design-only | Card 28; orchestrator portion gated on card 23. |
 | Cloud-hosted orchestration | planned | Card 27; future phase. |
+
+## Version history
+
+| Version | Date | Highlights |
+|---|---|---|
+| v0.1.0 | 2026-05-29 | First tagged release: dispatch contract, tick loop and unattended launchd path. |
+| v0.2.0 | 2026-08-27 | Operator instrumentation: TUI, pipeline pairs, `run_id`, stale-build warning, dashboard seam speedup, and the bake-off completed across eight candidates. |
 
 ## Licence
 

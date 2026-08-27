@@ -21,13 +21,13 @@ The repo extracts patterns from two prior projects (`fractals-from-the-90s` disp
 ## Two layers, shipped in two passes
 
 1. **Dispatch contract (pass 1 - shipped):** the contract between an orchestrator and one worker for one unit of work. Stage card -> worker prompt -> sandbox boundary -> acceptance command -> verifier handoff. Human drives the orchestrator session. Deliverables live in `docs/` and `templates/`.
-2. **Autonomous tick loop (pass 2 - shipped):** cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, exits. Budget file is the only safety. The loop layer **sits on top of** the dispatch contract - never modify the loop in ways that bypass it. Runtime in `scripts/`, schemas in `schemas/`, per-repo state in `state/`. See `docs/tick-loop.md` for the design and `docs/setup.md` for the operator flow.
+2. **Autonomous tick loop (pass 2 - shipped):** cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, exits. Two adjacent stages with declared, disjoint path claims may run as a pipeline pair, while verification and landing remain ordered. Budget file is the only safety. The loop layer **sits on top of** the dispatch contract - never modify the loop in ways that bypass it. Runtime in `scripts/`, schemas in `schemas/`, per-repo state in `state/`. See `docs/tick-loop.md` for the design and `docs/setup.md` for the operator flow.
 
 The operational roles are the human or interactive orchestrator, the worker,
 the verifier, and **phat-controller**, the scheduled queue minder. The tick
 loop is the mechanism phat-controller supervises, not an agent role.
 
-Pass 2 also ships **agent observability**: a per-agent liveness registry at `state/active-agents/<pid>.json`, a heartbeat watchdog at `scripts/heartbeat.sh` that surfaces stalls / over-budget conditions to `state/heartbeat.json`, a tmux agent ticker in the third pane of the `autometta-<repo>` viewer (`scripts/agent-ticker.sh`), and a polling primitive (`scripts/watch-agent.sh`) that any orchestrator-led manual dispatch can block on to catch silent agent deaths. See `docs/observability.md`. Spend is instrumented separately: `tick.sh` appends one cost-log line per dispatched role to `state/cost-log.jsonl` (per-tier `cost_usd_est` from `scripts/rates.sh`, `cached_input_tokens` vs `input_tokens`, `cache_hit_rate`). Schema and the prompt-caching notes are in `docs/cost-log.md`.
+Pass 2 also ships **agent observability**: a per-agent liveness registry at `state/active-agents/<pid>.json`, a heartbeat watchdog at `scripts/heartbeat.sh` that surfaces stalls / over-budget conditions to `state/heartbeat.json`, a full-window repo ticker (`scripts/repo-ticker.sh`), the `autometta tui` run/history/messages view, and a polling primitive (`scripts/watch-agent.sh`) that any orchestrator-led manual dispatch can block on to catch silent agent deaths. See `docs/observability.md`. Spend is instrumented separately: `tick.sh` appends one cost-log line per dispatched role to `state/cost-log.jsonl` (per-tier `cost_usd_est` from `scripts/rates.sh`, `cached_input_tokens` vs `input_tokens`, `cache_hit_rate`). Schema and the prompt-caching notes are in `docs/cost-log.md`.
 
 ## Load-bearing beliefs (read before proposing changes)
 
@@ -95,7 +95,7 @@ cd /path/to/autometta
 git pull --ff-only
 scripts/install-homebrew-local.sh
 autometta --version             # should match git HEAD short SHA
-autometta attach <repo>         # picks up the third tmux pane (ticker)
+autometta attach <repo>         # refreshes the two-window tmux viewer
 ```
 
 The brew tap is rendered at install time; `brew update` alone is not enough. Re-run `scripts/install-homebrew-local.sh` after every `git pull` of this repo.

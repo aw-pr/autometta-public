@@ -69,6 +69,11 @@ lands, while the remaining queue proceeds serially where safe.
 
 **Lifecycle.** The file is created when a repo first subscribes to the tick loop (see section (f)). It is mutated only by `autometta tick`; humans may read but should not edit, because human edits without a tick will silently desync `tick_count` from `last_tick_at`. If a human must edit, they must run `autometta tick --repair`.
 
+`autometta add-stage` assigns each new stage a `run_id`. It reuses the id
+from the most recent pending or in-progress stage, or creates a UTC
+`run-YYYYMMDD-HHMMSS` id when no run is active; historic records from before
+the field existed are not backfilled.
+
 **Who writes it.** Only `autometta tick`. Worker subagents do not touch `state.yaml` directly; they write into `state/verifiers/<stage-id>.json` (see section (d)) and let the tick promote that into `state.yaml`.
 
 **Atomicity.** Write-to-temp-then-rename within the same directory. This is enough on every POSIX filesystem Autometta is likely to run on (APFS, ext4, btrfs, ZFS). No fsync; we accept that a crash mid-tick can leave `state.yaml` at the pre-tick state and the verifier file already written. The next tick re-reads and recovers; idempotency falls out of the transition rule above.
@@ -213,7 +218,13 @@ The controller is observable through files it already owns:
 - `${AUTOMETTA_HOME:-$HOME/.autometta}/log/tick-YYYY-MM-DD.log` for tick-loop output.
 - `autometta/state` for committed state snapshots (see (j) for what is in one).
 
-`autometta status` is the read-only operator view over those files. `autometta init <repo>` creates a detached tmux viewer named `autometta-<project-name>` when `tmux` is available. `autometta attach <repo>` opens or creates that same viewer, tails the latest controller log, and opens a status pane. It is deliberately downstream of the filesystem state; it does not dispatch, supervise, or retry work.
+`autometta status` is the read-only operator view over those files. `autometta
+init <repo>` creates a detached tmux viewer named
+`autometta-<project-name>` when `tmux` is available. `autometta attach <repo>`
+opens or refreshes that viewer with two windows: `repo`, a full-window ticker
+for the subscriber, and `log`, the latest controller log filtered to that
+repo. It is deliberately downstream of the filesystem state; it does not
+dispatch, supervise, or retry work.
 
 This gives the operator an attachable cockpit without creating a resident controller daemon.
 
@@ -501,6 +512,7 @@ The `autometta` CLI is the preferred operator surface:
 - `autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]`: render the context seed when a job is configured. Refuses, writing nothing, if no spend authority is supplied.
 - `autometta status`: print a read-only status table.
 - `autometta attach <repo>`: open or create the repo-scoped tmux viewer.
+- `autometta tui [repo]`: open the full-screen run, history and controller-message view.
 
 The CLI delegates to these scripts:
 
@@ -526,7 +538,7 @@ The contract surface remains the state file, budget file, verifier handoff forma
 Items deferred beyond pass 2:
 
 - Multi-machine federation. The current design is single-machine; if a second machine wants to subscribe to the same backlog, that is out of scope.
-- Web UI or full TUI for the controller. The current design is filesystem, `git log`, and a read-only shell status view; richer visualisation is downstream.
+- Web control UI. The full-screen terminal UI is shipped as `autometta tui [repo]`; a browser-based control surface remains downstream.
 - Token estimation before dispatch. The current design enforces `token_cap_total` after the fact (per dispatched process). A pre-dispatch estimator is future scope. This is the residual gap card 31 could not close: `budget_gate_dispatch` guarantees the loop stops within one dispatch's spend of the cap, and nothing short of estimating a dispatch before spawning it can do better.
 - Multi-language stage cards. Currently all cards and prompts are English; localisation is future scope.
 

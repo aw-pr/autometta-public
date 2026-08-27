@@ -44,6 +44,25 @@ Print the current controller status:
 autometta status
 ```
 
+### What an operator now has
+
+- **`autometta status`** is the quickest fleet snapshot when one command and no persistent screen is enough.
+- **The tickers** open through `autometta attach <repo>` and suit a passive watch of one repo, its controller log, or the fleet page.
+- **`autometta tui <repo>`** is the detailed live view for the current run, card history and a conversation with phat-controller.
+- **`autometta failures <repo>`** (or `--fleet`) is the reach-for surface when the question is what failed, how often and what it cost.
+- **The HTML dashboard** from `autometta dashboard --open` is the broad fleet and trend view when a browser is more useful than a terminal.
+- **The controller inbox** is the asynchronous instruction path when phat-controller should consider something on its next pass without an attached session; the TUI messages page is its operator-facing writer.
+
+The TUI has run, history and messages pages. It polls the same
+`aggregate-dashboard.sh --repo` seam as the repo ticker every five seconds,
+but does so on a background thread so input remains responsive during a read.
+Card 74 replaced per-row process forks and repeated file scans in that seam,
+taking the measured per-repo read from 37 seconds to under one second; a
+five-second poll now represents a fresh snapshot rather than a queue of stale
+ones. Its messages page is the narrow exception to the read-only display
+model: it writes only an operator message to the controller inbox, then reads
+the journal and outbox back from the filesystem.
+
 `autometta init <repo>` creates the tmux viewer automatically when `tmux` is
 available. Each `autometta tick` also re-ensures the viewer per repo it
 processes, so a killed session reappears on the next tick and a freshly

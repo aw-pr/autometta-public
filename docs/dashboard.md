@@ -7,6 +7,11 @@ the fleet tmux viewer exists, a separate refresh job also regenerates the data
 snapshot every 120 seconds. The fleet ticker remains a read-only renderer and
 never walks subscriber repos.
 
+The HTML dashboard is one consumer of the aggregate, not a separate data
+path. The repo and fleet tickers, and the full-screen `autometta tui`, read the
+same payload from `scripts/aggregate-dashboard.sh`; `--repo <path>` narrows it
+to the subscriber those terminal surfaces display.
+
 ## Subcommand
 
 ```
@@ -41,6 +46,13 @@ SHA256 hash; a mismatch fails the install loudly.
    into `~/.autometta/dashboard/`.
 3. With `--open`, launches the local file via `open` (macOS) or
    `xdg-open` (linux).
+
+The TUI polls the per-repo seam every five seconds. Card 74 changed the
+aggregator from repeated per-row forks and file scans to set-based passes over
+the same inputs, reducing the measured `--repo` call on this repo from 37
+seconds to under one second without changing the payload. That speedup is why
+the five-second poll is an honest refresh interval rather than a backlog of
+old snapshots.
 
 Every commit-on-PASS records worker and verifier token counts onto the matching
 stage entry in `state.yaml`. The next aggregator run surfaces those snapshots

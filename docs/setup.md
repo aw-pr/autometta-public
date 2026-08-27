@@ -172,10 +172,22 @@ Check the controller at a glance:
 autometta status
 ```
 
+Check that the installed build matches the checkout:
+
+```sh
+autometta check-build
+```
+
 Open or create the tmux viewer:
 
 ```sh
 autometta attach .
+```
+
+Open the full-screen terminal UI:
+
+```sh
+autometta tui .
 ```
 
 Lint scripts without executing setup actions:
@@ -259,7 +271,7 @@ auth:
 
 or override at dispatch time with `AUTOMETTA_CODEX_MODE=local`. No `OP_REF_*` and no sibling `CODEX_HOME` are needed: the spawn scripts fetch no key for this route (op-fetch still runs, so any stray `OPENAI_API_KEY` in your shell is stripped rather than silently billing the API). If `ollama` is not on `PATH`, is not serving, or the model is not pulled, the spawn fails closed before launching an agent and names the missing piece; autometta never runs `ollama serve` on your behalf.
 
-Local weights are a real step down in capability from a frontier verifier. Prefer this route for stages whose acceptance is mechanical (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria: a FAIL from a weaker verifier still blocks the merge, but a PASS is only as trustworthy as the acceptance commands it actually ran. `gpt-oss:120b` is the measured default (77% FAIL recall against a 10-stage benchmark, tied for best of seven candidates measured; see `docs/verifier-bake-off.md`); `qwen3-coder:30b` is faster but effectively a rubber stamp (15% FAIL recall) and should not be substituted for the default without accepting that trade. Cold model load is on the order of a minute; warm dispatches are faster.
+Local weights are a real step down in capability from a frontier verifier. Prefer this route for stages whose acceptance is mechanical (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria: a FAIL from a weaker verifier still blocks the merge, but a PASS is only as trustworthy as the acceptance commands it actually ran. `gpt-oss:120b` is the measured default (77% FAIL recall against a 10-stage benchmark, tied for best of eight candidates measured; see `docs/verifier-bake-off.md`); `qwen3-coder:30b` is faster but effectively a rubber stamp (15% FAIL recall) and should not be substituted for the default without accepting that trade. Cold model load is on the order of a minute; warm dispatches are faster.
 
 ### Cloud free tier (measured, not a selectable dispatch mode)
 
@@ -285,7 +297,7 @@ export OP_REF_OPENROUTER_API_KEY="op://<your-vault>/openrouter-api-key/credentia
 
 **Data-sharing constraint.** Every cloud call ships the stage card and the deliverable files it evaluates to a third party (Groq or OpenRouter). Nothing from `.autometta.local.yaml`, `op-refs.local.sh`, or the controller home directory is included, but the card and diff themselves leave the machine. A repo whose diffs must not reach a third party stays on the local candidates only.
 
-**Measured recommendation.** Of the seven candidates measured (four local, Groq, two OpenRouter), `local-gpt-oss-120b` and `openrouter-nemotron-3-ultra-550b` tie at 77% FAIL recall, the only two that clear a defensible bar. `local-gpt-oss-120b` is the better default (same recall, better artefact discipline, $0 with no daily cap); the cloud candidate is a fallback for when the local machine is busy or a stage's evidence is too large for local wall-clock patience, and only for a repo already cloud-eligible. The one-time $10 OpenRouter unlock (50 to 1,000 requests/day) is not worth taking for this purpose: the free local candidate already matches its FAIL recall at $0. Groq's free tier cannot complete this comparison at all: its 8,000 tokens/minute cap is smaller than this verifier's prompt on most stages, a capacity fact rather than a quality one. Full table and per-candidate evidence: `docs/verifier-bake-off.md`.
+**Measured recommendation.** Of the eight candidates measured (five local, Groq, two OpenRouter), `local-gpt-oss-120b` and `openrouter-nemotron-3-ultra-550b` tie at 77% FAIL recall, the only two that clear a defensible bar. `local-gpt-oss-120b` is the better default (same recall, better artefact discipline, $0 with no daily cap); the cloud candidate is a fallback for when the local machine is busy or a stage's evidence is too large for local wall-clock patience, and only for a repo already cloud-eligible. The one-time $10 OpenRouter unlock (50 to 1,000 requests/day) is not worth taking for this purpose: the free local candidate already matches its FAIL recall at $0. Groq's free tier cannot complete this comparison at all: its 8,000 tokens/minute cap is smaller than this verifier's prompt on most stages, a capacity fact rather than a quality one. Full table and per-candidate evidence: `docs/verifier-bake-off.md`.
 
 A genuine third CLI family (Gemini CLI's free tier) was investigated and stays out of scope: it would need a new spawn branch, a new log format, and a new registry/heartbeat family value.
 
