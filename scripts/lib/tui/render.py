@@ -622,10 +622,22 @@ def run_lines(state, inner_width):
     for index, (cells, worker, verifier, active_role) in enumerate(rows):
         selected = state.focus == 2 and state.selection[2] == index
         if len(cells["id"]) > widths["id"]:
-            id_line = "  " + cells["id"]
-            lines.append(content_line(
-                id_line, [(0, len(id_line), REVERSE)] if selected else []))
-            cells = dict(cells, id="")
+            stage_id = cells["id"]
+            first_prefix = "  %s  " % cells["glyph"]
+            continuation_prefix = " " * len(first_prefix) + "│ "
+            first_width = max(1, inner_width - len(first_prefix))
+            continuation_width = max(1, inner_width - len(continuation_prefix))
+            id_lines = [first_prefix + stage_id[:first_width]]
+            remaining = stage_id[first_width:]
+            while remaining:
+                id_lines.append(continuation_prefix + remaining[:continuation_width])
+                remaining = remaining[continuation_width:]
+            for id_index, id_line in enumerate(id_lines):
+                spans = [(0, len(id_line), REVERSE)] if selected else []
+                if active_role and id_index == 0:
+                    spans.append((2, 3, ACTIVE))
+                lines.append(content_line(id_line, spans))
+            cells = dict(cells, glyph="", id="└─")
         rendered = render_grouped_lines(
             cells, order, widths, {}, inner_width, indent="  ")[0].rstrip()
         spans = [(0, len(rendered), REVERSE)] if selected else []
