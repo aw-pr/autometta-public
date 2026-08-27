@@ -199,7 +199,7 @@ main() {
       if [[ "$codex_mode" == "local" ]]; then
         # Fail closed before spawn: a dispatch that dies after model
         # negotiation with Ollama burns a worker attempt on infrastructure.
-        local_model="$(codex_local_model_for_role worker)"
+        local_model="$(codex_local_model_for_role worker "$repo_root")"
         if ! codex_local_preflight "$local_model"; then
           exit 1
         fi

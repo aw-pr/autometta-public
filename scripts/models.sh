@@ -33,15 +33,35 @@ AUTOMETTA_MODEL_CODEX_LOCAL="${AUTOMETTA_MODEL_CODEX_LOCAL:-gpt-oss:120b}"
 AUTOMETTA_MODEL_CODEX_LOCAL_WORKER="${AUTOMETTA_MODEL_CODEX_LOCAL_WORKER:-}"
 AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER="${AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER:-}"
 
-# codex_local_model_for_role <worker|verifier>
-# Resolve the Ollama model id a role dispatches to. An unrecognised role gets
-# the shared default rather than failing: a typo should not cost a run.
+# codex_local_model_for_role <worker|verifier> [repo-root]
+# Resolve the Ollama model id a role dispatches to. Resolution order, most
+# specific wins, mirroring resolve_codex_sandbox below:
+#   1. AUTOMETTA_MODEL_CODEX_LOCAL_WORKER / _VERIFIER env override
+#   2. codex.local_model.<role> in <repo>/.autometta.local.yaml
+#   3. AUTOMETTA_MODEL_CODEX_LOCAL (env, else the built-in default above)
+# An unrecognised role gets the shared default rather than failing: a typo
+# should cost a role its override, not cost the run its dispatch.
 codex_local_model_for_role() {
-  case "$1" in
-    worker)   printf '%s' "${AUTOMETTA_MODEL_CODEX_LOCAL_WORKER:-$AUTOMETTA_MODEL_CODEX_LOCAL}" ;;
-    verifier) printf '%s' "${AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER:-$AUTOMETTA_MODEL_CODEX_LOCAL}" ;;
-    *)        printf '%s' "$AUTOMETTA_MODEL_CODEX_LOCAL" ;;
+  local role="$1" repo_root="${2:-}"
+  local env_override="" manifest="" model=""
+
+  case "$role" in
+    worker)   env_override="${AUTOMETTA_MODEL_CODEX_LOCAL_WORKER:-}" ;;
+    verifier) env_override="${AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER:-}" ;;
+    *)        printf '%s' "$AUTOMETTA_MODEL_CODEX_LOCAL"; return 0 ;;
   esac
+
+  if [[ -n "$env_override" ]]; then
+    printf '%s' "$env_override"
+    return 0
+  fi
+
+  manifest="$repo_root/.autometta.local.yaml"
+  if [[ -n "$repo_root" && -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+    model="$(yq -r ".codex.local_model.${role} // \"\"" "$manifest" 2>/dev/null || true)"
+  fi
+
+  printf '%s' "${model:-$AUTOMETTA_MODEL_CODEX_LOCAL}"
 }
 
 # Both CLIs take the same effort vocabulary, so one card field serves both.

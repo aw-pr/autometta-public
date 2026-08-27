@@ -171,12 +171,30 @@ cmd_check() {
     fi
     # shellcheck source=./models.sh
     source "$script_dir/models.sh"
-    local preflight_msg
-    if ! preflight_msg="$(codex_local_preflight "$AUTOMETTA_MODEL_CODEX_LOCAL" 2>&1)"; then
-      printf 'FAIL          %s  %s\n' "$family" "$preflight_msg" >&2
-      exit 1
+    # Check the ids this repo actually dispatches to, per role. Checking the
+    # shared default instead would pass while the repo's real worker or
+    # verifier model sits unpulled, which is the one thing this gate exists to
+    # catch. The two roles usually resolve to the same id, so report the pair
+    # once when they match.
+    local preflight_msg role role_model
+    local -a checked=()
+    for role in worker verifier; do
+      role_model="$(codex_local_model_for_role "$role" "$repo_root")"
+      if ! preflight_msg="$(codex_local_preflight "$role_model" 2>&1)"; then
+        printf 'FAIL          %s  %s (%s role)\n' "$family" "$preflight_msg" "$role" >&2
+        exit 1
+      fi
+      checked+=( "$role=$role_model" )
+    done
+    if [[ "${checked[0]#worker=}" == "${checked[1]#verifier=}" ]]; then
+      printf 'PASS          %s  local -> ollama serving %s (no key fetch)\n' \
+        "$family" "${checked[0]#worker=}"
+    else
+      # Not "${checked[*]}": these scripts set IFS=$'\n\t', so the join would
+      # put a newline between the roles and split the line in two.
+      printf 'PASS          %s  local -> ollama serving %s, %s (no key fetch)\n' \
+        "$family" "${checked[0]}" "${checked[1]}"
     fi
-    printf 'PASS          %s  local -> ollama serving %s (no key fetch)\n' "$family" "$AUTOMETTA_MODEL_CODEX_LOCAL"
     return 0
   fi
 
