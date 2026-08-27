@@ -114,3 +114,77 @@ the failing-then-passing smoke output, and anything you falsified along the way.
 The reproduction concerns Codex CLI sandbox behaviour, so the worker must be the
 codex family. `codex exec` reads stdin after the prompt argument: redirect
 `</dev/null` from any wrapping harness (gotcha 1).
+
+## Re-brief, attempt 2 (2026-08-27)
+
+Attempt 1 is preserved as `1b93f4c19d8ef3d9693f940f5e2d79794a9231ec` on
+`wip/79-a-local-worker-can-write-to-its-worktree-attempt-1`. Read that commit
+before writing anything. Five of six criteria passed and that work is worth
+restoring; criterion 5 failed, and it failed for a reason that changes how the
+rest of this card has to be approached.
+
+### What attempt 1 concluded, and why it is wrong
+
+It reported the root cause as codex's shell tools inheriting the subscriber
+root as their operating-system cwd, and changed `scripts/spawn-worker.sh:201`
+to change directory to the run worktree before invoking codex.
+
+The verifier falsified that empirically rather than by argument. It cut a real
+linked worktree, launched codex with the process cwd deliberately set to the
+parent (the exact pre-fix shape), and had the model run `pwd`. The shell landed
+in the run worktree, not in the inherited cwd. It repeated the probe through
+`op-fetch --` to rule out the `env -i` sanitisation as a variable, with the same
+result:
+
+> Codex takes its shell workdir from `-C`; the launching process cwd is not
+> consulted, so the change at `scripts/spawn-worker.sh:201` cannot be what makes
+> a local worker able to write.
+
+Treat that as established. Do not re-propose cwd inheritance.
+
+### Why the smoke did not catch it
+
+The verifier's second finding matters more than the first. The smoke passed
+only because its codex stub asserted `pwd -P` equalled the `-C` argument, which
+encodes the hypothesis rather than the observed behaviour of the CLI it stands
+in for. A stub written to agree with the theory can never falsify the theory.
+
+This constrains attempt 2: **the reproduction may not stub codex.** It must
+invoke the real `codex exec --oss` against a real worktree and observe what
+actually happens. It stays free because the local route costs nothing per
+token; a trivial prompt is enough. If a real invocation genuinely cannot be
+made to run in the smoke's context, say so in the handoff and explain what you
+tried, rather than substituting a stub that asserts your own conclusion.
+
+### Prior art the card should have cited and did not
+
+`docs/lessons.md` gotcha 14, "the sandbox refused the one write the loop was
+waiting for", documents a 2026-08-16 incident with the same shape: a run
+worktree's `state/` is a symlink out of the tree, codex's `workspace-write`
+makes only the `-C` root writable, codex resolves the link when it checks a
+write, and the write is refused on the physical path. That was omitted from the
+original card, which is an authoring error, not a worker error.
+
+It is prior art, not the answer. Our failure was writing `calc/stats.py`, an
+ordinary file inside the workdir, and the codex banner showed the state
+directory explicitly among the granted roots. So gotcha 14 describes a
+neighbouring failure rather than this one. Start from it, establish whether the
+same resolution behaviour explains an ordinary in-workdir write, and say
+plainly which parts of it do and do not transfer.
+
+### What attempt 2 must produce
+
+Everything the original Deliverables and Acceptance criteria ask for, unchanged,
+plus:
+
+- The reproduction invokes real codex, not a stub.
+- The handoff states which hypotheses you falsified and how, not only the one
+  you settled on. Attempt 1's cwd theory is already falsified; adding to that
+  list is progress even if the cause is not found.
+- Gotcha 14 is cited explicitly, with a sentence on what transfers and what
+  does not.
+
+If you cannot establish the root cause within budget, stop and report the
+falsified list. A card that narrows the search honestly is worth more than one
+that ships a fix resting on an untested hypothesis, which is exactly what
+attempt 1 did and what cost it the stage.
