@@ -106,7 +106,7 @@ fleet_refresher() {
   local session="${AUTOMETTA_FLEET_SESSION:-${PHAT_CONTROLLER_FLEET_SESSION:-}}"
   trap 'exit 0' INT TERM
   while true; do
-    if [[ -n "$session" ]] && ! tmux has-session -t "$session" 2>/dev/null; then
+    if [[ -n "$session" ]] && ! tmux has-session -t "=$session" 2>/dev/null; then
       return 0
     fi
     "$script_dir/aggregate-dashboard.sh" >/dev/null 2>&1 || true
@@ -240,7 +240,7 @@ if [[ "$mode" == detach_all ]]; then
   owned="$(viewer_sessions)"
   while IFS= read -r session; do
     printf '%s' "$owned" | grep -Fqx "$session" || continue
-    tmux kill-session -t "$session"
+    tmux kill-session -t "=$session"
     printf 'PASS tmux viewer removed %s\n' "$session"
     removed=$(( removed + 1 ))
   done < <(tmux list-sessions -F '#S' 2>/dev/null || true)
@@ -255,8 +255,8 @@ repo_slug="$(session_slug "$repo_path")"
 session_name="${AUTOMETTA_TMUX_SESSION:-${PHAT_CONTROLLER_TMUX_SESSION:-autometta-$repo_slug}}"
 
 if [[ "$mode" == detach ]]; then
-  if tmux has-session -t "$session_name" 2>/dev/null; then
-    tmux kill-session -t "$session_name"
+  if tmux has-session -t "=$session_name" 2>/dev/null; then
+    tmux kill-session -t "=$session_name"
     printf 'PASS tmux viewer removed %s\n' "$session_name"
   else
     printf 'NOOP tmux viewer absent %s\n' "$session_name"
@@ -321,30 +321,30 @@ fi
 
 # An interactive re-attach replaces the viewer so long-running ticker loops
 # pick up the installed scripts. --ensure remains non-disruptive for ticks.
-if tmux has-session -t "$session_name" 2>/dev/null && ! "$ensure_only"; then
-  tmux kill-session -t "$session_name"
+if tmux has-session -t "=$session_name" 2>/dev/null && ! "$ensure_only"; then
+  tmux kill-session -t "=$session_name"
   printf 'PASS tmux viewer refreshed %s\n' "$session_name"
 fi
 
-if ! tmux has-session -t "$session_name" 2>/dev/null; then
+if ! tmux has-session -t "=$session_name" 2>/dev/null; then
   if [[ "$repo_slug" == autometta ]]; then
     "$script_dir/aggregate-dashboard.sh" >/dev/null 2>&1 || true
     tmux new-session -d -s "$session_name" -n tui "$tui_cmd"
-    tmux run-shell -b -t "$session_name" "$fleet_refresh_cmd"
-    tmux new-window -d -t "$session_name" -n repo "$fleet_scoped_cmd"
-    tmux new-window -d -t "$session_name" -n status "$ticker_cmd"
-    tmux new-window -d -t "$session_name" -n fleet "$fleet_cmd"
-    tmux new-window -d -t "$session_name" -n log "$log_cmd"
+    tmux run-shell -b -t "=$session_name" "$fleet_refresh_cmd"
+    tmux new-window -d -t "=$session_name" -n repo "$fleet_scoped_cmd"
+    tmux new-window -d -t "=$session_name" -n status "$ticker_cmd"
+    tmux new-window -d -t "=$session_name" -n fleet "$fleet_cmd"
+    tmux new-window -d -t "=$session_name" -n log "$log_cmd"
   else
     tmux new-session -d -s "$session_name" -n tui "$tui_cmd"
-    tmux new-window -d -t "$session_name" -n repo "$ticker_cmd"
-    tmux new-window -d -t "$session_name" -n log "$log_cmd"
+    tmux new-window -d -t "=$session_name" -n repo "$ticker_cmd"
+    tmux new-window -d -t "=$session_name" -n log "$log_cmd"
   fi
-  tmux select-window -t "$session_name":tui
+  tmux select-window -t "=$session_name:tui"
   printf 'PASS tmux viewer created %s\n' "$session_name"
 elif "$ensure_only"; then
   printf 'PASS tmux viewer exists %s\n' "$session_name"
 fi
 
 "$ensure_only" && exit 0
-tmux attach-session -t "$session_name"
+tmux attach-session -t "=$session_name"
