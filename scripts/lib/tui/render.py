@@ -847,7 +847,7 @@ def render_messages(canvas, state, width, usable):
     input_separator = "── message " + "─" * max(0, width - 17)
     fixed = len(journal) + 4 + (1 if state.compose_notice else 0)
     conversation = _conversation_lines(state, max(1, inner_height - fixed))
-    prompt = "> " + state.compose_buffer + ("_" if state.composing else "")
+    prompt = "> " + state.compose_buffer + ("_  enter send · esc cancel" if state.composing else "")
     if not state.composing:
         prompt = "> press m or enter to message the controller"
     lines = journal + [content_line(separator, [(0, 8, BOLD)])]
@@ -859,6 +859,12 @@ def render_messages(canvas, state, width, usable):
 
 
 def footer(canvas, state):
+    if state.composing:
+        text = "message draft  enter send · esc cancel"
+        canvas.put(0, canvas.height - 1, text[:canvas.width])
+        for x in range(min(canvas.width, len(text))):
+            canvas.attrs[canvas.height - 1][x] = ACTIVE
+        return
     tabs = "[1]run [2]history [3]messages"
     hints = "  j/k select · enter detail · [ ] page · o open card · m message controller · q quit"
     text = tabs + hints

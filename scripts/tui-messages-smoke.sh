@@ -98,6 +98,8 @@ assert_contains "$parsed" "### $new_id" "real pc_inbox_scan did not parse the co
 assert_contains "$parsed" 'please explain card 71' "real pc_inbox_scan did not parse the composed body"
 
 cancel_before="$(find "$repo/state/phat-controller-inbox/pending" -type f | wc -l | tr -d ' ')"
+composing="$(capture "$repo" 119 40 'm,draft')"
+assert_contains "$composing" 'enter send · esc cancel' "composer did not explain how to leave input mode"
 cancelled="$(capture "$repo" 119 40 'm,this must not land,ESC')"
 cancel_after="$(find "$repo/state/phat-controller-inbox/pending" -type f | wc -l | tr -d ' ')"
 [[ "$cancel_after" -eq "$cancel_before" ]] || fail "escape wrote a pending message"
