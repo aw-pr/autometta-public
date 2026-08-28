@@ -548,17 +548,27 @@
       totals[day] = (totals[day] || 0) + row.spend.total;
     });
     var days = Object.keys(totals).sort();
+    // A line needs two points to be a line. A repo whose activity all falls on
+    // one day -- a single run, or a filter narrowed to one repo -- produced a
+    // one-point series, which Chart.js draws as an empty grid and a dot the
+    // size of a full stop: the panel read as broken rather than as a day with
+    // 1.1M tokens in it. One bucket is a bar.
+    var single = days.length < 2;
     draw("chart-days", {
-      type: "line",
+      type: single ? "bar" : "line",
       data: {
         labels: days,
         datasets: [{
           label: "tokens per day",
           data: days.map(function (d) { return totals[d]; }),
           borderColor: "#58a6ff",
-          backgroundColor: "rgba(88,166,255,0.2)",
-          fill: true,
-          tension: 0.2
+          backgroundColor: single ? "#58a6ff" : "rgba(88,166,255,0.2)",
+          fill: !single,
+          tension: 0.2,
+          // Sparse series are common once the repo filter narrows things, so
+          // the points stay visible rather than hiding in the line.
+          pointRadius: 4,
+          pointHoverRadius: 6
         }]
       },
       options: chartCommon()
