@@ -148,7 +148,7 @@ main() {
   if [[ "$family" == codex ]]; then
     worker_route_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" codex --print-mode 2>/dev/null || printf '')"
     if [[ "$worker_route_mode" == local ]]; then
-      worker_family_notes="The apply_patch tool is NOT registered on this local route. Do not call it; every call fails with \"unsupported call: apply_patch\". Create and edit files with shell commands through exec_command instead, for example a python3 heredoc or cat > path <<'"'"'EOF'"'"'. Read each file back after writing it to confirm the change landed."
+      worker_family_notes="The apply_patch tool is NOT registered on this local route. Do not call it; every call fails with \"unsupported call: apply_patch\". Create and edit files with shell commands through exec_command instead, for example a python3 heredoc, or a shell heredoc that writes the file. Read each file back after writing it to confirm the change landed."
     fi
   fi
   prompt="$(render_prompt "$work_dir" "$card_path" "$worker_identity" "$stage_id" "$(basename "$repo_root")" "$worker_family_notes")"
