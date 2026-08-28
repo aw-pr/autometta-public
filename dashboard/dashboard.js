@@ -231,21 +231,48 @@
     var html = '<table class="stages"><thead><tr>' + headers.map(function (h) {
       return "<th>" + esc(h.label != null ? h.label : h) + "</th>";
     }).join("") + "</tr></thead><tbody>";
-    rows.forEach(function (row) {
+    rows.forEach(function (row, index) {
       var cells = row;
       var rowCls = "";
+      var expand = null;
       if (row && !Array.isArray(row) && row.cells) {
         cells = row.cells;
         rowCls = row.cls || "";
+        expand = row.expand || null;
       }
-      html += "<tr" + (rowCls ? ' class="' + esc(rowCls) + '"' : "") + ">" + cells.map(function (cell) {
-        if (cell && typeof cell === "object" && cell.html != null) {
-          return '<td class="' + esc(cell.cls || "") + '">' + cell.html + "</td>";
-        }
-        return "<td>" + esc(cell) + "</td>";
-      }).join("") + "</tr>";
+      var attrs = "";
+      var key = (row && row.key != null) ? row.key : index;
+      if (expand) {
+        rowCls = (rowCls + " clickable").trim();
+        attrs = ' data-expand="' + esc(key) + '"';
+      }
+      html += "<tr" + (rowCls ? ' class="' + esc(rowCls) + '"' : "") + attrs + ">" +
+        cells.map(function (cell) {
+          if (cell && typeof cell === "object" && cell.html != null) {
+            return '<td class="' + esc(cell.cls || "") + '">' + cell.html + "</td>";
+          }
+          return "<td>" + esc(cell) + "</td>";
+        }).join("") + "</tr>";
+      if (expand) {
+        html += '<tr class="expand-row" data-expand-for="' + esc(key) + '" hidden>' +
+          '<td colspan="' + headers.length + '">' + expand + "</td></tr>";
+      }
     });
     return html + "</tbody></table>";
+  }
+
+  // A row carrying an expand payload gets a hidden sibling row beneath it and
+  // toggles it on click.
+  function bindExpanders(wrap) {
+    wrap.querySelectorAll("tr[data-expand]").forEach(function (row) {
+      row.addEventListener("click", function () {
+        var target = wrap.querySelector(
+          'tr.expand-row[data-expand-for="' + row.getAttribute("data-expand") + '"]');
+        if (!target) return;
+        target.hidden = !target.hidden;
+        row.classList.toggle("open", !target.hidden);
+      });
+    });
   }
 
   function renderSimpleTable(id, headers, rows) {
@@ -255,6 +282,7 @@
       return;
     }
     wrap.innerHTML = tableHtml(headers, rows);
+    bindExpanders(wrap);
   }
 
   // Paged sibling of renderSimpleTable. `key` names the table for the stored
@@ -293,6 +321,7 @@
       "</div>";
 
     wrap.innerHTML = tableHtml(headers, shown) + controls;
+    bindExpanders(wrap);
 
     wrap.querySelector("select[data-pagesize]").addEventListener("change", function (ev) {
       setPageSize(key, parseInt(ev.target.value, 10) || 0);
@@ -304,6 +333,29 @@
         renderAll();
       });
     });
+  }
+
+  function stageKey(repo, stageId) {
+    return repo + "/" + stageId;
+  }
+
+  // Reveal one stage's card in the table, from wherever the reader clicked.
+  // The table is paged, so a stage the chart names may not be on the page
+  // currently shown; page to it first, then expand and scroll to it.
+  function openStageCard(repo, stageId) {
+    var key = stageKey(repo, stageId);
+    var order = state.stageRowOrder || [];
+    var index = order.indexOf(key);
+    var size = pageSizeFor("stages");
+    if (index >= 0 && size > 0) state.page.stages = Math.floor(index / size);
+    renderAll();
+    var wrap = document.getElementById("stages-table-wrap");
+    var row = wrap.querySelector('tr[data-expand="' + key + '"]');
+    var target = wrap.querySelector('tr.expand-row[data-expand-for="' + key + '"]');
+    if (!row || !target) return;
+    target.hidden = false;
+    row.classList.add("open");
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
   // --- panels --------------------------------------------------------------
@@ -431,6 +483,9 @@
       });
       group.forEach(function (row, i) { row.groupStart = i === 0; rows.push(row); });
     });
+    // The chart addresses table rows by key, and needs the row order to work
+    // out which page a stage has landed on.
+    state.stageRowOrder = rows.map(function (row) { return stageKey(row.repo, row.stage.id); });
     var byName = Object.create(null);
     repos.forEach(function (r) { byName[r.name] = r; });
     var cells = rows.map(function (row) {
@@ -439,9 +494,17 @@
       // A figure recovered from the cost log is marked, because it is a
       // different measurement from one the stage recorded on completion.
       var mark = spend.logged ? "*" : "";
-      return { cls: row.groupStart ? "group-start" : "", cells: [
+      var cardPath = s.card || ("stage-cards/" + s.id + ".md");
+      // The same answer the TUI's detail pane gives: the card is the prompt the
+      // worker was handed, so "why did it do that" is usually read from it
+      // rather than inferred from the row above.
+      var expand =
+        '<div class="card-path">' + esc(cardPath) + "</div>" +
+        '<pre class="card-text">' + esc(s.card_text || "card not read") + "</pre>";
+      return { cls: row.groupStart ? "group-start" : "", expand: expand,
+               key: stageKey(row.repo, s.id), cells: [
         row.repo,
-        s.id,
+        { html: '<span class="caret">\u25b8</span> ' + esc(s.id) },
         { html: '<span class="status ' + esc(s.status) + '">' + esc(s.status) + "</span>" },
         shortIdentity(s.worker),
         shortIdentity(s.verifier),
@@ -504,17 +567,31 @@
   }
 
   function drawStagesChart(stages) {
+    // Biggest first, and nothing that spent nothing. Plotting every stage in
+    // run order gave a chart whose x-axis was mostly zero-height bars and
+    // unreadable labels; the question this chart answers is which stages cost
+    // the most, so it is ordered by that.
+    var plotted = stages.filter(function (row) { return row.spend.total > 0; })
+      .sort(function (a, b) { return b.spend.total - a.spend.total; });
+    var options = chartCommon();
+    options.onClick = function (event, elements) {
+      if (!elements || !elements.length) return;
+      var row = plotted[elements[0].index];
+      if (row) openStageCard(row.repo, row.stage.id);
+    };
+    options.plugins = options.plugins || {};
+    options.plugins.tooltip = { callbacks: { afterLabel: function () { return "click to read the card"; } } };
     draw("chart-stages", {
       type: "bar",
       data: {
-        labels: stages.map(function (row) { return row.repo + " / " + row.stage.id; }),
+        labels: plotted.map(function (row) { return row.repo + " / " + row.stage.id; }),
         datasets: [{
           label: "stage tokens (" + rangeLabel() + ")",
-          data: stages.map(function (row) { return row.spend.total; }),
+          data: plotted.map(function (row) { return row.spend.total; }),
           backgroundColor: "#2ea043"
         }]
       },
-      options: chartCommon()
+      options: options
     });
   }
 

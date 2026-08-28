@@ -55,6 +55,10 @@ mkdir -p "$dashboard_dir/vendor"
 # Refresh data.json from current subscriber state.
 "$script_dir/aggregate-dashboard.sh" ${aggregate_args[@]+"${aggregate_args[@]}"}
 
+# Cards travel in the payload so the page can open one without reaching back to
+# disk, which a file:// page cannot do.
+"$script_dir/attach-card-text.py" "$dashboard_dir/data.json" "$dashboard_dir/data.js"
+
 # Copy static assets. Source of truth is the repo's dashboard/ directory;
 # the controller home is a regenerated mirror.
 src_dir="$autometta_root/dashboard"
