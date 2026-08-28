@@ -163,7 +163,7 @@ class TuiState:
         self.payload = {}
         self.focus = 2
         self.page = 1
-        self.selection = {1: 0, 2: 0, 3: 0, 4: 0}
+        self.selection = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
         self.pinned_stage = None
         self.history_selection = 0
         self.pinned_history_card = None
@@ -173,6 +173,9 @@ class TuiState:
         self.compose_buffer = ""
         self.compose_notice = ""
         self.card_notice = ""
+        self.card_body = []
+        self.card_body_stage = None
+        self.card_offset = 0
         self.history = {}
         self.now = int(time.time())
         self.monotonic_now = time.monotonic()
@@ -288,7 +291,7 @@ class TuiState:
             self.compose_buffer = ""
             self.compose_notice = ""
             return None
-        if key in ("1", "2", "3", "4"):
+        if key in ("0", "1", "2", "3", "4"):
             self.focus = int(key)
             return
         if key in ("TAB", "\t"):
@@ -320,6 +323,14 @@ class TuiState:
                 self.compose_buffer = ""
                 self.compose_notice = ""
             return None
+        # The detail pane carries the card body, which is longer than the pane
+        # and so is the one panel that scrolls rather than selects.
+        if self.focus == 0:
+            if key in ("j", "DOWN"):
+                self.card_offset = min(max(0, len(self.card_body) - 1), self.card_offset + 1)
+            elif key in ("k", "UP"):
+                self.card_offset = max(0, self.card_offset - 1)
+            return None
         rows = self.rows_for_focus()
         if key in ("j", "DOWN") and rows:
             self.selection[self.focus] = min(len(rows) - 1, self.selection[self.focus] + 1)
@@ -327,6 +338,17 @@ class TuiState:
             self.selection[self.focus] = max(0, self.selection[self.focus] - 1)
         elif key in ("ENTER", "\n", "\r") and self.focus == 2 and rows:
             self.pinned_stage = rows[self.selection[2]].get("id")
+            self.card_offset = 0
+        elif key in ("ENTER", "\n", "\r") and self.focus == 4 and rows:
+            # Escalations are the one panel where the answer is a conversation,
+            # so enter opens the composer already carrying the stage and the
+            # reason -- the controller inbox that m writes to, pre-addressed.
+            stage_id, status, reason = rows[self.selection[4]]
+            self.page = 3
+            self.composing = True
+            self.compose_buffer = "%s (%s: %s): " % (stage_id, status, reason)
+            self.compose_notice = ""
+            return None
 
 
 def stage_state(payload, stage):
@@ -344,13 +366,37 @@ def stage_state(payload, stage):
     return "▶", "VERIFY" if role == "verifier" else "WORKER", role
 
 
+def failure_reason(stage):
+    """Why this stage needs a human, in the words the state file already uses.
+
+    A status alone says a stage stopped, not what stopped it, and the operator's
+    next move differs entirely between a verifier that read the work and failed
+    it and a worker that exited without writing an envelope at all.
+    """
+    status = stage.get("status")
+    if status == "stalled":
+        return stage.get("stall_marker") or "exited without an envelope"
+    if status == "verifier_failed":
+        overall = stage.get("verifier_overall") or "FAIL"
+        attempts = stage.get("verifier_attempts") or 0
+        return "verifier %s on attempt %s" % (overall, attempts)
+    return stage.get("stall_marker") or status or "unknown"
+
+
 def escalation_rows(payload):
+    """Rows for the escalations box: the current run's failures, and a halt.
+
+    Scoped to the current run like every other panel on the page. Reading the
+    flat stage list instead meant a failure from a run that finished days ago
+    still sat in the box saying "needs you", in a repo with no current run at
+    all -- the box was reporting history as though it were outstanding work.
+    """
     rows = []
     if payload.get("halted"):
-        rows.append(("HALTED", payload.get("halt_reason") or "budget"))
-    for stage in payload.get("stages") or []:
+        rows.append(("HALTED", "halted", payload.get("halt_reason") or "budget"))
+    for stage in current_run_stages(payload):
         if stage.get("status") in ("stalled", "verifier_failed", "failed"):
-            rows.append((stage.get("id") or "?", stage.get("status")))
+            rows.append((stage.get("id") or "?", stage.get("status"), failure_reason(stage)))
     return rows
 
 
@@ -670,18 +716,27 @@ def agent_lines(state):
     return lines or [content_line("no live agents", [(0, 14, DIM)])]
 
 
+def inbox_message_count(state):
+    rows = (state.controller or {}).get("conversation") or []
+    return len([row for row in rows if row.get("status") == "pending"])
+
+
 def inbox_lines(state):
     rows = escalation_rows(state.payload)
     if not rows:
         return [content_line("no escalations or messages", [(0, 27, DIM)])]
     lines = []
-    for index, (stage_id, status) in enumerate(rows):
+    for index, (stage_id, status, reason) in enumerate(rows):
         heading = "✖ %s  needs you" % status
         spans = [(0, 1, ALERT)]
         if state.focus == 4 and state.selection[4] == index:
             spans.insert(0, (0, len(heading), REVERSE))
         lines.append(content_line(heading, spans))
-        lines.append(content_line("  " + stage_id))
+        # The reason rides on the stage line rather than its own: the box is
+        # sized in whole rows and an extra line per escalation overflowed it at
+        # 80 columns. A long reason truncates horizontally instead.
+        detail = "  %s · %s" % (stage_id, reason)
+        lines.append(content_line(detail, [(len(stage_id) + 2, len(detail), DIM)]))
     return lines
 
 
@@ -732,7 +787,7 @@ def wrap_content_lines(lines, inner_width):
     return wrapped
 
 
-def detail_lines(state, inner_width):
+def detail_lines(state, inner_width, inner_height=None):
     stages = ordered_run_stages(state.payload)
     stage = next((item for item in stages if item.get("id") == state.pinned_stage), None)
     if not stage:
@@ -770,7 +825,47 @@ def detail_lines(state, inner_width):
             short_tokens(usage.get("output_tokens", 0)), usage.get("cost_usd_est", 0) or 0)),
         content_line("%s  burn last 8 polls (%s/min)" % (spark, short_tokens(rate))),
     ])
-    return wrap_content_lines(lines, inner_width)
+    lines = wrap_content_lines(lines, inner_width)
+    capacity = None if inner_height is None else max(0, inner_height - len(lines))
+    lines.extend(card_body_lines(state, inner_width, capacity))
+    return lines
+
+
+def card_body_lines(state, inner_width, capacity=None):
+    """The stage card itself, under the metadata that summarises it.
+
+    The detail pane described the card; the question it was usually opened to
+    answer was what the card actually said. It scrolls with focus 0 (j/k)
+    because it is the one panel longer than its box; o still opens the whole
+    card in a pager or its own tmux window.
+    """
+    body = state.card_body or []
+    if not body:
+        block = [content_line(""),
+                 content_line("─ stage card " + "─" * max(0, inner_width - 13)),
+                 content_line("card not read", [(0, 13, DIM)])]
+    else:
+        offset = min(max(0, state.card_offset), max(0, len(body) - 1))
+        heading = "─ stage card %d/%d " % (offset + 1, len(body))
+        block = [content_line(""),
+                 content_line(heading + "─" * max(0, inner_width - len(heading)))]
+        for raw in body[offset:]:
+            block.append(content_line(raw.rstrip()))
+    block = wrap_content_lines(block, inner_width)
+    if capacity is None:
+        return block
+    if capacity <= 0:
+        return []
+    # The pane keeps its own overflow marker rather than letting draw_box
+    # truncate it. A box that silently drops rows is a bug everywhere else on
+    # this page; here the rows are meant to be off-screen, and the reader needs
+    # to be told they scroll rather than that they went missing.
+    if len(block) > capacity:
+        keep = max(0, capacity - 1)
+        hidden = len(block) - keep
+        note = "── %d more line(s) · press 0 then j/k ──" % hidden
+        block = block[:keep] + [content_line(note[:inner_width], [(0, len(note), DIM)])]
+    return block
 
 
 def fit_heights(desired, minimum, available, shrink_order):
@@ -866,7 +961,8 @@ def footer(canvas, state):
             canvas.attrs[canvas.height - 1][x] = ACTIVE
         return
     tabs = "[1]run [2]history [3]messages"
-    hints = "  j/k select · enter detail · [ ] page · o open card · m message controller · q quit"
+    hints = ("  j/k select · enter detail/chat · 0 card scroll · [ ] page"
+             " · o open card · m message controller · q quit")
     text = tabs + hints
     if len(text) > canvas.width:
         text = tabs + "  j/k select · enter detail · q quit"
@@ -909,13 +1005,18 @@ def render(state, width, height):
     run_title = "[2]─This run  %d of %d" % (done, len(stages))
     live_count = len(state.payload.get("agents") or [])
     esc_count = len(escalation_rows(state.payload))
+    msg_count = inbox_message_count(state)
+    # Two lines per escalation, so a fixed four-line box showed one row and hid
+    # the rest behind "and N more" -- including the reasons it exists to show.
+    # It still yields first when the terminal is short; it just asks for enough.
+    inbox_desired = max(4, min(12, 2 + 2 * esc_count))
     if not stacked:
         left_width = min(86, max(74, int(width * 0.52)))
         left_width = min(left_width, width - 45)
         right_x = left_width + 1
         right_width = width - right_x
         panel_total = usable - 3
-        heights = fit_heights([7, 16, 6, 4], [5, 5, 4, 3], panel_total, [1, 2, 0, 3])
+        heights = fit_heights([7, 16, 6, inbox_desired], [5, 5, 4, 3], panel_total, [1, 2, 0, 3])
         status_h, run_h, agents_h, inbox_h = heights
         y1 = 0
         y2 = y1 + status_h + 1
@@ -926,13 +1027,14 @@ def render(state, width, height):
                  run_lines(state, left_width - 4), state.focus == 2)
         draw_box(canvas, (0, y3, left_width, agents_h), "[3]─Agents  %d live" % live_count,
                  agent_lines(state), state.focus == 3)
-        draw_box(canvas, (0, y4, left_width, inbox_h), "[4]─Escalations & inbox  %d · 0" % esc_count,
+        draw_box(canvas, (0, y4, left_width, inbox_h), "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
         draw_box(canvas, (right_x, 0, right_width, usable), "[0]─Card detail",
-                 detail_lines(state, right_width - 4))
+                 detail_lines(state, right_width - 4, max(0, usable - 2)),
+                 state.focus == 0)
     else:
         available = usable - 4
-        heights = fit_heights([7, 18, 6, 4, 18], [4, 5, 3, 3, 6], available, [1, 4, 2, 0, 3])
+        heights = fit_heights([7, 18, 6, inbox_desired, 18], [4, 5, 3, 3, 6], available, [1, 4, 2, 0, 3])
         status_h, run_h, agents_h, inbox_h, detail_h = heights
         rects = []
         cursor = 0
@@ -942,8 +1044,9 @@ def render(state, width, height):
         draw_box(canvas, rects[0], "[1]─Status", status_lines(state), state.focus == 1)
         draw_box(canvas, rects[1], run_title, run_lines(state, width - 4), state.focus == 2)
         draw_box(canvas, rects[2], "[3]─Agents  %d live" % live_count, agent_lines(state), state.focus == 3)
-        draw_box(canvas, rects[3], "[4]─Escalations & inbox  %d · 0" % esc_count,
+        draw_box(canvas, rects[3], "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
-        draw_box(canvas, rects[4], "[0]─Card detail", detail_lines(state, width - 4))
+        draw_box(canvas, rects[4], "[0]─Card detail",
+                 detail_lines(state, width - 4, max(0, detail_h - 2)), state.focus == 0)
     footer(canvas, state)
     return canvas

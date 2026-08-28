@@ -13,7 +13,8 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from render import ACTIVE, ALERT, BOLD, DIM, NORMAL, REVERSE, TuiState, render
+from render import (ACTIVE, ALERT, BOLD, DIM, NORMAL, REVERSE, TuiState,
+                    ordered_run_stages, render)
 from messages import read_bus, write_pending
 
 
@@ -108,6 +109,42 @@ def open_card(repo_root, card_path):
     return "viewed %s" % os.path.basename(path)
 
 
+# A card is a prompt, not a document; anything past this is a card that has
+# gone wrong, and reading it whole belongs in the pager that o opens.
+CARD_BODY_MAX_LINES = 400
+
+
+def ensure_card_body(state, repo_root):
+    """Keep the detail pane's card text in step with the pinned stage.
+
+    render.py is rendered in the smokes against fixtures with no repo on disk,
+    so it stays a pure function of state: the file read lives here and the card
+    is handed over as data.
+    """
+    stage = next((item for item in ordered_run_stages(state.payload)
+                  if item.get("id") == state.pinned_stage), None)
+    if not stage:
+        if state.card_body_stage is not None:
+            state.card_body = []
+            state.card_body_stage = None
+            state.card_offset = 0
+        return
+    stage_id = stage.get("id")
+    if state.card_body_stage == stage_id:
+        return
+    path = stage.get("card") or "stage-cards/%s.md" % stage_id
+    if not os.path.isabs(path):
+        path = os.path.join(repo_root, path)
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            body = handle.read().splitlines()[:CARD_BODY_MAX_LINES]
+    except OSError as error:
+        body = ["could not read the card: %s" % error]
+    state.card_body = body
+    state.card_body_stage = stage_id
+    state.card_offset = 0
+
+
 def apply_key(state, key, repo_root):
     action = state.key(key)
     if not action:
@@ -143,8 +180,10 @@ def capture(args):
     for index, payload in enumerate(polls):
         state.update(payload, observed_at=index * args.interval)
         refresh_controller(state, args.repo_root)
+    ensure_card_body(state, args.repo_root)
     for key in filter(None, (part.strip() for part in args.keys.split(","))):
         apply_key(state, key, args.repo_root)
+        ensure_card_body(state, args.repo_root)
     sys.stdout.write(render(state, args.width, args.height).text(args.ansi) + "\n")
 
 
@@ -238,6 +277,7 @@ def interactive(args):
                            args.repo_root, payload)
                 in_flight_generation = latest_generation
                 next_poll = started_at + args.interval
+                ensure_card_body(state, args.repo_root)
                 dirty = True
             if dirty:
                 height, width = stdscr.getmaxyx()
@@ -257,6 +297,7 @@ def interactive(args):
                 curses.KEY_BACKSPACE: "BACKSPACE", 127: "BACKSPACE", 8: "BACKSPACE",
             }
             apply_key(state, mapping.get(key, chr(key) if 0 <= key < 256 else ""), args.repo_root)
+            ensure_card_body(state, args.repo_root)
             dirty = True
     finally:
         try:
