@@ -15,9 +15,36 @@ to the subscriber those terminal surfaces display.
 ## Subcommand
 
 ```
-autometta dashboard           # regenerate only
-autometta dashboard --open    # regenerate and open in default browser
+autometta dashboard                    # regenerate the fleet page
+autometta dashboard --open             # regenerate and open in default browser
+autometta dashboard --repo <path>      # the same page scoped to one subscriber
 ```
+
+`--repo` narrows the walk to one subscriber and writes the pair to
+`<controller home>/dashboard/repos/<name>/`, never inside the repo it reports
+on. It is the same document over a single-entry `repos[]`, so there is one
+renderer rather than a second page to keep in step: the page hides the repo
+filter and retitles itself, and nothing else differs.
+
+## Reading the page
+
+The header carries two controls. The repo filter narrows every panel, total and
+chart to the repos ticked; it is drawn only on the fleet page. The range control
+(24h/7d/30d/all) slices the token charts by stage date, and is remembered per
+viewer.
+
+Per stage, Failures and Provider windows page at ten rows, with a per-table size
+control; the default comes from `AUTOMETTA_DASHBOARD_PAGE_SIZE` at generation
+time. Per stage is grouped by repo and ordered by queue time, newest first.
+
+Clicking a Per stage row, or a bar in the stage chart, expands the stage card
+that drove it. Card text travels in the payload because a `file://` page cannot
+fetch a sibling file; `scripts/attach-card-text.py` attaches it inside the
+aggregator's write path, capped at 400 lines.
+
+A stage records its own token totals when it completes, so one that stalled
+reports zero. The table and charts fall back to the cost log for those, and mark
+the recovered figures with an asterisk.
 
 The dashboard files live at `~/.autometta/dashboard/`:
 
