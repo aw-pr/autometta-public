@@ -145,6 +145,32 @@ def ensure_card_body(state, repo_root):
     state.card_offset = 0
 
 
+def open_card_external(repo_root, card_path):
+    """Hand the card to the desktop's default handler for .md.
+
+    Separate from open_card because it is a different promise: that opens a
+    pager and guarantees the file cannot be changed, this opens whatever the
+    desktop associates with .md, which on most machines can write. The notice
+    says so, since the operator cannot see what got launched.
+    """
+    path = card_path if os.path.isabs(card_path) else os.path.join(repo_root, card_path)
+    if not os.path.exists(path):
+        return "card not found: %s" % card_path
+    if sys.platform == "darwin":
+        opener = ["open", path]
+    elif os.name == "posix":
+        opener = ["xdg-open", path]
+    else:
+        return "no default opener on this platform; press o to page it"
+    try:
+        subprocess.run(opener, check=True, capture_output=True)
+    except FileNotFoundError:
+        return "no %s on PATH; press o to page it" % opener[0]
+    except (OSError, subprocess.CalledProcessError) as error:
+        return "could not open the card: %s" % error
+    return "opened %s in the default viewer (editable)" % os.path.basename(path)
+
+
 def apply_key(state, key, repo_root):
     action = state.key(key)
     if not action:
@@ -152,6 +178,9 @@ def apply_key(state, key, repo_root):
     kind, message = action
     if kind == "open_card":
         state.card_notice = open_card(repo_root, message)
+        return
+    if kind == "open_card_external":
+        state.card_notice = open_card_external(repo_root, message)
         return
     if kind != "submit":
         return

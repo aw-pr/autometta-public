@@ -278,13 +278,18 @@ class TuiState:
             # that" is usually answered by reading it rather than by the detail
             # pane's summary of it. Resolution happens in the app layer, which
             # is the only part that knows about the terminal it is hosted in.
+            #
+            # o pages it read-only; O hands it to whatever the desktop opens .md
+            # with, which may well be an editor. They are separate keys rather
+            # than one, because a card a worker is mid-dispatch on must not
+            # become editable by a keystroke meant to read it.
             stage = next((item for item in ordered_run_stages(self.payload)
                           if item.get("id") == self.pinned_stage), None)
             if not stage:
                 self.card_notice = "no stage selected"
                 return None
             path = stage.get("card") or "stage-cards/%s.md" % stage.get("id")
-            return "open_card", path
+            return ("open_card" if key == "o" else "open_card_external"), path
         if key in ("m", "M"):
             self.page = 3
             self.composing = True
@@ -977,8 +982,8 @@ def footer(canvas, state):
         return
     tabs = "[1]run [2]history [3]messages"
     if state.page == 1:
-        hints = ("  1-4 focus · 0 card · j/k select · enter detail"
-                 " · [ ] page · o open card · m message · q quit")
+        hints = ("  1-4 focus · 0 card · j/k select · enter detail · [ ] page"
+                 " · o page card · O default viewer · m message · q quit")
     else:
         hints = "  1-3 page · j/k scroll · enter reply · esc run page · q quit"
     text = tabs + hints
