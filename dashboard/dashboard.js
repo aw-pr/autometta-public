@@ -73,6 +73,41 @@
     storeSet("autometta.pageSize." + key, String(size));
   }
 
+  // --- per-stage spend -----------------------------------------------------
+
+  // Tokens are written onto a stage row when it completes. A stage that
+  // stalled never gets that write, so its row reads 0 while the cost log knows
+  // it burned over a million -- which is why a repo whose whole run stalled
+  // drew empty charts. Fall back to the cost log, which carries the same
+  // figures per stage and per role.
+  function stageSpend(repo, stage) {
+    var worker = Number(stage.worker_tokens || 0);
+    var verifier = Number(stage.verifier_tokens || 0);
+    var total = Number(stage.tokens || 0);
+    if (total || worker || verifier) {
+      return { worker: worker, verifier: verifier, total: total || worker + verifier, logged: false };
+    }
+    var spend = repo.spend || {};
+    var logged = 0;
+    (spend.by_stage || []).forEach(function (row) {
+      if (row.stage_id === stage.id) logged += Number(row.tokens || 0);
+    });
+    (spend.failures || []).forEach(function (row) {
+      if (row.stage_id !== stage.id) return;
+      var lost = Number(row.tokens_lost || 0);
+      if (row.role === "verifier") verifier += lost;
+      else worker += lost;
+    });
+    total = logged || worker + verifier;
+    return { worker: worker, verifier: verifier, total: total, logged: total > 0 };
+  }
+
+  // A stage that never completed still happened, and dating it by when it was
+  // dispatched is what puts a stalled run on the per-day chart at all.
+  function stageWhen(stage) {
+    return stage.completed_at || stage.started_at || null;
+  }
+
   // --- time range ----------------------------------------------------------
 
   function rangeDays() {
@@ -96,8 +131,9 @@
   function stageInRange(stage) {
     var days = rangeDays();
     if (!days) return true;
-    if (!stage.completed_at) return true;
-    var t = Date.parse(stage.completed_at);
+    var when = stageWhen(stage);
+    if (!when) return true;
+    var t = Date.parse(when);
     return !isFinite(t) || t >= Date.now() - days * 86400000;
   }
 
@@ -106,7 +142,7 @@
     var out = [];
     visibleRepos().forEach(function (r) {
       (r.stages || []).forEach(function (s) {
-        if (stageInRange(s)) out.push({ repo: r.name, stage: s });
+        if (stageInRange(s)) out.push({ repo: r.name, stage: s, spend: stageSpend(r, s) });
       });
     });
     return out;
@@ -395,17 +431,23 @@
       });
       group.forEach(function (row, i) { row.groupStart = i === 0; rows.push(row); });
     });
+    var byName = Object.create(null);
+    repos.forEach(function (r) { byName[r.name] = r; });
     var cells = rows.map(function (row) {
       var s = row.stage;
+      var spend = stageSpend(byName[row.repo] || {}, s);
+      // A figure recovered from the cost log is marked, because it is a
+      // different measurement from one the stage recorded on completion.
+      var mark = spend.logged ? "*" : "";
       return { cls: row.groupStart ? "group-start" : "", cells: [
         row.repo,
         s.id,
         { html: '<span class="status ' + esc(s.status) + '">' + esc(s.status) + "</span>" },
         shortIdentity(s.worker),
         shortIdentity(s.verifier),
-        { html: fmtInt(s.worker_tokens), cls: "num" },
-        { html: fmtInt(s.verifier_tokens), cls: "num" },
-        { html: fmtInt(s.tokens), cls: "num" },
+        { html: fmtInt(spend.worker) + mark, cls: "num" },
+        { html: fmtInt(spend.verifier) + mark, cls: "num" },
+        { html: fmtInt(spend.total) + mark, cls: "num" },
         s.started_at || "",
         s.completed_at || ""
       ] };
@@ -444,7 +486,7 @@
     var totals = Object.create(null);
     repos.forEach(function (r) { totals[r.name] = 0; });
     stages.forEach(function (row) {
-      totals[row.repo] = (totals[row.repo] || 0) + Number(row.stage.tokens || 0);
+      totals[row.repo] = (totals[row.repo] || 0) + row.spend.total;
     });
     var names = repos.map(function (r) { return r.name; });
     draw("chart-repos", {
@@ -468,7 +510,7 @@
         labels: stages.map(function (row) { return row.repo + " / " + row.stage.id; }),
         datasets: [{
           label: "stage tokens (" + rangeLabel() + ")",
-          data: stages.map(function (row) { return row.stage.tokens || 0; }),
+          data: stages.map(function (row) { return row.spend.total; }),
           backgroundColor: "#2ea043"
         }]
       },
@@ -482,8 +524,8 @@
     var totals = Object.create(null);
     stages.forEach(function (row) {
       var s = row.stage;
-      if (s.worker) totals[s.worker] = (totals[s.worker] || 0) + Number(s.worker_tokens || 0);
-      if (s.verifier) totals[s.verifier] = (totals[s.verifier] || 0) + Number(s.verifier_tokens || 0);
+      if (s.worker) totals[s.worker] = (totals[s.worker] || 0) + row.spend.worker;
+      if (s.verifier) totals[s.verifier] = (totals[s.verifier] || 0) + row.spend.verifier;
     });
     var entries = Object.keys(totals).map(function (k) { return { identity: k, tokens: totals[k] }; })
       .sort(function (a, b) { return b.tokens - a.tokens || (a.identity < b.identity ? -1 : 1); });
@@ -500,10 +542,10 @@
   function drawDaysChart(stages) {
     var totals = Object.create(null);
     stages.forEach(function (row) {
-      var s = row.stage;
-      if (!s.completed_at || !(s.tokens > 0)) return;
-      var day = s.completed_at.slice(0, 10);
-      totals[day] = (totals[day] || 0) + Number(s.tokens || 0);
+      var when = stageWhen(row.stage);
+      if (!when || !(row.spend.total > 0)) return;
+      var day = when.slice(0, 10);
+      totals[day] = (totals[day] || 0) + row.spend.total;
     });
     var days = Object.keys(totals).sort();
     draw("chart-days", {
