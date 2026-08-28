@@ -9,7 +9,8 @@
 - [x] The spend on autometta shows no spend ? /users/anthonywest/screenshots/clipsaver/2ed8d19c6d83e7b54618132daebc0620158fb4a6.png
 - [x] Can we reorder put the panels as follows:/users/anthonywest/screenshots/clipsaver/943a8ab88b7e72cf211b73baf77065ecf9ccd0cc.png filters, perstage, per day, per model and provider windows last.
 - [x] The per day box in autometta-testing fileter is blank /users/anthonywest/screenshots/clipsaver/0d841366c6cb5d6aca028b805e5f6f16869c8f96.pngo
-
+- [x] Can we click through on the cards in per stage to open the stage card, a bit like the chanege for the TUI
+- [x] If we click the graph can we also go through to the stage card (if we click the bar on the graph. Also I wonder if we should sort those by tokens, max first and not bother with ones that have zero tokens./users/anthonywest/screenshots/clipsaver/33bb0865a5c0513d15565cc5c682ffbc1ea903e4.png
 
 
 #TUI
