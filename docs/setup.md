@@ -271,6 +271,39 @@ auth:
 
 or override at dispatch time with `AUTOMETTA_CODEX_MODE=local`. No `OP_REF_*` and no sibling `CODEX_HOME` are needed: the spawn scripts fetch no key for this route (op-fetch still runs, so any stray `OPENAI_API_KEY` in your shell is stripped rather than silently billing the API). If `ollama` is not on `PATH`, is not serving, or the model is not pulled, the spawn fails closed before launching an agent and names the missing piece; autometta never runs `ollama serve` on your behalf.
 
+#### Splitting the roles: local worker, cloud verifier
+
+`auth.codex.mode` sets the route for both sides of the gate, which on the local
+route means the same class of weights writes the code and judges it. A per-role
+key sits underneath it:
+
+```yaml
+auth:
+  codex:
+    mode: local            # the family default: both roles, unless overridden
+    verifier:
+      mode: subscription   # the gate runs on a cloud model
+```
+
+Resolution is most-specific-wins: `AUTOMETTA_CODEX_MODE_VERIFIER` (or
+`_WORKER`), then `AUTOMETTA_CODEX_MODE`, then `auth.codex.<role>.mode`, then
+`auth.codex.mode`, then the `subscription` default. A repo that sets no per-role
+key dispatches exactly as it did before.
+
+The pairing this buys is free weights writing the code against a metered model
+judging it, which costs verifier tokens only and holds the gate at a tier the
+worker cannot reach. It is worth knowing what the free-both-sides arrangement
+actually failed at in practice: local weights can write correct code and still
+be unable to hold the protocol around it, writing no worker envelope or never
+landing an `apply_patch` call, so the stage stalls on plumbing rather than on
+the work. A cloud verifier removes that failure from the half of the gate where
+it is fatal.
+
+Which cloud model the verifier reaches is the card's business, not this key's:
+a role's declared identity names its weights (`Codex GPT-5.6 Terra` dispatches
+to `gpt-5.6-terra`), and an identity naming none of Sol, Terra or Luna falls
+back to `AUTOMETTA_MODEL_CODEX`.
+
 Local weights are a real step down in capability from a frontier verifier. Prefer this route for stages whose acceptance is mechanical (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria: a FAIL from a weaker verifier still blocks the merge, but a PASS is only as trustworthy as the acceptance commands it actually ran. `gpt-oss:120b` is the measured default (77% FAIL recall against a 10-stage benchmark, tied for best of eight candidates measured; see `docs/verifier-bake-off.md`); `qwen3-coder:30b` is faster but effectively a rubber stamp (15% FAIL recall) and should not be substituted for the default without accepting that trade. Cold model load is on the order of a minute; warm dispatches are faster.
 
 ### Cloud free tier (measured, not a selectable dispatch mode)
