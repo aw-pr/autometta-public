@@ -2,7 +2,8 @@
 
 `autometta dashboard` regenerates a static, offline-renderable HTML
 dashboard that visualises token spend and stage activity across every
-subscribed repo. There is no daemon. The page is regenerated on demand; while
+subscribed repo. There is no daemon. The page is regenerated on demand, or on
+an interval with `--watch` / `--serve` for a live view; while
 the fleet tmux viewer exists, a separate refresh job also regenerates the data
 snapshot every 120 seconds. The fleet ticker remains a read-only renderer and
 never walks subscriber repos.
@@ -18,6 +19,8 @@ to the subscriber those terminal surfaces display.
 autometta dashboard                    # regenerate the fleet page
 autometta dashboard --open             # regenerate and open in default browser
 autometta dashboard --repo <path>      # the same page scoped to one subscriber
+autometta dashboard --watch            # regenerate every 5s until interrupted
+autometta dashboard --serve --open     # live view: regenerate, serve, and open it
 ```
 
 `--repo` narrows the walk to one subscriber and writes the pair to
@@ -73,6 +76,31 @@ SHA256 hash; a mismatch fails the install loudly.
    into `~/.autometta/dashboard/`.
 3. With `--open`, launches the local file via `open` (macOS) or
    `xdg-open` (linux).
+4. With `--watch`, repeats step 1 every `--interval` seconds (default 5) until
+   interrupted. Step 2 is not repeated: the assets are already in place, and
+   recopying them under a reading browser buys nothing.
+5. With `--serve` (which implies `--watch`), binds a `python3 -m http.server`
+   to `127.0.0.1:<port>` over the dashboard directory first, and reports that
+   URL instead of the `file://` one.
+
+Both are foreground processes that end with the terminal, in the same shape as
+`autometta tui`. Nothing supervises them and nothing restarts them, so this is
+not the daemon the design rules out: stop the process and the page simply goes
+back to being the snapshot it was.
+
+## Live updates
+
+The page polls for new data every five seconds and re-renders only when
+`generated_at` has moved, so a poll against an unchanged file costs one read
+and no repaint. A freshness marker sits beside the generated-at stamp: green
+while reads are landing, amber once three consecutive reads have failed, which
+is what distinguishes a dashboard nobody is regenerating from a genuinely quiet
+fleet. Open expander rows are held in renderer state rather than in the DOM, so
+a poll does not close a stage card mid-read.
+
+Polling needs something to poll. The page re-reading a file no one is
+rewriting is the default arrangement and stays a snapshot; `--watch` is the
+half that makes it live.
 
 The TUI polls the per-repo seam every five seconds. Card 74 changed the
 aggregator from repeated per-row forks and file scans to set-based passes over
@@ -171,6 +199,15 @@ as the fleet pane. Over HTTP it fetches `data.json`. `autometta dashboard
 the renderer uses `window.AUTOMETTA_DATA` when `fetch` is unavailable. The two
 files are emitted from one assembled object by the aggregator; `data.js` is
 not a second walker.
+
+The same split governs how the poll re-reads. Served over http it is an
+ordinary no-store fetch. On a `file://` origin fetch is blocked by the opaque
+file origin, so the poll re-injects `data.js` with a cache-busting query and
+reads `window.AUTOMETTA_DATA` again. That path depends on the browser honouring
+a query string on a file URL; where it does not, `generated_at` never advances
+and the page reads "unchanged" indefinitely, which looks exactly like an idle
+fleet. The freshness marker therefore names the transport it is on, and
+`--serve` exists to avoid the question entirely.
 
 ## Four breakdowns
 
