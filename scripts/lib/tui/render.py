@@ -962,7 +962,11 @@ def render_messages(canvas, state, width, usable):
     input_separator = "── message " + "─" * max(0, width - 17)
     fixed = len(journal) + 4 + (1 if state.compose_notice else 0)
     conversation = _conversation_lines(state, max(1, inner_height - fixed))
-    prompt = "> " + state.compose_buffer + ("_  enter send · esc cancel" if state.composing else "")
+    # Cursor only. The key hint used to be concatenated onto the input line
+    # right after the cursor, unstyled, so it read as text the operator had
+    # somehow typed into their own message. The footer already states the keys
+    # for the whole time the composer is open, which is where a hint belongs.
+    prompt = "> " + state.compose_buffer + ("_" if state.composing else "")
     if not state.composing:
         prompt = "> press m or enter to message the controller"
     lines = journal + [content_line(separator, [(0, 8, BOLD)])]
