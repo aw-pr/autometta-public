@@ -78,6 +78,53 @@ pc_seed_path="${AUTOMETTA_CONTROLLER_SEED:-$controller_home/phat-controller-seed
 # read back later distinguishes the role from whichever model held it.
 PC_GIT_IDENTITY="Phat Controller <phat-controller@local>"
 
+# Who authors a controller commit depends on what drove the pass, and the two
+# cases have different right answers.
+#
+# An agent-driven pass (an orchestrator session running `phat-controller
+# rebrief`) should name that agent: the author field is `git shortlog`'s
+# grouping key, and a role there invents a contributor that is neither a person
+# nor a model.
+#
+# A scheduled pass has no model driving it at all. It is launchd running bash,
+# and the role IS the honest author. Calling `agent-whoami` bare there does not
+# report the driver, because there is no driver to report: it reads
+# ~/.codex/config.toml and answers with whatever that file happens to name. The
+# first live re-brief after this attribution changed was authored `Codex
+# GPT-5.6 Luna` for a pass written by Opus 5, from a config that knew nothing
+# about the invocation. A confident wrong author is the failure the global
+# rules single out as worse than a stopped commit.
+#
+# So the model identity is used only when it is asserted FOR THIS PASS, by an
+# explicit environment variable. A helper answering from ambient config is not
+# an assertion about the driver, and everything else falls back to the role.
+pc_resolve_agent_identity() {
+  local ident="${AUTOMETTA_CONTROLLER_IDENTITY:-${AGENT_WHOAMI:-}}"
+  if [[ -n "$ident" && "$ident" =~ ^.+[[:space:]]\<.+\>$ ]]; then
+    printf '%s' "$ident"
+    return 0
+  fi
+  if [[ -n "$ident" ]]; then
+    log "phat-controller: ignoring malformed controller identity '${ident}'; attributing to the role"
+  fi
+  printf '%s' "$PC_GIT_IDENTITY"
+}
+PC_AGENT_IDENTITY="$(pc_resolve_agent_identity)"
+
+# The role record every controller commit carries. Co-Authored-By is the
+# git-native half the forge renders; Autometta-Controller is the machine-
+# readable half, matching tick.sh's Autometta-Worker / -Verifier keys. The role
+# is never folded into the author's display name: an annotated identity is a
+# second name for the same model and lists it twice. The Co-Authored-By line is
+# dropped when the author already is the role, so a fallback does not co-author
+# a commit with itself.
+pc_controller_trailers() {
+  if [[ "$PC_AGENT_IDENTITY" != "$PC_GIT_IDENTITY" ]]; then
+    printf 'Co-Authored-By: %s\n' "$PC_GIT_IDENTITY"
+  fi
+  printf 'Autometta-Controller: %s\n' "$PC_GIT_IDENTITY"
+}
+
 # Override tick.sh's log() (writes to tick-<date>.log) so every controller
 # line lands in its own file. An operator reading phat-controller-*.log must
 # not have to filter the tick's own chatter out of it, and a ticker or
@@ -850,7 +897,7 @@ pc_card_append() {
   rm -f "$backup"
 
   local rel_path="${card_path#"$repo_root"/}"
-  if ! ( cd "$repo_root" && git add -- "$rel_path" && git commit --author="$PC_GIT_IDENTITY" -m "$message" -- "$rel_path" ) >/dev/null 2>&1; then
+  if ! ( cd "$repo_root" && git add -- "$rel_path" && git commit --author="$PC_AGENT_IDENTITY" -m "$message" -m "$(pc_controller_trailers)" -- "$rel_path" ) >/dev/null 2>&1; then
     log "card-append: ${rel_path} appended but could not be committed (unexpected branch, or a dirty index in ${repo_root}); left on disk for review"
     release_repo_lock "$repo_root"
     return 1
@@ -1158,8 +1205,8 @@ pc_push() {
 pc_merge_clean() {
   local repo_root="$1" stage_id="$2" base_branch="$3" run_branch="$4" merge_tree="$5"
   local base_tip run_tip base_dir author_name author_email
-  author_name="${PC_GIT_IDENTITY% <*}"
-  author_email="${PC_GIT_IDENTITY##*<}"
+  author_name="${PC_AGENT_IDENTITY% <*}"
+  author_email="${PC_AGENT_IDENTITY##*<}"
   author_email="${author_email%>}"
   base_tip="$(git -C "$repo_root" rev-parse -q --verify "refs/heads/${base_branch}" 2>/dev/null || true)"
   run_tip="$(git -C "$repo_root" rev-parse -q --verify "refs/heads/${run_branch}" 2>/dev/null || true)"
@@ -1179,7 +1226,9 @@ pc_merge_clean() {
     (
       cd "$base_dir"
       GIT_AUTHOR_NAME="$author_name" GIT_AUTHOR_EMAIL="$author_email" \
-        git merge --no-ff --no-edit "$run_branch" >/dev/null 2>&1
+        git merge --no-ff -m "Merge branch '${run_branch}' into ${base_branch}
+
+$(pc_controller_trailers)" "$run_branch" >/dev/null 2>&1
     )
     return
   fi
@@ -1190,7 +1239,8 @@ pc_merge_clean() {
     GIT_AUTHOR_NAME="$author_name" \
     GIT_AUTHOR_EMAIL="$author_email" \
       git commit-tree "$merge_tree" -p "$base_tip" -p "$run_tip" \
-        -m "${stage_id}: phat-controller integrates ${run_branch} into ${base_branch}"
+        -m "${stage_id}: phat-controller integrates ${run_branch} into ${base_branch}" \
+        -m "$(pc_controller_trailers)"
   )" || return 1
   [[ -n "$merge_commit" ]] || return 1
   git -C "$repo_root" update-ref "refs/heads/${base_branch}" "$merge_commit" "$base_tip"
@@ -1359,6 +1409,34 @@ pc_render_pass_prompt() {
   printf '%s\n' "$rendered"
 }
 
+# The controller is an agent like any other, and until it registered itself it
+# was the one role no viewer could see: the TUI's Agents pane reads
+# state/active-agents/, and a pass left nothing there. An operator watching a
+# run could see every worker and verifier but not the thing deciding what they
+# did next, which is the process most worth watching when a queue misbehaves.
+#
+# Registration is per-repo because the pane is per-repo, and it names the model
+# driving the pass, not the role, so the pane reports what is actually running.
+pc_register_pass_agent() {
+  local repo_root="$1" family log_path
+  family="$(agent_family_for_identity "$PC_AGENT_IDENTITY")"
+  log_path="$pc_log_dir/phat-controller-$(date -u +%F).log"
+  "$script_dir/register-agent.sh" "$repo_root" "$$" controller "$family" \
+    "$PC_AGENT_IDENTITY" "-" "$log_path" "${PC_PASS_BUDGET_SECONDS:-1800}" \
+    >/dev/null 2>&1 || true
+}
+
+# A pass that dies without clearing its registration would leave a controller
+# that looks live for ever, so the trap runs on every exit path, not just the
+# clean one.
+pc_deregister_pass_agents() {
+  local repo_root
+  for repo_root in "${PC_REGISTERED_REPOS[@]:-}"; do
+    [[ -n "$repo_root" ]] || continue
+    rm -f "$repo_root/state/active-agents/$$.json" 2>/dev/null || true
+  done
+}
+
 pc_pass() {
   for tool in yq jq; do
     command -v "$tool" >/dev/null 2>&1 || { log "phat-controller: ${tool} is required but missing"; return 1; }
@@ -1380,6 +1458,12 @@ pc_pass() {
     log "phat-controller: no repos to mind"
     return 0
   fi
+
+  PC_REGISTERED_REPOS=( "${repos[@]}" )
+  trap pc_deregister_pass_agents EXIT
+  for repo_root in "${repos[@]}"; do
+    pc_register_pass_agent "$repo_root"
+  done
 
   # The controller works inside its envelope or it stops (prohibition 4).
   # There is nobody to escalate to mid-run, so an exhausted authority halts

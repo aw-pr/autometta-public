@@ -2,6 +2,11 @@
 # dashboard.sh — regenerate ~/.autometta/dashboard/{data.json,
 # index.html, dashboard.js, dashboard.css, vendor/chart.min.js} and
 # optionally open the page in the default browser.
+#
+# --repo narrows the page to one subscriber. It is the same document over a
+# data.json the aggregator narrowed for it, written to a per-repo directory
+# under the controller home, so a repo view never needs its own renderer and
+# never writes inside the repo it is reporting on.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -14,11 +19,17 @@ controller_home="$(autometta_controller_home)"
 dashboard_dir="$controller_home/dashboard"
 
 open_after=false
+repo_target=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --open) open_after=true ;;
+    --repo)
+      [[ $# -ge 2 ]] || { printf 'autometta dashboard: --repo needs a repo path\n' >&2; exit 1; }
+      repo_target="$2"
+      shift
+      ;;
     --help|-h)
-      printf 'Usage: autometta dashboard [--open]\n'
+      printf 'Usage: autometta dashboard [--repo <repo-path>] [--open]\n'
       exit 0
       ;;
     *)
@@ -29,10 +40,20 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+aggregate_args=()
+if [[ -n "$repo_target" ]]; then
+  repo_resolved="$(cd "$repo_target" 2>/dev/null && pwd -P)" || {
+    printf 'autometta dashboard: repo not found: %s\n' "$repo_target" >&2
+    exit 1
+  }
+  dashboard_dir="$controller_home/dashboard/repos/${repo_resolved##*/}"
+  aggregate_args=(--only "$repo_resolved" --out-dir "$dashboard_dir")
+fi
+
 mkdir -p "$dashboard_dir/vendor"
 
 # Refresh data.json from current subscriber state.
-"$script_dir/aggregate-dashboard.sh"
+"$script_dir/aggregate-dashboard.sh" ${aggregate_args[@]+"${aggregate_args[@]}"}
 
 # Copy static assets. Source of truth is the repo's dashboard/ directory;
 # the controller home is a regenerated mirror.

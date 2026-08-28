@@ -17,7 +17,7 @@
 
 `feat/control-plane-fixes` carries six commits from 2026-08-01/02 that have
 never reached `dev`. They live in a second worktree at
-`/Users/AnthonyWest/repos/autometta-cp-fixes`, clean and forgotten. Meanwhile
+`../autometta-cp-fixes`, clean and forgotten. Meanwhile
 `dev` has moved on through worktree-per-run dispatch and solved at least one of
 the same problems a second, different way.
 
@@ -72,7 +72,7 @@ the dispatch path and should be cheap.
 ## Inputs (read these in your own context)
 
 - `git log -p dev..feat/control-plane-fixes` — all six, read them
-- `/Users/AnthonyWest/repos/autometta-cp-fixes` — the worktree, currently clean
+- `../autometta-cp-fixes` — the worktree, currently clean
 - docs/plans/2026-08-01-control-plane-review.md — the review these came from
 - examples/self-host/31-budget-cap-did-not-stop-dispatch.md — the halt question
 - examples/self-host/29-run-worktree-state-writable.md — the envelope question

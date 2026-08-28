@@ -98,6 +98,8 @@ assert_contains "$parsed" "### $new_id" "real pc_inbox_scan did not parse the co
 assert_contains "$parsed" 'please explain card 71' "real pc_inbox_scan did not parse the composed body"
 
 cancel_before="$(find "$repo/state/phat-controller-inbox/pending" -type f | wc -l | tr -d ' ')"
+composing="$(capture "$repo" 119 40 'm,draft')"
+assert_contains "$composing" 'enter send · esc cancel' "composer did not explain how to leave input mode"
 cancelled="$(capture "$repo" 119 40 'm,this must not land,ESC')"
 cancel_after="$(find "$repo/state/phat-controller-inbox/pending" -type f | wc -l | tr -d ' ')"
 [[ "$cancel_after" -eq "$cancel_before" ]] || fail "escape wrote a pending message"
@@ -138,7 +140,16 @@ assert '"phat-controller-inbox", "processed"' in messages
 assert '"phat-controller-outbox"' in messages
 PY
 
-[[ -z "$(git -C "$script_dir/.." diff -- scripts/phat-controller.sh)" ]] || \
-  fail "phat-controller.sh was modified"
+# The seam is a direction, not a frozen file. The TUI reads the controller's
+# bus; the controller must not reach back into the TUI. Asserting instead that
+# phat-controller.sh had no uncommitted diff tested the working tree rather
+# than the dependency: it passed the instant anything was committed, and it
+# failed on any unrelated edit to that file by anyone, which is what it did
+# when the controller learned to register itself as an agent. Comments may name
+# the TUI; only executable coupling is refused.
+if grep -vE '^[[:space:]]*#' scripts/phat-controller.sh \
+   | grep -qE '(source|\.|bash|exec|python3)[^#]*(lib/tui|tui\.sh)'; then
+  fail "phat-controller.sh executes TUI code; the controller must not depend on its viewer"
+fi
 
 printf 'PASS tui messages: 80/119/160 captures, interleaving, pending/refusal, compose parse, cancel, empty state, bounded journal, one reader seam\n'

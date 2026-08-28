@@ -2,6 +2,7 @@
 """Polling and curses event loop for the Autometta TUI."""
 import argparse
 import curses
+import shlex
 import json
 import locale
 import os
@@ -12,7 +13,8 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from render import ACTIVE, ALERT, BOLD, DIM, NORMAL, REVERSE, TuiState, render
+from render import (ACTIVE, ALERT, BOLD, DIM, NORMAL, REVERSE, TuiState,
+                    ordered_run_stages, render)
 from messages import read_bus, write_pending
 
 
@@ -76,11 +78,110 @@ def refresh_controller(state, repo_root):
     state.update_controller(read_bus(repo_root))
 
 
+def open_card(repo_root, card_path):
+    """Show a stage card. Returns a short notice for the footer.
+
+    Inside tmux the card opens as its own window, which is what an operator
+    watching a run actually wants: the TUI keeps painting, and the card is a
+    window switch away rather than a modal that has to be dismissed. Outside
+    tmux there is nowhere to put it, so fall back to suspending curses around
+    a pager. Never shell out to an editor: this is a read path, and a card the
+    worker is mid-dispatch on must not be editable by accident.
+    """
+    path = card_path if os.path.isabs(card_path) else os.path.join(repo_root, card_path)
+    if not os.path.exists(path):
+        return "card not found: %s" % card_path
+    if os.environ.get("TMUX"):
+        window_name = os.path.basename(path)[:20] or "card"
+        try:
+            subprocess.run(
+                ["tmux", "new-window", "-n", window_name,
+                 "%s %s" % (os.environ.get("PAGER", "less"), shlex.quote(path))],
+                check=True, capture_output=True)
+        except (OSError, subprocess.CalledProcessError) as error:
+            return "could not open a tmux window: %s" % error
+        return "opened %s in a tmux window" % os.path.basename(path)
+    try:
+        curses.endwin()
+        subprocess.run([os.environ.get("PAGER", "less"), path], check=False)
+    except OSError as error:
+        return "could not page the card: %s" % error
+    return "viewed %s" % os.path.basename(path)
+
+
+# A card is a prompt, not a document; anything past this is a card that has
+# gone wrong, and reading it whole belongs in the pager that o opens.
+CARD_BODY_MAX_LINES = 400
+
+
+def ensure_card_body(state, repo_root):
+    """Keep the detail pane's card text in step with the pinned stage.
+
+    render.py is rendered in the smokes against fixtures with no repo on disk,
+    so it stays a pure function of state: the file read lives here and the card
+    is handed over as data.
+    """
+    stage = next((item for item in ordered_run_stages(state.payload)
+                  if item.get("id") == state.pinned_stage), None)
+    if not stage:
+        if state.card_body_stage is not None:
+            state.card_body = []
+            state.card_body_stage = None
+            state.card_offset = 0
+        return
+    stage_id = stage.get("id")
+    if state.card_body_stage == stage_id:
+        return
+    path = stage.get("card") or "stage-cards/%s.md" % stage_id
+    if not os.path.isabs(path):
+        path = os.path.join(repo_root, path)
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            body = handle.read().splitlines()[:CARD_BODY_MAX_LINES]
+    except OSError as error:
+        body = ["could not read the card: %s" % error]
+    state.card_body = body
+    state.card_body_stage = stage_id
+    state.card_offset = 0
+
+
+def open_card_external(repo_root, card_path):
+    """Hand the card to the desktop's default handler for .md.
+
+    Separate from open_card because it is a different promise: that opens a
+    pager and guarantees the file cannot be changed, this opens whatever the
+    desktop associates with .md, which on most machines can write. The notice
+    says so, since the operator cannot see what got launched.
+    """
+    path = card_path if os.path.isabs(card_path) else os.path.join(repo_root, card_path)
+    if not os.path.exists(path):
+        return "card not found: %s" % card_path
+    if sys.platform == "darwin":
+        opener = ["open", path]
+    elif os.name == "posix":
+        opener = ["xdg-open", path]
+    else:
+        return "no default opener on this platform; press o to page it"
+    try:
+        subprocess.run(opener, check=True, capture_output=True)
+    except FileNotFoundError:
+        return "no %s on PATH; press o to page it" % opener[0]
+    except (OSError, subprocess.CalledProcessError) as error:
+        return "could not open the card: %s" % error
+    return "opened %s in the default viewer (editable)" % os.path.basename(path)
+
+
 def apply_key(state, key, repo_root):
     action = state.key(key)
     if not action:
         return
     kind, message = action
+    if kind == "open_card":
+        state.card_notice = open_card(repo_root, message)
+        return
+    if kind == "open_card_external":
+        state.card_notice = open_card_external(repo_root, message)
+        return
     if kind != "submit":
         return
     try:
@@ -108,8 +209,10 @@ def capture(args):
     for index, payload in enumerate(polls):
         state.update(payload, observed_at=index * args.interval)
         refresh_controller(state, args.repo_root)
+    ensure_card_body(state, args.repo_root)
     for key in filter(None, (part.strip() for part in args.keys.split(","))):
         apply_key(state, key, args.repo_root)
+        ensure_card_body(state, args.repo_root)
     sys.stdout.write(render(state, args.width, args.height).text(args.ansi) + "\n")
 
 
@@ -203,6 +306,7 @@ def interactive(args):
                            args.repo_root, payload)
                 in_flight_generation = latest_generation
                 next_poll = started_at + args.interval
+                ensure_card_body(state, args.repo_root)
                 dirty = True
             if dirty:
                 height, width = stdscr.getmaxyx()
@@ -222,6 +326,7 @@ def interactive(args):
                 curses.KEY_BACKSPACE: "BACKSPACE", 127: "BACKSPACE", 8: "BACKSPACE",
             }
             apply_key(state, mapping.get(key, chr(key) if 0 <= key < 256 else ""), args.repo_root)
+            ensure_card_body(state, args.repo_root)
             dirty = True
     finally:
         try:

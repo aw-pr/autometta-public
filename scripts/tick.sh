@@ -859,6 +859,51 @@ spawn_worker_for_stage() {
   "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
 }
 
+# pipeline_pair_on <repo-root> -> family | target
+# Which key the pairing gate compares between the head and tail workers.
+#   1. AUTOMETTA_PIPELINE_PAIR_ON env override
+#   2. pipeline.pair_on in <repo>/.autometta.local.yaml
+#   3. default: family, which is the behaviour every repo had before this key
+# An invalid value falls back to family with a warning: pairing is the widening
+# option, so an unreadable setting must never be the one that turns it on.
+pipeline_pair_on() {
+  local repo_root="$1" value=""
+  local manifest="$repo_root/.autometta.local.yaml"
+  if [[ -n "${AUTOMETTA_PIPELINE_PAIR_ON:-}" ]]; then
+    value="${AUTOMETTA_PIPELINE_PAIR_ON}"
+  elif [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+    value="$(yq -r '.pipeline.pair_on // ""' "$manifest" 2>/dev/null || true)"
+  fi
+  case "$value" in
+    target)    printf 'target\n' ;;
+    family|"") printf 'family\n' ;;
+    *)
+      printf 'pipeline-pair-on: invalid value %s; using family\n' "$value" >&2
+      printf 'family\n'
+      ;;
+  esac
+}
+
+# pipeline_pair_key <identity> <repo-root>
+# The value the gate compares. Under the default `family` this is the family
+# alone, exactly as before. Under `target` an identity that names local weights
+# also carries its model id, because two different local models are genuinely
+# independent: separate weights, separate loaded copies in Ollama, no shared
+# rate-limit window. Cloud identities keep family alone, since there the shared
+# provider window is the very thing the gate exists to protect, and two Codex
+# API workers contend for it no matter which model they name.
+pipeline_pair_key() {
+  local identity="$1" repo_root="$2" family model
+  family="$(costlog_family_for_identity "$identity")"
+  [[ "$(pipeline_pair_on "$repo_root")" == "target" ]] || { printf '%s\n' "$family"; return 0; }
+  model="$(codex_local_model_for_identity "$identity")"
+  if [[ -n "$model" ]]; then
+    printf '%s/%s\n' "$family" "$model"
+  else
+    printf '%s\n' "$family"
+  fi
+}
+
 pipeline_try_dispatch_tail() {
   local repo_root="$1" state_yaml="$2" head_stage="$3" manifest_path="$4"
   local tail_stage head_claims tail_claims head_worker tail_worker head_family tail_family
@@ -892,10 +937,10 @@ pipeline_try_dispatch_tail() {
     '[.stages[] | select(.id == $id)][0].worker // empty')"
   tail_worker="$(state_json "$state_yaml" | jq -r --arg id "$tail_stage" \
     '[.stages[] | select(.id == $id)][0].worker // empty')"
-  head_family="$(costlog_family_for_identity "$head_worker")"
-  tail_family="$(costlog_family_for_identity "$tail_worker")"
+  head_family="$(pipeline_pair_key "$head_worker" "$repo_root")"
+  tail_family="$(pipeline_pair_key "$tail_worker" "$repo_root")"
   if [[ -z "$head_family" || "$head_family" == "$tail_family" ]]; then
-    log "pipeline pair ${head_stage} + ${tail_stage} refused: worker families do not alternate"
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: worker dispatch targets do not alternate (${head_family})"
     return 1
   fi
 

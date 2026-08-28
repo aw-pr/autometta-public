@@ -118,6 +118,30 @@ claim it wouldn't.
 
 Paid Grok is excluded per the card: no usable free API route exists for it.
 
+> **Reproducibility caveat, added 2026-08-27.** Six of the eight rows below can
+> no longer be reproduced on this machine. `codex-cli 0.149.1` refuses any
+> `--oss` model that lacks thinking support, killing the run with
+> `"<model>" does not support thinking`, and that now rules out
+> `local-qwen3-coder-30b`, `local-qwen3-32b`, `local-devstral` and
+> `local-llama4-scout` outright. All four ran to completion here on
+> 2026-08-24, three days before the check was made, on the same weights and the
+> same machine: the CLI changed under the result, the measurements did not.
+>
+> The numbers below stand as what was true on 2026-08-24 and are not being
+> retracted. What changes is their usefulness going forward: of the local
+> candidates only `local-gpt-oss-120b` and its smaller sibling `gpt-oss:20b`
+> can still be dispatched at all, so the recommendation's preferred default
+> survives while most of the field it was measured against does not. The
+> OpenRouter and Groq rows are unaffected, being cloud routes rather than
+> `--oss` dispatches.
+>
+> `scripts/models.sh:codex_local_preflight` now refuses a thinking-less model
+> before the spawn rather than after, reading the `Capabilities` block from
+> `ollama show`. Anyone re-running this harness should first run
+> `scripts/candidate-viability.sh`, which checks every local row in the table.
+> See the [measurement shelf-life policy](measurement-shelf-life.md) and
+> `docs/lessons.md` gotcha 13.
+
 **Substitution note.** Card 46's candidate table named
 `qwen/qwen3-coder:free` and `deepseek/deepseek-r1:free` as the two
 OpenRouter candidates. Neither was present in OpenRouter's `/models`

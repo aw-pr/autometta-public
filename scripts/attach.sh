@@ -106,7 +106,7 @@ fleet_refresher() {
   local session="${AUTOMETTA_FLEET_SESSION:-${PHAT_CONTROLLER_FLEET_SESSION:-}}"
   trap 'exit 0' INT TERM
   while true; do
-    if [[ -n "$session" ]] && ! tmux has-session -t "$session" 2>/dev/null; then
+    if [[ -n "$session" ]] && ! tmux has-session -t "=$session" 2>/dev/null; then
       return 0
     fi
     "$script_dir/aggregate-dashboard.sh" >/dev/null 2>&1 || true
@@ -240,7 +240,7 @@ if [[ "$mode" == detach_all ]]; then
   owned="$(viewer_sessions)"
   while IFS= read -r session; do
     printf '%s' "$owned" | grep -Fqx "$session" || continue
-    tmux kill-session -t "$session"
+    tmux kill-session -t "=$session"
     printf 'PASS tmux viewer removed %s\n' "$session"
     removed=$(( removed + 1 ))
   done < <(tmux list-sessions -F '#S' 2>/dev/null || true)
@@ -255,8 +255,8 @@ repo_slug="$(session_slug "$repo_path")"
 session_name="${AUTOMETTA_TMUX_SESSION:-${PHAT_CONTROLLER_TMUX_SESSION:-autometta-$repo_slug}}"
 
 if [[ "$mode" == detach ]]; then
-  if tmux has-session -t "$session_name" 2>/dev/null; then
-    tmux kill-session -t "$session_name"
+  if tmux has-session -t "=$session_name" 2>/dev/null; then
+    tmux kill-session -t "=$session_name"
     printf 'PASS tmux viewer removed %s\n' "$session_name"
   else
     printf 'NOOP tmux viewer absent %s\n' "$session_name"
@@ -282,6 +282,14 @@ log_cmd="mkdir -p $controller_log_q; latest=''; for candidate in $controller_log
 # tail is still one keystroke away (`tmux next-window` / autometta attach's
 # "log" window), it just no longer eats the ticker's width to sit beside it.
 ticker_cmd="cd $autometta_root_q && scripts/repo-ticker.sh $repo_path_q"
+# Window 0 in every session is the TUI (card 70+). It is the only view that
+# answers "what is happening right now" in one page: run queue with the model
+# pair per stage, live agents with their budget burn, card detail, escalations
+# and the controller inbox. The ticker pages it landed in front of are still
+# one keystroke away, they are just no longer what you arrive at. An operator
+# reaching a session over ssh or from a phone wants the live page first, not a
+# table they then have to navigate away from.
+tui_cmd="cd $autometta_root_q && scripts/tui.sh $repo_path_q"
 # Window 0 of the autometta-autometta session is the repo-scoped fleet page
 # (TOTALS and ESCALATIONS for this one repo, no REPOS table -- card 66). The
 # fleet-wide page (every subscriber) survives as a deliberately reached
@@ -296,11 +304,14 @@ report_orphans
 
 if "$dry_run"; then
   printf 'tmux session: %s\nrepo: %s\n' "$session_name" "$repo_path"
+  printf 'default window: tui (%s)\n' "$tui_cmd"
   if [[ "$repo_slug" == autometta ]]; then
-    printf 'default window: repo (%s)\nsecond window: status (%s)\nthird window: fleet (%s)\n' \
+    printf 'second window: repo (%s)\nthird window: status (%s)\nfourth window: fleet (%s)\n' \
       "$fleet_scoped_cmd" "$ticker_cmd" "$fleet_cmd"
+  else
+    printf 'second window: repo (%s)\n' "$ticker_cmd"
   fi
-  printf 'repo window (full pane): %s\nlog window: %s\n' "$ticker_cmd" "$log_cmd"
+  printf 'log window: %s\n' "$log_cmd"
   exit 0
 fi
 
@@ -310,29 +321,30 @@ fi
 
 # An interactive re-attach replaces the viewer so long-running ticker loops
 # pick up the installed scripts. --ensure remains non-disruptive for ticks.
-if tmux has-session -t "$session_name" 2>/dev/null && ! "$ensure_only"; then
-  tmux kill-session -t "$session_name"
+if tmux has-session -t "=$session_name" 2>/dev/null && ! "$ensure_only"; then
+  tmux kill-session -t "=$session_name"
   printf 'PASS tmux viewer refreshed %s\n' "$session_name"
 fi
 
-if ! tmux has-session -t "$session_name" 2>/dev/null; then
+if ! tmux has-session -t "=$session_name" 2>/dev/null; then
   if [[ "$repo_slug" == autometta ]]; then
     "$script_dir/aggregate-dashboard.sh" >/dev/null 2>&1 || true
-    tmux new-session -d -s "$session_name" -n repo "$fleet_scoped_cmd"
-    tmux run-shell -b -t "$session_name" "$fleet_refresh_cmd"
-    tmux new-window -d -t "$session_name" -n status "$ticker_cmd"
-    tmux new-window -d -t "$session_name" -n fleet "$fleet_cmd"
-    tmux new-window -d -t "$session_name" -n log "$log_cmd"
-    tmux select-window -t "$session_name":repo
+    tmux new-session -d -s "$session_name" -n tui "$tui_cmd"
+    tmux run-shell -b -t "=$session_name" "$fleet_refresh_cmd"
+    tmux new-window -d -t "=$session_name" -n repo "$fleet_scoped_cmd"
+    tmux new-window -d -t "=$session_name" -n status "$ticker_cmd"
+    tmux new-window -d -t "=$session_name" -n fleet "$fleet_cmd"
+    tmux new-window -d -t "=$session_name" -n log "$log_cmd"
   else
-    tmux new-session -d -s "$session_name" -n repo "$ticker_cmd"
-    tmux new-window -d -t "$session_name" -n log "$log_cmd"
-    tmux select-window -t "$session_name":repo
+    tmux new-session -d -s "$session_name" -n tui "$tui_cmd"
+    tmux new-window -d -t "=$session_name" -n repo "$ticker_cmd"
+    tmux new-window -d -t "=$session_name" -n log "$log_cmd"
   fi
+  tmux select-window -t "=$session_name:tui"
   printf 'PASS tmux viewer created %s\n' "$session_name"
 elif "$ensure_only"; then
   printf 'PASS tmux viewer exists %s\n' "$session_name"
 fi
 
 "$ensure_only" && exit 0
-tmux attach-session -t "$session_name"
+tmux attach-session -t "=$session_name"

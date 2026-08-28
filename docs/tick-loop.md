@@ -38,8 +38,25 @@ A tick is one transition, not a loop within the tick. This is the "cron + tick >
 
 Serial remains the default. Two adjacent stages become a pipeline pair only
 when both queued stage records have non-empty `path_claims`, the claimed paths
-are disjoint, their worker families differ, and remaining token headroom covers
-twice the repo's p95 historical dispatch cost from `state/cost-log.jsonl`.
+are disjoint, their worker **dispatch targets** differ, and remaining token
+headroom covers twice the repo's p95 historical dispatch cost from
+`state/cost-log.jsonl`.
+
+The dispatch target is the vendor family by default, so the rule reads exactly
+as it always did: two Codex workers do not pair, a Codex and a Claude worker
+may. A repo can widen it with `pipeline.pair_on: target` in
+`.autometta.local.yaml` (env override `AUTOMETTA_PIPELINE_PAIR_ON`), which
+appends the weights for an identity that names local Ollama models, giving
+`codex/llama3.3:70b` against `codex/gpt-oss:20b`. That exists because the
+family alone cannot express independence on the local route: every local
+dispatch goes through `codex exec --oss`, so every local worker is family
+`codex` and a wholly free run could never pair at all. Two different local
+models are genuinely independent, being separate weights in separate loaded
+copies with no shared rate-limit window, which is the contention the gate is
+protecting. Cloud identities keep family alone under either setting, since two
+Codex API workers contend for one provider window whichever model they name.
+An unreadable or invalid value falls back to `family`: pairing is the widening
+option, so a misconfiguration must never be what turns it on.
 Missing claims produce no pairing decision or pairing log. Overlap, a repeated
 worker family, or thin headroom is logged as an explicit refusal. The ordinary
 provider-window and `budget_gate_dispatch` checks still guard the second worker

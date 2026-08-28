@@ -90,3 +90,41 @@ auth:
 #     # advisor: claude-fable-5
 #     # Override without editing this file:
 #     #   AUTOMETTA_CLAUDE_ADVISOR=claude-fable-5 scripts/spawn-verifier.sh <card> <repo>
+
+# ---------------------------------------------------------------------------
+# Pipeline pairing. Optional. Two adjacent stages with disjoint path_claims may
+# run their workers at once; this key decides what counts as "two independent
+# workers".
+#
+#   family  (default)  the vendor family, as it has always been: two codex
+#                      workers refuse to pair, codex + claude may.
+#   target             family plus the weights, for an identity naming a local
+#                      Ollama model. Needed on auth.codex.mode: local, where
+#                      every dispatch is family codex and a fully free run
+#                      could otherwise never pair at all.
+#
+# Cloud identities are unaffected by `target`: two Codex API workers share one
+# provider rate-limit window whichever model they name, and that window is what
+# the gate protects. An invalid value falls back to `family`.
+#
+# Override without editing this file:
+#   AUTOMETTA_PIPELINE_PAIR_ON=target autometta tick
+# ---------------------------------------------------------------------------
+
+# pipeline:
+#   pair_on: family   # default; or `target` on the local route
+
+# ---------------------------------------------------------------------------
+# Local Ollama model per role, for auth.codex.mode: local. Optional.
+#
+# Most repos need neither key: a stage card's declared Worker / Verifier
+# identity already names its weights (e.g. `Codex Llama 3.3 70B`), and that
+# wins over anything set here. These are the fallback for a card whose identity
+# names no local model, and they are what stops the worker and the verifier
+# being the same weights, which is the worker marking its own homework.
+# ---------------------------------------------------------------------------
+
+# codex:
+#   local_model:
+#     worker: llama3.3:70b
+#     verifier: gpt-oss:20b

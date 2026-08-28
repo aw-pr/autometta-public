@@ -8,35 +8,54 @@
 </head>
 <body>
   <header class="header">
-    <h1>autometta cost dashboard</h1>
+    <h1 id="page-title">autometta cost dashboard</h1>
     <div class="meta">
       <span id="generated-at">loading...</span>
       <span id="drain-banner"></span>
     </div>
+    <div id="repo-filter" class="repo-filter"></div>
+    <div id="range-filter" class="repo-filter range-filter"></div>
   </header>
 
   <main>
+
+    <section class="panel" id="panel-stages">
+      <h2>Per stage</h2>
+      <p class="panel-note">Click a stage, or a bar in the chart below, to read its card. * recovered from the
+        cost log: a stage records its own totals when it completes, so one that
+        stalled reports them here.</p>
+      <div id="stages-table-wrap"></div>
+      <div class="chart-wrap">
+        <canvas id="chart-stages"></canvas>
+      </div>
+    </section>
+    <section class="panel" id="panel-days">
+      <h2>Per day</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-days"></canvas>
+      </div>
+    </section>
+    <section class="panel" id="panel-models">
+      <h2>Per model</h2>
+      <div class="chart-wrap">
+        <canvas id="chart-models"></canvas>
+      </div>
+    </section>
     <section class="panel" id="panel-agents">
       <h2>Agents and queue</h2>
       <div id="agents-table-wrap"></div>
     </section>
-
     <section class="panel" id="panel-failures">
       <h2>Failures</h2>
       <div id="failures-table-wrap"></div>
     </section>
-
     <section class="panel" id="panel-spend">
       <h2>Spend</h2>
+      <p class="panel-note">Cost log for the current UTC day. A repo with no rows
+        did not run today; its lifetime totals are in Per stage and Per repo.</p>
       <p id="spend-total"></p>
       <div id="spend-table-wrap"></div>
     </section>
-
-    <section class="panel" id="panel-quota">
-      <h2>Provider windows</h2>
-      <div id="quota-table-wrap"></div>
-    </section>
-
     <section class="panel" id="panel-repos">
       <h2>Per repo</h2>
       <div id="repos-grid" class="grid"></div>
@@ -44,27 +63,9 @@
         <canvas id="chart-repos"></canvas>
       </div>
     </section>
-
-    <section class="panel" id="panel-stages">
-      <h2>Per stage</h2>
-      <div id="stages-table-wrap"></div>
-      <div class="chart-wrap">
-        <canvas id="chart-stages"></canvas>
-      </div>
-    </section>
-
-    <section class="panel" id="panel-models">
-      <h2>Per model</h2>
-      <div class="chart-wrap">
-        <canvas id="chart-models"></canvas>
-      </div>
-    </section>
-
-    <section class="panel" id="panel-days">
-      <h2>Per day</h2>
-      <div class="chart-wrap">
-        <canvas id="chart-days"></canvas>
-      </div>
+    <section class="panel" id="panel-quota">
+      <h2>Provider windows</h2>
+      <div id="quota-table-wrap"></div>
     </section>
   </main>
 

@@ -322,7 +322,40 @@ assert_contains "$card_after" "$ct_sha" "the re-brief cites the preserved commit
 assert_eq "$criteria_before" "$(awk '/^## Acceptance criteria/,/^## Budget/' "$card_ct")" "not one acceptance criterion moved"
 assert_eq "$card_before" "${card_after:0:${#card_before}}" "the card was appended to and never rewritten"
 [[ -z "$(git -C "$rct" status --porcelain -- "stage-cards/${stage_ct}.md")" ]] || fail "the re-brief was left uncommitted"
-assert_eq "$PC_GIT_IDENTITY" "$(git -C "$rct" log -1 --format='%an <%ae>' -- "stage-cards/${stage_ct}.md")" "the re-brief commit is attributed to the role"
+# Author is the model that drove the pass, not the role: the author field is
+# git shortlog's grouping key, and a role there invents a contributor that is
+# neither a person nor a model. The role travels in the Autometta-Controller
+# trailer, which is what this asserts instead.
+assert_eq "$PC_AGENT_IDENTITY" "$(git -C "$rct" log -1 --format='%an <%ae>' -- "stage-cards/${stage_ct}.md")" "the re-brief commit is authored by the driving model"
+
+# The two assertions above pass trivially when no driving model is asserted,
+# because PC_AGENT_IDENTITY then equals PC_GIT_IDENTITY. Exercise the resolver
+# itself so the two cases are actually distinguished.
+#
+# The point of the gate: a scheduled pass has no model driving it, so calling
+# agent-whoami bare would answer from ~/.codex/config.toml and name a model
+# that had nothing to do with the invocation. Only an explicit assertion counts.
+printf '\n== controller identity: asserted model, else the role ==\n' >&2
+_id_probe() {
+  ( PC_GIT_IDENTITY="Phat Controller <phat-controller@local>"
+    log() { :; }
+    eval "$(sed -n '/^pc_resolve_agent_identity() {/,/^}/p' "$script_dir/phat-controller.sh")"
+    pc_resolve_agent_identity )
+}
+assert_eq "Phat Controller <phat-controller@local>" \
+  "$(env -u AGENT_WHOAMI -u AUTOMETTA_CONTROLLER_IDENTITY bash -c "$(declare -f _id_probe); script_dir='$script_dir'; _id_probe")" \
+  "a pass with no asserted driver is attributed to the role"
+assert_eq "Claude Opus 5 <claude-opus-5@local>" \
+  "$(AGENT_WHOAMI='Claude Opus 5 <claude-opus-5@local>' bash -c "$(declare -f _id_probe); script_dir='$script_dir'; _id_probe")" \
+  "an asserted driver is attributed to that model"
+assert_eq "Claude Opus 5 <claude-opus-5@local>" \
+  "$(AGENT_WHOAMI='Claude Sonnet 5 <claude-sonnet-5@local>' AUTOMETTA_CONTROLLER_IDENTITY='Claude Opus 5 <claude-opus-5@local>' bash -c "$(declare -f _id_probe); script_dir='$script_dir'; _id_probe")" \
+  "AUTOMETTA_CONTROLLER_IDENTITY beats AGENT_WHOAMI"
+assert_eq "Phat Controller <phat-controller@local>" \
+  "$(AUTOMETTA_CONTROLLER_IDENTITY='not-an-identity' bash -c "$(declare -f _id_probe); script_dir='$script_dir'; _id_probe")" \
+  "a malformed asserted identity falls back to the role"
+printf 'PASS controller identity resolves to the asserted model, else the role\n' >&2
+assert_eq "$PC_GIT_IDENTITY" "$(git -C "$rct" log -1 --format='%(trailers:key=Autometta-Controller,valueonly)' -- "stage-cards/${stage_ct}.md" | head -1)" "the re-brief commit names the controller role in a trailer"
 printf 'PASS stalled stage re-briefed citing the preserved commit and requeued, no criterion touched\n'
 
 printf '   -- the diff proving no acceptance criterion moved --\n'
@@ -572,7 +605,8 @@ pc_merge_awaiting "$r2" >/dev/null 2>&1 || true
 assert_eq merged "$(yq -r ".stages[] | select(.id == \"$stage2\") | .integration.state" "$r2/state/state.yaml")" "integration state after clean merge"
 git -C "$r2" merge-base --is-ancestor "$run_tip" dev || fail "clean divergent run tip was not integrated into dev"
 assert_eq 2 "$(git -C "$r2" show -s --format='%P' dev | awk '{print NF}')" "divergent clean integration made a two-parent merge commit"
-assert_eq "$PC_GIT_IDENTITY" "$(git -C "$r2" show -s --format='%an <%ae>' dev)" "merge commit author"
+assert_eq "$PC_AGENT_IDENTITY" "$(git -C "$r2" show -s --format='%an <%ae>' dev)" "merge commit is authored by the driving model"
+assert_eq "$PC_GIT_IDENTITY" "$(git -C "$r2" show -s --format='%(trailers:key=Autometta-Controller,valueonly)' dev | head -1)" "merge commit names the controller role in a trailer"
 assert_eq acted "$(journal_of "$r2" | jq -r 'select(.phase == "outcome") | .result' | tail -n1)" "the merge is journalled"
 printf 'PASS clean divergent awaiting integration merged\n'
 

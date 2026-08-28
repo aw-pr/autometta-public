@@ -73,7 +73,7 @@ third_run="$(yq -r '.stages[] | select(.id == "82-run-two-first") | .run_id' "$q
 [[ "$third_run" =~ ^run-[0-9]{8}-[0-9]{6}$ ]] || fail "third add-stage invocation did not mint a run id"
 [[ "$third_run" != "$first_run" ]] || fail "queue-empty add-stage invocation reused the completed run id"
 
-long_id="36-this-stage-identifier-is-deliberately-fifty-eight-characters-long"
+long_id="36-this-stage-identifier-is-deliberately-fifty-characters"
 
 python3 - "$polls" "$empty_polls" "$long_id" "$repo" "$controller_home" <<'PY'
 import copy
@@ -234,6 +234,7 @@ capture() {
 }
 
 frame80="$(capture 80 60)"
+frame80x24="$(capture 80 24)"
 frame119="$(capture 119 40)"
 frame160="$(capture 160 40)"
 
@@ -267,7 +268,8 @@ done
 for spec in "80:$frame80" "119:$frame119" "160:$frame160"; do
   width="${spec%%:*}"
   frame="${spec#*:}"
-  AUTOMETTA_TEST_FRAME="$frame" python3 - <<'PY' \
+  AUTOMETTA_TEST_FRAME="$frame" AUTOMETTA_TEST_LONG_ID="$long_id" \
+    AUTOMETTA_TEST_WIDTH="$width" python3 - <<'PY' \
     || fail "$width-column run rows did not keep constant column offsets"
 import os
 lines = os.environ["AUTOMETTA_TEST_FRAME"].splitlines()
@@ -278,6 +280,15 @@ run_start = next(i for i, line in enumerate(lines) if "[2]─This run" in line)
 run_end = next(i for i, line in enumerate(lines[run_start + 1:], run_start + 1)
                if "[3]─Agents" in line)
 lines = lines[run_start:run_end]
+long_id = os.environ["AUTOMETTA_TEST_LONG_ID"]
+long_index = next(i for i, line in enumerate(lines) if long_id in line)
+assert "✔  " + long_id in lines[long_index], lines[long_index]
+assert long_index + 1 < len(lines), lines[long_index]
+continuation = lines[long_index + 1]
+assert "└─" in continuation, continuation
+assert "done" in continuation and "terra→fable" in continuation and "776.8K" in continuation, continuation
+print("%s columns:\n%s\n%s" % (os.environ["AUTOMETTA_TEST_WIDTH"],
+                                 lines[long_index], continuation))
 stages = {
     "65-loop-stamps-hb": ("done", "sol→fable", "412.0K"),
     "66-fleet-view-fits": ("done", "gpt-5.3→opus-4.7", "3.9M"),
@@ -295,6 +306,12 @@ for stage_id, (status, pair, tokens) in stages.items():
 assert len(offsets) == 1, offsets
 PY
 done
+
+AUTOMETTA_TEST_FRAME="$frame80x24" python3 - <<'PY' \
+  || fail "80x24 frame escaped its terminal height"
+import os
+assert len(os.environ["AUTOMETTA_TEST_FRAME"].splitlines()) == 24
+PY
 
 python3 - "$script_dir/lib/tui/render.py" <<'PY' \
   || fail "identity alias mapping did not follow canonical slugs"

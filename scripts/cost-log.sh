@@ -21,19 +21,17 @@ if ! declare -f rate_for_tier >/dev/null 2>&1; then
   # shellcheck source=./rates.sh
   source "$_costlog_script_dir/rates.sh"
 fi
+if ! declare -f agent_family_for_identity >/dev/null 2>&1; then
+  # shellcheck source=./models.sh
+  source "$_costlog_script_dir/models.sh"
+fi
 
 # Map an identity string to the dispatch family. Mirrors worker_family /
 # verifier_family in the spawn scripts so the cost-log agrees with how the
 # role was actually launched.
 costlog_family_for_identity() {
   local identity="$1"
-  if [[ "$identity" == *Codex* || "$identity" == *GPT* ]]; then
-    printf 'codex\n'
-  elif [[ "$identity" == *Claude* ]]; then
-    printf 'claude\n'
-  else
-    printf 'unknown\n'
-  fi
+  agent_family_for_identity "$identity"
 }
 
 # Resolve the billing route (subscription | api) for a family in a repo.

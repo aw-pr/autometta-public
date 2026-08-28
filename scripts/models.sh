@@ -21,7 +21,98 @@ AUTOMETTA_MODEL_CODEX="gpt-5.6-sol"
 # model above. One place to bump when a faster or better-pulled local model
 # becomes the default; see codex_local_preflight below for the ollama checks
 # that gate a dispatch on this id actually being pulled.
-AUTOMETTA_MODEL_CODEX_LOCAL="gpt-oss:120b"
+AUTOMETTA_MODEL_CODEX_LOCAL="${AUTOMETTA_MODEL_CODEX_LOCAL:-gpt-oss:120b}"
+
+# Worker and verifier both read the id above, which makes the same weights
+# judge their own output. That is not an independent gate, and on one machine
+# it is also a scheduling problem: two roles on one model id contend for a
+# single loaded copy instead of running side by side. A repo that wants a
+# genuinely separate local verifier sets the per-role override. Unset roles
+# fall back to the shared default, so a repo that never sets one dispatches
+# exactly as it did before.
+AUTOMETTA_MODEL_CODEX_LOCAL_WORKER="${AUTOMETTA_MODEL_CODEX_LOCAL_WORKER:-}"
+AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER="${AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER:-}"
+
+# agent_family_for_identity <identity>
+# Map an identity string to the dispatch family, which selects WHICH CLI runs:
+# codex exec or claude -p. This is the one copy; spawn-worker.sh, spawn-
+# verifier.sh and cost-log.sh all delegate here rather than carrying their own,
+# which they did until they disagreed about nothing and duplicated a rule that
+# has to stay identical to be correct.
+#
+# Note what this is not: it is not a statement about the weights. Every local
+# Ollama model dispatches through codex exec --oss, so Llama weights are family
+# codex too. Anything that needs to tell two local models apart wants
+# codex_local_model_for_identity below, not this.
+agent_family_for_identity() {
+  local identity="$1"
+  if [[ "$identity" == *Codex* || "$identity" == *GPT* ]]; then
+    printf 'codex\n'
+  elif [[ "$identity" == *Claude* ]]; then
+    printf 'claude\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+# codex_local_model_for_identity <identity>
+# The inverse of agent-whoami for the local route: a card's declared identity
+# names the weights that role runs on. This is what lets the head and tail of a
+# pipeline pair use different local models, which a per-role manifest key
+# cannot express, both stages' workers being the same role. Prints nothing for
+# an identity that names no local model, which is every cloud identity.
+codex_local_model_for_identity() {
+  case "$1" in
+    *GPT-OSS\ 120B*|*gpt-oss-120b*)   printf 'gpt-oss:120b' ;;
+    *GPT-OSS\ 20B*|*gpt-oss-20b*)     printf 'gpt-oss:20b' ;;
+    *Llama\ 3.3\ 70B*|*llama-3-3-70b*) printf 'llama3.3:70b' ;;
+    *Llama\ 4\ Scout*|*llama-4-scout*) printf 'llama4:scout' ;;
+    *)                                 printf '' ;;
+  esac
+}
+
+# codex_local_model_for_role <worker|verifier> [repo-root]
+# Resolve the Ollama model id a role dispatches to. Resolution order, most
+# specific wins, mirroring resolve_codex_sandbox below:
+#   1. AUTOMETTA_MODEL_CODEX_LOCAL_WORKER / _VERIFIER env override
+#   2. the identity's own weights, via codex_local_model_for_identity
+#   3. codex.local_model.<role> in <repo>/.autometta.local.yaml
+#   4. AUTOMETTA_MODEL_CODEX_LOCAL (env, else the built-in default above)
+# An unrecognised role gets the shared default rather than failing: a typo
+# should cost a role its override, not cost the run its dispatch.
+codex_local_model_for_role() {
+  local role="$1" repo_root="${2:-}" identity="${3:-}"
+  local env_override="" manifest="" model=""
+
+  case "$role" in
+    worker)   env_override="${AUTOMETTA_MODEL_CODEX_LOCAL_WORKER:-}" ;;
+    verifier) env_override="${AUTOMETTA_MODEL_CODEX_LOCAL_VERIFIER:-}" ;;
+    *)        printf '%s' "$AUTOMETTA_MODEL_CODEX_LOCAL"; return 0 ;;
+  esac
+
+  if [[ -n "$env_override" ]]; then
+    printf '%s' "$env_override"
+    return 0
+  fi
+
+  # A card that names its weights wins over the repo-wide per-role key: two
+  # stages paired in a pipeline are both workers, so the role key alone cannot
+  # give them different models.
+  if [[ -n "$identity" ]]; then
+    model="$(codex_local_model_for_identity "$identity")"
+    if [[ -n "$model" ]]; then
+      printf '%s' "$model"
+      return 0
+    fi
+  fi
+
+  manifest="$repo_root/.autometta.local.yaml"
+  if [[ -n "$repo_root" && -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+    model="$(yq -r ".codex.local_model.${role} // \"\"" "$manifest" 2>/dev/null || true)"
+  fi
+
+  printf '%s' "${model:-$AUTOMETTA_MODEL_CODEX_LOCAL}"
+}
 
 # Both CLIs take the same effort vocabulary, so one card field serves both.
 AUTOMETTA_EFFORT_LEVELS="low medium high xhigh max"
@@ -210,6 +301,25 @@ codex_local_preflight() {
   if ! printf '%s\n' "$listing" | awk '{print $1}' | grep -qxF "$model"; then
     printf 'codex-local: model %s is not pulled; run '\''ollama pull %s'\'' before dispatching\n' "$model" "$model" >&2
     return 1
+  fi
+  # Pulled is not the same as usable. codex exec --oss refuses any model
+  # without reasoning support, dying mid-run with `"<model>" does not support
+  # thinking` after the stage is already marked in_progress, which spends a
+  # worker attempt on a fact knowable before the spawn. `ollama show` reports
+  # the capability locally and for free, so ask it.
+  #
+  # Deliberately fail-open on an unreadable capability block: a future ollama
+  # that renames or drops the section must not ground every local dispatch. The
+  # cost of guessing wrong here is one failed attempt, the same as before this
+  # check existed; the cost of a false negative is a route that cannot run at
+  # all.
+  local capabilities
+  if capabilities="$(ollama show "$model" 2>/dev/null)" \
+     && printf '%s\n' "$capabilities" | grep -qiE '^[[:space:]]*capabilities[[:space:]]*$'; then
+    if ! printf '%s\n' "$capabilities" | grep -qiE '^[[:space:]]*thinking[[:space:]]*$'; then
+      printf 'codex-local: model %s is pulled but has no thinking capability, which codex exec --oss requires; pick a model whose `ollama show` lists thinking (the gpt-oss family does) or set auth.codex.mode to subscription/api\n' "$model" >&2
+      return 1
+    fi
   fi
   return 0
 }

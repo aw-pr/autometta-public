@@ -56,13 +56,7 @@ extract_stage_id() {
 
 verifier_family() {
   local identity="$1"
-  if [[ "$identity" == *Codex* || "$identity" == *GPT* ]]; then
-    printf 'codex\n'
-  elif [[ "$identity" == *Claude* ]]; then
-    printf 'claude\n'
-  else
-    printf 'unknown\n'
-  fi
+  agent_family_for_identity "$identity"
 }
 
 render_prompt() {
@@ -348,11 +342,12 @@ main() {
       if [[ "$codex_mode" == "local" ]]; then
         # Fail closed before spawn: a dispatch that dies after model
         # negotiation with Ollama burns a verifier attempt on infrastructure.
-        if ! codex_local_preflight "$AUTOMETTA_MODEL_CODEX_LOCAL"; then
+        local_model="$(codex_local_model_for_role verifier "$repo_root" "$verifier_identity")"
+        if ! codex_local_preflight "$local_model"; then
           exit 1
         fi
         # shellcheck disable=SC2086
-        op-fetch $auth_pairs -- codex exec --oss --local-provider=ollama -m "$AUTOMETTA_MODEL_CODEX_LOCAL" -C "$work_dir" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec --oss --local-provider=ollama -m "$local_model" -C "$work_dir" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       elif [[ -n "$codex_home_override" ]]; then
         # shellcheck disable=SC2086
         CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &

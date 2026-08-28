@@ -36,7 +36,7 @@ if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
 fi
 
 case "$role" in
-  worker|verifier) ;;
+  worker|verifier|controller) ;;
   *) printf 'refusing unknown role: %s\n' "$role" >&2; exit 1 ;;
 esac
 
