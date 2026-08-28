@@ -67,6 +67,7 @@ render_prompt() {
   local worker_identity="$3"
   local stage_id="$4"
   local project_name="$5"
+  local family_notes="${6:-None}"
   local template_path="$work_dir/templates/worker-prompt.md"
 
   if [[ ! -f "$template_path" ]]; then
@@ -79,7 +80,7 @@ render_prompt() {
     -e "s|<<orchestrator-identity>>|phat-controller|g" \
     -e "s|<<stage-card-path>>|${card_path}|g" \
     -e "s|<<stage-id>>|${stage_id}|g" \
-    -e "s|<<family-specific-notes-or-none>>|None|g" \
+    -e "s|<<family-specific-notes-or-none>>|${family_notes}|g" \
     "$template_path"
 }
 
@@ -135,7 +136,22 @@ main() {
     log_msg "worker runs codex unsandboxed: card declares Requires GUI (${stage_id})"
   fi
   codex_state_argv_for_repo "$repo_root"
-  prompt="$(render_prompt "$work_dir" "$card_path" "$worker_identity" "$stage_id" "$(basename "$repo_root")")"
+  # Codex registers apply_patch from per-model metadata fetched from OpenAI's
+  # model catalogue. A local Ollama model is not in that catalogue, so it falls
+  # back to metadata carrying no apply_patch_tool_type and the tool is never
+  # registered -- while the harness prompt still instructs the model to use it.
+  # Unsaid, the model spends its entire budget guessing at the schema of a tool
+  # that does not exist: three stages stalled that way with
+  # worker_envelope_missing_after_exit on 2026-08-28, one of them after 681k
+  # tokens. exec_command works on this route, so name the edit path that does.
+  worker_family_notes="None"
+  if [[ "$family" == codex ]]; then
+    worker_route_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" codex --print-mode 2>/dev/null || printf '')"
+    if [[ "$worker_route_mode" == local ]]; then
+      worker_family_notes="The apply_patch tool is NOT registered on this local route. Do not call it; every call fails with \"unsupported call: apply_patch\". Create and edit files with shell commands through exec_command instead, for example a python3 heredoc or cat > path <<'"'"'EOF'"'"'. Read each file back after writing it to confirm the change landed."
+    fi
+  fi
+  prompt="$(render_prompt "$work_dir" "$card_path" "$worker_identity" "$stage_id" "$(basename "$repo_root")" "$worker_family_notes")"
   log_path="$logs_dir/${stage_id}-worker.log"
 
   # Resolve auth route via the canonical op-fetch pattern (auth-route-security
