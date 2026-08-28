@@ -7,7 +7,11 @@
 - [x] The None button on the selecter does not deselect all repos /users/anthonywest/screenshots/clipsaver/cb57891542d221e30ed370c5f4392dfc4e87d50f.png
 - [x] Can we have the per repo panel at the bottom but above provider windows /users/anthonywest/screenshots/clipsaver/cc25c1ef561a1bb6c941425d5f4fcb9ffd5a0f01.png 
 - [x] The spend on autometta shows no spend ? /users/anthonywest/screenshots/clipsaver/2ed8d19c6d83e7b54618132daebc0620158fb4a6.png
-- [x] There should b 
+- [x] Can we reorder put the panels as follows:/users/anthonywest/screenshots/clipsaver/943a8ab88b7e72cf211b73baf77065ecf9ccd0cc.png filters, perstage, per day, per model and provider windows last.
+
+#TUI
+- [x] There should be a way to view the atual stage card in the detail view and a way to open the actual card somehow maybe wit hthe default md viewer? Maybe try and just put the actual card below the meta data in te detail view and have that scroll able?
+- [x] Is the escalations box accurate? If so is there a way to click through to some sort of chat to rectify and explain the failye, We could also explain the failure on the main summary page?
 
 ## General feedback - schedule this for an overnight run maybe Monday when i have new tokens.
 - [ ] We should review machine dependancies of this repo, for example we must assume that codex and claude are installed, what about ollama and any bespoke scripts like my token usage ones. VBasically a review of all the non git hosted deependancies.
