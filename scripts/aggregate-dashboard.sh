@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # aggregate-dashboard.sh: the sole subscriber walker for fleet displays.
 #
-# Usage: aggregate-dashboard.sh [--repo <repo-path>]
+# Usage: aggregate-dashboard.sh [--repo <repo-path>] [--only <repo-path>]
+#                               [--out-dir <dir>]
 #
-# Without --repo: walks every subscriber and writes the fleet-wide
+# Without a filter: walks every subscriber and writes the fleet-wide
 # dashboard/data.json and data.js, as before.
+#
+# With --only: narrows the walk to one subscriber but still writes the full
+# envelope, so the HTML renderer reads a single-repo data.json through the same
+# seam as the fleet one. --out-dir sends that pair somewhere other than the
+# fleet dashboard directory, which is how per-repo pages get their own home
+# without a second copy of this walker.
 #
 # With --repo: walks only that one subscriber, prints its repo object (the
 # same shape as one element of the fleet's .repos[]) to stdout, and writes
@@ -31,28 +38,55 @@ alert_statuses_json="$(alert_stage_statuses_json)"
 . "$script_dir/vendor-set.sh"
 autometta_current_sha="$(git -C "$script_dir/.." rev-parse --short HEAD 2>/dev/null || printf unknown)"
 
+aggregate_usage() {
+  printf 'usage: %s [--repo <repo-path>] [--only <repo-path>] [--out-dir <dir>]\n' \
+    "$(basename "$0")" >&2
+}
+
 repo_filter=""
+only_filter=""
+out_dir_override=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
-      [[ $# -ge 2 ]] || { printf 'usage: %s [--repo <repo-path>]\n' "$(basename "$0")" >&2; exit 1; }
+      [[ $# -ge 2 ]] || { aggregate_usage; exit 1; }
       repo_filter="$2"
       shift 2
       ;;
+    --only)
+      [[ $# -ge 2 ]] || { aggregate_usage; exit 1; }
+      only_filter="$2"
+      shift 2
+      ;;
+    --out-dir)
+      [[ $# -ge 2 ]] || { aggregate_usage; exit 1; }
+      out_dir_override="$2"
+      shift 2
+      ;;
     *)
-      printf 'usage: %s [--repo <repo-path>]\n' "$(basename "$0")" >&2
+      aggregate_usage
       exit 1
       ;;
   esac
 done
-repo_filter_resolved=""
-if [[ -n "$repo_filter" ]]; then
-  repo_filter_resolved="$(cd "$repo_filter" 2>/dev/null && pwd -P || printf '%s' "$repo_filter")"
+if [[ -n "$repo_filter" && -n "$only_filter" ]]; then
+  printf '%s: --repo and --only are mutually exclusive\n' "$(basename "$0")" >&2
+  exit 1
+fi
+
+# Both flags narrow the walk to a single subscriber and differ only in what
+# leaves the far end: --repo short-circuits to one row on stdout for the
+# ticker, --only carries that row through the envelope for the HTML renderer.
+# One match test serves both so the two paths cannot drift apart.
+match_filter="${repo_filter:-$only_filter}"
+match_filter_resolved=""
+if [[ -n "$match_filter" ]]; then
+  match_filter_resolved="$(cd "$match_filter" 2>/dev/null && pwd -P || printf '%s' "$match_filter")"
 fi
 
 controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
-dashboard_dir="$controller_home/dashboard"
+dashboard_dir="${out_dir_override:-$controller_home/dashboard}"
 data_json="$dashboard_dir/data.json"
 data_js="$dashboard_dir/data.js"
 now_epoch="$(date -u +%s)"
@@ -133,12 +167,12 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   manifest_path="$subscriber_manifest_path"
   [[ -n "$repo_path" ]] || continue
 
-  if [[ -n "$repo_filter" ]]; then
+  if [[ -n "$match_filter" ]]; then
     # The literal comparison first, so the common case never forks a subshell
     # to resolve a path it was about to skip anyway.
-    if [[ "$repo_path" != "$repo_filter" ]]; then
+    if [[ "$repo_path" != "$match_filter" ]]; then
       repo_path_resolved="$(cd "$repo_path" 2>/dev/null && pwd -P || printf '%s' "$repo_path")"
-      [[ "$repo_path_resolved" == "$repo_filter_resolved" ]] || continue
+      [[ "$repo_path_resolved" == "$match_filter_resolved" ]] || continue
     fi
   fi
 
@@ -452,7 +486,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   # can. Offsets are cached in the same active-agents registry file
   # scripts/agent-ticker.sh already used for this, so the two never disagree
   # about how much of a transcript has been consumed.
-  if [[ -n "$repo_filter" && "$agents_json" != "[]" ]]; then
+  if [[ -n "$match_filter" && "$agents_json" != "[]" ]]; then
     agents_json="$(python3 "$script_dir/lib/transcript-tokens.py" "$active_agents_dir" \
       "${AUTOMETTA_CLAUDE_PROJECTS:-$HOME/.claude/projects}" \
       "${AUTOMETTA_CODEX_SESSIONS:-$HOME/.codex/sessions}" <<<"$agents_json" 2>/dev/null || printf '%s' "$agents_json")"
@@ -693,6 +727,10 @@ if [[ -n "$repo_filter" ]]; then
 fi
 
 repos_json="$(jq -c '.' "$repos_array_file")"
+if [[ -n "$only_filter" && "$repos_json" == "[]" ]]; then
+  printf 'aggregate-dashboard.sh: no enabled subscriber matches --only %s\n' "$only_filter" >&2
+  exit 1
+fi
 by_model_json="$(printf '%s' "$repos_json" | jq -c '[.[].stages[]? |
   [(if .worker != null then {identity:.worker,tokens:(.worker_tokens // 0)} else empty end),
    (if .verifier != null then {identity:.verifier,tokens:(.verifier_tokens // 0)} else empty end),
@@ -724,14 +762,27 @@ drain_json="$(printf '%s' "$repos_json" | jq -c '
   {active:($active|length > 0), cap:($active[0].drain_cap // null),
    expires_at:($active[0].drain_expires_at // null), repos:[$active[].name]}')"
 
+# scope tells the renderer which document it is: "fleet" draws the repo filter,
+# a repo name means the walk was already narrowed and the filter is noise.
+scope_name="fleet"
+if [[ -n "$only_filter" ]]; then
+  scope_name="$(printf '%s' "$repos_json" | jq -r '.[0].name')"
+fi
+# The page-size default travels in the data so a host can set the fleet-wide
+# preference once; the page still lets a reader override it per table.
+page_size_default="${AUTOMETTA_DASHBOARD_PAGE_SIZE:-10}"
+[[ "$page_size_default" =~ ^[0-9]+$ ]] || page_size_default=10
+
 generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 data_tmp="$(new_tmp)"
 jq -n --arg generated_at "$generated_at" --slurpfile repos_file "$repos_array_file" \
   --argjson by_model "$by_model_json" --argjson by_day "$by_day_json" \
   --argjson fleet_totals "$fleet_totals_json" --argjson spend "$spend_json" \
-  --argjson drain "$drain_json" \
+  --argjson drain "$drain_json" --arg scope "$scope_name" \
+  --argjson page_size_default "$page_size_default" \
   '$repos_file[0] as $repos |
-   {generated_at:$generated_at,repos:$repos,by_model:$by_model,by_day:$by_day,
+   {generated_at:$generated_at,scope:$scope,page_size_default:$page_size_default,
+    repos:$repos,by_model:$by_model,by_day:$by_day,
     fleet_totals:$fleet_totals,spend:$spend,drain:$drain,
     drain_active:$drain.active,drain_cap:$drain.cap,drain_expires_at:$drain.expires_at}' > "$data_tmp"
 mv "$data_tmp" "$data_json"
