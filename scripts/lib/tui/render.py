@@ -292,7 +292,22 @@ class TuiState:
             self.compose_notice = ""
             return None
         if key in ("0", "1", "2", "3", "4"):
-            self.focus = int(key)
+            # The number row means two things, and which one depends on what is
+            # on screen. The run page draws panels labelled [0]-[4], so there a
+            # number focuses a panel. The other pages draw no numbered panels,
+            # and the footer's tab strip is the only thing the number row can
+            # mean there -- so it switches page. It used to focus a panel on
+            # every page and return, which on the messages page did nothing at
+            # all: the tab strip advertised [1]run while pressing 1 left the
+            # reader exactly where they were, with only [ ] or q to escape.
+            if self.page == 1:
+                self.focus = int(key)
+            elif key in ("1", "2", "3"):
+                self.page = int(key)
+            return
+        if key in ("ESC", "\x1b"):
+            # A way out that does not require knowing which key paged you in.
+            self.page = 1
             return
         if key in ("TAB", "\t"):
             self.focus = self.focus % 4 + 1
@@ -961,11 +976,17 @@ def footer(canvas, state):
             canvas.attrs[canvas.height - 1][x] = ACTIVE
         return
     tabs = "[1]run [2]history [3]messages"
-    hints = ("  j/k select · enter detail/chat · 0 card scroll · [ ] page"
-             " · o open card · m message controller · q quit")
+    if state.page == 1:
+        hints = ("  1-4 focus · 0 card · j/k select · enter detail"
+                 " · [ ] page · o open card · m message · q quit")
+    else:
+        hints = "  1-3 page · j/k scroll · enter reply · esc run page · q quit"
     text = tabs + hints
     if len(text) > canvas.width:
-        text = tabs + "  j/k select · enter detail · q quit"
+        # The narrow fallback still has to name a way off this page, which is
+        # the thing a reader is stuck without.
+        text = tabs + ("  1-4 focus · [ ] page · q quit" if state.page == 1
+                       else "  1-3 page · esc run page · q quit")
     # A card-open result replaces the hint line until the next keypress. The
     # hints are always recoverable; a silent failure to open a card is not.
     if getattr(state, "card_notice", ""):

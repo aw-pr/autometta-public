@@ -12,6 +12,7 @@
 #TUI
 - [x] There should be a way to view the atual stage card in the detail view and a way to open the actual card somehow maybe wit hthe default md viewer? Maybe try and just put the actual card below the meta data in te detail view and have that scroll able?
 - [x] Is the escalations box accurate? If so is there a way to click through to some sort of chat to rectify and explain the failye, We could also explain the failure on the main summary page?
+- [x] I still cannot get out of the messages box, escape seems to work but 1,2,3, etc do not?
 
 ## General feedback - schedule this for an overnight run maybe Monday when i have new tokens.
 - [ ] We should review machine dependancies of this repo, for example we must assume that codex and claude are installed, what about ollama and any bespoke scripts like my token usage ones. VBasically a review of all the non git hosted deependancies.
