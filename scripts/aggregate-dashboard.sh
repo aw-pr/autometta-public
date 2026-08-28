@@ -791,4 +791,13 @@ js_tmp="$(new_tmp)"
 { printf 'window.AUTOMETTA_DATA = '; jq -c '.' "$data_json"; printf ';\n'; } > "$js_tmp"
 mv "$js_tmp" "$data_js"
 
+# Stage cards travel in the payload, because a file:// page cannot fetch a
+# sibling file to read one. This belongs to whoever writes the payload, not to
+# whoever renders the page: dashboard.sh attached the cards after calling this
+# script, so the next tick's fleet pass rewrote data.json without them and every
+# card on the page read "card not read" until someone ran dashboard.sh again.
+# --repo returns before this point, so the ticker's per-repo walk still reads
+# no card files.
+"$script_dir/attach-card-text.py" "$data_json" "$data_js"
+
 printf 'wrote %s and %s\n' "$data_json" "$data_js"
