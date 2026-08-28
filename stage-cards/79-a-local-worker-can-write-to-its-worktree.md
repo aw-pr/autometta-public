@@ -51,7 +51,7 @@ that makes the reproduction pass.
 - scripts/models.sh
 - docs/lessons.md
 - docs/observability.md
-- /Users/AnthonyWest/repos/autometta-testing/state/logs/01-stats-worker.log
+- ../autometta-testing/state/logs/01-stats-worker.log
 
 Do not read anything else unless you need to; keep your context lean.
 
