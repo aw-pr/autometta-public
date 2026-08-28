@@ -14,6 +14,7 @@
       <span id="drain-banner"></span>
     </div>
     <div id="repo-filter" class="repo-filter"></div>
+    <div id="range-filter" class="repo-filter range-filter"></div>
   </header>
 
   <main>
@@ -29,21 +30,10 @@
 
     <section class="panel" id="panel-spend">
       <h2>Spend</h2>
+      <p class="panel-note">Cost log for the current UTC day. A repo with no rows
+        did not run today; its lifetime totals are in Per stage and Per repo.</p>
       <p id="spend-total"></p>
       <div id="spend-table-wrap"></div>
-    </section>
-
-    <section class="panel" id="panel-quota">
-      <h2>Provider windows</h2>
-      <div id="quota-table-wrap"></div>
-    </section>
-
-    <section class="panel" id="panel-repos">
-      <h2>Per repo</h2>
-      <div id="repos-grid" class="grid"></div>
-      <div class="chart-wrap">
-        <canvas id="chart-repos"></canvas>
-      </div>
     </section>
 
     <section class="panel" id="panel-stages">
@@ -66,6 +56,17 @@
       <div class="chart-wrap">
         <canvas id="chart-days"></canvas>
       </div>
+    </section>
+    <section class="panel" id="panel-repos">
+      <h2>Per repo</h2>
+      <div id="repos-grid" class="grid"></div>
+      <div class="chart-wrap">
+        <canvas id="chart-repos"></canvas>
+      </div>
+    </section>
+    <section class="panel" id="panel-quota">
+      <h2>Provider windows</h2>
+      <div id="quota-table-wrap"></div>
     </section>
   </main>
 

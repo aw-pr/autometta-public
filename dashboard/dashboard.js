@@ -12,11 +12,20 @@
   var FALLBACK_PAGE_SIZE = 10;
   var PAGE_SIZE_CHOICES = [10, 25, 50, 0]; // 0 means every row
 
+  // Ranges slice the token charts by stage completion date. 0 means no cutoff.
+  var RANGE_CHOICES = [
+    { days: 1, label: "24h" },
+    { days: 7, label: "7d" },
+    { days: 30, label: "30d" },
+    { days: 0, label: "all" }
+  ];
+
   var state = {
     data: null,
     hidden: Object.create(null), // repo name -> true once deselected
     pageSize: Object.create(null),
-    page: Object.create(null)
+    page: Object.create(null),
+    rangeDays: null
   };
   var charts = Object.create(null);
 
@@ -62,6 +71,63 @@
     state.pageSize[key] = size;
     state.page[key] = 0;
     storeSet("autometta.pageSize." + key, String(size));
+  }
+
+  // --- time range ----------------------------------------------------------
+
+  function rangeDays() {
+    if (state.rangeDays != null) return state.rangeDays;
+    var stored = parseInt(storeGet("autometta.rangeDays"), 10);
+    state.rangeDays = isFinite(stored) && stored >= 0 ? stored : 0;
+    return state.rangeDays;
+  }
+
+  function rangeLabel() {
+    var days = rangeDays();
+    for (var i = 0; i < RANGE_CHOICES.length; i++) {
+      if (RANGE_CHOICES[i].days === days) return RANGE_CHOICES[i].label;
+    }
+    return "all";
+  }
+
+  // Work that has not completed has no date to test, and excluding it would
+  // hide the live run from every chart. It is current by definition, so it
+  // stays in whatever range is selected.
+  function stageInRange(stage) {
+    var days = rangeDays();
+    if (!days) return true;
+    if (!stage.completed_at) return true;
+    var t = Date.parse(stage.completed_at);
+    return !isFinite(t) || t >= Date.now() - days * 86400000;
+  }
+
+  // The charts all read the same seam: visible repos, stages within range.
+  function visibleStages() {
+    var out = [];
+    visibleRepos().forEach(function (r) {
+      (r.stages || []).forEach(function (s) {
+        if (stageInRange(s)) out.push({ repo: r.name, stage: s });
+      });
+    });
+    return out;
+  }
+
+  function renderRangeFilter() {
+    var wrap = document.getElementById("range-filter");
+    if (!wrap) return;
+    var days = rangeDays();
+    wrap.innerHTML = '<span class="filter-label">tokens over</span>' +
+      RANGE_CHOICES.map(function (choice) {
+        return '<button type="button" data-range="' + choice.days + '"' +
+          (choice.days === days ? ' class="on"' : "") + ">" + choice.label + "</button>";
+      }).join("");
+    wrap.querySelectorAll("button[data-range]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        state.rangeDays = parseInt(btn.getAttribute("data-range"), 10) || 0;
+        storeSet("autometta.rangeDays", String(state.rangeDays));
+        renderAll();
+      });
+    });
   }
 
   // --- repo filter ---------------------------------------------------------
@@ -130,7 +196,13 @@
       return "<th>" + esc(h.label != null ? h.label : h) + "</th>";
     }).join("") + "</tr></thead><tbody>";
     rows.forEach(function (row) {
-      html += "<tr>" + row.map(function (cell) {
+      var cells = row;
+      var rowCls = "";
+      if (row && !Array.isArray(row) && row.cells) {
+        cells = row.cells;
+        rowCls = row.cls || "";
+      }
+      html += "<tr" + (rowCls ? ' class="' + esc(rowCls) + '"' : "") + ">" + cells.map(function (cell) {
         if (cell && typeof cell === "object" && cell.html != null) {
           return '<td class="' + esc(cell.cls || "") + '">' + cell.html + "</td>";
         }
@@ -257,15 +329,29 @@
         fmtInt(r.output_tokens), fmtInt(r.productive_tokens), fmtInt(r.lost_tokens),
         "$" + Number(r.cost_usd_est || 0).toFixed(2)];
     });
+    // This table is today's cost log, so a repo that last ran yesterday
+    // contributes no rows and used to vanish from it entirely -- which reads as
+    // "never spent anything" for a repo sitting on a 240M-token window. An
+    // explicit zero row says "nothing today" instead of saying nothing at all.
+    var seen = Object.create(null);
+    byRepoRole.forEach(function (r) { seen[r.repo] = true; });
+    visibleRepos().forEach(function (r) {
+      if (seen[r.name]) return;
+      rows.push([r.name, "-", "0", "0", "0", "0", "0", "$0.00"]);
+    });
+    rows.sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
     renderSimpleTable("spend-table-wrap",
       ["Repo", "Role", "Input", "Cached", "Output", "Pass", "Lost", "Cost"], rows);
     // Totals follow the filter, so a narrowed view reports its own spend
-    // rather than the fleet's.
+    // rather than the fleet's. The window figure sits beside the daily one
+    // because the two differ by orders of magnitude and only one is labelled.
     var repos = visibleRepos();
     var tokens = repos.reduce(function (n, r) { return n + Number((r.spend || {}).tokens_total || 0); }, 0);
     var cost = repos.reduce(function (n, r) { return n + Number((r.spend || {}).cost_usd_est || 0); }, 0);
+    var window_ = repos.reduce(function (n, r) { return n + Number(r.tokens_spent || 0); }, 0);
     document.getElementById("spend-total").textContent =
-      "today " + fmtInt(tokens) + " tokens / $" + cost.toFixed(2);
+      "today (UTC) " + fmtInt(tokens) + " tokens / $" + cost.toFixed(2) +
+      "  -  budget window " + fmtInt(window_) + " tokens";
   }
 
   function renderQuota(repos) {
@@ -286,27 +372,32 @@
         });
       });
     });
-    renderSimpleTable("quota-table-wrap",
-      ["Repo", "Family", "Window", "Used", "Resets", "Source / reason"], rows);
+    renderPagedTable("quota-table-wrap",
+      ["Repo", "Family", "Window", "Used", "Resets", "Source / reason"], rows, "quota", null);
   }
 
   function renderStagesTable(repos) {
     var rows = [];
     repos.forEach(function (r) {
-      r.stages.forEach(function (s) { rows.push({ repo: r.name, stage: s }); });
-    });
-    // Newest first, with stages still running ahead of finished ones: page one
-    // is then the work worth looking at rather than the oldest card in the run.
-    rows.sort(function (a, b) {
-      var ac = a.stage.completed_at, bc = b.stage.completed_at;
-      if (!ac && !bc) return 0;
-      if (!ac) return -1;
-      if (!bc) return 1;
-      return ac < bc ? 1 : ac > bc ? -1 : 0;
+      // Grouped by repo, because a fleet view interleaved by time reads as
+      // noise; the filter narrows which repos appear, the grouping keeps each
+      // one's run legible once several are showing.
+      var group = r.stages.map(function (s) { return { repo: r.name, stage: s }; });
+      // Newest queue time at the top, with stages not yet dispatched above the
+      // dated ones: page one is then the live end of the run, not its oldest card.
+      group.sort(function (a, b) {
+        var at = a.stage.started_at || a.stage.completed_at;
+        var bt = b.stage.started_at || b.stage.completed_at;
+        if (!at && !bt) return 0;
+        if (!at) return -1;
+        if (!bt) return 1;
+        return at < bt ? 1 : at > bt ? -1 : 0;
+      });
+      group.forEach(function (row, i) { row.groupStart = i === 0; rows.push(row); });
     });
     var cells = rows.map(function (row) {
       var s = row.stage;
-      return [
+      return { cls: row.groupStart ? "group-start" : "", cells: [
         row.repo,
         s.id,
         { html: '<span class="status ' + esc(s.status) + '">' + esc(s.status) + "</span>" },
@@ -315,12 +406,13 @@
         { html: fmtInt(s.worker_tokens), cls: "num" },
         { html: fmtInt(s.verifier_tokens), cls: "num" },
         { html: fmtInt(s.tokens), cls: "num" },
+        s.started_at || "",
         s.completed_at || ""
-      ];
+      ] };
     });
     renderPagedTable("stages-table-wrap",
       ["Repo", "Stage", "Status", "Worker", "Verifier",
-       "Worker tok", "Verifier tok", "Total tok", "Completed"],
+       "Worker tok", "Verifier tok", "Total tok", "Queued", "Completed"],
       cells, "stages", null);
   }
 
@@ -345,14 +437,23 @@
     charts[id] = new Chart(document.getElementById(id).getContext("2d"), config);
   }
 
-  function drawReposChart(repos) {
+  // Every token chart is drawn from stage rows so all four obey the range
+  // control. The repo cards still carry the budget-window counter, which has no
+  // timestamp on it and so cannot be sliced by time at all.
+  function drawReposChart(repos, stages) {
+    var totals = Object.create(null);
+    repos.forEach(function (r) { totals[r.name] = 0; });
+    stages.forEach(function (row) {
+      totals[row.repo] = (totals[row.repo] || 0) + Number(row.stage.tokens || 0);
+    });
+    var names = repos.map(function (r) { return r.name; });
     draw("chart-repos", {
       type: "bar",
       data: {
-        labels: repos.map(function (r) { return r.name; }),
+        labels: names,
         datasets: [{
-          label: "tokens spent",
-          data: repos.map(function (r) { return r.tokens_spent; }),
+          label: "stage tokens (" + rangeLabel() + ")",
+          data: names.map(function (n) { return totals[n] || 0; }),
           backgroundColor: "#58a6ff"
         }]
       },
@@ -360,31 +461,29 @@
     });
   }
 
-  function drawStagesChart(repos) {
-    var labels = [];
-    var data = [];
-    repos.forEach(function (r) {
-      r.stages.forEach(function (s) {
-        labels.push(r.name + " / " + s.id);
-        data.push(s.tokens || 0);
-      });
-    });
+  function drawStagesChart(stages) {
     draw("chart-stages", {
       type: "bar",
-      data: { labels: labels, datasets: [{ label: "stage tokens", data: data, backgroundColor: "#2ea043" }] },
+      data: {
+        labels: stages.map(function (row) { return row.repo + " / " + row.stage.id; }),
+        datasets: [{
+          label: "stage tokens (" + rangeLabel() + ")",
+          data: stages.map(function (row) { return row.stage.tokens || 0; }),
+          backgroundColor: "#2ea043"
+        }]
+      },
       options: chartCommon()
     });
   }
 
   // by_model and by_day are fleet rollups the aggregator already flattened, so
   // the filter is reapplied here over the visible repos' own stages.
-  function drawModelsChart(repos) {
+  function drawModelsChart(stages) {
     var totals = Object.create(null);
-    repos.forEach(function (r) {
-      r.stages.forEach(function (s) {
-        if (s.worker) totals[s.worker] = (totals[s.worker] || 0) + Number(s.worker_tokens || 0);
-        if (s.verifier) totals[s.verifier] = (totals[s.verifier] || 0) + Number(s.verifier_tokens || 0);
-      });
+    stages.forEach(function (row) {
+      var s = row.stage;
+      if (s.worker) totals[s.worker] = (totals[s.worker] || 0) + Number(s.worker_tokens || 0);
+      if (s.verifier) totals[s.verifier] = (totals[s.verifier] || 0) + Number(s.verifier_tokens || 0);
     });
     var entries = Object.keys(totals).map(function (k) { return { identity: k, tokens: totals[k] }; })
       .sort(function (a, b) { return b.tokens - a.tokens || (a.identity < b.identity ? -1 : 1); });
@@ -392,20 +491,19 @@
       type: "bar",
       data: {
         labels: entries.map(function (m) { return shortIdentity(m.identity); }),
-        datasets: [{ label: "tokens", data: entries.map(function (m) { return m.tokens; }), backgroundColor: "#d29922" }]
+        datasets: [{ label: "tokens (" + rangeLabel() + ")", data: entries.map(function (m) { return m.tokens; }), backgroundColor: "#d29922" }]
       },
       options: chartCommon()
     });
   }
 
-  function drawDaysChart(repos) {
+  function drawDaysChart(stages) {
     var totals = Object.create(null);
-    repos.forEach(function (r) {
-      r.stages.forEach(function (s) {
-        if (!s.completed_at || !(s.tokens > 0)) return;
-        var day = s.completed_at.slice(0, 10);
-        totals[day] = (totals[day] || 0) + Number(s.tokens || 0);
-      });
+    stages.forEach(function (row) {
+      var s = row.stage;
+      if (!s.completed_at || !(s.tokens > 0)) return;
+      var day = s.completed_at.slice(0, 10);
+      totals[day] = (totals[day] || 0) + Number(s.tokens || 0);
     });
     var days = Object.keys(totals).sort();
     draw("chart-days", {
@@ -431,11 +529,17 @@
     var data = state.data;
     var repos = visibleRepos();
     var names = visibleNames();
-    var scoped = data.scope && data.scope !== "fleet";
+    var stages = visibleStages();
 
     document.getElementById("generated-at").textContent =
       "generated " + data.generated_at + " - " + repos.length +
       " of " + (data.repos || []).length + " repo(s)";
+
+    // Both controls are rebuilt from state on every pass. Mutating state
+    // without redrawing them left the all/none buttons filtering the data
+    // while every checkbox stayed as the reader had last clicked it.
+    renderRepoFilter();
+    renderRangeFilter();
 
     renderReposGrid(repos);
     renderAgents(repos);
@@ -443,15 +547,10 @@
     renderSpend(data.spend || {}, names);
     renderQuota(repos);
     renderStagesTable(repos);
-    drawReposChart(repos);
-    drawStagesChart(repos);
-    drawModelsChart(repos);
-    drawDaysChart(repos);
-
-    if (scoped) {
-      var panel = document.getElementById("panel-repos");
-      if (panel) panel.querySelector("h2").textContent = "Repo";
-    }
+    drawReposChart(repos, stages);
+    drawStagesChart(stages);
+    drawModelsChart(stages);
+    drawDaysChart(stages);
   }
 
   function render(data) {
@@ -467,7 +566,6 @@
       document.getElementById("drain-banner").textContent =
         "DRAIN cap " + fmtInt(data.drain.cap) + ", expires " + data.drain.expires_at;
     }
-    renderRepoFilter();
     renderAll();
   }
 

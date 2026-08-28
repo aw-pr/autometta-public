@@ -156,3 +156,20 @@ table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .pager-range, .pager-page { font-variant-numeric: tabular-nums; }
 .empty { color: var(--muted); }
+
+/* Time-range control for the token charts. */
+.range-filter button.on {
+  background: #1f6feb;
+  border-color: #1f6feb;
+  color: #fff;
+}
+
+/* First row of each repo's block in the per-stage table. */
+tr.group-start td { border-top: 2px solid #30363d; }
+tr.group-start td:first-child { font-weight: 600; }
+
+.panel-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: -0.2rem 0 0.6rem;
+}
