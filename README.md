@@ -5,6 +5,14 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green) ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 
+![The autometta fleet dashboard](docs/images/dashboard.png)
+
+`autometta dashboard --open` over a seven-repo fleet. Every stage the fleet has
+run, newest first and grouped by repo, with what each one spent; click a row or
+a bar to read the stage card that drove it. `autometta dashboard --repo <path>`
+gives the same page scoped to one repo, and `autometta tui <path>` is the
+terminal equivalent for a run in flight.
+
 ```mermaid
 flowchart LR
   S[("git: state.yaml + budget.json")]
@@ -154,13 +162,13 @@ autometta/
 ├── packaging/                # local Homebrew formula template
 ├── schemas/                  # state.yaml + budget.json schemas
 ├── state/                    # per-repo runtime state (gitignored content)
-├── stage-cards/              # self-host stage cards and PLAN.md
+├── stage-cards/              # self-host stage cards and PLAN.md - the current worked examples
 ├── memory/                   # cross-session agent memory (in-repo)
 ├── skills/                   # skills hosted by this repo
 │   ├── agent-orchestrator/   # canonical home (mcp-hub copy is a symlink back)
 │   └── autometta-setup/      # adopt the dispatch contract in another repo
 └── examples/
-    ├── fractals-stage-cards/ # real cards as illustrations
+    ├── fractals-stage-cards/ # older cards from another project, kept for cross-project shape
     ├── benchmarks/           # end-to-end benchmark runs (e.g. bench-005)
     └── bake-off/             # verifier bake-off fixtures and scored artefacts
 ```
@@ -171,6 +179,9 @@ autometta/
 2. `docs/dispatch-contract.md` - the load-bearing document.
 3. `docs/lessons.md` - the headless gotchas that will bite you on day one.
 4. `templates/stage-card.md` and `templates/worker-prompt.md` - copy these, fill them in.
+   For filled-in examples read this repo's own recent cards, which are the ones
+   the dashboard above is reporting on: `stage-cards/81-a-measured-table-declares-its-shelf-life.md`
+   and `stage-cards/78-the-docs-catch-up-with-the-instrumentation.md`.
 5. `docs/verification.md` - how to gate the worker's output.
 6. `docs/tick-loop.md` and `docs/setup.md` - when you want to put the dispatch contract under cron. `docs/setup.md` section 7 covers subscription, API-key and free verifier routes.
 7. `docs/deployment.md` and `docs/observability.md` - when you want to adopt it across repos and watch the loop.
