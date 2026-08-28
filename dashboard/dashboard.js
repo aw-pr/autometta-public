@@ -25,7 +25,13 @@
     hidden: Object.create(null), // repo name -> true once deselected
     pageSize: Object.create(null),
     page: Object.create(null),
-    rangeDays: null
+    rangeDays: null,
+    // Which expander rows are open. This has to live in state rather than in
+    // the DOM: a poll re-renders every table, and a reader mid-way through a
+    // stage card should not have it collapse under them every few seconds.
+    expanded: Object.create(null),
+    lastGeneratedAt: null,
+    pollFailures: 0
   };
   var charts = Object.create(null);
 
@@ -262,15 +268,26 @@
   }
 
   // A row carrying an expand payload gets a hidden sibling row beneath it and
-  // toggles it on click.
+  // toggles it on click. Open rows are recorded in state.expanded and restored
+  // on the next render, so polling does not shut a card the reader has open.
+  // The key is scoped by wrapper id: two tables may both carry a row keyed on
+  // the same stage id.
   function bindExpanders(wrap) {
+    var scope = (wrap.id || "") + "\u0000";
     wrap.querySelectorAll("tr[data-expand]").forEach(function (row) {
+      var key = row.getAttribute("data-expand");
+      var stateKey = scope + key;
+      var target = wrap.querySelector('tr.expand-row[data-expand-for="' + key + '"]');
+      if (target && state.expanded[stateKey]) {
+        target.hidden = false;
+        row.classList.add("open");
+      }
       row.addEventListener("click", function () {
-        var target = wrap.querySelector(
-          'tr.expand-row[data-expand-for="' + row.getAttribute("data-expand") + '"]');
         if (!target) return;
         target.hidden = !target.hidden;
         row.classList.toggle("open", !target.hidden);
+        if (target.hidden) delete state.expanded[stateKey];
+        else state.expanded[stateKey] = true;
       });
     });
   }
@@ -698,24 +715,125 @@
     renderAll();
   }
 
-  var load = window.location.protocol === "file:" && window.AUTOMETTA_DATA
-    ? Promise.resolve(window.AUTOMETTA_DATA)
-    : fetch("data.json", { cache: "no-store" })
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.json();
+  // ---------------------------------------------------------------- polling
+  //
+  // Two transports, because the page is opened both ways. Served over http
+  // (autometta dashboard --serve) data.json is fetched directly. Opened as a
+  // file:// URL, fetch is blocked by the opaque file origin, so the data
+  // arrives the only way that origin allows: a <script> tag. index.html loads
+  // data.js at first paint; a poll re-injects it with a cache-busting query so
+  // the browser re-reads it from disk rather than serving the parsed copy.
+  //
+  // Either way the page only re-renders when the aggregator has actually
+  // rewritten the file, keyed on generated_at. A poll that finds the same
+  // stamp costs one read and nothing else, which is what makes a 5s interval
+  // reasonable against a file the tick rewrites every few minutes.
+
+  var POLL_MS = 5000;
+  var isFile = window.location.protocol === "file:";
+
+  function loadViaFetch() {
+    return fetch("data.json", { cache: "no-store" }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    });
+  }
+
+  function loadViaScript() {
+    return new Promise(function (resolve, reject) {
+      var el = document.createElement("script");
+      el.src = "data.js?t=" + Date.now();
+      el.onload = function () {
+        el.parentNode.removeChild(el);
+        if (window.AUTOMETTA_DATA) resolve(window.AUTOMETTA_DATA);
+        else reject(new Error("data.js defined no window.AUTOMETTA_DATA"));
+      };
+      el.onerror = function () {
+        el.parentNode.removeChild(el);
+        reject(new Error("could not read data.js"));
+      };
+      document.head.appendChild(el);
+    });
+  }
+
+  function loadData() {
+    if (isFile) {
+      // No fetch on a file:// origin, and no http fallback to try.
+      return loadViaScript();
+    }
+    return loadViaFetch().catch(function (err) {
+      if (window.AUTOMETTA_DATA) return window.AUTOMETTA_DATA;
+      throw err;
+    });
+  }
+
+  // The freshness line sits beside the generated-at stamp. It says when this
+  // page last saw new data, which is not the same question as when the
+  // aggregator last ran: a dashboard nobody is regenerating goes stale in
+  // silence otherwise, which is exactly how a snapshot gets misread as live.
+  // Naming the transport is not decoration. On a file:// origin the poll
+  // depends on the browser honouring a cache-busting query on a file URL; if
+  // it serves the parsed copy instead, generated_at never moves and the page
+  // reads "unchanged" forever, which is indistinguishable from an idle run.
+  // Saying which transport is in play is what lets a reader tell those apart.
+  function transportNote() {
+    return isFile ? " (file://, serve for a reliable poll)" : "";
+  }
+
+  function setLiveStatus(text, cls) {
+    var el = document.getElementById("live-status");
+    if (!el) return;
+    el.textContent = text;
+    el.className = "live-status" + (cls ? " " + cls : "");
+  }
+
+  function applyData(data) {
+    var stamp = data && data.generated_at;
+    if (stamp && stamp === state.lastGeneratedAt) return false;
+    state.lastGeneratedAt = stamp || null;
+    render(data);
+    return true;
+  }
+
+  function poll() {
+    loadData()
+      .then(function (data) {
+        state.pollFailures = 0;
+        var fresh = applyData(data);
+        setLiveStatus(
+          "live" + transportNote() + " - " +
+          (fresh ? "updated " : "unchanged at ") +
+          new Date().toLocaleTimeString(),
+          "ok");
       })
       .catch(function (err) {
-        if (window.AUTOMETTA_DATA) return window.AUTOMETTA_DATA;
-        throw err;
+        state.pollFailures += 1;
+        // One missed read is a half-written file the aggregator is mid-way
+        // through replacing; the mv is atomic but the read can still lose the
+        // race on some filesystems. Only say something once it persists.
+        if (state.pollFailures >= 3) {
+          setLiveStatus("stale - " + err.message, "warn");
+        }
       });
+  }
 
-  load
-    .then(render)
+  // index.html already loaded data.js, so the first paint on a file:// origin
+  // uses what is in hand rather than re-reading it.
+  var first = isFile && window.AUTOMETTA_DATA
+    ? Promise.resolve(window.AUTOMETTA_DATA)
+    : loadData();
+
+  first
+    .then(function (data) {
+      applyData(data);
+      setLiveStatus(
+        "live" + transportNote() + " - polling every " + (POLL_MS / 1000) + "s", "ok");
+      setInterval(poll, POLL_MS);
+    })
     .catch(function (err) {
       document.body.insertAdjacentHTML(
         "beforeend",
-        '<pre style="color:#f85149;padding:2rem">Failed to load data.json: ' + esc(err.message) + "</pre>"
+        '<pre style="color:#f85149;padding:2rem">Failed to load data: ' + esc(err.message) + "</pre>"
       );
     });
 })();
