@@ -188,3 +188,75 @@ If you cannot establish the root cause within budget, stop and report the
 falsified list. A card that narrows the search honestly is worth more than one
 that ships a fix resting on an untested hypothesis, which is exactly what
 attempt 1 did and what cost it the stage.
+
+
+## Re-brief, attempt 3 (2026-08-30)
+
+Attempt 2 is preserved as `b163d1490e82256400716f08cff3f698f92c6857` on
+`wip/79-a-local-worker-can-write-to-its-worktree-attempt-2`. Read that commit
+before writing anything. Five of six criteria passed again, and this time the
+work behind them is sound: the smoke stubs nothing, cuts a real linked
+worktree, symlinks `state/` out of it, leaves the card only in the subscriber
+checkout and dispatches real `codex exec --oss` through `spawn-worker.sh`. The
+root-cause narrative correctly falsifies attempt 1's cwd theory rather than
+restating it. Keep all of that. One thing failed, and it is the same criterion
+that has now cost the card twice.
+
+### What failed
+
+Criterion 2. The smoke does not discriminate the fix. The verifier reverted the
+only behavioural change (`scripts/spawn-worker.sh:85`, the rendered
+`$family_notes` in place of the literal `None`) through the smoke's own seam
+`AUTOMETTA_SPAWN_WORKER_UNDER_TEST` and ran six pre-fix trials: PASS, FAIL,
+PASS, PASS, PASS, PASS. The fixed arm ran 4/4 PASS. Five of six passes on
+unmodified code is not a reproduction; it is noise from a 20B model making a
+free choice. The card's central demand is a test that fails before the fix and
+passes after it, and this one does not.
+
+The mitigation claimed at `docs/lessons.md:539-544`, that the smoke "accepts
+only a marker in the linked worktree and rejects one in the subscriber
+checkout", is therefore not supported by the artefact it describes. The marker
+lands in the linked worktree with or without the change.
+
+### Why this is structural, not careless
+
+The behaviour under test is a model's free choice of tool directory, which is
+stochastic. A single trial cannot be an assertion. That is the real lesson of
+attempts 1 and 2 together, and attempt 3 exists to fix the fixture, not to
+re-derive the cause.
+
+### What attempt 3 must produce
+
+Take the verifier's route (a). The fixture is not discriminating because the
+fixture subscriber checkout lives under `$TMPDIR`, which codex grants as a
+sandbox root in its own banner (`sandbox: workspace-write [workdir, /tmp,
+$TMPDIR, .../subscriber/state]`). A wrong-checkout write there succeeds
+silently, so the wrong choice produces a pass. Place the fixture subscriber
+checkout **outside every granted sandbox root**, so a wrong-checkout write is
+refused with `Operation not permitted` exactly as in the 2026-08-16 incident
+the card stands in for. Then the arms separate on the sandbox's verdict rather
+than on the model's mood, and the fixture also becomes a closer model of the
+incident.
+
+Route (b), N trials per arm asserting a wrong-checkout rate, is acceptable only
+if you can show route (a) cannot be made to work, and you must say why in the
+handoff. It costs wall-clock and it leaves a flaky test behind.
+
+Everything else in Deliverables, Constraints and Acceptance criteria stands
+unchanged. Specifically:
+
+- Criterion 2 must now be demonstrated with both arms shown: the pre-fix arm
+  failing and the fixed arm passing, on the same fixture, in the handoff.
+- Do not re-litigate the root cause. It is settled and `docs/lessons.md`
+  gotcha 14 records it. Edit that section only if the new fixture changes what
+  is true about it.
+- Do not widen the sandbox to make the fixture separate. Moving the fixture
+  out of the granted roots is the point; granting more roots is the opposite.
+
+### Out of scope, recorded here so it is not lost
+
+`render_prompt` has always discarded the card's own `## Family-specific notes`
+section and substituted a literal `None` (`scripts/spawn-worker.sh:85` before
+attempt 2's change). Attempt 2 replaced that literal with a fixed sentence, so
+the card's declared notes are still dropped. This is pre-existing, it is not
+this card's job, and it wants its own card. Do not fix it here.
