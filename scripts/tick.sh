@@ -1367,6 +1367,29 @@ ensure_run_worktree() {
     cd "$repo_root"
     git worktree add "$work_dir" -b "$run_branch" "$base_branch" >/dev/null 2>&1
   ) || { log "ensure_run_worktree: failed to cut ${work_dir} from ${base_branch} for ${stage_id}"; return 1; }
+  # Any path git tracks under state/ is a live threat to the symlink below.
+  # `git worktree add` materialises those files, which makes state/ a real
+  # directory, and so does any later checkout, restore, stash or clean the
+  # worker happens to run. The symlink we create is then silently gone and the
+  # worker writes its handoff envelope into the worktree's own state/ instead
+  # of the subscriber's shared one. tick.sh reads the shared one, finds
+  # nothing, and scores a finished stage as stalled.
+  #
+  # emergence-lab tracks state/handoffs/.gitkeep and state/handoffs/README.md,
+  # and lost cards 63 and 66 to exactly this on 2026-08-30: roughly 6.9M tokens
+  # of completed work, envelopes present but in the wrong directory, both
+  # reported as worker_envelope_missing_after_exit.
+  #
+  # skip-worktree tells git this worktree's copy is authoritative and not to
+  # write those paths, so nothing re-creates the directory under the link.
+  local tracked_state
+  tracked_state="$(git -C "$work_dir" ls-files -z -- state 2>/dev/null | tr -d '\0' | tr '\n' ' ')"
+  if [[ -n "${tracked_state// /}" ]]; then
+    git -C "$work_dir" ls-files -z -- state 2>/dev/null \
+      | xargs -0 git -C "$work_dir" update-index --skip-worktree 2>/dev/null \
+      || log "ensure_run_worktree: could not skip-worktree tracked state paths in ${work_dir}"
+  fi
+
   rm -rf "${work_dir:?}/state"
   ln -s "../$(basename "$repo_root")/state" "$work_dir/state"
   if ! assert_run_worktree_state_link "$repo_root" "$stage_id"; then
