@@ -260,3 +260,80 @@ section and substituted a literal `None` (`scripts/spawn-worker.sh:85` before
 attempt 2's change). Attempt 2 replaced that literal with a fixed sentence, so
 the card's declared notes are still dropped. This is pre-existing, it is not
 this card's job, and it wants its own card. Do not fix it here.
+
+
+## Re-brief, attempt 4 (2026-08-30)
+
+Attempt 3 is preserved as `727dc404c6d9012032388b782ccbd56c6dad9867` on
+`wip/79-a-local-worker-can-write-to-its-worktree-attempt-3`. Read that commit
+before writing anything. Do not start from attempt 2.
+
+Criteria 1 and 3 to 6 passed for the third time. Criterion 2 failed for the
+third time. That pattern is the finding, and this re-brief exists to act on it
+rather than to ask for a fourth run at the same wall.
+
+### Route (a) worked, and it was still not enough
+
+The fixture change was right. Moving the fixture subscriber checkout outside
+the run worktree, `/tmp`, `$TMPDIR` and the granted state path took the pre-fix
+false-pass rate from 5-in-6 (attempt 2) to 3-in-14 (attempt 3, against 5/5 on
+the fixed arm). The mechanism is now correct: the sandbox refuses the
+wrong-checkout write instead of silently accepting it. Keep the attempt-3
+fixture. Do not redesign it.
+
+What defeats it is residual, not systematic. Roughly one run in five the model
+picks the right checkout for its own reasons and the write lands where it
+should regardless of the fix. No single-trial assertion can remove that,
+because the quantity being asserted is a probability. Attempt 3 was asked for a
+deterministic test of a stochastic behaviour, and that was an authoring error
+in the attempt-3 re-brief, not a worker failure.
+
+### What attempt 4 must produce
+
+Take route (b), which earlier re-briefs allowed only as a fallback. It is now
+the primary instruction.
+
+- Keep the attempt-3 fixture exactly as it stands.
+- Run N trials per arm and assert on the **rate**, not on a single outcome.
+  Pick N from the measured rates above and state the arithmetic in the handoff:
+  N must be large enough that a 3-in-14 pre-fix arm and a 5-in-5 fixed arm
+  separate reliably, and small enough to fit the wall-clock budget. Show the
+  number you chose and why.
+- Assert a threshold with headroom either side, not equality. A pre-fix arm
+  that passes a fifth of the time and a fixed arm that passes every time do not
+  need a tight boundary between them.
+- The smoke must name its own flake budget in a comment: what rate it tolerates
+  on each arm, and what observed rate would mean the fix has regressed.
+
+### The blocker that has now cost three attempts
+
+The worker cannot exercise its own criterion. From inside the worker sandbox
+`bash -lc ollama list` returns `dial tcp 127.0.0.1:11434: connect: operation
+not permitted`, while the same command from the verifier seat succeeds and
+shows `gpt-oss:20b` pulled. Every attempt has reported this, and every attempt
+has been marked down for a demonstration it was structurally unable to give.
+
+For this card, stop pretending otherwise:
+
+- Criterion 2's A/B is the **verifier's** job, not the worker's. The worker
+  writes the smoke and states plainly that it could not run it, with the exact
+  error. That is a complete worker deliverable, not a partial one.
+- The worker's handoff envelope should read `status: pass` when the smoke is
+  written and criteria 3 to 6 hold, with the unexercised criteria named in
+  `notes`. It should not read `partial` for a limitation of the seat it was
+  dispatched into.
+
+The sandbox's loopback refusal is a real defect in the local route and it wants
+its own card. It is out of scope here. Note it in the handoff, do not fix it.
+
+### Out of scope, restated
+
+`render_prompt` still discards the card's own `## Family-specific notes` and
+substitutes a fixed sentence (`scripts/spawn-worker.sh`). Pre-existing, wants
+its own card, do not fix it here.
+
+### Not scheduled
+
+This re-brief is recorded, not queued. The stage stays `verifier_failed` until
+an operator queues it deliberately. Do not treat the presence of this section
+as a dispatch.
