@@ -101,7 +101,7 @@ The loop layer is built on top of the dispatch layer. You can use dispatch witho
 ## Decision tree - which layer do I want?
 
 - **One stage, in front of me, I want to step through it** -> use the dispatch contract directly. Open an orchestrator session (Claude Code), fill in `templates/stage-card.md`, dispatch a Codex worker with `templates/worker-prompt.md`, verify yourself, commit.
-- **Many stages, well-defined, I want to run them overnight** -> use the autonomous loop. Author N stage cards, subscribe the repo via `autometta init`, install a cron entry per `docs/setup.md`, walk away. Inspect `autometta status`, `state/state.yaml`, and the controller log in the morning.
+- **Many stages, well-defined, I want to run them overnight** -> use the autonomous loop. Follow the [operator runbook](./docs/runbook.md), then inspect `autometta status`, `state/state.yaml`, and the controller log in the morning.
 - **One stage, exploratory, I'm not sure what "done" looks like** -> don't use Autometta. Use a normal Claude Code session.
 
 
@@ -199,6 +199,7 @@ autometta/
 5. `docs/verification.md` - how to gate the worker's output.
 6. `docs/tick-loop.md` and `docs/setup.md` - when you want to put the dispatch contract under cron. `docs/setup.md` section 7 covers subscription, API-key and free verifier routes.
 7. `docs/deployment.md` and `docs/observability.md` - when you want to adopt it across repos and watch the loop.
+8. `docs/runbook.md` - the ordered cold-start and daily operator path.
 
 
 
