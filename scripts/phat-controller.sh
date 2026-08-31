@@ -1246,21 +1246,9 @@ $(pc_controller_trailers)" "$run_branch" >/dev/null 2>&1
   git -C "$repo_root" update-ref "refs/heads/${base_branch}" "$merge_commit" "$base_tip"
 }
 
-pc_merge_awaiting() {
-  local repo_root="$1" stage_id="${2:-}"
-  local state_yaml="$repo_root/state/state.yaml"
-  [[ -f "$state_yaml" ]] || { log "merge-awaiting: ${repo_root} has no state.yaml"; return 1; }
-  pc_progress_gc "$repo_root" "$state_yaml"
-
-  local candidate
-  if [[ -n "$stage_id" ]]; then
-    candidate="$(state_json "$state_yaml" | jq -c --arg id "$stage_id" '[.stages[] | select(.id == $id)][0] // empty' 2>/dev/null || true)"
-  else
-    candidate="$(state_json "$state_yaml" | jq -c '[.stages[] | select(.integration.state == "awaiting")][0] // empty' 2>/dev/null || true)"
-  fi
-  [[ -n "$candidate" && "$candidate" != "null" ]] || { log "merge-awaiting: ${repo_root} has no awaiting integration"; return 3; }
-
-  local base_branch run_branch
+pc_merge_awaiting_candidate() {
+  local repo_root="$1" state_yaml="$2" candidate="$3"
+  local stage_id base_branch run_branch
   stage_id="$(printf '%s' "$candidate" | jq -r '.id')"
   base_branch="$(printf '%s' "$candidate" | jq -r '.integration.base_branch // ""')"
   run_branch="$(printf '%s' "$candidate" | jq -r '.integration.run_branch // ""')"
@@ -1289,8 +1277,27 @@ pc_merge_awaiting() {
     "integration.state=awaiting ${run_branch} -> ${base_branch}" \
     "a conflict-free merge into ${base_branch}, worktree torn down, record closed to merged")"
 
-  if ! git -C "$repo_root" rev-parse -q --verify "refs/heads/${base_branch}" >/dev/null 2>&1 \
-     || ! git -C "$repo_root" rev-parse -q --verify "refs/heads/${run_branch}" >/dev/null 2>&1; then
+  if ! git -C "$repo_root" rev-parse -q --verify "refs/heads/${base_branch}" >/dev/null 2>&1; then
+    log "merge-awaiting: ${repo_root} ${stage_id} ${base_branch} or ${run_branch} no longer resolves; surfaced, not touched"
+    pc_journal_outcome "$repo_root" "$decision_id" refused "a branch named by the integration record no longer resolves"
+    release_repo_lock "$repo_root"
+    return 3
+  fi
+
+  if ! git -C "$repo_root" rev-parse -q --verify "refs/heads/${run_branch}" >/dev/null 2>&1; then
+    local recorded_head
+    recorded_head="$(printf '%s' "$candidate" | jq -r '.integration.head // ""')"
+    if [[ -n "$recorded_head" ]] \
+       && git -C "$repo_root" merge-base --is-ancestor "$recorded_head" "refs/heads/${base_branch}" 2>/dev/null; then
+      record_stage_integration "$state_yaml" "$stage_id" \
+        "$(integration_record merged "$base_branch" "$run_branch" "$recorded_head" "")"
+      pc_progress_clear "$repo_root" "$stage_id" merge-awaiting
+      pc_journal_outcome "$repo_root" "$decision_id" acted \
+        "${run_branch} no longer resolves, but ${recorded_head} is already contained in ${base_branch}; record closed"
+      log "merge-awaiting: ${repo_root} ${stage_id} closed stale ${run_branch}; ${recorded_head} is already in ${base_branch}"
+      release_repo_lock "$repo_root"
+      return 0
+    fi
     log "merge-awaiting: ${repo_root} ${stage_id} ${base_branch} or ${run_branch} no longer resolves; surfaced, not touched"
     pc_journal_outcome "$repo_root" "$decision_id" refused "a branch named by the integration record no longer resolves"
     release_repo_lock "$repo_root"
@@ -1323,6 +1330,40 @@ pc_merge_awaiting() {
   log "merge-awaiting: ${repo_root} ${stage_id} merged ${run_branch} into ${base_branch}"
   release_repo_lock "$repo_root"
   return 0
+}
+
+pc_merge_awaiting() {
+  local repo_root="$1" requested_stage_id="${2:-}"
+  local state_yaml="$repo_root/state/state.yaml"
+  [[ -f "$state_yaml" ]] || { log "merge-awaiting: ${repo_root} has no state.yaml"; return 1; }
+  pc_progress_gc "$repo_root" "$state_yaml"
+
+  local -a candidates=()
+  local candidate
+  if [[ -n "$requested_stage_id" ]]; then
+    candidate="$(state_json "$state_yaml" | jq -c --arg id "$requested_stage_id" '[.stages[] | select(.id == $id)][0] // empty' 2>/dev/null || true)"
+    [[ -n "$candidate" && "$candidate" != "null" ]] || { log "merge-awaiting: ${repo_root} has no awaiting integration"; return 3; }
+    candidates=("$candidate")
+  else
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" && "$candidate" != "null" ]] && candidates+=("$candidate")
+    done < <(state_json "$state_yaml" | jq -c '.stages[] | select(.integration.state == "awaiting")' 2>/dev/null || true)
+    ((${#candidates[@]})) || { log "merge-awaiting: ${repo_root} has no awaiting integration"; return 3; }
+  fi
+
+  local candidate_rc=0 worst_rc=0 acted=false
+  for candidate in "${candidates[@]}"; do
+    candidate_rc=0
+    pc_merge_awaiting_candidate "$repo_root" "$state_yaml" "$candidate" || candidate_rc=$?
+    if (( candidate_rc == 0 )); then
+      acted=true
+    elif (( candidate_rc > worst_rc )); then
+      worst_rc="$candidate_rc"
+    fi
+  done
+
+  [[ "$acted" == "true" ]] && return 0
+  return "$worst_rc"
 }
 
 # --- Verb: queue-card --------------------------------------------------------

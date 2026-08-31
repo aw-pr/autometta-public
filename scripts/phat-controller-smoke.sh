@@ -646,6 +646,103 @@ assert_eq "$dev_before" "$(git -C "$r2c" rev-parse dev)" "dev untouched by a con
 assert_contains "$(journal_of "$r2c")" "prohibition 5" "the refusal names the prohibition it rests on"
 printf 'PASS conflicted awaiting integration surfaced, never resolved\n'
 
+printf '== stale awaiting records close or surface without blocking the ledger ==\n'
+r2stale_merged="$(make_repo r2stale_merged)"
+stage2stale=86-stale-merged
+stage2live=87-live-after-stale
+(
+  cd "$r2stale_merged"
+  git checkout -qb "autometta/${stage2stale}"
+  printf 'already merged worker output\n' > stale-result.txt
+  git add stale-result.txt
+  git commit -qm "stale worker diff"
+  stale_merged_head="$(git rev-parse HEAD)"
+  git checkout -q dev
+  git merge --ff-only -q "autometta/${stage2stale}"
+  git branch -D "autometta/${stage2stale}" >/dev/null
+  git checkout -qb "autometta/${stage2live}"
+  printf 'live worker output\n' > live-result.txt
+  git add live-result.txt
+  git commit -qm "live worker diff"
+  git checkout -q dev
+)
+stale_merged_head="$(git -C "$r2stale_merged" rev-parse dev)"
+live_merged_head="$(git -C "$r2stale_merged" rev-parse "autometta/${stage2live}")"
+cat > "$r2stale_merged/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+stages:
+  - id: $stage2stale
+    status: completed
+    integration:
+      state: awaiting
+      base_branch: dev
+      run_branch: autometta/${stage2stale}
+      head: "${stale_merged_head}"
+      pushed: false
+  - id: $stage2live
+    status: completed
+    integration:
+      state: awaiting
+      base_branch: dev
+      run_branch: autometta/${stage2live}
+      head: "${live_merged_head}"
+      pushed: false
+YAML
+pc_merge_awaiting "$r2stale_merged" >/dev/null 2>&1 || fail "a stale merged record blocked the later live integration"
+assert_eq merged "$(yq -r ".stages[] | select(.id == \"$stage2stale\") | .integration.state" "$r2stale_merged/state/state.yaml")" "a contained stale record is closed"
+assert_eq merged "$(yq -r ".stages[] | select(.id == \"$stage2live\") | .integration.state" "$r2stale_merged/state/state.yaml")" "the later live record is merged"
+git -C "$r2stale_merged" merge-base --is-ancestor "$live_merged_head" dev || fail "the later live head was not merged"
+printf 'PASS a contained stale record closes and a later live record merges in one pass\n'
+
+r2stale_uncontained="$(make_repo r2stale_uncontained)"
+stage2uncontained=88-stale-uncontained
+stage2live_after_uncontained=89-live-after-uncontained
+(
+  cd "$r2stale_uncontained"
+  git checkout -qb "autometta/${stage2uncontained}"
+  printf 'unmerged worker output\n' > uncontained-result.txt
+  git add uncontained-result.txt
+  git commit -qm "uncontained worker diff"
+  stale_uncontained_head="$(git rev-parse HEAD)"
+  git tag fixture-stale-uncontained "$stale_uncontained_head"
+  git checkout -q dev
+  git branch -D "autometta/${stage2uncontained}" >/dev/null
+  git checkout -qb "autometta/${stage2live_after_uncontained}"
+  printf 'later live worker output\n' > later-live-result.txt
+  git add later-live-result.txt
+  git commit -qm "later live worker diff"
+  git checkout -q dev
+)
+stale_uncontained_head="$(git -C "$r2stale_uncontained" rev-parse fixture-stale-uncontained)"
+live_after_uncontained_head="$(git -C "$r2stale_uncontained" rev-parse "autometta/${stage2live_after_uncontained}")"
+cat > "$r2stale_uncontained/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+stages:
+  - id: $stage2uncontained
+    status: completed
+    integration:
+      state: awaiting
+      base_branch: dev
+      run_branch: autometta/${stage2uncontained}
+      head: "${stale_uncontained_head}"
+      pushed: false
+  - id: $stage2live_after_uncontained
+    status: completed
+    integration:
+      state: awaiting
+      base_branch: dev
+      run_branch: autometta/${stage2live_after_uncontained}
+      head: "${live_after_uncontained_head}"
+      pushed: false
+YAML
+uncontained_out="$(pc_merge_awaiting "$r2stale_uncontained" 2>&1)" || fail "an uncontained stale record blocked the later live integration"
+assert_contains "$uncontained_out" "no longer resolves; surfaced, not touched" "an uncontained stale record is surfaced"
+assert_eq awaiting "$(yq -r ".stages[] | select(.id == \"$stage2uncontained\") | .integration.state" "$r2stale_uncontained/state/state.yaml")" "an uncontained stale record remains awaiting"
+assert_eq merged "$(yq -r ".stages[] | select(.id == \"$stage2live_after_uncontained\") | .integration.state" "$r2stale_uncontained/state/state.yaml")" "the live record after an uncontained stale record is merged"
+printf 'PASS an uncontained stale record surfaces and a later live record still merges\n'
+
 printf '== card 54 mechanism kept: the same verb twice with no progress escalates, blocking ==\n'
 esc_rc=0
 pc_merge_awaiting "$r2c" >/dev/null 2>&1 || true
