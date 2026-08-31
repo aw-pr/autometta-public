@@ -61,6 +61,12 @@ Do not read anything else unless you need to; keep your context lean.
 3. `docs/observability.md`: the agents panel description says it shows
    live agents and the queued next stages, and names the payload `queue`
    field as the source.
+4. `scripts/lib/tui/render.py`: the run panel ("This run") orders its
+   rows by scheduled order, latest first, so the stage the loop is on or
+   just finished sits at the top of the pane and the "and N more"
+   truncation hides the oldest stages rather than the newest. UAT
+   feedback from the 2026-08-31 run: with the panel truncated, the
+   in-flight stage was the one out of sight.
 
 ## Constraints
 
@@ -88,7 +94,10 @@ Do not read anything else unless you need to; keep your context lean.
 5. With the cursor on the agents panel, selection skips queued rows: the
    selectable index range equals the live-agent count (evidence from a
    fixture-driven run or a unit-level check of the selection bound).
-6. `git diff --stat` on the run branch touches only the three claimed
+6. From a fixture payload of mixed done and in-flight stages, the run
+   panel renders latest scheduled first, and a pane shorter than the list
+   truncates the oldest rows (evidence: rendered line order).
+7. `git diff --stat` on the run branch touches only the three claimed
    paths.
 
 ## Contract test
