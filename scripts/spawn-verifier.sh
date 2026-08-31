@@ -175,23 +175,27 @@ resolve_family_notes() {
   printf 'None'
 }
 
-# Resolve the claude verifier transport (sdk | cli).
+# Resolve a verifier transport (sdk | cli) for one family.
 # Resolution order (most specific wins):
-#   1. AUTOMETTA_CLAUDE_TRANSPORT env var override
-#   2. verifier.claude.transport in <repo>/.autometta.local.yaml
+#   1. AUTOMETTA_<FAMILY>_TRANSPORT env var override
+#   2. verifier.<family>.transport in <repo>/.autometta.local.yaml
 #   3. default: cli
 # Prints: "<transport> <provenance>"
-resolve_claude_transport() {
-  local repo_root="$1"
+resolve_verifier_transport() {
+  local family="$1"
+  local repo_root="$2"
   local manifest="$repo_root/.autometta.local.yaml"
   local transport="" provenance="default"
+  local family_upper override_var
+  family_upper="$(printf '%s' "$family" | tr '[:lower:]' '[:upper:]')"
+  override_var="AUTOMETTA_${family_upper}_TRANSPORT"
 
-  if [[ -n "${AUTOMETTA_CLAUDE_TRANSPORT:-}" ]]; then
-    transport="${AUTOMETTA_CLAUDE_TRANSPORT}"
+  if [[ -n "${!override_var:-}" ]]; then
+    transport="${!override_var}"
     provenance="env"
   elif [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
     local from_manifest
-    from_manifest="$(yq -r '.verifier.claude.transport // ""' "$manifest" 2>/dev/null || true)"
+    from_manifest="$(yq -r ".verifier.${family}.transport // \"\"" "$manifest" 2>/dev/null || true)"
     if [[ -n "$from_manifest" ]]; then
       transport="$from_manifest"
       provenance="manifest"
@@ -199,6 +203,33 @@ resolve_claude_transport() {
   fi
 
   printf '%s %s\n' "${transport:-cli}" "$provenance"
+}
+
+validate_codex_sdk_auth_home() {
+  local billing_mode="$1"
+  local codex_home="$2"
+  local expected_auth_mode actual_auth_mode
+  case "$billing_mode" in
+    subscription) expected_auth_mode="chatgpt" ;;
+    api) expected_auth_mode="apikey" ;;
+    *)
+      log_msg "verifier-transport: fail-closed; codex SDK does not support auth.codex.mode=${billing_mode}"
+      return 1
+      ;;
+  esac
+  if [[ ! -f "$codex_home/auth.json" ]]; then
+    log_msg "verifier-transport: fail-closed; codex SDK auth-route=${billing_mode} requires $codex_home/auth.json with auth_mode=${expected_auth_mode}"
+    return 1
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    log_msg "verifier-transport: fail-closed; jq is required to check $codex_home/auth.json before a codex SDK dispatch"
+    return 1
+  fi
+  actual_auth_mode="$(jq -r '.auth_mode // empty' "$codex_home/auth.json" 2>/dev/null || true)"
+  if [[ "$actual_auth_mode" != "$expected_auth_mode" ]]; then
+    log_msg "verifier-transport: fail-closed; auth.codex.mode=${billing_mode} requires auth_mode=${expected_auth_mode}, but $codex_home/auth.json has auth_mode=${actual_auth_mode:-missing}"
+    return 1
+  fi
 }
 
 # Resolve the optional claude verifier advisor model (Fable-as-advisor).
@@ -315,6 +346,7 @@ main() {
 
   local verifier_identity stage_id family log_path artefact_path pid prompt
   local claude_transport="cli" claude_transport_provenance="default"
+  local codex_transport="cli" codex_transport_provenance="default"
   local effort
   verifier_identity="$(extract_verifier_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
@@ -367,19 +399,27 @@ main() {
     exit 1
   fi
 
-  # Resolve claude verifier transport after auth route is known.
-  if [[ "$family" == "claude" ]]; then
+  # Resolve the selected family transport after its auth route is known.
+  if [[ "$family" == "claude" || "$family" == "codex" ]]; then
     local transport_result
-    transport_result="$(resolve_claude_transport "$repo_root")"
-    claude_transport="${transport_result%% *}"
-    claude_transport_provenance="${transport_result#* }"
-    case "$claude_transport" in
+    transport_result="$(resolve_verifier_transport "$family" "$repo_root")"
+    local resolved_transport resolved_transport_provenance
+    resolved_transport="${transport_result%% *}"
+    resolved_transport_provenance="${transport_result#* }"
+    case "$resolved_transport" in
       cli|sdk) ;;
       *)
-        log_msg "verifier-transport: invalid value ${claude_transport} (expected cli | sdk)"
+        log_msg "verifier-transport: invalid value ${resolved_transport} (expected cli | sdk)"
         exit 1
         ;;
     esac
+    if [[ "$family" == "claude" ]]; then
+      claude_transport="$resolved_transport"
+      claude_transport_provenance="$resolved_transport_provenance"
+    else
+      codex_transport="$resolved_transport"
+      codex_transport_provenance="$resolved_transport_provenance"
+    fi
   fi
 
   # Sibling CODEX_HOME for api mode (see spawn-worker.sh + docs/lessons.md
@@ -388,7 +428,7 @@ main() {
   # fires on the local route: local needs no key, and demanding the sibling
   # here would fail a route whose whole point is that it needs no key.
   local codex_home_override=""
-  if [[ "$family" == "codex" && -n "$auth_pairs" ]]; then
+  if [[ "$family" == "codex" && -n "$auth_pairs" && "$codex_transport" != "sdk" ]]; then
     codex_home_override="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}"
     if [[ ! -f "$codex_home_override/auth.json" ]]; then
       log_msg "codex api dispatch requires a sibling CODEX_HOME with auth_mode: apikey at $codex_home_override"
@@ -404,6 +444,17 @@ main() {
       log_msg "auth-route mode resolution failed for family=codex"
       exit 1
     fi
+    if [[ "$codex_transport" == "sdk" ]]; then
+      case "$codex_mode" in
+        subscription) codex_home_override="${AUTOMETTA_CODEX_SUBSCRIPTION_HOME:-$HOME/.codex}" ;;
+        api) codex_home_override="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}" ;;
+        *)
+          log_msg "verifier-transport: fail-closed; verifier.codex.transport=sdk does not support auth.codex.mode=${codex_mode}"
+          exit 1
+          ;;
+      esac
+      validate_codex_sdk_auth_home "$codex_mode" "$codex_home_override" || exit 1
+    fi
   fi
 
   local cloud_model="$AUTOMETTA_MODEL_CODEX"
@@ -413,7 +464,37 @@ main() {
 
   case "$family" in
     codex)
-      if [[ "$codex_mode" == "local" ]]; then
+      if [[ "$codex_transport" == "sdk" ]]; then
+        local artefact_glob sdk_out notes_arg sdk_script sdk_effort_arg
+        sdk_script="$script_dir/verify-sdk-openai.py"
+        if [[ ! -f "$sdk_script" ]]; then
+          log_msg "verifier-transport: fail-closed; verifier.codex.transport=sdk requires $sdk_script"
+          exit 1
+        fi
+        artefact_glob="$(derive_artefact_glob "$card_path")"
+        sdk_out="$repo_root/$artefact_path"
+        notes_arg=()
+        if [[ "$family_notes" != "None" ]]; then
+          notes_arg=(--worker-notes "$family_notes")
+        fi
+        sdk_effort_arg=()
+        if [[ -n "$effort" && "$effort" != "None" ]]; then
+          sdk_effort_arg=(--effort "$effort")
+        fi
+        log_msg "verifier-transport: sdk (provenance: ${codex_transport_provenance})"
+        log_msg "verifier-transport: sdk auth-route=${codex_mode} CODEX_HOME=${codex_home_override} auth_mode=$(jq -r '.auth_mode' "$codex_home_override/auth.json")"
+        # shellcheck disable=SC2086
+        ( cd "$work_dir" && CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- \
+            python3 "$sdk_script" \
+              --stage-id "$stage_id" \
+              --card "$card_path" \
+              --artefact-glob "$artefact_glob" \
+              --out "$sdk_out" \
+              --model "$cloud_model" \
+              ${sdk_effort_arg[@]+"${sdk_effort_arg[@]}"} \
+              ${notes_arg[@]+"${notes_arg[@]}"} \
+            </dev/null >"$log_path" 2>&1 ) &
+      elif [[ "$codex_mode" == "local" ]]; then
         # Fail closed before spawn: a dispatch that dies after model
         # negotiation with Ollama burns a verifier attempt on infrastructure.
         local_model="$(codex_local_model_for_role verifier "$repo_root" "$verifier_identity")"
