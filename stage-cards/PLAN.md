@@ -227,6 +227,7 @@ Queue order: 82, 86, 83, 84, 85.
 | 85 | Bounded fact slice in the verifier prompt | queued 2026-08-31 - gated on 84 | [`85-the-verifier-reads-the-ledger-first.md`](./85-the-verifier-reads-the-ledger-first.md) |
 | 88 | Machine-dependency inventory (UAT ask) | queued 2026-08-31 - pipeline tail for 85 | [`88-the-machine-dependencies-are-declared.md`](./88-the-machine-dependencies-are-declared.md) |
 | 87 | herdr evidence spike (authored by the herdr session) | queued 2026-08-31 - pipeline tail for 88 | [`87-the-multiplexer-knows-what-its-panes-are-doing.md`](./87-the-multiplexer-knows-what-its-panes-are-doing.md) |
+| 89 | SDK verifier on the subscription OAuth token | queued 2026-08-31 - gated on 85 | [`89-the-sdk-verifier-runs-on-the-subscription.md`](./89-the-sdk-verifier-runs-on-the-subscription.md) |
 
 ### Operator notes (pass 5)
 
@@ -237,6 +238,9 @@ Queue order: 82, 86, 83, 84, 85.
   the two-p95 overlap check needs ~50M of headroom, and the 2026-08-31 window
   has ~55M left. If the check refuses, the pair degrades to serial by design;
   a fresh window makes the overlap comfortable.
+- **Alternation gate off (2026-08-31):** the operator set `pipeline.pair_on:
+  off` in this repo's manifest, trading quota isolation for wall clock. Claims,
+  gates and the two-p95 headroom check still apply.
 - **Overlap plan, revised after the 82/86 window was missed:** the 82/86 pair
   was eligible but 82's verifier finished inside one tick interval, so the
   pairing never arose. The tick pairs only the adjacent pending stage, so the
