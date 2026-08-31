@@ -96,7 +96,12 @@ Do not read anything else unless you need to; keep your context lean.
 
 ## Budget
 
-- **Worker wall-clock:** 1800s
+- **Worker wall-clock:** 14400s
+  (raised 2026-08-31 21:25: not a work estimate. The worker passed in six
+  minutes; the stage has since sat through provider pauses, and the
+  pre-card-97 stall check charges paused hours against this figure. The
+  headroom stops a third bogus stall until 97 lands and restores honest
+  arithmetic.)
 - **Verifier wall-clock:** 1800s
 
 ## Verifier handoff
