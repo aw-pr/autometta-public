@@ -325,6 +325,16 @@ class TuiState:
             # A way out that does not require knowing which key paged you in.
             self.page = 1
             return
+        # Letter shortcuts that mean the same page everywhere. On the run
+        # page the number row focuses panels, so "[2]history" in the tab
+        # strip reads as "press 2" and then 2 focuses the This-run box
+        # instead (UAT 2026-08-31). h and r are unambiguous on every page.
+        if key in ("h", "H"):
+            self.page = 2
+            return
+        if key in ("r", "R"):
+            self.page = 1
+            return
         if key in ("TAB", "\t"):
             self.focus = self.focus % 4 + 1
             return
@@ -1048,18 +1058,18 @@ def footer(canvas, state):
         for x in range(min(canvas.width, len(text))):
             canvas.attrs[canvas.height - 1][x] = ACTIVE
         return
-    tabs = "[1]run [2]history [3]messages"
+    tabs = "[r]un [h]istory [m]essages"
     if state.page == 1:
         hints = ("  1-4 focus · 0 card · j/k select · enter detail · [ ] page"
-                 " · o page card · O default viewer · m message · q quit")
+                 " · o page card · O default viewer · q quit")
     else:
-        hints = "  1-3 page · j/k scroll · enter reply · esc run page · q quit"
+        hints = "  j/k scroll · enter reply · esc run page · q quit"
     text = tabs + hints
     if len(text) > canvas.width:
         # The narrow fallback still has to name a way off this page, which is
         # the thing a reader is stuck without.
         text = tabs + ("  1-4 focus · [ ] page · q quit" if state.page == 1
-                       else "  1-3 page · esc run page · q quit")
+                       else "  esc run page · q quit")
     # A card-open result replaces the hint line until the next keypress. The
     # hints are always recoverable; a silent failure to open a card is not.
     if getattr(state, "card_notice", ""):

@@ -246,7 +246,7 @@ for frame in "$frame80" "$frame119" "$frame160"; do
   for panel in '[0]─Card detail' '[1]─Status' '[2]─This run' '[3]─Agents' '[4]─Escalations & inbox'; do
     assert_contains "$frame" "$panel" "missing panel $panel"
   done
-  assert_contains "$frame" '[1]run [2]history [3]messages' "missing page tabs"
+  assert_contains "$frame" '[r]un [h]istory [m]essages' "missing page tabs"
   assert_contains "$frame" 'This run  5 of 7' "current-run count is not scoped to seven cards"
   assert_not_contains "$frame" '01-historic-stage-01' "historic stage leaked onto the run page"
   assert_contains "$frame" "$long_id" "long stage id was truncated or hidden"
