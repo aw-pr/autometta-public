@@ -859,11 +859,14 @@ spawn_worker_for_stage() {
   "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
 }
 
-# pipeline_pair_on <repo-root> -> family | target
+# pipeline_pair_on <repo-root> -> family | target | off
 # Which key the pairing gate compares between the head and tail workers.
 #   1. AUTOMETTA_PIPELINE_PAIR_ON env override
 #   2. pipeline.pair_on in <repo>/.autometta.local.yaml
 #   3. default: family, which is the behaviour every repo had before this key
+# `off` disables the alternation comparison entirely: any two claimed,
+# disjoint, in-headroom stages may pair, accepting that both draws may land
+# on one provider window. An operator choice for speed over quota isolation.
 # An invalid value falls back to family with a warning: pairing is the widening
 # option, so an unreadable setting must never be the one that turns it on.
 pipeline_pair_on() {
@@ -876,6 +879,7 @@ pipeline_pair_on() {
   fi
   case "$value" in
     target)    printf 'target\n' ;;
+    off)       printf 'off\n' ;;
     family|"") printf 'family\n' ;;
     *)
       printf 'pipeline-pair-on: invalid value %s; using family\n' "$value" >&2
@@ -937,11 +941,15 @@ pipeline_try_dispatch_tail() {
     '[.stages[] | select(.id == $id)][0].worker // empty')"
   tail_worker="$(state_json "$state_yaml" | jq -r --arg id "$tail_stage" \
     '[.stages[] | select(.id == $id)][0].worker // empty')"
-  head_family="$(pipeline_pair_key "$head_worker" "$repo_root")"
-  tail_family="$(pipeline_pair_key "$tail_worker" "$repo_root")"
-  if [[ -z "$head_family" || "$head_family" == "$tail_family" ]]; then
-    log "pipeline pair ${head_stage} + ${tail_stage} refused: worker dispatch targets do not alternate (${head_family})"
-    return 1
+  if [[ "$(pipeline_pair_on "$repo_root")" == "off" ]]; then
+    log "pipeline pair ${head_stage} + ${tail_stage}: alternation check off by configuration"
+  else
+    head_family="$(pipeline_pair_key "$head_worker" "$repo_root")"
+    tail_family="$(pipeline_pair_key "$tail_worker" "$repo_root")"
+    if [[ -z "$head_family" || "$head_family" == "$tail_family" ]]; then
+      log "pipeline pair ${head_stage} + ${tail_stage} refused: worker dispatch targets do not alternate (${head_family})"
+      return 1
+    fi
   fi
 
   local p95 budget_path cap spent headroom required active_drain_cap=""
