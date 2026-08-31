@@ -55,22 +55,22 @@ auth:
 
 # ---------------------------------------------------------------------------
 # Verifier transport overrides. Optional. Default for all families is the
-# existing CLI path. Setting `sdk` on the claude family routes verifier
-# dispatch through scripts/verify-sdk.py instead of `claude -p`.
+# existing CLI path. Set `sdk` per verifier family to route through its
+# matching SDK entrypoint. Both SDK routes support api and subscription auth.
 #
-# IMPORTANT: sdk transport requires auth.claude.mode: api (above). Setting
-# verifier.claude.transport: sdk while auth.claude.mode is subscription
-# fails closed at dispatch with a clear message: the SDK requires an API
-# key that the subscription route does not inject. Set both together.
+# IMPORTANT: the Codex SDK reuses CODEX_HOME authentication. On subscription,
+# it must use ~/.codex with auth_mode: chatgpt; on api, it must use the
+# api-only sibling with auth_mode: apikey. The spawner checks this before it
+# launches, so a billing-route mismatch fails closed.
 #
 # To opt in:
-#   1. Set auth.claude.mode: api and provide OP_REF_ANTHROPIC_API_KEY in op-refs.local.sh
-#   2. Set verifier.claude.transport: sdk here
-#   3. Install the SDK once: pip install -r scripts/requirements-sdk.txt
+#   1. Set the selected family's auth mode and any required OP_REF_* value.
+#   2. Set verifier.<family>.transport: sdk here.
+#   3. Install the SDK once: pip install -r scripts/requirements-sdk.txt.
 #
 # To A/B compare routes without editing this file:
-#   AUTOMETTA_CLAUDE_TRANSPORT=cli  scripts/spawn-verifier.sh <card> <repo>
-#   AUTOMETTA_CLAUDE_TRANSPORT=sdk  AUTOMETTA_CLAUDE_MODE=api  scripts/spawn-verifier.sh <card> <repo>
+#   AUTOMETTA_CLAUDE_TRANSPORT=cli scripts/spawn-verifier.sh <card> <repo>
+#   AUTOMETTA_CODEX_TRANSPORT=sdk AUTOMETTA_CODEX_MODE=subscription scripts/spawn-verifier.sh <card> <repo>
 #
 # Codex workers are not affected; they always use `codex exec`.
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ auth:
 # verifier:
 #   claude:
 #     transport: cli   # default; uses `claude -p` (subscription or api)
-#     # transport: sdk   # opt-in; requires auth.claude.mode: api (see above)
+#     # transport: sdk   # uses scripts/verify-sdk.py (subscription or api)
 #
 #     # Optional Fable-as-advisor verifier. The request model (transport: sdk,
 #     # e.g. claude-sonnet-4-6) does the bulk reading; the advisor is consulted
@@ -90,6 +90,20 @@ auth:
 #     # advisor: claude-fable-5
 #     # Override without editing this file:
 #     #   AUTOMETTA_CLAUDE_ADVISOR=claude-fable-5 scripts/spawn-verifier.sh <card> <repo>
+#   codex:
+#     transport: cli   # default; uses `codex exec` (subscription or api)
+#     # transport: sdk   # uses scripts/verify-sdk-openai.py (subscription or api)
+#
+# ---------------------------------------------------------------------------
+# Orchestrator transport design only. These keys are not active and do not
+# change dispatch. A production SDK orchestrator is gated behind the card-23
+# experiment verdict; see docs/design/orchestrator-sdk-transport.md.
+# ---------------------------------------------------------------------------
+# orchestrator:
+#   claude:
+#     # transport: cli | sdk   # design-pending card 23
+#   codex:
+#     # transport: cli | sdk   # design-pending card 23
 
 # ---------------------------------------------------------------------------
 # Pipeline pairing. Optional. Two adjacent stages with disjoint path_claims may

@@ -241,3 +241,66 @@ op-fetch ANTHROPIC_API_KEY="$OP_REF_ANTHROPIC_API_KEY" -- \
 ```
 
 The smoke test runs `verify-sdk.py` twice against stage 14, parses the `cache:` log lines, and asserts that the second run has `read > 0`. Exits 0 on cache hit, 1 on miss, 2 on environment error.
+
+## Codex SDK verifier route
+
+`scripts/verify-sdk-openai.py` is the equivalent verifier entrypoint for the
+Codex family. It uses the official `openai-codex` Python package, which drives
+the local Codex app-server and reuses the selected `CODEX_HOME` authentication.
+It does not use the key-only `openai` or `openai-agents` libraries.
+
+The entrypoint reuses the same prompt rubric, artefact schema, envelope shape,
+and offline validator as `verify-sdk.py`. It creates a read-only Codex thread,
+asks for exactly one JSON envelope, validates it against `schemas/verifier.json`,
+and writes the requested artefact. After the turn it writes these lines to
+stderr from the returned `ThreadTokenUsage`:
+
+```
+usage: input=<N> cached=<N> output=<N> total=<N>
+tokens used
+<N>
+```
+
+The second marker is deliberately compatible with the existing Codex token-log
+parser. Usage is a turn value, not a signal to add session totals from repeated
+runs.
+
+Manual smoke test, after choosing and checking the intended auth route:
+
+```sh
+python3 scripts/verify-sdk-openai.py --help
+
+CODEX_HOME="$HOME/.codex" op-fetch --pass CODEX_HOME -- \
+  python3 scripts/verify-sdk-openai.py \
+    --stage-id 14-auth-route-toggle \
+    --card stage-cards/14-auth-route-toggle.md \
+    --artefact-glob 'scripts/auth*.sh' \
+    --out state/verifiers/14-auth-route-toggle.json
+```
+
+### Per-role, per-family transport matrix
+
+Verifier transport resolution is independent for each family:
+
+| Role | Family | Manifest key | SDK entrypoint | Auth modes |
+|---|---|---|---|---|
+| verifier | claude | `verifier.claude.transport` | `scripts/verify-sdk.py` | api, subscription |
+| verifier | codex | `verifier.codex.transport` | `scripts/verify-sdk-openai.py` | api, subscription |
+| orchestrator | claude | `orchestrator.claude.transport` | design only | design-pending card 23 |
+| orchestrator | codex | `orchestrator.codex.transport` | design only | design-pending card 23 |
+
+The verifier defaults to `cli`. `AUTOMETTA_CLAUDE_TRANSPORT` and
+`AUTOMETTA_CODEX_TRANSPORT` override their matching manifest key for an A/B
+run without editing the manifest.
+
+For a Codex SDK verifier, `spawn-verifier.sh` selects and checks `CODEX_HOME`
+before the process starts:
+
+| Resolved `auth.codex.mode` | Selected home | Required `auth.json` mode |
+|---|---|---|
+| subscription | `${AUTOMETTA_CODEX_SUBSCRIPTION_HOME:-~/.codex}` | `chatgpt` |
+| api | `${AUTOMETTA_CODEX_HOME:-~/.codex-api-only}` | `apikey` |
+
+Any mismatch fails closed and names both the requested billing mode and the
+found `auth_mode`. This prevents an API key route accidentally spending the
+plan, or a subscription route accidentally using the API-only sibling.
