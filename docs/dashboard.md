@@ -113,6 +113,23 @@ Every commit-on-PASS records worker and verifier token counts onto the matching
 stage entry in `state.yaml`. The next aggregator run surfaces those snapshots
 in `data.json`; the tick itself does not walk the fleet.
 
+### Live figures
+
+SDK verifiers write cumulative `live_input_tokens`, `live_output_tokens` and
+`live_updated_at` into their own `state/active-agents/<pid>.json` registry
+entry as usage arrives. The aggregator copies those fields to an in-flight
+agent's `live_usage` object in `data.json`; it omits that object when the
+registry has no SDK figure. The dashboard labels a present value `LIVE` and
+shows `n/a` for a CLI dispatch, rather than treating absence as zero.
+
+Latency is bounded by the SDK usage message, the registry's atomic rename, the
+next seam regeneration, and the page poll. `--watch` and `--serve` regenerate
+the dashboard every five seconds by default; the fleet snapshot job defaults
+to 120 seconds; the TUI reads the per-repo seam every five seconds. A missing
+or stale registry timestamp only weakens the display. Settled accounting stays
+in `state/cost-log.jsonl`, so live figures are never added to billing totals or
+counted again when the dispatch lands.
+
 `autometta attach /path/to/autometta` starts one background refresh job in the
 tmux session. Override its 120-second interval with
 `AUTOMETTA_FLEET_REFRESH_INTERVAL`. The fleet pane prints the exact

@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import glob
 import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 from typing import Any
 
 
@@ -18,6 +20,55 @@ TEMPLATE = Path("templates/verifier-prompt.md")
 VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 4096
+
+
+def usage_field(usage: Any, name: str) -> int | None:
+    """Return an optional usage field across SDK object and mapping shapes."""
+    if usage is None:
+        return None
+    value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+    return None if value is None else int(value)
+
+
+def update_live_usage(input_tokens: int, output_tokens: int) -> None:
+    """Best-effort atomically refresh this verifier's registry usage fields."""
+    path = Path("state/active-agents") / f"{os.getpid()}.json"
+    try:
+        registry = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(registry, dict):
+            raise ValueError("registry entry is not a JSON object")
+        registry.update({
+            "live_input_tokens": max(0, int(input_tokens)),
+            "live_output_tokens": max(0, int(output_tokens)),
+            "live_updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        })
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, text=True
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(registry, handle, indent=2)
+                handle.write("\n")
+            os.replace(temporary, path)
+        except Exception:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"verify-sdk: could not update live usage registry: {exc}", file=sys.stderr)
+
+
+def live_anthropic_usage(usage: Any, prior_input: int) -> tuple[int, int]:
+    """Normalise an Anthropic usage signal, retaining input absent from deltas."""
+    input_fields = (
+        usage_field(usage, "input_tokens"),
+        usage_field(usage, "cache_creation_input_tokens"),
+        usage_field(usage, "cache_read_input_tokens"),
+    )
+    input_tokens = sum(value for value in input_fields if value is not None)
+    if all(value is None for value in input_fields):
+        input_tokens = prior_input
+    output_tokens = usage_field(usage, "output_tokens") or 0
+    return input_tokens, output_tokens
 
 
 def identity_for_model(model: str) -> str:
@@ -378,12 +429,26 @@ def run_sdk(
         }
     if effort:
         create_kwargs["output_config"] = {"effort": effort}
-    response = client.messages.create(**create_kwargs)
+    live_input = 0
+    live_output = 0
+    with client.messages.stream(**create_kwargs) as stream:
+        for event in stream:
+            event_usage = getattr(event, "usage", None)
+            if event_usage is None:
+                message = getattr(event, "message", None)
+                event_usage = getattr(message, "usage", None)
+            if event_usage is None:
+                continue
+            live_input, live_output = live_anthropic_usage(event_usage, live_input)
+            update_live_usage(live_input, live_output)
+        response = stream.get_final_message()
     usage = response.usage
     write = getattr(usage, "cache_creation_input_tokens", 0) or 0
     read = getattr(usage, "cache_read_input_tokens", 0) or 0
     inp = getattr(usage, "input_tokens", 0) or 0
     out = getattr(usage, "output_tokens", 0) or 0
+    live_input, live_output = live_anthropic_usage(usage, live_input)
+    update_live_usage(live_input, live_output)
     print(f"cache: write={write} read={read} input={inp} output={out}", file=sys.stderr)
     print(f"Total tokens: {inp + out}", file=sys.stderr)
     if advisor:
