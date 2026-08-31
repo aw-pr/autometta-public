@@ -35,7 +35,11 @@ DIM = 5
 ANSI = {
     NORMAL: "\x1b[0m",
     BOLD: "\x1b[1m",
-    REVERSE: "\x1b[7m",
+    # Selection and focus highlight. A hard reverse-video block read as a
+    # glare against the dark theme (UAT 2026-08-31); a pastel blue keeps the
+    # row legible while clearly selected. 256-colour SGR: light steel blue
+    # ground, near-black ink.
+    REVERSE: "\x1b[48;5;153m\x1b[38;5;235m",
     ACTIVE: "\x1b[1;36m",
     ALERT: "\x1b[1;31m",
     DIM: "\x1b[2m",
