@@ -44,6 +44,8 @@ Write exactly one JSON report to the artefact path with this shape:
 
 Do not emit prose outside the JSON report. Do not alter files outside the verifier artefact path.
 
+<<established-facts-section>>
+
 <!--
 Everything below this line is the per-dispatch variable block. It sits after
 the stable prefix so the cacheable portion above is byte-identical across
