@@ -435,8 +435,9 @@ derive_artefact_glob() {
     printf '%s/**\n' "$dirs"
   else
     # Multiple or root-level deliverables: broad recursive glob.
-    # Python's glob.glob does not support brace expansion prior to 3.13.
-    printf '**\n'
+    # The shared collector accepts comma-separated negative patterns. Keep
+    # runtime state, dependencies and Git internals out of broad fallbacks.
+    printf '**,!**/.git/**,!**/state/**,!**/node_modules/**\n'
   fi
 }
 

@@ -20,6 +20,17 @@ TEMPLATE = Path("templates/verifier-prompt.md")
 VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 4096
+# Keep a broad fallback from consuming an unbounded portion of the verifier
+# context. This applies to source bytes before line numbering expands them.
+MAX_ARTEFACT_BYTES = 512 * 1024
+_BINARY_MAGIC_PREFIXES = (
+    b"\x89PNG\r\n\x1a\n",
+    b"\xff\xd8\xff",
+    b"GIF87a",
+    b"GIF89a",
+    b"%PDF-",
+    b"PK\x03\x04",
+)
 
 
 def usage_field(usage: Any, name: str) -> int | None:
@@ -269,11 +280,41 @@ def numbered(path: Path, text: str) -> str:
 
 def find_artefacts(pattern: str) -> list[Path]:
     matches: list[Path] = []
+    excluded: set[Path] = set()
     for part in (item.strip() for item in pattern.split(",")):
         if not part:
             continue
-        matches.extend(Path(item) for item in glob.glob(part, recursive=True))
-    return sorted({path for path in matches if path.is_file()})
+        paths = {Path(item) for item in glob.glob(part.lstrip("!"), recursive=True)}
+        if part.startswith("!"):
+            excluded.update(paths)
+        else:
+            matches.extend(paths)
+    return sorted({path for path in matches if path.is_file() and path not in excluded})
+
+
+def collect_artefact_sections(artefacts: list[Path]) -> str:
+    """Return bounded, numbered text artefacts and notes for skipped files."""
+    sections: list[str] = []
+    collected_bytes = 0
+    for path in artefacts:
+        raw = path.read_bytes()
+        if b"\0" in raw or raw.startswith(_BINARY_MAGIC_PREFIXES):
+            sections.append(f"### {path}\n(skipped binary artefact)\n")
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            sections.append(f"### {path}\n(skipped artefact: not valid UTF-8)\n")
+            continue
+        if collected_bytes + len(raw) > MAX_ARTEFACT_BYTES:
+            sections.append(
+                f"(artefact collection stopped at {MAX_ARTEFACT_BYTES} bytes; "
+                "remaining matched files omitted)\n"
+            )
+            break
+        collected_bytes += len(raw)
+        sections.append(numbered(path, text))
+    return "\n".join(sections)
 
 
 def verifier_schema() -> dict[str, Any]:
@@ -321,7 +362,7 @@ def build_variable_block(
     worker_notes: str | None = None,
 ) -> str:
     """Return the per-stage, non-cached portion of the prompt."""
-    artefact_sections = "\n".join(numbered(path, read_text(path)) for path in artefacts)
+    artefact_sections = collect_artefact_sections(artefacts)
     if not artefact_sections:
         artefact_sections = "(no artefacts matched the supplied glob)\n"
 
