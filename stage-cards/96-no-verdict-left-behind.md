@@ -96,7 +96,7 @@ Do not read anything else unless you need to; keep your context lean.
 
 ## Budget
 
-- **Worker wall-clock:** 2400s
+- **Worker wall-clock:** 1800s
 - **Verifier wall-clock:** 1800s
 
 ## Verifier handoff
@@ -107,3 +107,26 @@ verbatim, the pre-existing checks' summary, and the diff stat.
 ## Family-specific notes
 
 None
+
+## Re-brief (attempt 2, 2026-08-31)
+
+Attempt 1 produced the work and was killed before the paperwork: the tick's
+budget enforcement (2400s + 50% grace) terminated the worker at 5168s,
+before the handoff envelope was written. The diff itself is sound. It is
+preserved as commit acc6170 (also on
+origin/autometta/96-no-verdict-left-behind), and the orchestrator ran the
+full smoke against it: every check passes, including the new orphaned
+verdict recovery regression.
+
+Your job is to land that work, not redo it:
+
+1. Restore the preserved diff into your working tree:
+   `git checkout acc6170 -- scripts/tick.sh scripts/pipeline-pair-smoke.sh`
+   (a tree-only checkout; make no git commits, as ever).
+2. Read the restored diff and satisfy yourself it meets the card; fix
+   anything that does not.
+3. Run the acceptance criteria and collect the evidence.
+4. Write the handoff envelope. This is the step attempt 1 died before;
+   do not skip it, and do not start open-ended extra validation once the
+   criteria have their evidence. The budget above is sized for
+   validate-and-envelope, not a rebuild.
