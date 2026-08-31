@@ -2,10 +2,18 @@
 
 ## Metadata
 
-- **Authored:** 2026-05-27
-- **Orchestrator:** Claude Opus 4.7 <claude-opus-4-7@local>
-- **Worker:** Codex GPT-5.3 <codex-gpt-5-3@local>
-- **Verifier:** Claude Opus 4.7 <claude-opus-4-7@local>
+- **Authored:** 2026-05-27 (re-briefed 2026-08-31 for queueing: seats
+  moved to current identities, run metadata added; scope unchanged)
+- **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Opus 5 <claude-opus-5@local>
+- **Base branch:** dev
+- **Run branch:** autometta/23-sdk-controller-experiment
+- **Worker effort:** high
+- **Verifier effort:** high
+- **Verifier panel:** false
+- **Gate:** stage-completed: 97-a-pause-is-not-a-stall
+- **Path claims:** scripts/controller-sdk-experiment.py, tests/sdk-controller-experiment/, docs/experiments/sdk-controller-postmortem.md, memory/decision-sdk-controller-experiment.md, docs/philosophy.md
 - **Pairing rationale:** Cross-family. Codex builds a deliberately minimal prototype; Claude verifies that the prototype's failure modes are accurately reported in the postmortem (this stage's deliverable is partly a negative result, and the verifier's job is to confirm honesty).
 - **Type:** Experiment-with-postmortem. The expected outcome is "we don't want this" — but the experiment validates that, rather than asserting it.
 
