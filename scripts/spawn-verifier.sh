@@ -175,34 +175,193 @@ resolve_family_notes() {
   printf 'None'
 }
 
+# True when every named module is importable by the python3 that would run the
+# SDK entrypoint. Used as an SDK precondition, so a repo that has never run
+# `pip install -r scripts/requirements-sdk.txt` keeps dispatching on the cli.
+python_has_modules() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$@" <<'PY' 2>/dev/null
+import importlib.util
+import sys
+
+try:
+    ok = all(importlib.util.find_spec(name) for name in sys.argv[1:])
+except Exception:
+    ok = False
+sys.exit(0 if ok else 1)
+PY
+}
+
+# Are this family's SDK preconditions all present?
+#
+# Silent and returns 0 when the SDK route can run; prints a short reason and
+# returns 1 when something it needs is missing. Consulted only when nothing
+# explicit has named a transport. An explicit `sdk` never comes through here:
+# it still fails closed further down, because an operator who asked for the
+# SDK by name wants to hear that it cannot run, not to be quietly rerouted.
+verifier_sdk_precondition() {
+  local family="$1"
+  local repo_root="$2"
+  local auth_pairs="$3"
+  local mode
+
+  if ! mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" "$family" --print-mode --role verifier 2>/dev/null)"; then
+    printf 'auth mode unresolved'
+    return 1
+  fi
+
+  case "$family" in
+    claude)
+      if [[ ! -f "$script_dir/verify-sdk.py" ]]; then
+        printf 'scripts/verify-sdk.py missing'
+        return 1
+      fi
+      if ! python_has_modules anthropic jsonschema; then
+        printf 'python packages anthropic and jsonschema not importable'
+        return 1
+      fi
+      case "$mode" in
+        api)
+          if [[ "$auth_pairs" != *ANTHROPIC_API_KEY* ]]; then
+            printf 'OP_REF_ANTHROPIC_API_KEY unset or still a placeholder'
+            return 1
+          fi
+          ;;
+        subscription)
+          if [[ "$auth_pairs" != *CLAUDE_CODE_OAUTH_TOKEN* ]]; then
+            printf 'OP_REF_CLAUDE_CODE_OAUTH_TOKEN unset or still a placeholder'
+            return 1
+          fi
+          ;;
+        *)
+          printf 'auth.claude.mode=%s has no SDK route' "$mode"
+          return 1
+          ;;
+      esac
+      ;;
+    codex)
+      if [[ ! -f "$script_dir/verify-sdk-openai.py" ]]; then
+        printf 'scripts/verify-sdk-openai.py missing'
+        return 1
+      fi
+      if ! python_has_modules openai_codex jsonschema; then
+        printf 'python packages openai-codex and jsonschema not importable'
+        return 1
+      fi
+      if ! command -v jq >/dev/null 2>&1; then
+        printf 'jq missing, so the CODEX_HOME auth mode cannot be checked'
+        return 1
+      fi
+      local codex_home expected_auth_mode
+      case "$mode" in
+        subscription)
+          codex_home="${AUTOMETTA_CODEX_SUBSCRIPTION_HOME:-$HOME/.codex}"
+          expected_auth_mode="chatgpt"
+          ;;
+        api)
+          codex_home="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}"
+          expected_auth_mode="apikey"
+          ;;
+        *)
+          printf 'auth.codex.mode=%s has no SDK route' "$mode"
+          return 1
+          ;;
+      esac
+      if [[ ! -f "$codex_home/auth.json" ]] \
+        || [[ "$(jq -r '.auth_mode // empty' "$codex_home/auth.json" 2>/dev/null || true)" != "$expected_auth_mode" ]]; then
+        printf '%s/auth.json is not auth_mode=%s' "$codex_home" "$expected_auth_mode"
+        return 1
+      fi
+      ;;
+    *)
+      printf 'family %s has no SDK route' "$family"
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
 # Resolve a verifier transport (sdk | cli) for one family.
 # Resolution order (most specific wins):
-#   1. AUTOMETTA_<FAMILY>_TRANSPORT env var override
-#   2. verifier.<family>.transport in <repo>/.autometta.local.yaml
-#   3. default: cli
-# Prints: "<transport> <provenance>"
+#   1. AUTOMETTA_<FAMILY>_TRANSPORT env var override        -> env
+#   2. verifier.<family>.transport in .autometta.local.yaml -> manifest
+#   3. sdk, when the family's SDK preconditions hold        -> default-sdk
+#   4. cli, naming the precondition that is missing         -> fallback-cli
+#
+# The SDK is the transport of first resort: both families authenticate it on
+# every mode they support, so an unset key means "whichever route works" rather
+# than "the old one". The cli is what a repo lands on when a precondition is
+# absent, and it says which one, so a dispatch never changes route in silence.
+# Prints: "<transport> <provenance> [reason]"
 resolve_verifier_transport() {
   local family="$1"
   local repo_root="$2"
+  local auth_pairs="${3:-}"
   local manifest="$repo_root/.autometta.local.yaml"
-  local transport="" provenance="default"
   local family_upper override_var
   family_upper="$(printf '%s' "$family" | tr '[:lower:]' '[:upper:]')"
   override_var="AUTOMETTA_${family_upper}_TRANSPORT"
 
   if [[ -n "${!override_var:-}" ]]; then
-    transport="${!override_var}"
-    provenance="env"
-  elif [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+    printf '%s env\n' "${!override_var}"
+    return 0
+  fi
+
+  if [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
     local from_manifest
     from_manifest="$(yq -r ".verifier.${family}.transport // \"\"" "$manifest" 2>/dev/null || true)"
     if [[ -n "$from_manifest" ]]; then
-      transport="$from_manifest"
-      provenance="manifest"
+      printf '%s manifest\n' "$from_manifest"
+      return 0
     fi
   fi
 
-  printf '%s %s\n' "${transport:-cli}" "$provenance"
+  local reason
+  if reason="$(verifier_sdk_precondition "$family" "$repo_root" "$auth_pairs")"; then
+    printf 'sdk default-sdk\n'
+  else
+    printf 'cli fallback-cli %s\n' "$reason"
+  fi
+}
+
+# Format one resolution for the log, or for the --print-transport probe.
+format_transport_resolution() {
+  local transport="$1" provenance="$2" reason="${3:-}"
+  if [[ -n "$reason" ]]; then
+    printf '%s (%s: %s)' "$transport" "$provenance" "$reason"
+  else
+    printf '%s (%s)' "$transport" "$provenance"
+  fi
+}
+
+# Resolution probe: print the transport one family would take in this repo
+# right now, without dispatching anything or spending a token.
+print_transport() {
+  local family="$1"
+  local repo_root="$2"
+
+  case "$family" in
+    claude|codex) ;;
+    *)
+      log_msg "usage: $0 --print-transport <claude|codex> [repo-root]"
+      exit 1
+      ;;
+  esac
+
+  local autometta_root_local
+  autometta_root_local="$(autometta_self_root "$script_dir")"
+  if [[ -f "$autometta_root_local/op-refs.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$autometta_root_local/op-refs.sh"
+  fi
+
+  local auth_pairs result transport provenance reason
+  auth_pairs="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" "$family" --role verifier 2>/dev/null || true)"
+  result="$(resolve_verifier_transport "$family" "$repo_root" "$auth_pairs")"
+  IFS=' ' read -r transport provenance reason <<<"$result"
+  format_transport_resolution "$transport" "$provenance" "$reason"
+  printf '\n'
 }
 
 validate_codex_sdk_auth_home() {
@@ -314,8 +473,14 @@ is_panel_mode() {
 }
 
 main() {
+  if [[ "${1:-}" == "--print-transport" ]]; then
+    print_transport "${2:-}" "${3:-$PWD}"
+    exit 0
+  fi
+
   if [[ $# -lt 2 || $# -gt 3 ]]; then
     log_msg "usage: $0 <stage-card-path> <repo-root> [work-dir]"
+    log_msg "       $0 --print-transport <claude|codex> [repo-root]"
     exit 1
   fi
 
@@ -345,8 +510,8 @@ main() {
   fi
 
   local verifier_identity stage_id family log_path artefact_path pid prompt
-  local claude_transport="cli" claude_transport_provenance="default"
-  local codex_transport="cli" codex_transport_provenance="default"
+  local claude_transport="cli"
+  local codex_transport="cli"
   local effort
   verifier_identity="$(extract_verifier_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
@@ -399,13 +564,14 @@ main() {
     exit 1
   fi
 
-  # Resolve the selected family transport after its auth route is known.
+  # Resolve the selected family transport after its auth route is known: the
+  # SDK preconditions include the credential the route emits, so the default
+  # cannot be settled before auth_pairs exists.
   if [[ "$family" == "claude" || "$family" == "codex" ]]; then
     local transport_result
-    transport_result="$(resolve_verifier_transport "$family" "$repo_root")"
-    local resolved_transport resolved_transport_provenance
-    resolved_transport="${transport_result%% *}"
-    resolved_transport_provenance="${transport_result#* }"
+    transport_result="$(resolve_verifier_transport "$family" "$repo_root" "$auth_pairs")"
+    local resolved_transport resolved_transport_provenance resolved_transport_reason
+    IFS=' ' read -r resolved_transport resolved_transport_provenance resolved_transport_reason <<<"$transport_result"
     case "$resolved_transport" in
       cli|sdk) ;;
       *)
@@ -413,12 +579,13 @@ main() {
         exit 1
         ;;
     esac
+    # One provenance word per dispatch, emitted here so both families and both
+    # transports are covered by the same line.
+    log_msg "verifier-transport: $(format_transport_resolution "$resolved_transport" "$resolved_transport_provenance" "$resolved_transport_reason")"
     if [[ "$family" == "claude" ]]; then
       claude_transport="$resolved_transport"
-      claude_transport_provenance="$resolved_transport_provenance"
     else
       codex_transport="$resolved_transport"
-      codex_transport_provenance="$resolved_transport_provenance"
     fi
   fi
 
@@ -481,7 +648,6 @@ main() {
         if [[ -n "$effort" && "$effort" != "None" ]]; then
           sdk_effort_arg=(--effort "$effort")
         fi
-        log_msg "verifier-transport: sdk (provenance: ${codex_transport_provenance})"
         log_msg "verifier-transport: sdk auth-route=${codex_mode} CODEX_HOME=${codex_home_override} auth_mode=$(jq -r '.auth_mode' "$codex_home_override/auth.json")"
         # shellcheck disable=SC2086
         ( cd "$work_dir" && CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- \
@@ -552,15 +718,14 @@ main() {
         esac
       fi
 
-      # Fall back to cli if verify-sdk.py is missing.
+      # Fall back to cli if verify-sdk.py is missing. An unset key never
+      # reaches here on a missing entrypoint (the precondition already caught
+      # it); this catches an explicit sdk pointed at a tree without the script.
       local sdk_script="$script_dir/verify-sdk.py"
       if [[ "$claude_transport" == "sdk" && ! -f "$sdk_script" ]]; then
-        log_msg "verifier-transport: warning; $sdk_script not found; falling back to cli"
         claude_transport="cli"
-        claude_transport_provenance="default"
+        log_msg "verifier-transport: $(format_transport_resolution cli fallback-cli "$sdk_script not found")"
       fi
-
-      log_msg "verifier-transport: ${claude_transport} (provenance: ${claude_transport_provenance})"
 
       if [[ "$claude_transport" == "sdk" ]]; then
         local artefact_glob sdk_out claude_advisor advisor_arg notes_arg

@@ -1,6 +1,6 @@
 # SDK verifier prototype
 
-`scripts/verify-sdk.py` is an opt-in entrypoint for running a verifier through the Claude Agent SDK. It reads a stage card, expands a worker artefact glob, renders `templates/verifier-prompt.md`, asks the SDK for structured JSON, validates it against `schemas/verifier.json`, and writes the verifier artefact to the path supplied by `--out`.
+`scripts/verify-sdk.py` is the entrypoint for running a verifier through the Claude Agent SDK, and the route a claude verifier takes by default. It reads a stage card, expands a worker artefact glob, renders `templates/verifier-prompt.md`, asks the SDK for structured JSON, validates it against `schemas/verifier.json`, and writes the verifier artefact to the path supplied by `--out`.
 
 Direct use of `scripts/verify-sdk.py` does not read 1Password, choose an auth route, register heartbeat state, or provide fallback behaviour to `claude -p`. The caller must install `scripts/requirements-sdk.txt` once and inject one credential through `op-fetch`: `ANTHROPIC_API_KEY` on the api route, or `CLAUDE_CODE_OAUTH_TOKEN` on the subscription route. Production dispatch goes through `scripts/spawn-verifier.sh`, which owns auth-route selection, fallback, and registration.
 
@@ -69,27 +69,48 @@ Known gaps after 15b:
 
 ## Integration into spawn-verifier.sh
 
-`scripts/spawn-verifier.sh` selects between the SDK route and the existing `claude -p` route at dispatch time. The selection is controlled by a manifest flag and an env override; the default is `cli` (zero behavioural change for repos that do not opt in).
+`scripts/spawn-verifier.sh` selects between the SDK route and the existing CLI route at dispatch time. The SDK is the transport of first resort: both families authenticate it on every auth mode they support, so an unset `verifier.<family>.transport` means "whichever route works here" rather than "the old one". A repo lands on the CLI only when an SDK precondition is absent, and the log says which one.
 
 ### Transport resolution
 
-Resolution order (most specific wins):
+Resolution order (most specific wins), per family:
 
-1. `AUTOMETTA_CLAUDE_TRANSPORT` env var (`sdk` or `cli`)
-2. `verifier.claude.transport` in the repo's `.autometta.local.yaml`
-3. Default: `cli`
+1. `AUTOMETTA_CLAUDE_TRANSPORT` / `AUTOMETTA_CODEX_TRANSPORT` env var (`sdk` or `cli`), provenance `env`
+2. `verifier.<family>.transport` in the repo's `.autometta.local.yaml`, provenance `manifest`
+3. Unset, with the family's SDK preconditions all present: `sdk`, provenance `default-sdk`
+4. Unset, with a precondition missing: `cli`, provenance `fallback-cli`, naming the reason
 
-A single log line is emitted to stderr before dispatch:
+The preconditions are checked only for an unset key. An explicit `sdk` never falls back on them: an operator who asked for the SDK by name wants to hear that it cannot run, not to be rerouted quietly.
+
+| Family | Preconditions for `default-sdk` |
+|---|---|
+| claude | `scripts/verify-sdk.py` present; `anthropic` and `jsonschema` importable by `python3`; `auth.claude.mode` is `api` or `subscription`; the mode's credential resolves (`OP_REF_ANTHROPIC_API_KEY` or `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`) |
+| codex | `scripts/verify-sdk-openai.py` present; `openai-codex` and `jsonschema` importable by `python3`; `jq` present; `auth.codex.mode` is `api` or `subscription`; the matching `CODEX_HOME/auth.json` carries the matching `auth_mode` |
+
+`auth.codex.mode: local` has no SDK entrypoint, so a local route resolves to `cli (fallback-cli)` and keeps running. Nothing in this list turns a missing precondition into an error.
+
+A single log line is emitted to stderr before dispatch, whichever family and transport is chosen:
 
 ```
-verifier-transport: sdk (provenance: manifest)
-verifier-transport: cli (provenance: default)
-verifier-transport: cli (provenance: env)
+verifier-transport: sdk (default-sdk)
+verifier-transport: sdk (manifest)
+verifier-transport: cli (env)
+verifier-transport: cli (fallback-cli: python packages anthropic and jsonschema not importable)
+verifier-transport: cli (fallback-cli: auth.codex.mode=local has no SDK route)
 ```
 
-### Opting in
+### The resolution probe
 
-In the repo's `.autometta.local.yaml`:
+`spawn-verifier.sh --print-transport <claude|codex> [repo-root]` prints the transport that family would take in that repo right now, in the same format, without dispatching anything or spending a token:
+
+```sh
+scripts/spawn-verifier.sh --print-transport claude
+scripts/spawn-verifier.sh --print-transport codex /path/to/subscribed/repo
+```
+
+### Pinning the CLI
+
+Nothing needs setting to reach the SDK. To hold a family on the CLI, name it in the repo's `.autometta.local.yaml`:
 
 ```yaml
 auth:
@@ -97,10 +118,10 @@ auth:
     mode: subscription # or api; both routes reach the SDK
 verifier:
   claude:
-    transport: sdk
+    transport: cli
 ```
 
-See `.autometta.local.yaml.example` for the full template and comments.
+`AUTOMETTA_CLAUDE_TRANSPORT=cli` does the same for one dispatch without editing the manifest. See `.autometta.local.yaml.example` for the full template and comments.
 
 ### Fable-as-advisor (optional)
 
@@ -144,7 +165,8 @@ artefacts contain personal data.
 | `transport: sdk` + `auth.claude.mode: api` + `OP_REF_ANTHROPIC_API_KEY` unresolved | Exits non-zero before spawning any process. Message names the ref. |
 | `transport: sdk` + `auth.claude.mode: local` | Refused by `auth-route.sh`: the local route is codex-family only. |
 | `transport` value other than `cli` or `sdk` | Exits non-zero before spawning any process. |
-| `transport: sdk` + `scripts/verify-sdk.py` missing | Logs a warning and falls back to `cli`. |
+| `transport: sdk` + `scripts/verify-sdk.py` missing | Falls back to `cli`, logged as `fallback-cli`. |
+| Unset transport + any missing precondition from the table above | Resolves to `cli`, logged as `fallback-cli` with the reason. Never an error. |
 | `transport: sdk` + SDK package missing | `verify-sdk.py` exits `2`; logged to the stage log. |
 | `transport: sdk` + declared `Verifier effort` | Passes the level through `output_config.effort`; it is not discarded. |
 | `advisor` weaker than `--model` (inverted #66714 pair) | `verify-sdk.py` exits `2` before any API call, naming both models. |
@@ -153,6 +175,8 @@ artefacts contain personal data.
 ### Artefact glob derivation
 
 The spawner parses the `## Deliverables` section of the stage card, extracts backtick-quoted paths, and derives a glob from their parent directories. If all deliverables share one parent directory (e.g., `scripts/`), the glob is `scripts/**`. When deliverables span multiple directories, the spawner falls back to `**` (broad recursive). This is a v1 heuristic; operators can override by invoking `verify-sdk.py` directly with a targeted glob.
+
+The heuristic matters more now that the SDK is the default: it decides how much of the tree is read into the prompt, and it widens to whole directories rather than the deliverables themselves. A card whose deliverables span several directories derives `**`, which on a large repo is far more input than any verifier needs. Measure before dispatching a wide card on the SDK route, and pin `transport: cli` or pass a targeted glob where the derived one is too broad.
 
 ### Registration and heartbeat
 
@@ -289,9 +313,10 @@ Verifier transport resolution is independent for each family:
 | orchestrator | claude | `orchestrator.claude.transport` | design only | design-pending card 23 |
 | orchestrator | codex | `orchestrator.codex.transport` | design only | design-pending card 23 |
 
-The verifier defaults to `cli`. `AUTOMETTA_CLAUDE_TRANSPORT` and
-`AUTOMETTA_CODEX_TRANSPORT` override their matching manifest key for an A/B
-run without editing the manifest.
+An unset verifier key resolves to `sdk` on both families wherever the
+preconditions hold, and to `cli` where one is missing.
+`AUTOMETTA_CLAUDE_TRANSPORT` and `AUTOMETTA_CODEX_TRANSPORT` override their
+matching manifest key for an A/B run without editing the manifest.
 
 For a Codex SDK verifier, `spawn-verifier.sh` selects and checks `CODEX_HOME`
 before the process starts:

@@ -54,19 +54,34 @@ auth:
     # would be a different CLI and a different card.
 
 # ---------------------------------------------------------------------------
-# Verifier transport overrides. Optional. Default for all families is the
-# existing CLI path. Set `sdk` per verifier family to route through its
-# matching SDK entrypoint. Both SDK routes support api and subscription auth.
+# Verifier transport overrides. Optional, and usually unnecessary: leave the
+# key unset and each verifier family reaches for its SDK entrypoint first.
+# Both SDK routes support api and subscription auth, so there is no auth mode
+# on which the default is unreachable.
+#
+# An unset key resolves in this order:
+#   sdk   (provenance default-sdk)   the SDK preconditions are all present
+#   cli   (provenance fallback-cli)  one is missing, and the log names it
+#
+# The preconditions are the SDK entrypoint script, its python packages, and
+# the auth mode's credential. A missing one is never an error: the dispatch
+# keeps working on the CLI. `auth.codex.mode: local` has no SDK entrypoint
+# and always falls back this way.
+#
+# Set `cli` to hold a family on the old route. That is an explicit pin, not a
+# fallback, and it is honoured exactly as written.
 #
 # IMPORTANT: the Codex SDK reuses CODEX_HOME authentication. On subscription,
 # it must use ~/.codex with auth_mode: chatgpt; on api, it must use the
 # api-only sibling with auth_mode: apikey. The spawner checks this before it
 # launches, so a billing-route mismatch fails closed.
 #
-# To opt in:
-#   1. Set the selected family's auth mode and any required OP_REF_* value.
-#   2. Set verifier.<family>.transport: sdk here.
-#   3. Install the SDK once: pip install -r scripts/requirements-sdk.txt.
+# Before relying on the SDK default, install the packages once:
+#   pip install -r scripts/requirements-sdk.txt
+#
+# To see which route a family would take here, without spending a token:
+#   scripts/spawn-verifier.sh --print-transport claude <repo>
+#   scripts/spawn-verifier.sh --print-transport codex <repo>
 #
 # To A/B compare routes without editing this file:
 #   AUTOMETTA_CLAUDE_TRANSPORT=cli scripts/spawn-verifier.sh <card> <repo>
@@ -77,8 +92,10 @@ auth:
 
 # verifier:
 #   claude:
-#     transport: cli   # default; uses `claude -p` (subscription or api)
-#     # transport: sdk   # uses scripts/verify-sdk.py (subscription or api)
+#     transport: cli   # pin the old route; uses `claude -p` (subscription or api)
+#     # transport: sdk   # scripts/verify-sdk.py, named explicitly. Same route
+#     #   the unset key takes, but an explicit sdk fails closed on a missing
+#     #   precondition instead of falling back to cli.
 #
 #     # Optional Fable-as-advisor verifier. The request model (transport: sdk,
 #     # e.g. claude-sonnet-4-6) does the bulk reading; the advisor is consulted
@@ -91,8 +108,9 @@ auth:
 #     # Override without editing this file:
 #     #   AUTOMETTA_CLAUDE_ADVISOR=claude-fable-5 scripts/spawn-verifier.sh <card> <repo>
 #   codex:
-#     transport: cli   # default; uses `codex exec` (subscription or api)
-#     # transport: sdk   # uses scripts/verify-sdk-openai.py (subscription or api)
+#     transport: cli   # pin the old route; uses `codex exec` (subscription or api)
+#     # transport: sdk   # scripts/verify-sdk-openai.py, named explicitly, with
+#     #   the same fail-closed behaviour as the claude key above.
 #
 # ---------------------------------------------------------------------------
 # Orchestrator transport design only. These keys are not active and do not
