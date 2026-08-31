@@ -205,3 +205,29 @@ which is severity first, then dependency.
   fleet-wide launchd tick job was added on 2026-08-19 despite the fleet plist's
   own comment forbidding exactly that. The operator's ticker showed a full
   queue throughout, which is card 37's third defect.
+
+## Pass 5 - the fact ledger (graph engineering), designed 2026-08-31
+
+`docs/graph-engineering.md` is the brief: the commit DAG records what changed,
+nothing records what is true. Four cards, strictly gated, all serial (82 is a
+contract, 84 touches `tick.sh`, and the batch shares `memory/facts.jsonl`).
+Worker families alternate Claude/Codex/Claude/Codex per the pairing rule.
+
+| # | Stage | Status | Card |
+|---|---|---|---|
+| 82 | Fact ledger schema, lint, contract doc | designed, not queued | [`82-a-fact-has-a-shape-before-anything-records-one.md`](./82-a-fact-has-a-shape-before-anything-records-one.md) |
+| 83 | Backfill the ledger from `Autometta-*` trailers | designed, not queued - gated on 82 | [`83-the-trailers-already-knew-the-facts.md`](./83-the-trailers-already-knew-the-facts.md) |
+| 84 | Tick appends facts at landing, never blocking one | designed, not queued - gated on 83 | [`84-a-landing-leaves-a-fact-behind.md`](./84-a-landing-leaves-a-fact-behind.md) |
+| 85 | Bounded fact slice in the verifier prompt | designed, not queued - gated on 84 | [`85-the-verifier-reads-the-ledger-first.md`](./85-the-verifier-reads-the-ledger-first.md) |
+
+### Operator notes (pass 5)
+
+- Spend plan from `state/cost-log.jsonl` (2026-08-31): worker median $2.98
+  (p95 $25.26), verifier median $1.70 (p95 $5.33). Four stages estimate ~$19
+  at the median; size the drain at ~$45 to cover one outlier.
+- **Not queued deliberately.** The current budget window shows 245M of 300M
+  tokens spent; queue with `add-stage.sh` in card order (82, 83, 84, 85) when
+  the window resets. Gates hold the order regardless.
+- Cards 84 and 85 modify load-bearing dispatch surfaces (`tick.sh`,
+  `spawn-verifier.sh`). Both carry the fail-open/never-block-a-landing rule
+  as an acceptance criterion with forced-failure evidence, not prose.
