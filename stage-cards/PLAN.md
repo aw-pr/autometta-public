@@ -231,6 +231,7 @@ Queue order: 82, 86, 83, 84, 85.
 | 28 | OpenAI SDK verifier route + transport matrix (refreshed) | queued 2026-08-31 - gated on 89 | [`28-per-role-family-sdk-transport.md`](./28-per-role-family-sdk-transport.md) |
 | 90 | SDK is the default verifier transport | queued 2026-08-31 - gated on 28 | [`90-the-verifier-reaches-for-the-sdk-first.md`](./90-the-verifier-reaches-for-the-sdk-first.md) |
 | 91 | Live token burn in the TUI and dashboard | queued 2026-08-31 - gated on 90 | [`91-the-burn-is-visible-while-it-burns.md`](./91-the-burn-is-visible-while-it-burns.md) |
+| 92 | Agents panel click-through to the controller inbox (UAT ask) | designed, not queued - gate on 91, next batch | [`92-the-agents-panel-answers-back.md`](./92-the-agents-panel-answers-back.md) |
 
 ### Operator notes (pass 5)
 
