@@ -45,11 +45,17 @@ Do not read anything else unless you need to; keep your context lean.
 
 ## Deliverables
 
-1. `scripts/verify-sdk.py` and `scripts/verify-sdk-openai.py`: after each
-   SDK message, update the agent's own registry JSON with cumulative
+1. `scripts/verify-sdk.py` and `scripts/verify-sdk-openai.py`: on each
+   usage signal, update the agent's own registry JSON with cumulative
    `live_input_tokens`, `live_output_tokens`, `live_updated_at`. Atomic
    write (temp file + rename); a write failure warns and never interrupts
-   the verification.
+   the verification. Two codex-side cautions from the 2026-08-31 research
+   (`memory/project-codex-sdk-subscription-auth.md`): the Codex SDK's
+   usage figures are cumulative session totals, so diff totals rather than
+   summing deltas; and whether `thread/tokenUsage/updated` notifications
+   pass through `TurnHandle.stream()` mid-turn is unverified. If they do
+   not, the codex side updates once at `turn.completed` and the handoff
+   reports that as a finding, not a failure.
 2. `scripts/aggregate-dashboard.sh`: in-flight dispatches gain `live_usage`
    in `data.json`, sourced from the registry; absent fields simply omit it.
 3. `scripts/tui.sh` run page and `dashboard/dashboard.js`: render the live

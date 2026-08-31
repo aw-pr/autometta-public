@@ -40,9 +40,9 @@ Do not read anything else unless you need to; keep your context lean.
 
 All files listed here must be created or modified. Paths are relative to repo root.
 
-1. `scripts/verify-sdk-openai.py` - OpenAI SDK verifier entrypoint, parallel to `scripts/verify-sdk.py`: reads the same rubric contract (`schemas/verifier.json`), writes the same verifier artefact shape, and emits a comparable cache or usage line to stderr. Uses the `openai` library.
-2. `scripts/requirements-sdk.txt` - add the `openai` dependency, pinned.
-3. `scripts/spawn-verifier.sh` - generalise the transport branch so `verifier.codex.transport: sdk` routes to the OpenAI entrypoint, mirroring the Claude SDK branch. Auth gating is per family and reflects what each SDK accepts, not a blanket api-only rule: the Claude route takes api or subscription (card 89); the codex route requires `auth.codex.mode: api`, because the `openai` library authenticates by key only and the ChatGPT subscription stays reachable through the CLI transport. The codex fail-closed message must name the CLI transport as the subscription path.
+1. `scripts/verify-sdk-openai.py` - codex SDK verifier entrypoint, parallel to `scripts/verify-sdk.py`: reads the same rubric contract (`schemas/verifier.json`), writes the same verifier artefact shape, and emits a comparable usage line to stderr from the turn's `ThreadTokenUsage`. Uses the official **Codex SDK** (`openai-codex` on PyPI), which drives the codex agent harness and reuses codex's own auth resolution - NOT the `openai` API library and NOT the `openai-agents` framework, both of which are key-only and the wrong surface (researched 2026-08-31; see `memory/project-codex-sdk-subscription-auth.md`).
+2. `scripts/requirements-sdk.txt` - add the `openai-codex` dependency, pinned.
+3. `scripts/spawn-verifier.sh` - generalise the transport branch so `verifier.codex.transport: sdk` routes to the codex SDK entrypoint, mirroring the Claude SDK branch. Both families take api or subscription on the SDK route. The codex-side trap is CODEX_HOME selection, the exact inverse of gotcha 8: subscription mode must point CODEX_HOME at the normal `~/.codex` (chatgpt-mode auth.json, bills the plan); api mode must point it at the sibling api-only home. The spawn reads the selected auth.json's `auth_mode` and fails closed on a mismatch with the resolved billing mode, because a silent mismatch bills the wrong route invisibly.
 4. `.autometta.local.yaml.example` - document the generalised matrix: `verifier.{claude,codex}.transport` and a commented, not-yet-active `orchestrator.{claude,codex}.transport` block marked as design-pending card 23.
 5. `docs/sdk-verifier.md` - extend with the OpenAI verifier route and the generalised matrix.
 6. `docs/design/orchestrator-sdk-transport.md` - design memo for the orchestrator-role transport options across both families: what the manifest keys would be, how dispatch would differ from the CLI orchestrator, and the explicit statement that the production path is gated behind the card-23 verdict.
@@ -50,7 +50,7 @@ All files listed here must be created or modified. Paths are relative to repo ro
 
 ## Constraints
 
-- The OpenAI verifier route must fail closed on `verifier.codex.transport: sdk` with `auth.codex.mode` not `api`, with a message naming the CLI transport as the subscription path. Do not narrow the Claude route back to api-only anywhere; card 89's subscription branch is the contract this card generalises.
+- The codex SDK route must fail closed when the selected CODEX_HOME's `auth.json` carries an `auth_mode` that contradicts the resolved billing mode, naming both in the message. Do not narrow either family back to api-only anywhere; card 89's subscription branch is the contract this card generalises.
 - No production orchestrator-SDK code in this card. The orchestrator side is design memo only.
 - `verify-sdk-openai.py` must honour the same `AUTOMETTA_*_TRANSPORT` A/B override pattern the Claude route uses.
 - Reuse the existing rubric schema and verifier artefact contract; do not fork them per family.
@@ -62,7 +62,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 
 1. `scripts/verify-sdk-openai.py --help` prints usage and exits 0.
 2. `verifier.codex.transport: sdk` with `auth.codex.mode: api` routes a verifier dispatch through `verify-sdk-openai.py` (demonstrated against one stage, or with a documented smoke run if no API key is available at verify time).
-3. `verifier.codex.transport: sdk` with `auth.codex.mode: subscription` fails closed at dispatch with a clear message naming the CLI transport as the subscription path, and `verifier.claude.transport: sdk` with `auth.claude.mode: subscription` still dispatches per card 89.
+3. `verifier.codex.transport: sdk` dispatches on both auth modes with the right CODEX_HOME each way (subscription -> normal home, api -> sibling), shown by the spawn's route log; a deliberately mismatched auth.json fails closed naming the mismatch; and `verifier.claude.transport: sdk` with `auth.claude.mode: subscription` still dispatches per card 89.
 4. The OpenAI verifier writes a verifier artefact that validates against `schemas/verifier.json` via `scripts/validate-verifier-artefacts.sh`.
 5. `.autometta.local.yaml.example` documents `verifier.{claude,codex}.transport` and a commented `orchestrator.{claude,codex}.transport` block flagged as design-pending card 23.
 6. `docs/design/orchestrator-sdk-transport.md` states explicitly that the orchestrator-SDK production path is gated behind the card-23 verdict.

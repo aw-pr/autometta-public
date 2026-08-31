@@ -22,9 +22,11 @@
 With the Claude SDK route on subscription auth (card 89) and the codex SDK
 route shipped (card 28), the CLI stops being the transport of first resort.
 The operator's decision: SDK by default wherever the family's auth mode
-supports it. Flip the resolution for an **unset** `verifier.<family>.transport`
-from `cli` to: `sdk` when the resolved auth mode has an SDK path (claude:
-api or subscription; codex: api), otherwise `cli`. An explicit `transport:
+supports it. After card 28's codex SDK route, that is every mode of both
+families (the Codex SDK reuses chatgpt-mode auth.json; the Claude SDK takes
+the OAuth token), so an **unset** `verifier.<family>.transport` resolves to
+`sdk`, with `cli` remaining as the logged fallback only where an SDK
+precondition is missing (package absent, OAuth ref unset). An explicit `transport:
 cli` in the manifest and the `AUTOMETTA_CLAUDE_TRANSPORT` /
 `AUTOMETTA_CODEX_TRANSPORT` env overrides are honoured exactly as today, and
 every resolution logs its provenance (default-sdk, fallback-cli, manifest,
@@ -51,8 +53,9 @@ Do not read anything else unless you need to; keep your context lean.
 
 - No behaviour change for any explicit setting: manifest and env values
   resolve exactly as before the card.
-- `codex` + `subscription` resolves to `cli` with a logged fallback, never
-  an error: the subscription dispatch keeps working out of the box.
+- A missing SDK precondition resolves to `cli` with a logged fallback,
+  never an error: the dispatch keeps working out of the box on any auth
+  mode.
 - The worker role stays CLI: sandbox-as-role-boundary is load-bearing and
   this card must not touch `spawn-worker.sh`.
 - British English, no em dashes, no AI-tell vocabulary.
@@ -62,8 +65,9 @@ Do not read anything else unless you need to; keep your context lean.
 1. `bash -n scripts/spawn-verifier.sh` passes.
 2. A resolution probe (dry-run or `--print-transport` if the worker adds
    one) shows: unset + claude + subscription -> `sdk (default-sdk)`; unset +
-   codex + subscription -> `cli (fallback-cli)`; unset + codex + api ->
-   `sdk (default-sdk)`; manifest `cli` -> `cli (manifest)`; env override
+   codex + subscription -> `sdk (default-sdk)`; unset + codex + api ->
+   `sdk (default-sdk)`; unset with the SDK package deliberately hidden ->
+   `cli (fallback-cli)`; manifest `cli` -> `cli (manifest)`; env override
    beats manifest.
 3. One real verifier dispatch on this repo (claude family, subscription)
    goes down the SDK branch with no transport key set, shown by its log
