@@ -12,7 +12,10 @@ IFS=$'\n\t'
 #
 #   mode="$(scripts/auth-route.sh <family> --print-mode)"
 #
+#   pairs="$(scripts/auth-route.sh <family> --role verifier)"
+#
 #   <family> := codex | claude
+#   <role>   := worker | verifier
 #
 # Output:
 #   - subscription mode (codex): empty (op-fetch sanitises env; codex
@@ -31,9 +34,17 @@ IFS=$'\n\t'
 #     its dispatch command on the route rather than just fetch credentials.
 #
 # Resolution order (most specific wins):
-#   1. AUTOMETTA_<FAMILY>_MODE env var override
-#   2. auth.<family>.mode in <repo>/.autometta.local.yaml
-#   3. hard default: subscription
+#   1. AUTOMETTA_<FAMILY>_MODE_<ROLE> env var override (when --role is given)
+#   2. AUTOMETTA_<FAMILY>_MODE env var override
+#   3. auth.<family>.<role>.mode in <repo>/.autometta.local.yaml
+#   4. auth.<family>.mode in <repo>/.autometta.local.yaml
+#   5. hard default: subscription
+#
+# The per-role keys exist so the two sides of a gate can sit on different
+# routes. The case that wants it is a local worker facing a cloud verifier:
+# free weights write the code, a metered model judges it. A family-wide mode
+# cannot say that, and same-family same-weights verification is the worker
+# marking its own homework.
 #
 # local is codex-family only: it runs `codex exec --oss` against Ollama, a
 # different CLI path than the api/subscription codex branches. A Claude-family
@@ -46,19 +57,31 @@ IFS=$'\n\t'
 # via the service-account token and exec's the child with a sanitised env.
 
 usage() {
-  printf 'usage: %s <family> [--print-mode]\n' "$(basename "$0")" >&2
+  printf 'usage: %s <family> [--print-mode] [--role worker|verifier]\n' "$(basename "$0")" >&2
   printf '  family: codex | claude\n' >&2
   exit 1
 }
 
-[[ $# -ge 1 && $# -le 2 ]] || usage
+[[ $# -ge 1 ]] || usage
 family="$1"
+shift
 print_mode_only=0
-if [[ "${2:-}" == "--print-mode" ]]; then
-  print_mode_only=1
-elif [[ -n "${2:-}" ]]; then
-  usage
-fi
+role=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --print-mode) print_mode_only=1; shift ;;
+    --role)
+      [[ $# -ge 2 ]] || usage
+      role="$2"
+      case "$role" in
+        worker|verifier) ;;
+        *) printf 'auth-route: unknown role %q (expected worker | verifier)\n' "$role" >&2; exit 1 ;;
+      esac
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
 
 case "$family" in
   codex)  ref_var="OP_REF_OPENAI_API_KEY"; env_name="OPENAI_API_KEY" ;;
@@ -76,18 +99,37 @@ else
 fi
 manifest="$repo_root/.autometta.local.yaml"
 
-# 1. env override
-override_var="AUTOMETTA_$(printf '%s' "$family" | tr '[:lower:]' '[:upper:]')_MODE"
-mode="${!override_var:-}"
-mode_source="env:$override_var"
+family_upper="$(printf '%s' "$family" | tr '[:lower:]' '[:upper:]')"
 
-# 2. manifest
-if [[ -z "$mode" && -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
-  mode="$(yq -r ".auth.${family}.mode // \"\"" "$manifest" 2>/dev/null || true)"
-  [[ -n "$mode" ]] && mode_source="manifest:$manifest"
+# 1. per-role env override
+override_var="AUTOMETTA_${family_upper}_MODE"
+mode=""
+mode_source=""
+if [[ -n "$role" ]]; then
+  role_override_var="AUTOMETTA_${family_upper}_MODE_$(printf '%s' "$role" | tr '[:lower:]' '[:upper:]')"
+  mode="${!role_override_var:-}"
+  [[ -n "$mode" ]] && { override_var="$role_override_var"; mode_source="env:$role_override_var"; }
 fi
 
-# 3. default
+# 2. family-wide env override
+if [[ -z "$mode" ]]; then
+  mode="${!override_var:-}"
+  mode_source="env:$override_var"
+fi
+
+# 3. manifest, per-role key then family-wide
+if [[ -z "$mode" && -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+  if [[ -n "$role" ]]; then
+    mode="$(yq -r ".auth.${family}.${role}.mode // \"\"" "$manifest" 2>/dev/null || true)"
+    [[ -n "$mode" ]] && mode_source="manifest:$manifest (auth.${family}.${role}.mode)"
+  fi
+  if [[ -z "$mode" ]]; then
+    mode="$(yq -r ".auth.${family}.mode // \"\"" "$manifest" 2>/dev/null || true)"
+    [[ -n "$mode" ]] && mode_source="manifest:$manifest"
+  fi
+fi
+
+# 4. default
 if [[ -z "$mode" ]]; then
   mode="subscription"
   mode_source="default"

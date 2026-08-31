@@ -55,6 +55,13 @@ models are genuinely independent, being separate weights in separate loaded
 copies with no shared rate-limit window, which is the contention the gate is
 protecting. Cloud identities keep family alone under either setting, since two
 Codex API workers contend for one provider window whichever model they name.
+
+`pipeline.pair_on: off` disables the alternation comparison entirely: any two
+claimed, disjoint stages inside headroom may pair, whatever their workers.
+This trades quota isolation for wall clock, so both dispatches of a pair can
+land on one provider window and contend there; the claims, gate and headroom
+checks still apply. An operator choice for a repo that would rather spend a
+window faster than wait out serial order.
 An unreadable or invalid value falls back to `family`: pairing is the widening
 option, so a misconfiguration must never be what turns it on.
 Missing claims produce no pairing decision or pairing log. Overlap, a repeated

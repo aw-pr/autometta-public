@@ -205,3 +205,52 @@ which is severity first, then dependency.
   fleet-wide launchd tick job was added on 2026-08-19 despite the fleet plist's
   own comment forbidding exactly that. The operator's ticker showed a full
   queue throughout, which is card 37's third defect.
+
+## Pass 5 - the fact ledger (graph engineering), designed 2026-08-31
+
+`docs/graph-engineering.md` is the brief: the commit DAG records what changed,
+nothing records what is true. The ledger cards are a strict data chain
+(83 needs 82's schema landed, 84 needs 83's ledger, 84 touches `tick.sh`),
+so the chain itself runs serial. Card 86 (the UAT runbook ask) is the
+independent work that gives the batch a pipeline pair: disjoint path claims
+against 82 and an alternating worker family, so worker 86 may overlap
+verifier 82.
+
+Queue order: 82, 86, 83, 84, 85.
+
+| # | Stage | Status | Card |
+|---|---|---|---|
+| 82 | Fact ledger schema, lint, contract doc | queued 2026-08-31 | [`82-a-fact-has-a-shape-before-anything-records-one.md`](./82-a-fact-has-a-shape-before-anything-records-one.md) |
+| 86 | Operator runbook (cold start + daily drive) | queued 2026-08-31 - pipeline partner for 82 | [`86-a-runbook-a-stranger-can-drive.md`](./86-a-runbook-a-stranger-can-drive.md) |
+| 83 | Backfill the ledger from `Autometta-*` trailers | queued 2026-08-31 - gated on 82 | [`83-the-trailers-already-knew-the-facts.md`](./83-the-trailers-already-knew-the-facts.md) |
+| 84 | Tick appends facts at landing, never blocking one | queued 2026-08-31 - gated on 83 | [`84-a-landing-leaves-a-fact-behind.md`](./84-a-landing-leaves-a-fact-behind.md) |
+| 85 | Bounded fact slice in the verifier prompt | queued 2026-08-31 - gated on 84 | [`85-the-verifier-reads-the-ledger-first.md`](./85-the-verifier-reads-the-ledger-first.md) |
+| 88 | Machine-dependency inventory (UAT ask) | queued 2026-08-31 - pipeline tail for 85 | [`88-the-machine-dependencies-are-declared.md`](./88-the-machine-dependencies-are-declared.md) |
+| 87 | herdr evidence spike (authored by the herdr session) | queued 2026-08-31 - pipeline tail for 88 | [`87-the-multiplexer-knows-what-its-panes-are-doing.md`](./87-the-multiplexer-knows-what-its-panes-are-doing.md) |
+| 89 | SDK verifier on the subscription OAuth token | queued 2026-08-31 - gated on 85 | [`89-the-sdk-verifier-runs-on-the-subscription.md`](./89-the-sdk-verifier-runs-on-the-subscription.md) |
+| 28 | OpenAI SDK verifier route + transport matrix (refreshed) | queued 2026-08-31 - gated on 89 | [`28-per-role-family-sdk-transport.md`](./28-per-role-family-sdk-transport.md) |
+| 90 | SDK is the default verifier transport | queued 2026-08-31 - gated on 28 | [`90-the-verifier-reaches-for-the-sdk-first.md`](./90-the-verifier-reaches-for-the-sdk-first.md) |
+| 91 | Live token burn in the TUI and dashboard | queued 2026-08-31 - gated on 90 | [`91-the-burn-is-visible-while-it-burns.md`](./91-the-burn-is-visible-while-it-burns.md) |
+
+### Operator notes (pass 5)
+
+- Spend plan from `state/cost-log.jsonl` (2026-08-31): worker median $2.98
+  (p95 $25.26), verifier median $1.70 (p95 $5.33). Five stages estimate ~$24
+  at the median; size the drain at ~$50 to cover one outlier.
+- **Headroom caveat for the pipeline pair:** worker token p95 is ~24.9M, so
+  the two-p95 overlap check needs ~50M of headroom, and the 2026-08-31 window
+  has ~55M left. If the check refuses, the pair degrades to serial by design;
+  a fresh window makes the overlap comfortable.
+- **Alternation gate off (2026-08-31):** the operator set `pipeline.pair_on:
+  off` in this repo's manifest, trading quota isolation for wall clock. Claims,
+  gates and the two-p95 headroom check still apply.
+- **Overlap plan, revised after the 82/86 window was missed:** the 82/86 pair
+  was eligible but 82's verifier finished inside one tick interval, so the
+  pairing never arose. The tick pairs only the adjacent pending stage, so the
+  tail queue is ordered 85, 88, 87: verifier 85 (codex worker) may overlap
+  worker 88 (claude), and verifier 88 may overlap worker 87 (codex). Card 87
+  could not be 85's tail directly: both workers are codex and the family
+  alternation check would refuse the pair.
+- Cards 84 and 85 modify load-bearing dispatch surfaces (`tick.sh`,
+  `spawn-verifier.sh`). Both carry the fail-open/never-block-a-landing rule
+  as an acceptance criterion with forced-failure evidence, not prose.

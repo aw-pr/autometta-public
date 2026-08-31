@@ -11,10 +11,11 @@ AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5"
 # Frontier tier a step above Opus. Opt-in per card only: no existing identity
 # resolves here, so a stage uses it only when its card names a *Fable* role.
 AUTOMETTA_MODEL_FABLE="claude-fable-5"
-# One codex model serves every codex identity. A card naming Terra, Luna or Sol
-# all dispatch here, so the identity string drives git attribution and the cost
-# tier, not the model that actually runs. Name the role Sol on new cards or the
-# cost-log bills a T1 run at the T2 rate.
+# The fallback codex cloud model: what a codex identity dispatches to when it
+# names no model of its own. Cards that name Sol, Terra or Luna resolve through
+# codex_cloud_model_for_identity below and reach those weights directly, so the
+# identity now drives the model as well as the git attribution and the cost
+# tier. An identity that names none of them still lands here.
 AUTOMETTA_MODEL_CODEX="gpt-5.6-sol"
 # The codex `local` auth route (auth.codex.mode: local) runs this Ollama model
 # id via `codex exec --oss --local-provider=ollama -m <id>` instead of the API
@@ -68,6 +69,23 @@ codex_local_model_for_identity() {
     *Llama\ 3.3\ 70B*|*llama-3-3-70b*) printf 'llama3.3:70b' ;;
     *Llama\ 4\ Scout*|*llama-4-scout*) printf 'llama4:scout' ;;
     *)                                 printf '' ;;
+  esac
+}
+
+# codex_cloud_model_for_identity <identity>
+# The cloud counterpart of codex_local_model_for_identity: a card's declared
+# identity names the weights that role runs on the API/subscription route.
+# Until this existed every codex identity dispatched to AUTOMETTA_MODEL_CODEX,
+# so a card naming Luna ran Sol and the cost-log billed a T1 run at the T4 rate
+# tier_for_identity read off the identity string. Prints the shared default for
+# an identity that names no cloud model, which keeps every card written before
+# this dispatching exactly as it did.
+codex_cloud_model_for_identity() {
+  case "$1" in
+    *GPT-5.6\ Sol*|*gpt-5.6-sol*)     printf 'gpt-5.6-sol' ;;
+    *GPT-5.6\ Terra*|*gpt-5.6-terra*) printf 'gpt-5.6-terra' ;;
+    *GPT-5.6\ Luna*|*gpt-5.6-luna*)   printf 'gpt-5.6-luna' ;;
+    *)                                printf '%s' "$AUTOMETTA_MODEL_CODEX" ;;
   esac
 }
 

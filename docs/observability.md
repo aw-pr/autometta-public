@@ -53,7 +53,17 @@ autometta status
 - **The HTML dashboard** from `autometta dashboard --open` is the broad fleet and trend view when a browser is more useful than a terminal.
 - **The controller inbox** is the asynchronous instruction path when phat-controller should consider something on its next pass without an attached session; the TUI messages page is its operator-facing writer.
 
-The TUI has run, history and messages pages. It polls the same
+The TUI has run, history and messages pages. On the run page the number row
+focuses a panel, matching the `[0]`-`[4]` labels the boxes carry; on the other
+two, where no numbered panels are drawn, it switches page as the footer's tab
+strip says, and escape returns to the run page from anywhere. Focus `0` is the
+card detail pane, which carries the stage card under the metadata and scrolls
+with `j`/`k`; `o` pages that card read-only in a tmux window, and `O` opens it in
+the desktop's default viewer, which can usually write to it. Enter on an
+escalation opens the controller composer already carrying the stage and the
+reason it stopped.
+
+It polls the same
 `aggregate-dashboard.sh --repo` seam as the repo ticker every five seconds,
 but does so on a background thread so input remains responsive during a read.
 Card 74 replaced per-row process forks and repeated file scans in that seam,

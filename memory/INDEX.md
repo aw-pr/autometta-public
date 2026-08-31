@@ -41,3 +41,4 @@ Banked at `memory/adopters/<repo>/` with analysis-friendly `metadata.run` frontm
 - [Verifier panel design](decision-verifier-panel.md): N=3 majority vote, opt-in, fixed composition for v1 — stage 18 decisions.
 - [Sweep stage design](decision-sweep-stage.md): Opt-in parallel worker exploration; synthesis as worker; worktrees; output is docs/decisions/ — stage 20 design.
 - [Remote monitoring contract](decision-remote-monitoring.md): Hosted routines file PRs only; no dispatch authority; three surfaces — stage 21.
+- [Codex SDK runs on the subscription](project-codex-sdk-subscription-auth.md) - openai-codex reuses chatgpt auth.json; openai/openai-agents are key-only

@@ -29,6 +29,15 @@ body {
 .header h1 { margin: 0 0 .25rem; font-size: 1.4rem; font-weight: 600; }
 .meta { color: var(--muted); font-size: .85rem; }
 
+/* Freshness marker beside the generated-at stamp: green while the page is
+   seeing new data, amber once reads have failed often enough to mean the
+   aggregator is no longer running. A dashboard that has quietly stopped
+   updating reads exactly like a live one without it. */
+.live-status { margin-left: .75rem; }
+.live-status::before { content: "\25CF"; margin-right: .35rem; }
+.live-status.ok { color: var(--pass); }
+.live-status.warn { color: var(--stall); }
+
 main {
   display: grid;
   gap: 1.25rem;

@@ -50,7 +50,8 @@ Usage:
   autometta drain end
   autometta check-deps
   autometta check-build
-  autometta dashboard [--repo <repo-path>] [--open]
+  autometta dashboard [--repo <repo-path>] [--open] [--watch] [--serve]
+                      [--interval <secs>] [--port <port>]
   autometta failures <repo-path> [--json]
   autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]

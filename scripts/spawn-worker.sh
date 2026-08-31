@@ -146,7 +146,7 @@ main() {
   # tokens. exec_command works on this route, so name the edit path that does.
   worker_family_notes="None"
   if [[ "$family" == codex ]]; then
-    worker_route_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" codex --print-mode 2>/dev/null || printf '')"
+    worker_route_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" codex --print-mode --role worker 2>/dev/null || printf '')"
     if [[ "$worker_route_mode" == local ]]; then
       worker_family_notes="The apply_patch tool is NOT registered on this local route. Do not call it; every call fails with \"unsupported call: apply_patch\". Create and edit files with shell commands through exec_command instead, for example a python3 heredoc, or a shell heredoc that writes the file. Read each file back after writing it to confirm the change landed."
     fi
@@ -167,7 +167,7 @@ main() {
     source "$autometta_root_local/op-refs.sh"
   fi
   local auth_pairs
-  if ! auth_pairs="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" "$family")"; then
+  if ! auth_pairs="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" "$family" --role worker)"; then
     log_msg "auth-route resolver failed for family=$family"
     exit 1
   fi
@@ -198,10 +198,15 @@ main() {
 
   local codex_mode=""
   if [[ "$family" == "codex" ]]; then
-    if ! codex_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" codex --print-mode)"; then
+    if ! codex_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" codex --print-mode --role worker)"; then
       log_msg "auth-route mode resolution failed for family=codex"
       exit 1
     fi
+  fi
+
+  local cloud_model="$AUTOMETTA_MODEL_CODEX"
+  if [[ "$family" == "codex" ]]; then
+    cloud_model="$(codex_cloud_model_for_identity "$worker_identity")"
   fi
 
   case "$family" in
@@ -217,10 +222,10 @@ main() {
         op-fetch $auth_pairs -- codex exec --oss --local-provider=ollama -m "$local_model" -C "$work_dir" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       elif [[ -n "$codex_home_override" ]]; then
         # shellcheck disable=SC2086
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       else
         # shellcheck disable=SC2086
-        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$AUTOMETTA_MODEL_CODEX" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)
