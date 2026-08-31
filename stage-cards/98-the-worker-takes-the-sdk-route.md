@@ -151,3 +151,11 @@ The prototype uses the Claude Agent SDK on the subscription route proven
 by card 89. The codex SDK thread model differs (cumulative usage totals,
 card 91 notes); the postmortem must not generalise Claude findings to
 codex without saying so.
+
+## Re-brief note (2026-08-31 22:45 BST, minder)
+
+Same auth-route finding as card 23's re-brief note: build on the
+`claude-agent-sdk` package, never the raw `anthropic` client, which 429s
+instantly on subscription OAuth. `scripts/verify-sdk.py` is the broken
+pattern, not prior art. A first-request 429 means the auth route, not
+load; stop and report rather than retry.

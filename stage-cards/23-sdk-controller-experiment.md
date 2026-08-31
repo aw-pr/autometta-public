@@ -84,3 +84,17 @@ Worker writes the deliverables, runs both test stages, and pastes the test-`stat
 
 - **Codex (worker):** stdin redirect for any subprocess. Sandbox `workspace-write` is sufficient; tests write to `/tmp` and to `tests/sdk-controller-experiment/`.
 - **Claude (verifier):** the verifier does NOT need to run the SDK experiment itself; it reads the postmortem and the test artefacts. This is a deliberate cost guard.
+
+## Re-brief note (2026-08-31 22:45 BST, minder)
+
+Auth-route finding from tonight's run, load-bearing for this card: the
+long-lived session MUST be built on the `claude-agent-sdk` package, which
+drives the Claude Code engine and honours the subscription OAuth token.
+Do NOT use `scripts/verify-sdk.py` as prior art: despite its name it
+instantiates the raw `anthropic` client against the Messages API, and that
+path is refused instantly with a 429 on subscription OAuth (two refusals
+tonight, request ids req_011CebUkhN159VXfD28zBFci and
+req_011CebX8zh975kvsSmKpt2ST, while `claude -p` on the same account worked
+throughout). If any API call in this experiment is refused with a 429 on
+the first request, stop and record the refusal in the postmortem rather
+than retrying; a first-request 429 here means the auth route, not load.
