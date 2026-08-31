@@ -23,15 +23,14 @@ The history is **linear and shared**. There is one line of development:
 # 2. when a batch is ready for the public mirror:
 git switch publish
 git merge --ff-only dev          # publish catches up to dev's tip; always a clean ff
-git push public publish          # PR source; gh pr create --base main --head publish
-# review the PR diff, then:
-PUBLISH_PR_REVIEWED=1 git publish  # backs up to origin, then ff-pushes PUB main behind the gate
+git push origin publish          # private backup first
+git push public publish          # PR source, private-file-scanned by the gate
+gh pr create --base main --head publish   # first batch only; later pushes update the open PR
 git switch dev                   # back to the working branch
+# 3. merge the PR on the forge (gh pr merge <n> --merge, or the web button)
 ```
 
-`git publish` is the alias `git push origin publish && PUBLISH_GUARD_OK=1 git push public publish:main`. It backs up to the private remote first, then publishes. Never hand-type `git push public publish:main`: the gate blocks it and points you back here.
-
-The publish boundary is PR-by-default and the gate enforces it: the push to `PUB/main` is rejected unless `PUBLISH_PR_REVIEWED=1` is set, which attests that a `publish` to `main` PR was opened and its diff reviewed. The fast-forward push then completes the PR, since GitHub marks a PR merged once the base holds the head commits. A repo where the PR is genuinely surplus opts out with `git config publishguard.boundary direct`.
+The publish boundary is PR-by-default and the pre-push gate enforces it strictly: any push to `PUB/main` is rejected, with no attestation escape hatch. The old `PUBLISH_PR_REVIEWED=1 git publish` completion is retired; a flag set by the same automation it gates certifies nothing, so the merge happens on the forge where the diff is actually in front of you. The forge merge is a merge commit, so `PUB/main` carries publish's per-agent commits plus one merge bubble per batch; `publish` itself stays a strict ancestor and the next batch's push updates or reopens the PR (first exercised here as PR #3, merged 2026-08-31). A repo where the PR is genuinely surplus opts out with `git config publishguard.boundary direct`.
 
 If `git merge --ff-only dev` refuses, `publish` has commits `dev` does not (someone committed directly on `publish`). That should not happen in this model; reconcile by hand rather than forcing.
 
