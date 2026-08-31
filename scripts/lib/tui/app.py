@@ -227,6 +227,10 @@ def curses_attr(attr):
     if attr == BOLD:
         return curses.A_BOLD
     if attr == REVERSE:
+        # Pastel selection to match the ANSI table in render.py; hard
+        # reverse video only where the terminal lacks 256 colours.
+        if curses.has_colors() and curses.COLORS >= 256:
+            return curses.color_pair(3)
         return curses.A_REVERSE
     if attr == ACTIVE:
         return curses.A_BOLD | (curses.color_pair(1) if curses.has_colors() else 0)
@@ -282,6 +286,10 @@ def interactive(args):
             curses.use_default_colors()
             curses.init_pair(1, curses.COLOR_CYAN, -1)
             curses.init_pair(2, curses.COLOR_RED, -1)
+            if curses.COLORS >= 256:
+                # Selection: near-black ink on light steel blue, the same
+                # 256-colour indices the ANSI table uses.
+                curses.init_pair(3, 235, 153)
 
         state = TuiState(args.interval)
         next_poll = 0.0
