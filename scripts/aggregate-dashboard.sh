@@ -481,7 +481,14 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
           baseline_sample_size: ($live.baseline_sample_size // null),
           token_outlier: ($live.token_outlier // null),
           log_bytes:$log_bytes, alive:true
-        }) | . + {elapsed:.elapsed_seconds}]')"
+        } + (if ($reg.live_input_tokens? != null or $reg.live_output_tokens? != null)
+             then {live_usage:{
+               input_tokens:($reg.live_input_tokens // 0),
+               output_tokens:($reg.live_output_tokens // 0),
+               updated_at:($reg.live_updated_at // null)
+             }}
+             else {}
+             end)) | . + {elapsed:.elapsed_seconds}]')"
   fi
 
   # Live transcript token totals, --repo mode only: reading the harness

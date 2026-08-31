@@ -78,6 +78,17 @@ def usage_value(usage: Any, name: str) -> int:
     return int(value or 0)
 
 
+def cumulative_usage(usage: Any) -> tuple[int, int]:
+    """Read the Codex SDK's cumulative thread totals as displayable input/output."""
+    total = usage.get("total") if isinstance(usage, dict) else getattr(usage, "total", usage)
+    input_tokens = (
+        usage_value(total, "input_tokens")
+        + usage_value(total, "cached_input_tokens")
+        + usage_value(total, "cache_write_input_tokens")
+    )
+    return input_tokens, usage_value(total, "output_tokens")
+
+
 def log_usage(usage: Any) -> None:
     """Emit both a comparable SDK line and the established Codex budget marker."""
     input_tokens = usage_value(usage, "input_tokens")
@@ -96,11 +107,38 @@ def log_usage(usage: Any) -> None:
     print(total_tokens, file=sys.stderr)
 
 
-def run_sdk(prompt: str, model: str) -> tuple[str, Any]:
+def run_sdk(prompt: str, model: str, update_live_usage: Any) -> tuple[str, Any]:
     Codex, Sandbox = load_codex()
+    from openai_codex._run import _collect_turn_result
+    from openai_codex.types import ThreadTokenUsageUpdatedNotification
+
     with Codex() as codex:
         thread = codex.thread_start(model=model, sandbox=Sandbox.read_only)
-        result = thread.run(prompt)
+        turn = thread.turn(prompt)
+        previous_input = previous_output = 0
+        live_input = live_output = 0
+
+        def observed_stream() -> Any:
+            nonlocal previous_input, previous_output, live_input, live_output
+            for event in turn.stream():
+                payload = event.payload
+                if isinstance(payload, ThreadTokenUsageUpdatedNotification):
+                    cumulative_input, cumulative_output = cumulative_usage(payload.token_usage)
+                    # The SDK reports thread totals on every update. Add only
+                    # their difference so the same cumulative usage is never
+                    # counted repeatedly as it crosses the stream.
+                    live_input += max(0, cumulative_input - previous_input)
+                    live_output += max(0, cumulative_output - previous_output)
+                    previous_input, previous_output = cumulative_input, cumulative_output
+                    update_live_usage(live_input, live_output)
+                yield event
+
+        result = _collect_turn_result(observed_stream(), turn_id=turn.id)
+        if result.usage is not None:
+            cumulative_input, cumulative_output = cumulative_usage(result.usage)
+            live_input += max(0, cumulative_input - previous_input)
+            live_output += max(0, cumulative_output - previous_output)
+            update_live_usage(live_input, live_output)
     return result.final_response, getattr(result, "usage", None)
 
 
@@ -132,7 +170,9 @@ def main() -> int:
         if args.effort:
             variable_block += f"\n- Declared verifier effort: `{args.effort}`\n"
         validator = Validator(shared.verifier_schema())
-        text, usage = run_sdk(f"{static_block}\n\n{variable_block}", args.model)
+        text, usage = run_sdk(
+            f"{static_block}\n\n{variable_block}", args.model, shared.update_live_usage
+        )
         log_usage(usage)
         envelope = shared.validate_envelope(shared._extract_json(text), validator)
         out.parent.mkdir(parents=True, exist_ok=True)

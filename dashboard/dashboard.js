@@ -404,14 +404,20 @@
       (r.agents || []).forEach(function (a) {
         var elapsed = fmtInt(a.elapsed_seconds || 0) + "s";
         if (a.budget_seconds) elapsed += " / " + fmtInt(a.budget_seconds) + "s";
-        rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-", elapsed]);
+        var usage = a.live_usage;
+        var burn = "n/a";
+        if (usage) {
+          burn = "LIVE " + fmtInt(Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0));
+          if (!usage.updated_at) burn += " (stale)";
+        }
+        rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-", burn, elapsed]);
       });
       (r.queue || []).forEach(function (q) {
-        rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "-"]);
+        rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "-", "-"]);
       });
     });
     renderSimpleTable("agents-table-wrap",
-      ["Repo", "Kind", "Stage", "Role", "Agent / worker", "Verifier", "Elapsed / budget"], rows);
+      ["Repo", "Kind", "Stage", "Role", "Agent / worker", "Verifier", "Live burn", "Elapsed / budget"], rows);
   }
 
   function renderFailures(spend, names) {
