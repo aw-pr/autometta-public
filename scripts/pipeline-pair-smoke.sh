@@ -43,6 +43,11 @@ quota_gate_role_dispatch() { return 0; }
 budget_gate_dispatch() { return 0; }
 budget_drain_active() { return 1; }
 commit_state_branch() { return 0; }
+ensure_yq_or_halt() { return 0; }
+quota_write_repo_state() { return 0; }
+budget_ensure_window() { return 0; }
+budget_pause_active() { return 1; }
+budget_check_caps() { return 0; }
 
 spawn_worker_for_stage() {
   local card_path="$1" repo_root="$2" work_dir="$3" stage_id pid
@@ -313,10 +318,68 @@ conflict_escalation_smoke() {
   assert_log 'no headless conflict resolution attempted'
 }
 
+orphaned_verdict_scan_smoke() {
+  new_fixture orphaned-verdict
+  local head_work head_pid tail_pid
+  head_work="$(ensure_run_worktree "$fixture_repo" 01-head dev)"
+  printf 'head output\n' >>"$head_work/head.txt"
+  start_head_verifier "$fixture_repo"
+  head_pid="$started_pid"
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head ""
+  tail_pid="$(state_json "$fixture_repo/state/state.yaml" | jq -r '.stages[] | select(.id == "02-tail") | .worker_pid')"
+  stop_pid "$tail_pid"
+  write_verdict "$fixture_repo" 02-tail PASS
+  _process_verifier_artefact "$fixture_repo" "$fixture_repo/state/state.yaml" \
+    02-tail state/verifiers/02-tail.json ""
+  pipeline_after_tail_resolution "$fixture_repo/state/state.yaml" 02-tail
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.current_stage')" \
+    null "tail landing did not clear current_stage"
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.stages[] | select(.id == "02-tail") | .status')" \
+    completed "tail did not land before the orphaned verdict scan"
+
+  write_verdict "$fixture_repo" 01-head PASS
+  stop_pid "$head_pid"
+
+  _process_repo_locked "$fixture_repo" ""
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.current_stage')" \
+    null "orphaned verdict scan restored current_stage"
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.stages[] | select(.id == "01-head") | .status')" \
+    completed "orphaned head PASS was not consumed"
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.stages[] | select(.id == "02-tail") | .status')" \
+    completed "tail did not remain landed while the orphaned verdict was consumed"
+  assert_log 'stage 01-head verifier artefact found by in-progress verdict scan; consuming'
+  assert_log 'stage 01-head PASS: committed worker output'
+
+  new_fixture live-verifier
+  start_head_verifier "$fixture_repo"
+  head_pid="$started_pid"
+  write_verdict "$fixture_repo" 01-head PASS
+  state_apply_json "$fixture_repo/state/state.yaml" \
+    '(.stages[] | select(.id == "02-tail")).status = "completed"
+     | .current_stage = null'
+  local head_before head_after
+  head_before="$(state_json "$fixture_repo/state/state.yaml" | jq -c '.stages[] | select(.id == "01-head")')"
+  _process_repo_locked "$fixture_repo" ""
+  head_after="$(state_json "$fixture_repo/state/state.yaml" | jq -c '.stages[] | select(.id == "01-head")')"
+  assert_eq "$head_after" "$head_before" "live verifier was touched by the verdict scan"
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.current_stage')" \
+    null "live verifier scan changed current_stage"
+  stop_pid "$head_pid"
+
+  new_fixture current-fast-path
+  write_verdict "$fixture_repo" 01-head PASS
+  state_apply_json "$fixture_repo/state/state.yaml" \
+    '(.stages[] | select(.id == "02-tail")).status = "completed"'
+  _process_repo_locked "$fixture_repo" ""
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.stages[] | select(.id == "01-head") | .status')" \
+    completed "single current-stage verdict was not consumed"
+}
+
 queue_parser_smoke
 formation_and_ordered_landing_smoke
 refusal_smoke
 head_fail_fast_forward_smoke
 conflict_escalation_smoke
+orphaned_verdict_scan_smoke
 
-printf 'PASS: pipeline pair queue parsing, formation, refusals, pid checks, ordered landing, rebasing, fast-forward, conflict escalation, and serial fallback\n'
+printf 'PASS: pipeline pair queue parsing, formation, refusals, pid checks, ordered landing, rebasing, fast-forward, conflict escalation, serial fallback, and orphaned verdict recovery\n'

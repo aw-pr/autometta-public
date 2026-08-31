@@ -2143,6 +2143,62 @@ _process_verifier_artefact() {
   log "stage ${stage_id} PASS: committed worker output as ${commit_sha:-unknown} with --author=${worker_identity}"
 }
 
+# Consume one completed verifier artefact using the same accounting and
+# pipeline-resolution sequence whether it is the displayed current stage or
+# an in-progress stage found by the verdict backstop.
+consume_verifier_artefact() {
+  local repo_root="$1" state_yaml="$2" stage_id="$3" artefact="$4" manifest_path="$5"
+  local verifier_log_path verifier_work_dir_acct verifier_start_epoch
+  local verifier_identity_acct verifier_family_acct verifier_overall verifier_result
+
+  verifier_log_path="$repo_root/state/logs/${stage_id}-verifier.log"
+  verifier_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  verifier_start_epoch="$(role_started_epoch "$state_yaml" "$stage_id" verifier)"
+  verifier_identity_acct="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+    '.stages[] | select(.id == $id) | .verifier // empty')"
+  verifier_family_acct="$(costlog_family_for_identity "$verifier_identity_acct")"
+  budget_account_tokens_from_dispatch "$repo_root" "$verifier_log_path" "verifier" \
+    "$verifier_work_dir_acct" "$verifier_start_epoch" "$verifier_family_acct" || true
+  stage_snapshot_tokens "$repo_root" "$state_yaml" "$stage_id" "$verifier_log_path" "verifier" \
+    "$verifier_work_dir_acct" "$verifier_start_epoch" "$verifier_family_acct"
+  verifier_overall="$(jq -r '.overall // empty' "$repo_root/$artefact" 2>/dev/null || true)"
+  case "$verifier_overall" in
+    PASS) verifier_result="pass" ;;
+    *)    verifier_result="fail" ;;
+  esac
+  costlog_emit_verifier "$repo_root" "$state_yaml" "$stage_id" "$verifier_result"
+  _process_verifier_artefact "$repo_root" "$state_yaml" "$stage_id" "$artefact" "$manifest_path"
+
+  local pair_head pair_tail
+  pair_head="$(state_json "$state_yaml" | jq -r '.pipeline_pair.head // empty')"
+  pair_tail="$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')"
+  if [[ "$pair_head" == "$stage_id" ]]; then
+    pipeline_after_head_resolution "$state_yaml" "$stage_id"
+  elif [[ "$pair_tail" == "$stage_id" ]]; then
+    pipeline_after_tail_resolution "$state_yaml" "$stage_id"
+  fi
+}
+
+# The displayed current stage is the normal fast path. When a pipeline pair,
+# restart or crash leaves another stage in progress, scan the recorded order
+# so a completed verifier cannot be orphaned by the single display pointer.
+VERIFIER_ARTEFACTS_CONSUMED=0
+consume_orphaned_verifier_artefacts() {
+  local repo_root="$1" state_yaml="$2" manifest_path="$3"
+  local stage_id artefact verifier_pid
+  VERIFIER_ARTEFACTS_CONSUMED=0
+
+  while IFS=$'\t' read -r stage_id artefact verifier_pid; do
+    [[ -n "$stage_id" && -n "$artefact" ]] || continue
+    verifier_completion_ready "$repo_root/$artefact" "$verifier_pid" || continue
+    log "stage ${stage_id} verifier artefact found by in-progress verdict scan; consuming"
+    consume_verifier_artefact "$repo_root" "$state_yaml" "$stage_id" "$artefact" "$manifest_path"
+    VERIFIER_ARTEFACTS_CONSUMED=$((VERIFIER_ARTEFACTS_CONSUMED + 1))
+  done < <(state_json "$state_yaml" | jq -r '
+    .stages[] | select(.status == "in_progress")
+    | [.id, (.verifier_artefact // ""), (.verifier_pid // "")] | @tsv')
+}
+
 process_repo() {
   local repo_root="$1"
   local manifest_path="${2:-}"
@@ -2494,6 +2550,22 @@ _process_repo_locked() {
   local current_stage
   current_stage="$(state_json "$state_yaml" | jq -r '.current_stage')"
 
+  # Keep the single current-stage path below unchanged when it is the only
+  # in-progress stage. A second in-progress stage means current_stage is no
+  # longer a complete representation of verdicts that may be ready.
+  local in_progress_elsewhere
+  in_progress_elsewhere="$(state_json "$state_yaml" | jq -r --arg current "$current_stage" \
+    '.stages[] | select(.status == "in_progress" and .id != $current) | .id' | head -n1)"
+  if [[ -n "$in_progress_elsewhere" ]]; then
+    consume_orphaned_verifier_artefacts "$repo_root" "$state_yaml" "$manifest_path"
+    if (( VERIFIER_ARTEFACTS_CONSUMED > 0 )); then
+      tick_kind="work"
+      budget_increment_tick "$repo_root" work
+      commit_state_branch "$repo_root"
+      return 0
+    fi
+  fi
+
   if [[ "$current_stage" != "null" && -n "$current_stage" ]]; then
     tick_kind="work"
     if ! validate_stage_id "$current_stage"; then
@@ -2549,41 +2621,7 @@ _process_repo_locked() {
         commit_state_branch "$repo_root"
         return 0
       fi
-      # Token accounting (stage 10): the verifier has produced its
-      # artefact, so its log is final. Count its tokens before the stage
-      # closes out. This branch runs exactly once per stage because
-      # _process_verifier_artefact clears current_stage on exit.
-      local verifier_log_path="$repo_root/state/logs/${current_stage}-verifier.log"
-      local verifier_work_dir_acct verifier_start_epoch verifier_identity_acct verifier_family_acct
-      verifier_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$current_stage")"
-      verifier_start_epoch="$(role_started_epoch "$state_yaml" "$current_stage" verifier)"
-      verifier_identity_acct="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
-        '.stages[] | select(.id == $id) | .verifier // empty')"
-      verifier_family_acct="$(costlog_family_for_identity "$verifier_identity_acct")"
-      budget_account_tokens_from_dispatch "$repo_root" "$verifier_log_path" "verifier" \
-        "$verifier_work_dir_acct" "$verifier_start_epoch" "$verifier_family_acct" || true
-      # Per-stage snapshot (stage 11): capture verifier tokens against the
-      # stage entry. Worker tokens may already be set from an earlier tick.
-      stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$verifier_log_path" "verifier" \
-        "$verifier_work_dir_acct" "$verifier_start_epoch" "$verifier_family_acct"
-      # Cost-log: the verifier produced an artefact, so its log is final.
-      # Emit before _process_verifier_artefact clears current_stage.
-      local verifier_overall verifier_result
-      verifier_overall="$(jq -r '.overall // empty' "$repo_root/$artefact" 2>/dev/null || true)"
-      case "$verifier_overall" in
-        PASS) verifier_result="pass" ;;
-        *)    verifier_result="fail" ;;
-      esac
-      costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "$verifier_result"
-      _process_verifier_artefact "$repo_root" "$state_yaml" "$current_stage" "$artefact" "$manifest_path"
-      local pair_head pair_tail
-      pair_head="$(state_json "$state_yaml" | jq -r '.pipeline_pair.head // empty')"
-      pair_tail="$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')"
-      if [[ "$pair_head" == "$current_stage" ]]; then
-        pipeline_after_head_resolution "$state_yaml" "$current_stage"
-      elif [[ "$pair_tail" == "$current_stage" ]]; then
-        pipeline_after_tail_resolution "$state_yaml" "$current_stage"
-      fi
+      consume_verifier_artefact "$repo_root" "$state_yaml" "$current_stage" "$artefact" "$manifest_path"
       budget_increment_tick "$repo_root" work
       commit_state_branch "$repo_root"
       return 0
