@@ -2,13 +2,20 @@
 
 ## Metadata
 
-- **Authored:** 2026-05-28
-- **Orchestrator:** Claude Opus 4.7 <claude-opus-4-7@local>
-- **Worker:** Codex GPT-5.3 <codex-gpt-5-3@local>
-- **Verifier:** Claude Opus 4.7 <claude-opus-4-7@local>
+- **Authored:** 2026-05-28 (refreshed 2026-08-31: identities, gate, claims, and the auth-mode reality after card 89)
+- **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Opus 5 <claude-opus-5@local>
+- **Base branch:** dev
+- **Run branch:** autometta/28-per-role-family-sdk-transport
+- **Worker effort:** high
+- **Verifier effort:** high
+- **Verifier panel:** false
+- **Gate:** stage-completed: 89-the-sdk-verifier-runs-on-the-subscription
+- **Path claims:** scripts/verify-sdk-openai.py, scripts/requirements-sdk.txt, scripts/spawn-verifier.sh, .autometta.local.yaml.example, docs/sdk-verifier.md, docs/design/orchestrator-sdk-transport.md, memory/decision-per-role-family-sdk-transport.md
 - **Pairing rationale:** Cross-family. Codex builds the OpenAI SDK verifier route and the generalised transport resolver; Claude verifies the matrix is consistent, fails closed correctly, and that the orchestrator-SDK design honours the card-23 gate rather than productionising ahead of it.
 - **Type:** Implementation (verifier side) plus design (orchestrator side).
-- **Depends on:** 15c + 16 (shipped Claude SDK verifier route and prompt caching). The orchestrator-SDK portion depends on the card-23 verdict for productionisation; this card designs it but does not build a production orchestrator-SDK path.
+- **Depends on:** 15c + 16 (shipped Claude SDK verifier route and prompt caching), and card 89 (the Claude SDK route on subscription auth), because both edit `spawn-verifier.sh` and this card must generalise the post-89 branch, not the pre-89 one. The orchestrator-SDK portion depends on the card-23 verdict for productionisation; this card designs it but does not build a production orchestrator-SDK path.
 
 ## Surfacing concern
 
@@ -35,7 +42,7 @@ All files listed here must be created or modified. Paths are relative to repo ro
 
 1. `scripts/verify-sdk-openai.py` - OpenAI SDK verifier entrypoint, parallel to `scripts/verify-sdk.py`: reads the same rubric contract (`schemas/verifier.json`), writes the same verifier artefact shape, and emits a comparable cache or usage line to stderr. Uses the `openai` library.
 2. `scripts/requirements-sdk.txt` - add the `openai` dependency, pinned.
-3. `scripts/spawn-verifier.sh` - generalise the transport branch so `verifier.codex.transport: sdk` routes to the OpenAI entrypoint, mirroring the existing Claude SDK branch, including the same fail-closed check that SDK transport requires `auth.<family>.mode: api`.
+3. `scripts/spawn-verifier.sh` - generalise the transport branch so `verifier.codex.transport: sdk` routes to the OpenAI entrypoint, mirroring the Claude SDK branch. Auth gating is per family and reflects what each SDK accepts, not a blanket api-only rule: the Claude route takes api or subscription (card 89); the codex route requires `auth.codex.mode: api`, because the `openai` library authenticates by key only and the ChatGPT subscription stays reachable through the CLI transport. The codex fail-closed message must name the CLI transport as the subscription path.
 4. `.autometta.local.yaml.example` - document the generalised matrix: `verifier.{claude,codex}.transport` and a commented, not-yet-active `orchestrator.{claude,codex}.transport` block marked as design-pending card 23.
 5. `docs/sdk-verifier.md` - extend with the OpenAI verifier route and the generalised matrix.
 6. `docs/design/orchestrator-sdk-transport.md` - design memo for the orchestrator-role transport options across both families: what the manifest keys would be, how dispatch would differ from the CLI orchestrator, and the explicit statement that the production path is gated behind the card-23 verdict.
@@ -43,7 +50,7 @@ All files listed here must be created or modified. Paths are relative to repo ro
 
 ## Constraints
 
-- The OpenAI verifier route must fail closed exactly like the Claude one: `verifier.codex.transport: sdk` with `auth.codex.mode` not `api` aborts at dispatch with a clear message.
+- The OpenAI verifier route must fail closed on `verifier.codex.transport: sdk` with `auth.codex.mode` not `api`, with a message naming the CLI transport as the subscription path. Do not narrow the Claude route back to api-only anywhere; card 89's subscription branch is the contract this card generalises.
 - No production orchestrator-SDK code in this card. The orchestrator side is design memo only.
 - `verify-sdk-openai.py` must honour the same `AUTOMETTA_*_TRANSPORT` A/B override pattern the Claude route uses.
 - Reuse the existing rubric schema and verifier artefact contract; do not fork them per family.
@@ -55,7 +62,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 
 1. `scripts/verify-sdk-openai.py --help` prints usage and exits 0.
 2. `verifier.codex.transport: sdk` with `auth.codex.mode: api` routes a verifier dispatch through `verify-sdk-openai.py` (demonstrated against one stage, or with a documented smoke run if no API key is available at verify time).
-3. `verifier.codex.transport: sdk` with `auth.codex.mode: subscription` fails closed at dispatch with a clear message, matching the Claude route's behaviour.
+3. `verifier.codex.transport: sdk` with `auth.codex.mode: subscription` fails closed at dispatch with a clear message naming the CLI transport as the subscription path, and `verifier.claude.transport: sdk` with `auth.claude.mode: subscription` still dispatches per card 89.
 4. The OpenAI verifier writes a verifier artefact that validates against `schemas/verifier.json` via `scripts/validate-verifier-artefacts.sh`.
 5. `.autometta.local.yaml.example` documents `verifier.{claude,codex}.transport` and a commented `orchestrator.{claude,codex}.transport` block flagged as design-pending card 23.
 6. `docs/design/orchestrator-sdk-transport.md` states explicitly that the orchestrator-SDK production path is gated behind the card-23 verdict.

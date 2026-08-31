@@ -56,10 +56,11 @@ Do not read anything else unless you need to; keep your context lean.
    it currently insists on `ANTHROPIC_API_KEY`; no other behaviour change.
 3. `docs/sdk-verifier.md`: the failure table row for `transport: sdk` +
    `subscription` changes from fail-closed to the new contract; a short
-   subsection states the token is minted by `claude setup-token`, lives in
-   1Password behind `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`, and notes Anthropic's
-   published position that products must not offer claude.ai login to third
-   parties, which a solo operator's own machine does not do.
+   subsection states the token is minted by `claude setup-token` and lives
+   in 1Password behind `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`, and notes that the
+   old api-only requirement was a leftover from before Anthropic's pivot to
+   supporting subscription auth in the Agent SDK, so no doc in this repo
+   should steer the SDK route to API keys again.
 
 ## Constraints
 
