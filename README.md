@@ -4,15 +4,15 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green) ![Status](https://img.shields.io/badge/status-pre--alpha-orange)
 
+## Two families, one tree
 
+This repo is designed for Claude Code and Codex CLI to work in the same tree without prejudice. Session state lives in the repo (`memory/`, `state/`, `stage-cards/`), not in any one harness's private directory. Every agent picks up the same context.
+
+Not a framework. Not a runtime. Not a hosted service. A set of contracts, templates, and a thin shell scaffolding for running Claude Code + Codex workers unattended, with cross-family verification, on a solo developer's laptop.
 
 ![The autometta fleet dashboard](docs/images/dashboard.png)
 
-`autometta dashboard --open` over a seven-repo fleet. Every stage the fleet has
-run, newest first and grouped by repo, with what each one spent; click a row or
-a bar to read the stage card that drove it. `autometta dashboard --repo <path>`
-gives the same page scoped to one repo, and `autometta tui <path>` is the
-terminal equivalent for a run in flight.
+`autometta dashboard --open` over a seven-repo fleet. Every stage the fleet has run, newest first and grouped by repo, with what each one spent; click a row or a bar to read the stage card that drove it. `autometta dashboard --repo <path>` gives the same page scoped to one repo, and `autometta tui <path>` is the terminal equivalent for a run in flight.
 
 ```mermaid
 flowchart LR
@@ -36,21 +36,13 @@ Git is the state store, the sandbox is the role boundary, the worker and verifie
 
 ## Why this exists
 
-Managing several agent threads across several projects is draining. Patterns like Steve Yegge's Gas Town show how multiple autonomous agents can run for long periods and produce good results, provided enough effort goes into specs, design, and verification artefacts.
+Managing several agent threads across several projects is draining. Patterns like Steve Yegge's Gas Town show how multiple autonomous agents can run for long periods and produce reasonable results, provided enough effort goes into design, and verification artefacts.
 
 The open source or commercial orchestrators are either token-heavy and API-biased, or cede control to higher-level interface surfaces. Some vendors are fussy about running their CLI inside another harness at all.
 
 Autometta is a small implementation of agent orchestration. Cron is the heartbeat that survives laptop lid close with power, as long as the machine is configured appropriately. The contract dispatches worker and verifier roles as needed and runs against whichever auth the operator already has. Cross-family verification (Sonnet checking Codex, or the reverse) catches a class of failure that same-family self-verification silently misses.
 
 Anthropic's Managed Agents (June 2026) has since shipped the hosted equivalent of the tick heartbeat and the credential injection. We keep autometta's version for cross-family verification, git-as-state with no hosted dependency, and family-agnostic dispatch on one machine. The full note is in [docs/prior-art.md](./docs/prior-art.md).
-
-
-
-## Two families, one tree
-
-This repo is designed for Claude Code and Codex CLI to work in the same tree without prejudice. State and memory that agents need across sessions lives in the repo (`memory/`, `state/`, `stage-cards/`), not in any one harness's private directory. Every agent picks up the same context.
-
-Not a framework. Not a runtime. Not a hosted service. A set of contracts, templates, and (eventually) thin shell scaffolding for running Claude Code + Codex CLI workers unattended, with cross-family verification, on a solo developer's laptop.
 
 ## Status
 
@@ -130,71 +122,28 @@ See `docs/philosophy.md` for the long-form version.
 
 ## Graph engineering
 
-Karpathy's "Delete Everything, Keep Graph" lecture names the pattern this
-repo already runs: the durable asset of an agentic loop is not the
-transcripts but the graph of what was learned. Autometta implements four of
-the playbook's five planes today: the reflective loop (tick + acceptance +
-git reset), parallel execution (pipeline pairs in worktrees), grounded
-evaluation (cross-family verifier outside the sandbox), and commit-DAG
-provenance (`Autometta-*` trailers on every landed change). The gap is the
-typed knowledge layer: `memory/` is prose with untyped links, not
-subject-predicate-object triples a verifier can fact-check against. The
-assessment, the vendor comparison, and the adoption sketch are in
-[docs/graph-engineering.md](./docs/graph-engineering.md).
+Karpathy's "Delete Everything, Keep Graph" lecture names the pattern this repo already runs: the durable asset of an agentic loop is not the transcripts but the graph of what was learned. Autometta implements four of the playbook's five planes today: the reflective loop (tick + acceptance + git reset), parallel execution (pipeline pairs in worktrees), grounded evaluation (cross-family verifier outside the sandbox), and commit-DAG provenance (`Autometta-*` trailers on every landed change). The gap is the typed knowledge layer: `memory/` is prose with untyped links, not subject-predicate-object triples a verifier can fact-check against. The assessment, the vendor comparison, and the adoption sketch are in [docs/graph-engineering.md](./docs/graph-engineering.md).
 
 ## History -> future
 
-Autometta did not start from a blank page. It packages two earlier
-projects: the fractals-from-the-90s dispatch contract (the stage card, the
-acceptance command, the headless gotchas) and the agentic-rag-kimble pass
-28-29 autonomous loop (the cron tick, the budget file, the cross-family
-verification protocol). Steve Yegge's Gas Town supplied the inspiration
-and three patterns taken verbatim (git-backed ledger, persistent agent
-identity, stall detection as a first-class state); Aider's architect/coder
-split supplied the role taxonomy. The bets were made early and on purpose:
-cron plus tick over a daemon, git as the state store, the sandbox as the
-role boundary, worker and verifier in different model families, a budget
-file as the only safety.
+Autometta did not start from a blank page. It packages two earlier projects: the fractals-from-the-90s dispatch contract (the stage card, the acceptance command, the headless gotchas) and the agentic-rag-kimble pass 28-29 autonomous loop (the cron tick, the budget file, the cross-family verification protocol). Steve Yegge's Gas Town supplied the inspiration and three patterns taken verbatim (git-backed ledger, persistent agent identity, stall detection as a first-class state); Aider's architect/coder split supplied the role taxonomy. The bets were made early and on purpose: cron plus tick over a daemon, git as the state store, the sandbox as the role boundary, worker and verifier in different model families, a budget file as the only safety.
 
 The market then moved, mostly towards the same choices.
 
-- The mid-2026 survey in [docs/prior-art.md](./docs/prior-art.md) found
-  every serious tool converging on the same shape: git as the state
-  backbone, state machine over messages, stage-card-as-brief,
-  sandbox-enforced role split, cron + tick + budget. Its own conclusion
-  was "roll your own runtime, but stop calling it novel".
-- Anthropic's Managed Agents (June 2026) shipped the hosted equivalent of
-  the tick heartbeat and the credential injection. We keep our version for
-  cross-family verification, git-as-state with no hosted dependency, and
-  family-agnostic dispatch; the postscript in prior-art.md records why.
-- Karpathy's "Delete Everything, Keep Graph" lecture named the pattern
-  this repo already runs, and also named where it lags: four of the
-  playbook's five planes are in place here, but `memory/` is prose, not
-  the typed knowledge layer a verifier can fact-check against
-  ([docs/graph-engineering.md](./docs/graph-engineering.md)).
-- Both vendors' agent SDKs turn out to run on subscription auth (confirmed
-  2026-08-31; the official Codex SDK reuses the CLI's own auth
-  resolution), which removes the billing reason to keep SDK transports
-  pinned to API mode.
+- The mid-2026 survey in [docs/prior-art.md](./docs/prior-art.md) found every serious tool converging on the same shape: git as the state backbone, state machine over messages, stage-card-as-brief, sandbox-enforced role split, cron + tick + budget. Its own conclusion was "roll your own runtime, but stop calling it novel".
+- Anthropic's Managed Agents (June 2026) shipped the hosted equivalent of the tick heartbeat and the credential injection. We keep our version for cross-family verification, git-as-state with no hosted dependency, and family-agnostic dispatch; the postscript in prior-art.md records why.
+- Karpathy's "Delete Everything, Keep Graph" lecture named the pattern this repo already runs, and also named where it lags: four of the playbook's five planes are in place here, but `memory/` is prose, not the typed knowledge layer a verifier can fact-check against ([docs/graph-engineering.md](./docs/graph-engineering.md)).
+- Both vendors' agent SDKs turn out to run on subscription auth (confirmed 2026-08-31; the official Codex SDK reuses the CLI's own auth resolution), which removes the billing reason to keep SDK transports pinned to API mode.
 
-| Date | Autometta | The market |
-| --- | --- | --- |
-| 2026-05 | Landscape survey banked; v0.1.0 tagged (dispatch contract, tick loop, unattended launchd path) | Gas Town, Aider and the consensus patterns already in circulation |
-| 2026-06 | Loop kept; the reasons recorded in prior-art.md | Anthropic Managed Agents: hosted cron and credential vaults |
-| 2026-08 | v0.2.0 operator instrumentation; graph assessment; pass 5 designed and queued | Karpathy's lecture and its playbook name the pattern; vendor SDKs confirmed on subscription auth |
 
-Where it goes next is pass 5, the fact ledger
-([stage-cards/PLAN.md](./stage-cards/PLAN.md), cards 82 to 91): a
-committed typed-fact ledger with a schema and lint, backfilled from the
-`Autometta-*` trailers that already carry the provenance, appended by the
-tick on every landing, and read by the verifier as a bounded slice before
-it judges. Alongside it, the SDK becomes the default verifier transport on
-both families, and the TUI and dashboard show token burn while it burns.
-One evaluation stays open: cloud-hosted orchestration (card 27). The
-herdr multiplexer evaluation closed on 2026-08-31 against adoption; the
-SDK transport covers the need it was probing. The
-bets from the first paragraph are unchanged; the passes since have been
-about making the loop remember what it learned.
+| Date    | Autometta                                                                                      | The market                                                                                       |
+| ------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 2026-05 | Landscape survey banked; v0.1.0 tagged (dispatch contract, tick loop, unattended launchd path) | Gas Town, Aider and the consensus patterns already in circulation                                |
+| 2026-06 | Loop kept; the reasons recorded in prior-art.md                                                | Anthropic Managed Agents: hosted cron and credential vaults                                      |
+| 2026-08 | v0.2.0 operator instrumentation; graph assessment; pass 5 designed and queued                  | Karpathy's lecture and its playbook name the pattern; vendor SDKs confirmed on subscription auth |
+
+
+Where it goes next is pass 5, the fact ledger ([stage-cards/PLAN.md](./stage-cards/PLAN.md), cards 82 to 91): a committed typed-fact ledger with a schema and lint, backfilled from the `Autometta-*` trailers that already carry the provenance, appended by the tick on every landing, and read by the verifier as a bounded slice before it judges. Alongside it, the SDK becomes the default verifier transport on both families, and the TUI and dashboard show token burn while it burns. One evaluation stays open: cloud-hosted orchestration (card 27). The herdr multiplexer evaluation closed on 2026-08-31 against adoption; the SDK transport covers the need it was probing. The bets from the first paragraph are unchanged; the passes since have been about making the loop remember what it learned.
 
 ## Layout
 
@@ -246,10 +195,7 @@ autometta/
 1. `docs/philosophy.md` - what we believe and why.
 2. `docs/dispatch-contract.md` - the load-bearing document.
 3. `docs/lessons.md` - the headless gotchas that will bite you on day one.
-4. `templates/stage-card.md` and `templates/worker-prompt.md` - copy these, fill them in.
-  For filled-in examples read this repo's own recent cards, which are the ones
-   the dashboard above is reporting on: `stage-cards/81-a-measured-table-declares-its-shelf-life.md`
-   and `stage-cards/78-the-docs-catch-up-with-the-instrumentation.md`.
+4. `templates/stage-card.md` and `templates/worker-prompt.md` - copy these, fill them in. For filled-in examples read this repo's own recent cards, which are the ones the dashboard above is reporting on: `stage-cards/81-a-measured-table-declares-its-shelf-life.md` and `stage-cards/78-the-docs-catch-up-with-the-instrumentation.md`.
 5. `docs/verification.md` - how to gate the worker's output.
 6. `docs/tick-loop.md` and `docs/setup.md` - when you want to put the dispatch contract under cron. `docs/setup.md` section 7 covers subscription, API-key and free verifier routes.
 7. `docs/deployment.md` and `docs/observability.md` - when you want to adopt it across repos and watch the loop.
@@ -300,28 +246,13 @@ autometta --version                 # should match `git rev-parse --short HEAD`
 autometta check-build               # installed-build versus checkout check
 ```
 
-Sessions started before the upgrade stay pinned to the old Cellar version
-until re-sourced or restarted; the ticker, fleet viewer and TUI warn on
-build drift. Full upgrade notes, including when `autometta init` is needed
-again, are in [docs/deployment.md](./docs/deployment.md).
+Sessions started before the upgrade stay pinned to the old Cellar version until re-sourced or restarted; the ticker, fleet viewer and TUI warn on build drift. Full upgrade notes, including when `autometta init` is needed again, are in [docs/deployment.md](./docs/deployment.md).
 
 ## Billing routes: three tiers
 
-Every dispatched worker or verifier runs on one of three tiers:
-**subscription** (OAuth session: Claude Pro / ChatGPT plan), **api** (a
-metered key, injected per dispatch), or **free** (codex-family only:
-`auth.codex.mode: local` runs Ollama weights on the same machine at zero
-marginal cost). Every launch goes through `op-fetch` (`env -i` plus an
-allowlist plus only the named refs), so subscription mode strips any stray
-`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` from the parent shell rather than
-silently flipping you to API billing. Missing tooling, an unset `OP_REF_*`,
-or an unresolved placeholder fails closed before a token is spent.
+Every dispatched worker or verifier runs on one of three tiers: **subscription** (OAuth session: Claude Pro / ChatGPT plan), **api** (a metered key, injected per dispatch), or **free** (codex-family only: `auth.codex.mode: local` runs Ollama weights on the same machine at zero marginal cost). Every launch goes through `op-fetch` (`env -i` plus an allowlist plus only the named refs), so subscription mode strips any stray `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` from the parent shell rather than silently flipping you to API billing. Missing tooling, an unset `OP_REF_`*, or an unresolved placeholder fails closed before a token is spent.
 
-The mode lives per repo in `.autometta.local.yaml` (gitignored); the real
-`op://` references live once per machine in
-`~/.config/autometta/op-refs.local.sh` (gitignored, mode 0600); the keys
-themselves live only in 1Password. Dispatch-time env overrides beat the
-manifest. Verify before dispatching:
+The mode lives per repo in `.autometta.local.yaml` (gitignored); the real `op://` references live once per machine in `~/.config/autometta/op-refs.local.sh` (gitignored, mode 0600); the keys themselves live only in 1Password. Dispatch-time env overrides beat the manifest. Verify before dispatching:
 
 ```sh
 autometta auth status         # mode + ref provenance per family
@@ -329,17 +260,9 @@ autometta auth check codex    # PASS / FAIL / subscription, no token spend
 autometta auth check claude
 ```
 
-The free local tier is measurement-backed: `docs/verifier-bake-off.md`
-retro-grades eight free candidates against ten benchmark stages and
-recommends `gpt-oss:120b` for mechanical-acceptance stages only. No free
-candidate exceeded 77% FAIL recall, so free-tier verification lowers cost on
-mechanical stages; it does not replace a frontier verifier on judgement
-calls.
+The free local tier is measurement-backed: `docs/verifier-bake-off.md` retro-grades eight free candidates against ten benchmark stages and recommends `gpt-oss:120b` for mechanical-acceptance stages only. No free candidate exceeded 77% FAIL recall, so free-tier verification lowers cost on mechanical stages; it does not replace a frontier verifier on judgement calls.
 
-Full surface, including the op-refs file layout, the sibling `CODEX_HOME`
-required for codex api mode, the cloud free tier, and the
-what-does-not-work list, is in [docs/setup.md](./docs/setup.md) section 7.
-The wrapper design follows the `auth-route-security` skill.
+Full surface, including the op-refs file layout, the sibling `CODEX_HOME` required for codex api mode, the cloud free tier, and the what-does-not-work list, is in [docs/setup.md](./docs/setup.md) section 7. The wrapper design follows the `auth-route-security` skill.
 
 ## Known limitations
 
@@ -351,20 +274,20 @@ The wrapper design follows the `auth-route-security` skill.
 ## Feature status
 
 
-| Feature                                                    | Status                       | Notes                                                                                                               |
-| ---------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Dispatch contract (pass 1)                                 | shipped                      | Self-hosted through stage 6.                                                                                        |
-| Agent observability                                        | shipped                      | Registry, heartbeat, ticker, watch primitive.                                                                       |
-| Terminal UI                                                | shipped                      | `autometta tui`: live run, history and controller-message pages over the shared dashboard data seam.                |
-| Auth routing (subscription / API / local)                  | shipped                      | `op-fetch`, fail-closed, per-family toggle.                                                                         |
-| Free verifier tier, local (codex `auth.codex.mode: local`) | shipped                      | Zero-cost Ollama route, measurement-backed default (`gpt-oss:120b`). See "Billing routes" above.                    |
-| Free verifier tier, cloud bake-off                         | experimental                 | Measured in `docs/verifier-bake-off.md`; run manually via `scripts/verifier-bake-off.sh`, not a stage-card-selectable mode yet. |
-| SDK verifier route + prompt caching                        | shipped                      | Claude family only (stages 15-16).                                                                                  |
-| Worker handoff envelope                                    | shipped                      | Sole worker completion signal (stage 17).                                                                           |
-| Autonomous loop (pass 2)                                   | shipped                      | Unattended macOS launchd path verified 2026-05-29 (gotcha 9 fix). Linux via cron.                                   |
-| OpenAI SDK verifier route                                  | planned                      | Card 28; codex parallel to the Claude route.                                                                        |
-| Per-role, per-family SDK transport matrix                  | design-only                  | Card 28; orchestrator portion gated on card 23.                                                                     |
-| Cloud-hosted orchestration                                 | planned                      | Card 27; future phase.                                                                                              |
+| Feature                                                    | Status       | Notes                                                                                                                           |
+| ---------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Dispatch contract (pass 1)                                 | shipped      | Self-hosted through stage 6.                                                                                                    |
+| Agent observability                                        | shipped      | Registry, heartbeat, ticker, watch primitive.                                                                                   |
+| Terminal UI                                                | shipped      | `autometta tui`: live run, history and controller-message pages over the shared dashboard data seam.                            |
+| Auth routing (subscription / API / local)                  | shipped      | `op-fetch`, fail-closed, per-family toggle.                                                                                     |
+| Free verifier tier, local (codex `auth.codex.mode: local`) | shipped      | Zero-cost Ollama route, measurement-backed default (`gpt-oss:120b`). See "Billing routes" above.                                |
+| Free verifier tier, cloud bake-off                         | experimental | Measured in `docs/verifier-bake-off.md`; run manually via `scripts/verifier-bake-off.sh`, not a stage-card-selectable mode yet. |
+| SDK verifier route + prompt caching                        | shipped      | Claude family only (stages 15-16).                                                                                              |
+| Worker handoff envelope                                    | shipped      | Sole worker completion signal (stage 17).                                                                                       |
+| Autonomous loop (pass 2)                                   | shipped      | Unattended macOS launchd path verified 2026-05-29 (gotcha 9 fix). Linux via cron.                                               |
+| OpenAI SDK verifier route                                  | planned      | Card 28; codex parallel to the Claude route.                                                                                    |
+| Per-role, per-family SDK transport matrix                  | design-only  | Card 28; orchestrator portion gated on card 23.                                                                                 |
+| Cloud-hosted orchestration                                 | planned      | Card 27; future phase.                                                                                                          |
 
 
 
