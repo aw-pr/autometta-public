@@ -209,25 +209,32 @@ which is severity first, then dependency.
 ## Pass 5 - the fact ledger (graph engineering), designed 2026-08-31
 
 `docs/graph-engineering.md` is the brief: the commit DAG records what changed,
-nothing records what is true. Four cards, strictly gated, all serial (82 is a
-contract, 84 touches `tick.sh`, and the batch shares `memory/facts.jsonl`).
-Worker families alternate Claude/Codex/Claude/Codex per the pairing rule.
+nothing records what is true. The ledger cards are a strict data chain
+(83 needs 82's schema landed, 84 needs 83's ledger, 84 touches `tick.sh`),
+so the chain itself runs serial. Card 86 (the UAT runbook ask) is the
+independent work that gives the batch a pipeline pair: disjoint path claims
+against 82 and an alternating worker family, so worker 86 may overlap
+verifier 82.
+
+Queue order: 82, 86, 83, 84, 85.
 
 | # | Stage | Status | Card |
 |---|---|---|---|
-| 82 | Fact ledger schema, lint, contract doc | designed, not queued | [`82-a-fact-has-a-shape-before-anything-records-one.md`](./82-a-fact-has-a-shape-before-anything-records-one.md) |
-| 83 | Backfill the ledger from `Autometta-*` trailers | designed, not queued - gated on 82 | [`83-the-trailers-already-knew-the-facts.md`](./83-the-trailers-already-knew-the-facts.md) |
-| 84 | Tick appends facts at landing, never blocking one | designed, not queued - gated on 83 | [`84-a-landing-leaves-a-fact-behind.md`](./84-a-landing-leaves-a-fact-behind.md) |
-| 85 | Bounded fact slice in the verifier prompt | designed, not queued - gated on 84 | [`85-the-verifier-reads-the-ledger-first.md`](./85-the-verifier-reads-the-ledger-first.md) |
+| 82 | Fact ledger schema, lint, contract doc | queued 2026-08-31 | [`82-a-fact-has-a-shape-before-anything-records-one.md`](./82-a-fact-has-a-shape-before-anything-records-one.md) |
+| 86 | Operator runbook (cold start + daily drive) | queued 2026-08-31 - pipeline partner for 82 | [`86-a-runbook-a-stranger-can-drive.md`](./86-a-runbook-a-stranger-can-drive.md) |
+| 83 | Backfill the ledger from `Autometta-*` trailers | queued 2026-08-31 - gated on 82 | [`83-the-trailers-already-knew-the-facts.md`](./83-the-trailers-already-knew-the-facts.md) |
+| 84 | Tick appends facts at landing, never blocking one | queued 2026-08-31 - gated on 83 | [`84-a-landing-leaves-a-fact-behind.md`](./84-a-landing-leaves-a-fact-behind.md) |
+| 85 | Bounded fact slice in the verifier prompt | queued 2026-08-31 - gated on 84 | [`85-the-verifier-reads-the-ledger-first.md`](./85-the-verifier-reads-the-ledger-first.md) |
 
 ### Operator notes (pass 5)
 
 - Spend plan from `state/cost-log.jsonl` (2026-08-31): worker median $2.98
-  (p95 $25.26), verifier median $1.70 (p95 $5.33). Four stages estimate ~$19
-  at the median; size the drain at ~$45 to cover one outlier.
-- **Not queued deliberately.** The current budget window shows 245M of 300M
-  tokens spent; queue with `add-stage.sh` in card order (82, 83, 84, 85) when
-  the window resets. Gates hold the order regardless.
+  (p95 $25.26), verifier median $1.70 (p95 $5.33). Five stages estimate ~$24
+  at the median; size the drain at ~$50 to cover one outlier.
+- **Headroom caveat for the pipeline pair:** worker token p95 is ~24.9M, so
+  the two-p95 overlap check needs ~50M of headroom, and the 2026-08-31 window
+  has ~55M left. If the check refuses, the pair degrades to serial by design;
+  a fresh window makes the overlap comfortable.
 - Cards 84 and 85 modify load-bearing dispatch surfaces (`tick.sh`,
   `spawn-verifier.sh`). Both carry the fail-open/never-block-a-landing rule
   as an acceptance criterion with forced-failure evidence, not prose.
