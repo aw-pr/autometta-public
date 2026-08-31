@@ -322,7 +322,11 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
         phase:(if (.status // "pending") == "in_progress"
                then (if (.verifier_pid // null) != null then "verifying"
                      elif (.worker_pid // null) != null then "working"
-                     else "in_progress" end)
+                     # In progress with no live pid: one half finished and
+                     # the loop has not dispatched the other (idle gap, or a
+                     # provider pause). Plain "in_progress" here read as the
+                     # phase split not working (UAT 2026-08-31).
+                     else "waiting" end)
                else (.status // "pending") end),
         worker:(.worker // null), verifier:(.verifier // null),
         started_at:(.started_at // null), completed_at:(.completed_at // null), tokens:(.tokens // 0),
