@@ -190,8 +190,9 @@ committed typed-fact ledger with a schema and lint, backfilled from the
 tick on every landing, and read by the verifier as a bounded slice before
 it judges. Alongside it, the SDK becomes the default verifier transport on
 both families, and the TUI and dashboard show token burn while it burns.
-Two evaluations stay open: herdr as an agent-aware terminal multiplexer
-(card 87's evidence spike) and cloud-hosted orchestration (card 27). The
+One evaluation stays open: cloud-hosted orchestration (card 27). The
+herdr multiplexer evaluation closed on 2026-08-31 against adoption; the
+SDK transport covers the need it was probing. The
 bets from the first paragraph are unchanged; the passes since have been
 about making the loop remember what it learned.
 

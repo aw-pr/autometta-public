@@ -108,8 +108,7 @@ Do not read anything else unless you need to; keep your context lean.
 ## Out of scope
 
 - Pushing prompts into a running agent's process or pane: delivery is the
-  controller's pull, full stop. (If herdr is ever adopted, that is a
-  different card.)
+  controller's pull, full stop.
 - Any change to the controller's inbox-reading logic or cadence.
 - Authentication beyond the loopback bind.
 - The TUI (already has this per card 71).

@@ -226,7 +226,7 @@ Queue order: 82, 86, 83, 84, 85.
 | 84 | Tick appends facts at landing, never blocking one | queued 2026-08-31 - gated on 83 | [`84-a-landing-leaves-a-fact-behind.md`](./84-a-landing-leaves-a-fact-behind.md) |
 | 85 | Bounded fact slice in the verifier prompt | queued 2026-08-31 - gated on 84 | [`85-the-verifier-reads-the-ledger-first.md`](./85-the-verifier-reads-the-ledger-first.md) |
 | 88 | Machine-dependency inventory (UAT ask) | queued 2026-08-31 - pipeline tail for 85 | [`88-the-machine-dependencies-are-declared.md`](./88-the-machine-dependencies-are-declared.md) |
-| 87 | herdr evidence spike (authored by the herdr session) | queued 2026-08-31 - pipeline tail for 88 | [`87-the-multiplexer-knows-what-its-panes-are-doing.md`](./87-the-multiplexer-knows-what-its-panes-are-doing.md) |
+| 87 | herdr evidence spike (authored by the herdr session) | landed 2026-08-31, then retired 2026-08-31 - operator decided against herdr; the SDK transport covers it, card and spike doc removed | - |
 | 89 | SDK verifier on the subscription OAuth token | queued 2026-08-31 - gated on 85 | [`89-the-sdk-verifier-runs-on-the-subscription.md`](./89-the-sdk-verifier-runs-on-the-subscription.md) |
 | 28 | OpenAI SDK verifier route + transport matrix (refreshed) | queued 2026-08-31 - gated on 89 | [`28-per-role-family-sdk-transport.md`](./28-per-role-family-sdk-transport.md) |
 | 90 | SDK is the default verifier transport | queued 2026-08-31 - gated on 28 | [`90-the-verifier-reaches-for-the-sdk-first.md`](./90-the-verifier-reaches-for-the-sdk-first.md) |
