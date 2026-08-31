@@ -766,6 +766,25 @@ def agent_lines(state):
             identity_alias(stage.get("verifier")),
         )
         lines.append(content_line(text, [(0, len(text), DIM)]))
+    # A stage can be mid-flight with no process alive: one half has finished
+    # and the loop has not dispatched the other yet, or the repo is paused
+    # waiting out a provider window. "no live agents" was truthful but read
+    # as broken while a card was visibly in progress (UAT 2026-08-31).
+    if not agents:
+        for stage in current_run_stages(state.payload):
+            if stage.get("status") != "in_progress":
+                continue
+            paused_until = state.payload.get("paused_until")
+            if paused_until:
+                when = time.strftime("%H:%M", time.localtime(int(paused_until)))
+                reason = state.payload.get("paused_reason") or ""
+                cause = "rate limit" if ("429" in reason or "RateLimit" in reason) else "provider pause"
+                text = "◌ %s waiting  next dispatch %s (%s)" % (
+                    stage.get("id") or "?", when, cause)
+            else:
+                text = "◌ %s between dispatches  next tick resumes it" % (
+                    stage.get("id") or "?")
+            lines.append(content_line(text, [(0, len(text), DIM)]))
     return lines or [content_line("no live agents", [(0, 14, DIM)])]
 
 
