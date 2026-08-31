@@ -142,6 +142,59 @@ subject-predicate-object triples a verifier can fact-check against. The
 assessment, the vendor comparison, and the adoption sketch are in
 [docs/graph-engineering.md](./docs/graph-engineering.md).
 
+## History -> future
+
+Autometta did not start from a blank page. It packages two earlier
+projects: the fractals-from-the-90s dispatch contract (the stage card, the
+acceptance command, the headless gotchas) and the agentic-rag-kimble pass
+28-29 autonomous loop (the cron tick, the budget file, the cross-family
+verification protocol). Steve Yegge's Gas Town supplied the inspiration
+and three patterns taken verbatim (git-backed ledger, persistent agent
+identity, stall detection as a first-class state); Aider's architect/coder
+split supplied the role taxonomy. The bets were made early and on purpose:
+cron plus tick over a daemon, git as the state store, the sandbox as the
+role boundary, worker and verifier in different model families, a budget
+file as the only safety.
+
+The market then moved, mostly towards the same choices.
+
+- The mid-2026 survey in [docs/prior-art.md](./docs/prior-art.md) found
+  every serious tool converging on the same shape: git as the state
+  backbone, state machine over messages, stage-card-as-brief,
+  sandbox-enforced role split, cron + tick + budget. Its own conclusion
+  was "roll your own runtime, but stop calling it novel".
+- Anthropic's Managed Agents (June 2026) shipped the hosted equivalent of
+  the tick heartbeat and the credential injection. We keep our version for
+  cross-family verification, git-as-state with no hosted dependency, and
+  family-agnostic dispatch; the postscript in prior-art.md records why.
+- Karpathy's "Delete Everything, Keep Graph" lecture named the pattern
+  this repo already runs, and also named where it lags: four of the
+  playbook's five planes are in place here, but `memory/` is prose, not
+  the typed knowledge layer a verifier can fact-check against
+  ([docs/graph-engineering.md](./docs/graph-engineering.md)).
+- Both vendors' agent SDKs turn out to run on subscription auth (confirmed
+  2026-08-31; the official Codex SDK reuses the CLI's own auth
+  resolution), which removes the billing reason to keep SDK transports
+  pinned to API mode.
+
+| Date | Autometta | The market |
+| --- | --- | --- |
+| 2026-05 | Landscape survey banked; v0.1.0 tagged (dispatch contract, tick loop, unattended launchd path) | Gas Town, Aider and the consensus patterns already in circulation |
+| 2026-06 | Loop kept; the reasons recorded in prior-art.md | Anthropic Managed Agents: hosted cron and credential vaults |
+| 2026-08 | v0.2.0 operator instrumentation; graph assessment; pass 5 designed and queued | Karpathy's lecture and its playbook name the pattern; vendor SDKs confirmed on subscription auth |
+
+Where it goes next is pass 5, the fact ledger
+([stage-cards/PLAN.md](./stage-cards/PLAN.md), cards 82 to 91): a
+committed typed-fact ledger with a schema and lint, backfilled from the
+`Autometta-*` trailers that already carry the provenance, appended by the
+tick on every landing, and read by the verifier as a bounded slice before
+it judges. Alongside it, the SDK becomes the default verifier transport on
+both families, and the TUI and dashboard show token burn while it burns.
+Two evaluations stay open: herdr as an agent-aware terminal multiplexer
+(card 87's evidence spike) and cloud-hosted orchestration (card 27). The
+bets from the first paragraph are unchanged; the passes since have been
+about making the loop remember what it learned.
+
 ## Layout
 
 ```
