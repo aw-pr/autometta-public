@@ -89,3 +89,31 @@ Worker implements the OpenAI verifier route and the generalised transport branch
 
 - **Codex (worker):** stdin redirect for any subprocess. The OpenAI SDK verifier needs `OPENAI_API_KEY` injected via the existing `op-fetch` route; do not read keys from any other source.
 - **Claude (verifier):** the verifier does not need to run either SDK route end to end; it reads the code, the manifest docs, and one smoke artefact if present. This is a deliberate cost guard, matching card 23.
+
+## Re-brief (2026-08-31, after attempt 1 verifier FAIL)
+
+Attempt 1 (`wip/28-per-role-family-sdk-transport-attempt-1`, commit
+b7c7c56fd3161d0e98f0b48ae6af1f189cd684cc) passed seven of eight acceptance
+criteria. Criterion 3 failed on one clause, "dispatches": the codex SDK
+branch forwards `AUTOMETTA_EFFORT_ARGV` verbatim, and
+`effort_flags_for_family` emits the codex CLI form
+(`-c model_reasoning_effort=<level>`) for that family, which
+`verify-sdk-openai.py`'s argument parser rejects (`unrecognized arguments`,
+exit 2). The child dies before any verification runs, burns a verifier
+attempt against `verifier_attempt_cap`, and 63 of the 97 cards in
+`stage-cards/` declare a `Verifier effort`, so the majority case of this
+route never runs (verifier finding,
+`state/verifiers/28-per-role-family-sdk-transport.json`, criterion 3).
+
+Resolution: **restore the tree preserved on
+`wip/28-per-role-family-sdk-transport-attempt-1` and apply one narrow
+fix.** When the codex family dispatches over the SDK transport, effort must
+reach `verify-sdk-openai.py` as the `--effort <level>` option it already
+defines, never as the codex CLI form. Do not fix it by dropping the effort
+argv: a declared effort that is silently inert on one route is the failure
+mode card 34 and `docs/lessons.md` gotcha 12 exist to prevent. Restore the
+preserved tree, not the preserved commit; everything else in attempt 1 was
+judged sound, so reproduce its behaviour unchanged. Attempt 2's smoke of
+the codex SDK route must be run with a declared `Verifier effort` in play,
+so the corrected path is the path exercised. All other constraints and
+criteria stand unchanged.
