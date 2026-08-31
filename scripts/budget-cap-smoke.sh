@@ -307,6 +307,96 @@ check "budget_spend_caps_blown sees the Codex-only token breach" \
 rm -rf "$codex_cap_dir"
 
 # ---------------------------------------------------------------------------
+printf '== 8. a completed worker is not stalled while verification is pending ==\n' >&2
+
+# Source the tick's functions without running its controller loop. The small
+# overrides below isolate the stall and verifier-dispatch path from auth,
+# quotas and worktree creation; the fixture still exercises one real tick,
+# including its state transition and tick log.
+source "$script_dir/tick.sh"
+
+ensure_yq_or_halt() { return 0; }
+quota_write_repo_state() { :; }
+budget_ensure_window() { :; }
+budget_pause_active() { return 1; }
+budget_check_caps() { return 0; }
+budget_increment_tick() { :; }
+commit_state_branch() { :; }
+guard_run_worktree_state_before_dispatch() { return 0; }
+quota_gate_role_dispatch() { return 0; }
+budget_gate_dispatch() { return 0; }
+spawn_verifier_for_stage() { touch "$2/state/verifier-dispatched"; }
+
+returned_dir="$(mktemp -d)"
+mkdir -p "$returned_dir/state/handoffs" "$returned_dir/stage-cards"
+new_budget "$returned_dir"
+returned_started="$(python3 - <<'PY'
+import datetime
+
+print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=120)).strftime('%Y-%m-%dT%H:%M:%SZ'))
+PY
+)"
+printf '%s\n' \
+  '# returned worker fixture' \
+  '## Budget' \
+  '- **Worker wall-clock:** 60s' \
+  > "$returned_dir/stage-cards/97-returned-worker.md"
+cat > "$returned_dir/state/state.yaml" <<EOF
+current_stage: 97-returned-worker
+stages:
+  - id: 97-returned-worker
+    status: in_progress
+    started_at: '$returned_started'
+    worker_pid: null
+    verifier_pid: null
+    worker: Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+    verifier: Claude Opus 5 <claude-opus-5@local>
+EOF
+cat > "$returned_dir/state/handoffs/97-returned-worker.json" <<'EOF'
+{
+  "stage_id": "97-returned-worker",
+  "status": "pass",
+  "deliverables": ["scripts/tick.sh"],
+  "notes": "Worker completed the fixture.",
+  "worker_identity": "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>"
+}
+EOF
+
+_process_repo_locked "$returned_dir" >/dev/null 2>&1
+returned_status="$(yq -r '.stages[] | select(.id == "97-returned-worker") | .status' "$returned_dir/state/state.yaml")"
+returned_log="$PHAT_CONTROLLER_HOME/log/tick-$(date +%F).log"
+check "returned PASS worker is not stalled after twice its budget" "$(eq in_progress "$returned_status")"
+check "returned PASS worker proceeds to verifier dispatch" \
+  "$( [[ -f "$returned_dir/state/verifier-dispatched" ]] && printf 'ok\n' || printf 'no\n' )"
+check "tick log records the completed-worker exemption" \
+  "$(rg -q '97-returned-worker has a completed worker envelope' "$returned_log" && printf 'ok\n' || printf 'no\n')"
+rm -rf "$returned_dir"
+
+# ---------------------------------------------------------------------------
+printf '== 9. a recorded pause is excluded from the stall clock ==\n' >&2
+
+pause_dir="$(mktemp -d)"
+new_budget "$pause_dir"
+record_pause_window "$pause_dir" 1700000100 1700002000 'provider limit'
+
+IFS=$'\t' read -r paused_elapsed paused_seconds < <(
+  stage_stall_elapsed_seconds "$pause_dir" 1700000000 1700002200
+)
+jq 'del(.pause_windows)' "$pause_dir/state/budget.json" > "$pause_dir/b" \
+  && mv "$pause_dir/b" "$pause_dir/state/budget.json"
+IFS=$'\t' read -r unpaused_elapsed ignored_paused_seconds < <(
+  stage_stall_elapsed_seconds "$pause_dir" 1700000000 1700002200
+)
+
+check "pause overlap is subtracted from elapsed worker time" "$(eq 300 "$paused_elapsed")"
+check "pause ledger records the excluded interval" "$(eq 1900 "$paused_seconds")"
+check "paused fixture survives a 900-second worker-plus-grace threshold" \
+  "$( (( paused_elapsed <= 900 )) && printf 'ok\n' || printf 'no: %s\n' "$paused_elapsed" )"
+check "the same fixture without its pause record still stalls" \
+  "$( (( unpaused_elapsed > 900 )) && printf 'ok\n' || printf 'no: %s\n' "$unpaused_elapsed" )"
+rm -rf "$pause_dir"
+
+# ---------------------------------------------------------------------------
 if (( fail )); then
   printf '\nbudget-cap-smoke: FAIL\n' >&2
   exit 1
