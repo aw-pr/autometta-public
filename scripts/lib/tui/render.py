@@ -728,8 +728,21 @@ def agent_lines(state):
         scope = agent.get("stage_id") or "?"
         if role == "controller" and scope in ("-", "?", ""):
             scope = "queue"
-        text = "● %s %s  %s  %s / %s" % (scope, role, alias, elapsed, budget)
+        live_usage = agent.get("live_usage")
+        if isinstance(live_usage, dict):
+            live_tokens = (int(live_usage.get("input_tokens") or 0)
+                           + int(live_usage.get("output_tokens") or 0))
+            burn = "LIVE %s%s" % (
+                short_tokens(live_tokens),
+                " stale" if not live_usage.get("updated_at") else "",
+            )
+        else:
+            burn = "n/a"
+        text = "● %s %s  %s  %s  %s / %s" % (scope, role, alias, burn, elapsed, budget)
         spans = [(0, 1, ACTIVE)]
+        burn_start = text.find(burn)
+        if burn_start >= 0 and burn != "n/a":
+            spans.append((burn_start, burn_start + len(burn), ACTIVE))
         if state.focus == 3 and state.selection[3] == index:
             spans.insert(0, (0, len(text), REVERSE))
         lines.append(content_line(text, spans))
@@ -820,6 +833,16 @@ def detail_lines(state, inner_width, inner_height=None):
     elapsed = agent.get("elapsed_seconds") or 0
     budget = agent.get("budget_seconds") or 0
     budget_pct = int(elapsed * 100 / budget) if budget else 0
+    live_usage = agent.get("live_usage")
+    if isinstance(live_usage, dict):
+        live_input = int(live_usage.get("input_tokens") or 0)
+        live_output = int(live_usage.get("output_tokens") or 0)
+        live_text = "LIVE in %s out %s%s" % (
+            short_tokens(live_input), short_tokens(live_output),
+            " stale" if not live_usage.get("updated_at") else "",
+        )
+    else:
+        live_text = "n/a"
     spark, rate = sparkline_and_rate(state, stage.get("id"))
     lines = [
         content_line("%s %s  %s" % (glyph, stage.get("id"), status), [(0, 1, ACTIVE if glyph == "▶" else NORMAL)]),
@@ -843,6 +866,8 @@ def detail_lines(state, inner_width, inner_height=None):
         content_line("tokens  in %s  cached %s  out %s  $%.2f" % (
             short_tokens(usage.get("input_tokens", 0)), short_tokens(usage.get("cached_input_tokens", 0)),
             short_tokens(usage.get("output_tokens", 0)), usage.get("cost_usd_est", 0) or 0)),
+        content_line("live      %s" % live_text,
+                     [(10, 10 + len(live_text), ACTIVE)] if live_text != "n/a" else [(10, 13, DIM)]),
         content_line("%s  burn last 8 polls (%s/min)" % (spark, short_tokens(rate))),
     ])
     lines = wrap_content_lines(lines, inner_width)
