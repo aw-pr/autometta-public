@@ -2,7 +2,7 @@
 
 `scripts/verify-sdk.py` is an opt-in entrypoint for running a verifier through the Claude Agent SDK. It reads a stage card, expands a worker artefact glob, renders `templates/verifier-prompt.md`, asks the SDK for structured JSON, validates it against `schemas/verifier.json`, and writes the verifier artefact to the path supplied by `--out`.
 
-Direct use of `scripts/verify-sdk.py` does not read 1Password, choose an auth route, register heartbeat state, or provide fallback behaviour to `claude -p`. The caller must install `scripts/requirements-sdk.txt` once and inject `ANTHROPIC_API_KEY` through `op-fetch`. Production dispatch goes through `scripts/spawn-verifier.sh`, which owns auth-route selection, fallback, and registration.
+Direct use of `scripts/verify-sdk.py` does not read 1Password, choose an auth route, register heartbeat state, or provide fallback behaviour to `claude -p`. The caller must install `scripts/requirements-sdk.txt` once and inject one credential through `op-fetch`: `ANTHROPIC_API_KEY` on the api route, or `CLAUDE_CODE_OAUTH_TOKEN` on the subscription route. Production dispatch goes through `scripts/spawn-verifier.sh`, which owns auth-route selection, fallback, and registration.
 
 Manual smoke test:
 
@@ -24,7 +24,7 @@ Exit codes:
 
 - `0`: SDK returned `overall: "PASS"` and the JSON artefact was written.
 - `1`: SDK returned `overall: "FAIL"` or the returned JSON was malformed.
-- `2`: environment error, including missing `ANTHROPIC_API_KEY`, missing `claude-agent-sdk`, missing card, or missing verifier prompt template.
+- `2`: environment error, including neither `ANTHROPIC_API_KEY` nor `CLAUDE_CODE_OAUTH_TOKEN` being set, missing `claude-agent-sdk`, missing card, or missing verifier prompt template.
 - `3`: SDK returned JSON that failed `schemas/verifier.json`; an invalid report is written to `<out>.invalid.json`.
 
 The output envelope intentionally matches the existing verifier artefact shape:
@@ -94,7 +94,7 @@ In the repo's `.autometta.local.yaml`:
 ```yaml
 auth:
   claude:
-    mode: api          # required; SDK route needs ANTHROPIC_API_KEY
+    mode: subscription # or api; both routes reach the SDK
 verifier:
   claude:
     transport: sdk
@@ -114,7 +114,9 @@ advisor consults over the same cached prefix, so its input is cached. Design:
 
 Resolution order (most specific wins): `AUTOMETTA_CLAUDE_ADVISOR` env var, then
 `verifier.claude.advisor` in `.autometta.local.yaml`, then off. The advisor sits
-under the `sdk` branch only and inherits its `auth.claude.mode: api` gate.
+under the `sdk` branch only and carries its own `auth.claude.mode: api` gate:
+the advisor tool is an API feature, so an advisor requested on the subscription
+route fails closed rather than being dropped.
 
 ```yaml
 verifier:
@@ -137,12 +139,16 @@ artefacts contain personal data.
 
 | Condition | Outcome |
 |---|---|
-| `transport: sdk` + `auth.claude.mode: subscription` | Exits non-zero before spawning any process. Message names both flags. |
+| `transport: sdk` + `auth.claude.mode: subscription` + resolvable `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` | Dispatches, with `CLAUDE_CODE_OAUTH_TOKEN` as the only credential in the child env. |
+| `transport: sdk` + `auth.claude.mode: subscription` + `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` unset or still a `YOUR_VAULT` placeholder | Exits non-zero before spawning any process. Message names the ref and `claude setup-token`. |
+| `transport: sdk` + `auth.claude.mode: api` + `OP_REF_ANTHROPIC_API_KEY` unresolved | Exits non-zero before spawning any process. Message names the ref. |
+| `transport: sdk` + `auth.claude.mode: local` | Refused by `auth-route.sh`: the local route is codex-family only. |
 | `transport` value other than `cli` or `sdk` | Exits non-zero before spawning any process. |
 | `transport: sdk` + `scripts/verify-sdk.py` missing | Logs a warning and falls back to `cli`. |
 | `transport: sdk` + SDK package missing | `verify-sdk.py` exits `2`; logged to the stage log. |
 | `transport: sdk` + declared `Verifier effort` | Passes the level through `output_config.effort`; it is not discarded. |
 | `advisor` weaker than `--model` (inverted #66714 pair) | `verify-sdk.py` exits `2` before any API call, naming both models. |
+| `advisor` set + `auth.claude.mode` other than `api` | Exits non-zero before spawning any process. The advisor is an API-only feature. |
 
 ### Artefact glob derivation
 
@@ -154,7 +160,28 @@ The SDK route registers the spawned process via `scripts/register-agent.sh` with
 
 ### Env injection contract
 
-The SDK route goes through `op-fetch` with the same `ANTHROPIC_API_KEY=$OP_REF_ANTHROPIC_API_KEY` pair as other api-mode dispatches. The sanitised env strips any inherited key from the parent shell; only the 1Password-resolved value is injected. Subscription mode cannot reach the SDK route; it fails closed before `op-fetch` is invoked.
+The SDK route goes through `op-fetch` with whichever single pair `scripts/auth-route.sh claude --role verifier` emits: `ANTHROPIC_API_KEY=$OP_REF_ANTHROPIC_API_KEY` in api mode, `CLAUDE_CODE_OAUTH_TOKEN=$OP_REF_CLAUDE_CODE_OAUTH_TOKEN` in subscription mode. Each route names only its own ref, so the credential the other route would use is structurally absent from the child env rather than merely unused. The sanitised env also strips any inherited key from the parent shell; only the 1Password-resolved value is injected.
+
+One line on stderr records which route was taken, naming the mode and the credential's variable name (never the reference or the secret):
+
+```
+verifier-transport: sdk auth-route=subscription credential=CLAUDE_CODE_OAUTH_TOKEN
+verifier-transport: sdk auth-route=api credential=ANTHROPIC_API_KEY
+```
+
+### Subscription auth
+
+The Agent SDK runs the Claude Code harness, which authenticates with an OAuth token rather than an API key. The operator mints that token once, by hand:
+
+```sh
+claude setup-token
+```
+
+Store the result in 1Password and point `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` at it in `~/.config/autometta/op-refs.local.sh`. `op-refs.sh` has reserved that variable since the CLI route needed it; the SDK route reuses the same item. Nothing in the repo mints, reads, or logs the token: `auth-route.sh` emits the `op://` reference, `op-fetch` resolves it at exec time, and it exists only in the child env.
+
+`verify-sdk.py` sends the token as a bearer credential with the `anthropic-beta: oauth-2025-04-20` header the Claude Code entitlement requires. When the ref is unset or still a `YOUR_VAULT` placeholder, `spawn-verifier.sh` exits before spawning anything; it never falls back to `ANTHROPIC_API_KEY` or to the `cli` transport, because a silent fallback is how billing goes wrong invisibly.
+
+The api-only requirement this replaced was a leftover from before Anthropic supported subscription auth in the Agent SDK, not a limit of the SDK. No doc in this repo should steer the SDK route back to API keys on those grounds. The one thing that genuinely stays api-only is the Fable-as-advisor option, whose advisor tool is an API feature; requesting an advisor on the subscription route fails closed.
 
 ## Prompt caching
 

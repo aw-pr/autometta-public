@@ -431,11 +431,44 @@ main() {
       fi
       ;;
     claude)
-      # Fail closed: sdk transport requires api mode (ANTHROPIC_API_KEY must be in auth_pairs).
-      if [[ "$claude_transport" == "sdk" && "$auth_pairs" != *ANTHROPIC_API_KEY* ]]; then
-        log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk requires auth.claude.mode=api"
-        log_msg "  set auth.claude.mode: api in .autometta.local.yaml or export AUTOMETTA_CLAUDE_MODE=api"
-        exit 1
+      # Fail closed on a route the sdk transport cannot authenticate. Mode
+      # resolution is duplicated inside this guard rather than hoisted above
+      # the transport branch: between entering this case and taking the cli
+      # arm, execution must traverse nothing it did not traverse before, so
+      # the cli dispatch can never abort on a resolver call it does not need.
+      if [[ "$claude_transport" == "sdk" ]]; then
+        local claude_mode
+        if ! claude_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" claude --print-mode --role verifier)"; then
+          log_msg "auth-route mode resolution failed for family=claude"
+          exit 1
+        fi
+        case "$claude_mode" in
+          api)
+            if [[ "$auth_pairs" != *ANTHROPIC_API_KEY* ]]; then
+              log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk with auth.claude.mode=api requires ANTHROPIC_API_KEY in the route"
+              log_msg "  set OP_REF_ANTHROPIC_API_KEY in ~/.config/autometta/op-refs.local.sh"
+              exit 1
+            fi
+            ;;
+          subscription)
+            # The Agent SDK runs the Claude Code harness, which authenticates
+            # with the OAuth token `claude setup-token` mints once. auth-route.sh
+            # emits the pair only when OP_REF_CLAUDE_CODE_OAUTH_TOKEN is set and
+            # is not the YOUR_VAULT placeholder, so an absent pair here is an
+            # unusable subscription route and never a silent ANTHROPIC_API_KEY
+            # or cli fallback.
+            if [[ "$auth_pairs" != *CLAUDE_CODE_OAUTH_TOKEN* ]]; then
+              log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk with auth.claude.mode=subscription requires OP_REF_CLAUDE_CODE_OAUTH_TOKEN, which is unset or still the YOUR_VAULT placeholder"
+              log_msg "  mint the token once with: claude setup-token"
+              log_msg "  store it in 1Password, then point OP_REF_CLAUDE_CODE_OAUTH_TOKEN at it in ~/.config/autometta/op-refs.local.sh"
+              exit 1
+            fi
+            ;;
+          *)
+            log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk does not support auth.claude.mode=${claude_mode}"
+            exit 1
+            ;;
+        esac
       fi
 
       # Fall back to cli if verify-sdk.py is missing.
@@ -453,7 +486,16 @@ main() {
         artefact_glob="$(derive_artefact_glob "$card_path")"
         sdk_out="$repo_root/$artefact_path"
         claude_advisor="$(resolve_claude_advisor "$repo_root")"
+        # Route evidence: names the resolved mode and the single credential
+        # op-fetch will place in the child env. auth_pairs is NAME=op://ref;
+        # only the NAME is logged, never the reference or the secret.
+        log_msg "verifier-transport: sdk auth-route=${claude_mode} credential=${auth_pairs%%=*}"
         advisor_arg=()
+        if [[ -n "$claude_advisor" && "$claude_mode" != "api" ]]; then
+          log_msg "verifier-advisor: fail-closed; the advisor is an API-only feature and cannot run on auth.claude.mode=${claude_mode}"
+          log_msg "  set auth.claude.mode: api, or drop verifier.claude.advisor from .autometta.local.yaml"
+          exit 1
+        fi
         if [[ -n "$claude_advisor" ]]; then
           advisor_arg=(--advisor "$claude_advisor")
           log_msg "verifier-advisor: ${claude_advisor} (Fable-as-advisor; request model does the reading)"

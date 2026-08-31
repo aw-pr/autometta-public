@@ -159,6 +159,41 @@ def load_jsonschema() -> Any:
     return Draft202012Validator
 
 
+# The two credentials a verifier route can carry. api mode injects
+# ANTHROPIC_API_KEY; subscription mode injects the OAuth token `claude
+# setup-token` mints, which the Agent SDK's Claude Code entitlement is gated
+# behind. spawn-verifier.sh names exactly one of them per route, so only one is
+# ever present in this process's env.
+OAUTH_BETA_HEADER = "oauth-2025-04-20"
+
+
+def resolve_auth() -> tuple[str, str] | None:
+    """Return ``(kind, credential)`` for the client, or ``None`` if neither is set.
+
+    ``kind`` is ``"api_key"`` for ANTHROPIC_API_KEY or ``"auth_token"`` for
+    CLAUDE_CODE_OAUTH_TOKEN. The api key wins when both are somehow present so
+    that a repo on the metered route keeps the credential it asked for.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        return "api_key", api_key
+    oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if oauth_token:
+        return "auth_token", oauth_token
+    return None
+
+
+def build_client(Anthropic: Any, auth_kind: str, credential: str) -> Any:
+    """Construct the Anthropic client for whichever credential the route carried."""
+    if auth_kind == "auth_token":
+        return Anthropic(
+            api_key=None,
+            auth_token=credential,
+            default_headers={"anthropic-beta": OAUTH_BETA_HEADER},
+        )
+    return Anthropic(api_key=credential)
+
+
 def load_anthropic() -> Any:
     try:
         from anthropic import Anthropic
@@ -299,7 +334,8 @@ def _extract_json(text: str) -> Any:
 def run_sdk(
     static_block: str,
     variable_block: str,
-    api_key: str,
+    auth_kind: str,
+    credential: str,
     Anthropic: Any,
     validator: Any,
     model: str = MODEL,
@@ -313,7 +349,7 @@ def run_sdk(
     advisor is consulted only at the decision point to finalise the envelope.
     The advisor consults over the same cached prefix, so its input is cached.
     """
-    client = Anthropic(api_key=api_key)
+    client = build_client(Anthropic, auth_kind, credential)
     create_kwargs: dict[str, Any] = {
         "model": model,
         "max_tokens": MAX_TOKENS,
@@ -373,8 +409,8 @@ def main() -> int:
 
     # Enforce the #66714 precondition first, before any import or API call: the
     # advisor must not be weaker than the request model. This path is reached
-    # only under the sdk transport, which spawn-verifier.sh already gates to
-    # auth.claude.mode: api (ANTHROPIC_API_KEY required below).
+    # only under the sdk transport, which spawn-verifier.sh gates to a route
+    # carrying one of the two credentials resolved below.
     if args.advisor:
         try:
             assert_advisor_ordering(args.model, args.advisor)
@@ -388,12 +424,14 @@ def main() -> int:
         print(f"verify-sdk: {exc}", file=sys.stderr)
         return 2
 
-    try:
-        anthropic_api_key = os.environ["ANTHROPIC_API_KEY"]
-    except KeyError:
-        return fail_env("missing ANTHROPIC_API_KEY; inject it with op-fetch before running")
-    if not anthropic_api_key:
-        return fail_env("missing ANTHROPIC_API_KEY; inject it with op-fetch before running")
+    auth = resolve_auth()
+    if auth is None:
+        return fail_env(
+            "missing ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN; inject one with "
+            "op-fetch before running (api mode uses the key, subscription mode uses "
+            "the token minted by `claude setup-token`)"
+        )
+    auth_kind, auth_credential = auth
 
     card = Path(args.card)
     out = Path(args.out)
@@ -424,7 +462,8 @@ def main() -> int:
         envelope = run_sdk(
             static_block,
             variable_block,
-            anthropic_api_key,
+            auth_kind,
+            auth_credential,
             Anthropic,
             validator,
             model=model,
