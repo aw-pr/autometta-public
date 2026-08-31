@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autometta.local/schemas/fact-ledger.json",
+  "title": "Fact ledger line",
+  "description": "One typed triple in the append-only fact ledger at memory/facts.jsonl. One JSON object per line, never rewritten: a correction is a new line carrying the supersedes predicate. The contract for what belongs here is docs/fact-ledger.md; the gate is scripts/facts-lint.sh.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["subject", "predicate", "object", "source", "agent", "recorded_at"],
+  "properties": {
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The entity the fact is about: a stage id, a commit SHA, a repo-relative path, a gotcha label, or an agent identity. Stable across lines so a reader can group by it."
+    },
+    "predicate": {
+      "type": "string",
+      "enum": [
+        "measured",
+        "verified-by",
+        "failed-criterion",
+        "caused-by",
+        "fixed-by",
+        "depends-on",
+        "supersedes",
+        "refutes"
+      ],
+      "description": "Closed vocabulary. Extending it means editing this enum and the table in docs/fact-ledger.md in one commit; an ad hoc string is a lint failure, not a new predicate."
+    },
+    "object": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The other end of the edge. A measurement is written as name=value; every other predicate names an entity in the same vocabulary the subject uses."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/]",
+      "description": "Provenance: the commit SHA the fact was observed at, or a repo-relative path (optionally with a #anchor) to the document that states it. Never an absolute path, never a URL to a transcript that will not survive the session."
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^.+ <[^<>@\\s]+@[^<>@\\s]+>$",
+      "description": "Canonical agent identity string that recorded the fact, in git author form, e.g. 'Claude Opus 5 <claude-opus-5@local>'. Produced by scripts/agent-whoami in the mcp-hub toolchain."
+    },
+    "recorded_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)?$",
+      "description": "ISO 8601 UTC date, or full timestamp when ordering within a day matters. This is when the fact was recorded, not when the thing it describes happened."
+    },
+    "stage_id": {
+      "type": "string",
+      "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+      "description": "Optional. The stage the fact was recorded during, matching state.yaml stages[].id and the stage card filename slug."
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^run-[0-9]{8}-[0-9]{6}$",
+      "description": "Optional. The queue-time run identity the stage inherited, matching state.yaml stages[].run_id."
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "default": "high",
+      "description": "Optional, defaults to high. high is a measured or verifier-confirmed observation; medium is a single unreplicated observation; low is an inference a later run should test."
+    }
+  }
+}
