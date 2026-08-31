@@ -63,6 +63,10 @@ the desktop's default viewer, which can usually write to it. Enter on an
 escalation opens the controller composer already carrying the stage and the
 reason it stopped.
 
+The `[3] Agents` panel shows live agents followed by the queued next stages.
+Queued rows come from the aggregate payload's `queue` field and are display-only;
+the cursor remains confined to live agents.
+
 It polls the same
 `aggregate-dashboard.sh --repo` seam as the repo ticker every five seconds,
 but does so on a background thread so input remains responsive during a read.

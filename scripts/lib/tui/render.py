@@ -153,8 +153,15 @@ def current_run_stages(payload):
 
 
 def ordered_run_stages(payload):
-    order = {"completed": 0, "in_progress": 1, "pending": 2}
-    return sorted(current_run_stages(payload), key=lambda stage: order.get(stage.get("status"), 3))
+    stages = current_run_stages(payload)
+    # Pending stages have not run yet: keep their queue order after the live
+    # edge, then show finished scheduled work newest first.
+    active = [stage for stage in reversed(stages)
+              if stage.get("status") not in ("completed", "pending", "superseded")]
+    queued = [stage for stage in stages if stage.get("status") == "pending"]
+    finished = [stage for stage in reversed(stages)
+                if stage.get("status") in ("completed", "superseded")]
+    return active + queued + finished
 
 
 class TuiState:
@@ -718,7 +725,9 @@ def run_lines(state, inner_width):
 
 def agent_lines(state):
     lines = []
-    for index, agent in enumerate(state.payload.get("agents") or []):
+    agents = state.payload.get("agents") or []
+    queue = state.payload.get("queue") or []
+    for index, agent in enumerate(agents):
         alias = identity_alias(agent.get("identity"))
         elapsed = short_secs(agent.get("elapsed_seconds") or 0)
         budget = short_secs(agent.get("budget_seconds") or 0)
@@ -746,6 +755,13 @@ def agent_lines(state):
         if state.focus == 3 and state.selection[3] == index:
             spans.insert(0, (0, len(text), REVERSE))
         lines.append(content_line(text, spans))
+    for stage in queue:
+        text = "○ %s queued  %s / %s" % (
+            stage.get("stage_id") or "?",
+            identity_alias(stage.get("worker")),
+            identity_alias(stage.get("verifier")),
+        )
+        lines.append(content_line(text, [(0, len(text), DIM)]))
     return lines or [content_line("no live agents", [(0, 14, DIM)])]
 
 
@@ -1059,6 +1075,11 @@ def render(state, width, height):
     done = len([s for s in stages if s.get("status") == "completed"])
     run_title = "[2]─This run  %d of %d" % (done, len(stages))
     live_count = len(state.payload.get("agents") or [])
+    queued_count = len(state.payload.get("queue") or [])
+    if "queue" in state.payload:
+        agents_title = "[3]─Agents  %d live, %d queued" % (live_count, queued_count)
+    else:
+        agents_title = "[3]─Agents  %d live" % live_count
     esc_count = len(escalation_rows(state.payload))
     msg_count = inbox_message_count(state)
     # Two lines per escalation, so a fixed four-line box showed one row and hid
@@ -1080,7 +1101,7 @@ def render(state, width, height):
         draw_box(canvas, (0, y1, left_width, status_h), "[1]─Status", status_lines(state), state.focus == 1)
         draw_box(canvas, (0, y2, left_width, run_h), run_title,
                  run_lines(state, left_width - 4), state.focus == 2)
-        draw_box(canvas, (0, y3, left_width, agents_h), "[3]─Agents  %d live" % live_count,
+        draw_box(canvas, (0, y3, left_width, agents_h), agents_title,
                  agent_lines(state), state.focus == 3)
         draw_box(canvas, (0, y4, left_width, inbox_h), "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
@@ -1098,7 +1119,7 @@ def render(state, width, height):
             cursor += panel_height + 1
         draw_box(canvas, rects[0], "[1]─Status", status_lines(state), state.focus == 1)
         draw_box(canvas, rects[1], run_title, run_lines(state, width - 4), state.focus == 2)
-        draw_box(canvas, rects[2], "[3]─Agents  %d live" % live_count, agent_lines(state), state.focus == 3)
+        draw_box(canvas, rects[2], agents_title, agent_lines(state), state.focus == 3)
         draw_box(canvas, rects[3], "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
         draw_box(canvas, rects[4], "[0]─Card detail",

@@ -27,6 +27,11 @@ def payload_from_aggregator(aggregator, repo_root):
 _NO_PAYLOAD = object()
 
 
+def confine_agent_selection(state):
+    live_count = len(state.payload.get("agents") or [])
+    state.selection[3] = min(state.selection[3], max(0, live_count - 1))
+
+
 def _poll(results, generation, started_at, aggregator, repo_root, payload):
     try:
         value = (payload_from_aggregator(aggregator, repo_root)
@@ -62,6 +67,7 @@ def apply_poll_result(state, result, latest_generation):
     else:
         state.update(result["payload"], observed_at=result["started_at"],
                      data_started_at=result["started_at"])
+        confine_agent_selection(state)
     return True
 
 
@@ -208,6 +214,7 @@ def capture(args):
         polls = [payload_from_aggregator(args.aggregator, args.repo_root)]
     for index, payload in enumerate(polls):
         state.update(payload, observed_at=index * args.interval)
+        confine_agent_selection(state)
         refresh_controller(state, args.repo_root)
     ensure_card_body(state, args.repo_root)
     for key in filter(None, (part.strip() for part in args.keys.split(","))):
