@@ -607,16 +607,64 @@ handle_limit_refusal() {
   local stage_id="$2"
   local role="$3"
   local log_path="$4"
-  local hit reset_epoch
+  local hit reset_epoch pause_started_epoch
   hit="$(usage_limit_hit "$log_path")" || return 1
   reset_epoch="$(usage_limit_reset_epoch "$hit")"
   if [[ -z "$reset_epoch" || ! "$reset_epoch" =~ ^[0-9]+$ ]]; then
     reset_epoch=$(( $(date -u +%s) + 3600 ))
   fi
+  pause_started_epoch="$(date -u +%s)"
   budget_pause_until "$repo_root" "$reset_epoch" "$hit"
+  record_pause_window "$repo_root" "$pause_started_epoch" "$reset_epoch" "$hit"
   log "stage ${stage_id} ${role} was refused by the provider, not failed: ${hit}"
   log "  stage left untouched; dispatch paused until $(date -r "$reset_epoch" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || echo "$reset_epoch")"
   return 0
+}
+
+# Keep a bounded pause ledger in the existing budget file. The active pause
+# fields still own dispatch control; this is observability for the separate
+# worker-clock calculation below, so an elapsed pause can never be charged to
+# an agent that was not running.
+record_pause_window() {
+  local repo_root="$1" started_epoch="$2" until_epoch="$3" reason="$4"
+  local retain="${AUTOMETTA_PAUSE_RECORD_RETAIN:-50}"
+  [[ "$started_epoch" =~ ^[0-9]+$ && "$until_epoch" =~ ^[0-9]+$ ]] || return 0
+  (( until_epoch > started_epoch )) || return 0
+  [[ "$retain" =~ ^[0-9]+$ && "$retain" -gt 0 ]] || retain=50
+  budget_write_atomic "$repo_root" '
+    .pause_windows = (((.pause_windows // []) + [{
+      started_at: $started,
+      until: $until,
+      reason: $reason
+    }]) | if length > $retain then .[-$retain:] else . end)
+  ' --argjson started "$started_epoch" --argjson until "$until_epoch" \
+    --arg reason "$reason" --argjson retain "$retain"
+}
+
+# Print elapsed worker seconds and excluded pause seconds as tab-separated
+# values. A pause outside the worker interval contributes nothing, and an
+# absent ledger preserves the original arithmetic exactly.
+stage_stall_elapsed_seconds() {
+  local repo_root="$1" started_epoch="$2" now_epoch="$3"
+  local budget_path wall_elapsed paused_elapsed
+  wall_elapsed=$((now_epoch - started_epoch))
+  (( wall_elapsed < 0 )) && wall_elapsed=0
+  budget_path="$(budget_file "$repo_root")"
+  paused_elapsed="$(jq -r --argjson started "$started_epoch" --argjson now "$now_epoch" '
+    [(.pause_windows // [])[]?
+      | select((.started_at | type) == "number" and (.until | type) == "number")
+      | select(.until > .started_at)
+      | ([.started_at, $started] | max) as $overlap_start
+      | ([.until, $now] | min) as $overlap_end
+      | select($overlap_end > $overlap_start)
+      | ($overlap_end - $overlap_start)]
+    | add // 0
+  ' "$budget_path" 2>/dev/null || printf '0')"
+  [[ "$paused_elapsed" =~ ^[0-9]+$ ]] || paused_elapsed=0
+  if (( paused_elapsed > wall_elapsed )); then
+    paused_elapsed="$wall_elapsed"
+  fi
+  printf '%s\t%s\n' "$((wall_elapsed - paused_elapsed))" "$paused_elapsed"
 }
 
 stage_snapshot_tokens() {
@@ -857,6 +905,16 @@ pipeline_tail_gate_met() {
 spawn_worker_for_stage() {
   local card_path="$1" repo_root="$2" work_dir="$3"
   "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
+}
+
+spawn_verifier_for_stage() {
+  local card_path="$1" repo_root="$2" work_dir="$3"
+  if [[ -d "$work_dir" ]]; then
+    "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root" "$work_dir"
+  else
+    log "run worktree missing for ${current_stage} at ${work_dir}, verifying against ${repo_root} (deprecated fallback)"
+    "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root"
+  fi
 }
 
 # pipeline_pair_on <repo-root> -> family | target | off
@@ -2627,8 +2685,20 @@ _process_repo_locked() {
       return 0
     fi
 
-    if [[ -n "$started_at" ]]; then
-      local card_path budget_seconds grace_seconds stall_threshold started_epoch now_epoch elapsed
+    # A PASS or partial handoff means the worker has returned. Its wall clock
+    # is no longer relevant, even where the controller has not yet consumed
+    # the envelope because it is waiting to dispatch a verifier.
+    local completed_worker_envelope="$repo_root/state/handoffs/${current_stage}.json"
+    local worker_returned=false
+    if [[ -f "$completed_worker_envelope" ]] \
+       && { [[ -z "${worker_pid:-}" ]] || ! kill -0 "$worker_pid" 2>/dev/null; } \
+       && jq -e '.status == "pass" or .status == "partial"' "$completed_worker_envelope" >/dev/null 2>&1; then
+      worker_returned=true
+      log "stage ${current_stage} has a completed worker envelope; skipping worker-clock stall check"
+    fi
+
+    if [[ -n "$started_at" && "$worker_returned" != "true" ]]; then
+      local card_path budget_seconds grace_seconds stall_threshold started_epoch now_epoch elapsed wall_elapsed
       card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
       if [[ -n "$card_path" ]]; then
         budget_seconds="$(worker_budget_seconds_from_card "$card_path")"
@@ -2640,7 +2710,10 @@ _process_repo_locked() {
       stall_threshold=$((budget_seconds + grace_seconds))
       if started_epoch="$(stage_started_epoch "$started_at" 2>/dev/null)"; then
         now_epoch="$(date -u +%s)"
-        elapsed=$((now_epoch - started_epoch))
+        wall_elapsed=$((now_epoch - started_epoch))
+        IFS=$'\t' read -r elapsed paused_elapsed < <(
+          stage_stall_elapsed_seconds "$repo_root" "$started_epoch" "$now_epoch"
+        )
         if (( elapsed > stall_threshold )); then
           if [[ -n "${worker_pid:-}" ]]; then
             kill -TERM "$worker_pid" 2>/dev/null || true
@@ -2650,7 +2723,11 @@ _process_repo_locked() {
             --arg id "$current_stage"
           pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
-          log "stage ${current_stage} stalled after ${elapsed}s (budget ${budget_seconds}s + 50% grace), marked stalled"
+          if (( paused_elapsed > 0 )); then
+            log "stage ${current_stage} stalled after ${elapsed}s active (${wall_elapsed}s wall, ${paused_elapsed}s paused; budget ${budget_seconds}s + 50% grace), marked stalled"
+          else
+            log "stage ${current_stage} stalled after ${elapsed}s (budget ${budget_seconds}s + 50% grace), marked stalled"
+          fi
           budget_increment_tick "$repo_root" work
           commit_state_branch "$repo_root"
           return 0
@@ -2938,12 +3015,7 @@ _process_repo_locked() {
       local verifier_work_dir
       verifier_work_dir="$(worktree_path_for_stage "$repo_root" "$current_stage")"
       local verifier_spawn_rc=0
-      if [[ -d "$verifier_work_dir" ]]; then
-        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root" "$verifier_work_dir" || verifier_spawn_rc=$?
-      else
-        log "run worktree missing for ${current_stage} at ${verifier_work_dir}, verifying against ${repo_root} (deprecated fallback)"
-        "$script_dir/spawn-verifier.sh" "$card_path" "$repo_root" || verifier_spawn_rc=$?
-      fi
+      spawn_verifier_for_stage "$card_path" "$repo_root" "$verifier_work_dir" || verifier_spawn_rc=$?
       if (( verifier_spawn_rc != 0 )); then
         halt_dispatch_configuration_fault "$repo_root" "$current_stage" verifier
         pipeline_after_member_failure "$state_yaml" "$current_stage"
