@@ -522,7 +522,7 @@
                key: stageKey(row.repo, s.id), cells: [
         row.repo,
         { html: '<span class="caret">\u25b8</span> ' + esc(s.id) },
-        { html: '<span class="status ' + esc(s.status) + '">' + esc(s.status) + "</span>" },
+        { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
         shortIdentity(s.worker),
         shortIdentity(s.verifier),
         { html: fmtInt(spend.worker) + mark, cls: "num" },

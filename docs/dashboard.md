@@ -217,7 +217,11 @@ fleet. The freshness marker therefore names the transport it is on, and
 2. **Per stage.** Table of every stage across every repo with status,
    worker / verifier identity, per-stage worker / verifier / total
    token counts, and completion timestamp. Mirrored as a bar chart of
-   per-stage totals.
+   per-stage totals. The status chip shows the stage's `phase`: an
+   in-progress stage reads `working` while its worker pid is live and
+   `verifying` while its verifier pid is, derived by the seam from
+   `state.yaml`; every other status renders as itself. `status` stays
+   the loop's raw contract; `phase` is display only.
 3. **Per model.** Token spend grouped by canonical agent identity
    (e.g. `Claude Opus 4.8 <claude-opus-4-8@local>`,
    `GPT-5.6 Sol <gpt-5-6-sol@local>`,
@@ -293,6 +297,7 @@ fleet. The freshness marker therefore names the transport it is on, and
         {
           "id": "01-...",
           "status": "completed",
+          "phase": "completed",
           "worker": "GPT-5.6 Sol <gpt-5-6-sol@local>",
           "verifier": "Claude Sonnet 4.6 <claude-sonnet-4-6@local>",
           "orchestrator": "Claude Opus 4.8 <claude-opus-4-8@local>",

@@ -319,6 +319,11 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     && state_fields="$(printf '%s' "$state_doc" | jq -r '
       [.stages[]? | {
         id, run_id:(.run_id // null), status:(.status // "pending"),
+        phase:(if (.status // "pending") == "in_progress"
+               then (if (.verifier_pid // null) != null then "verifying"
+                     elif (.worker_pid // null) != null then "working"
+                     else "in_progress" end)
+               else (.status // "pending") end),
         worker:(.worker // null), verifier:(.verifier // null),
         started_at:(.started_at // null), completed_at:(.completed_at // null), tokens:(.tokens // 0),
         worker_tokens:(.worker_tokens // null), verifier_tokens:(.verifier_tokens // null),
