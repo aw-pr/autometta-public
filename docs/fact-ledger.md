@@ -10,10 +10,61 @@ committed, one JSON object per line, each a typed triple with provenance:
 `subject`, `predicate`, `object`, plus `source`, `agent` and `recorded_at`.
 Optional `stage_id`, `run_id` and `confidence` say which dispatch observed it
 and how much weight it carries. `schemas/fact-ledger.json` is the shape and
-`scripts/facts-lint.sh` is the gate. Nothing writes to the ledger yet.
+`scripts/facts-lint.sh` is the gate.
 
 A fact earns its line when a later stage should be constrained by it. A
 lesson learned in stage 12 that nothing can query does not reach stage 40.
+
+## Who writes
+
+`scripts/tick.sh` is the only automated writer, and it writes at exactly two
+moments. On a verifier PASS it records a `verified-by` line naming the
+verifier that cleared the stage, and, when the card or the commit subject
+names an earlier stage this one repairs, a `fixed-by` or `supersedes` line
+for that. On a verifier FAIL it records a `failed-criterion` line citing the
+verifier envelope. Nothing else in the loop appends, and no worker should:
+a worker writes deliverables, and the ledger is a statement about work that
+has already been judged.
+
+The tick reads a repair relation from a card metadata line when the card
+declares one,
+
+```
+- **Fixes:** 30-effort-flags-ifs-wordsplit
+- **Supersedes:** 43-alert-worthy-status
+```
+
+and otherwise from the objective or the commit subject, where the stage id
+has to follow the verb directly ("fixes 30-effort-flags-ifs-wordsplit").
+Cards say "card 37 fixes two panels" all the time, so a looser match would
+manufacture edges nobody asserted, and a ledger line is permanent. A
+declared metadata line is recorded at `high` confidence, a match read out of
+prose at `medium`.
+
+Facts recorded by the tick carry `phat-controller <phat-controller@local>`
+as their `agent`. The loop recorded them, not the model behind any one
+dispatch; the worker and the verifier are named in the fact itself.
+
+### Never block a landing
+
+A ledger write must never change a landing or a state transition. Two things
+enforce that rather than a promise to be careful.
+
+Every line goes through `scripts/facts-lint.sh` against a temp file before
+the ledger is opened, so the gate on the committed ledger is the gate on the
+write. A rejected line warns to the controller log and is dropped; the stage
+lands regardless, and the ledger is untouched.
+
+A PASS is written into the run worktree after the worker diff is staged and
+before the commit, so the facts land in the same commit as the work. A FAIL
+has no commit to ride, so its fact is spooled to `state/facts-pending.jsonl`,
+captured by the state commit the same tick makes, and drained into the ledger
+by the next landing. The spool is cleared only once that landing commit
+exists. Appending straight into the operator checkout would leave a dirty
+tracked `memory/facts.jsonl`, and the next fast-forward merge of a run branch
+refuses to overwrite one: every later landing would drop to `awaiting`
+manual integration. That is a ledger write costing a landing, which is the
+one outcome this design does not allow.
 
 ## Vocabulary
 

@@ -1192,7 +1192,8 @@ state_snapshot_ref="refs/heads/autometta/state"
 # live in repo_root/state, so it would have to copy them across on every
 # tick. Plumbing needs neither.
 #
-# What is captured: state/state.yaml and state/budget.json, plus whatever of
+# What is captured: state/state.yaml, state/budget.json and, when a verifier
+# FAIL has spooled one, state/facts-pending.jsonl, plus whatever of
 # state/verifiers and state/handoffs the repo does not ignore. What is not:
 # state/logs, state/cost-log.jsonl, state/active-agents, state/recent-agents
 # and state/heartbeat.json, all of which are either large, high-churn or
@@ -1221,7 +1222,7 @@ commit_state_branch() {
     export GIT_INDEX_FILE="$index_file"
     local -a captured=()
     local p
-    for p in state/state.yaml state/budget.json; do
+    for p in state/state.yaml state/budget.json state/facts-pending.jsonl; do
       if [[ -f "$p" ]] && git add -f -- "$p" >/dev/null 2>&1; then
         captured+=( "$p" )
       fi
@@ -1667,6 +1668,300 @@ stage_card_orchestrator() {
     | sed -E 's/^- \*\*Orchestrator:\*\*[[:space:]]*//'
 }
 
+# --- Fact ledger ----------------------------------------------------------
+#
+# memory/facts.jsonl is the repo's typed, append-only fact ledger (docs/
+# fact-ledger.md, schemas/fact-ledger.json). The tick is its only automated
+# writer, and it writes two things: who verified a stage that landed, and
+# which criterion rejected one that did not.
+#
+# One rule shapes everything below: a ledger write must never change a
+# landing. Two consequences follow.
+#
+# Every line is put through scripts/facts-lint.sh against a temp file before
+# the ledger is opened, so the gate that guards the committed ledger is the
+# same gate that guards this write. A rejection warns to the controller log
+# and returns non-zero, and no caller acts on that return.
+#
+# Nothing is ever written into repo_root's working tree. A PASS writes into
+# the run worktree that is about to be committed, so the fact lands in the
+# same commit as the work it describes. A FAIL has no commit to ride, so its
+# fact is spooled to state/facts-pending.jsonl -- gitignored, captured by the
+# same state commit the tick is about to make, drained into the ledger by the
+# next landing. Appending straight into the operator checkout's ledger would
+# leave a dirty tracked file, and the next ff-merge of a run branch refuses to
+# overwrite one: every later landing would drop to 'awaiting' manual
+# integration. A ledger write that costs a landing is the failure this must
+# not have.
+
+# Identity recorded against every tick-written fact. The loop, not the model
+# behind any one dispatch: the worker and the verifier are named in the fact
+# itself, and agent-whoami would report whichever family happened to launch
+# the cron.
+facts_recorder_identity='phat-controller <phat-controller@local>'
+
+facts_pending_path() { printf '%s\n' "$1/state/facts-pending.jsonl"; }
+
+# The ledger is opt-in per repo. A subscriber with no memory/ directory has
+# not adopted it, and a landing is no place to create one.
+facts_ledger_enabled() { [[ -d "$1/memory" ]]; }
+
+# Collapse a verifier's prose to one bounded line. Same scrub the wip commit
+# subject uses, for the same reason: it is going somewhere that cannot hold a
+# paragraph.
+facts_oneline() {
+  printf '%s' "$1" | tr '\r\n\t' '   ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' | cut -c1-200
+}
+
+# facts_append <target-file> <json-line>
+#
+# Validate one fact line and append it. On any failure the target file is not
+# opened at all, so a rejected line cannot leave a half-written ledger behind.
+facts_append() {
+  local target="$1" line="$2"
+  local lint="$script_dir/facts-lint.sh"
+  if [[ -z "$target" || -z "$line" ]]; then
+    log "facts: refusing to append an empty fact"
+    return 1
+  fi
+  if [[ ! -f "$lint" ]]; then
+    log "facts: ${lint} is missing; ${target:-ledger} unchanged"
+    return 1
+  fi
+  local tmp
+  tmp="$(mktemp 2>/dev/null || true)"
+  if [[ -z "$tmp" ]]; then
+    log "facts: mktemp failed; ${target} unchanged"
+    return 1
+  fi
+  if ! printf '%s\n' "$line" > "$tmp"; then
+    rm -f "$tmp"
+    log "facts: could not stage a fact for validation; ${target} unchanged"
+    return 1
+  fi
+  # A multi-token command travels in an array, expanded quoted (gotcha 12).
+  # The bash prefix is the fallback for a lint file that has lost its exec
+  # bit, which a stubbed or freshly checked-out tree can do.
+  local -a lint_argv=()
+  if [[ -x "$lint" ]]; then
+    lint_argv=( "$lint" )
+  else
+    lint_argv=( bash "$lint" )
+  fi
+  local lint_out lint_rc=0
+  lint_out="$("${lint_argv[@]}" "$tmp" 2>&1)" || lint_rc=$?
+  rm -f "$tmp"
+  if (( lint_rc != 0 )); then
+    local why
+    why="$(facts_oneline "$lint_out")"
+    [[ -n "$why" ]] || why="no reason given"
+    log "facts: facts-lint rejected a fact (exit ${lint_rc}): ${why}; ${target} unchanged"
+    return 1
+  fi
+  if ! mkdir -p "$(dirname "$target")" 2>/dev/null; then
+    log "facts: cannot create $(dirname "$target"); ${target} unchanged"
+    return 1
+  fi
+  if ! printf '%s\n' "$line" >> "$target"; then
+    log "facts: append to ${target} failed"
+    return 1
+  fi
+  return 0
+}
+
+# facts_line <subject> <predicate> <object> <source> [stage_id] [run_id] [confidence]
+#
+# jq builds the object so every value is escaped rather than pasted. The
+# optional fields are dropped unless they match the pattern the schema holds
+# them to: a malformed stage_id would take the whole fact down at the lint,
+# and the fact is worth more than the annotation.
+facts_line() {
+  local subject="$1" predicate="$2" object="$3" source="$4"
+  local stage_id="${5:-}" run_id="${6:-}" confidence="${7:-}"
+  [[ "$stage_id" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]] || stage_id=""
+  [[ "$run_id" =~ ^run-[0-9]{8}-[0-9]{6}$ ]] || run_id=""
+  case "$confidence" in high|medium|low) ;; *) confidence="" ;; esac
+  jq -nc \
+    --arg subject "$subject" \
+    --arg predicate "$predicate" \
+    --arg object "$object" \
+    --arg source "$source" \
+    --arg agent "$facts_recorder_identity" \
+    --arg recorded_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg stage_id "$stage_id" \
+    --arg run_id "$run_id" \
+    --arg confidence "$confidence" \
+    '{subject: $subject, predicate: $predicate, object: $object,
+      source: $source, agent: $agent, recorded_at: $recorded_at}
+     + (if $stage_id == "" then {} else {stage_id: $stage_id} end)
+     + (if $run_id == "" then {} else {run_id: $run_id} end)
+     + (if $confidence == "" then {} else {confidence: $confidence} end)' 2>/dev/null || true
+}
+
+# One stage field out of state.yaml, empty when absent. The inline form of
+# this appears half a dozen times above; the ledger callers use it enough to
+# name it.
+facts_stage_field() {
+  local state_yaml="$1" stage_id="$2" field="$3"
+  state_json "$state_yaml" 2>/dev/null \
+    | jq -r --arg id "$stage_id" --arg f "$field" \
+        '.stages[] | select(.id == $id) | .[$f] // empty' 2>/dev/null || true
+}
+
+# The object of a failed-criterion fact reads the way docs/fact-ledger.md
+# writes it: "acceptance-3: lint accepted a bad line". First FAIL criterion
+# wins; a verdict carrying no criteria falls back to its additional findings.
+facts_failed_criterion_object() {
+  local artefact_abs="$1" object=""
+  object="$(jq -r '
+    ([.criteria[]? | select(.verdict == "FAIL")
+      | "acceptance-\(.id): \(.evidence // .name // "no evidence recorded")"][0])
+    // (if (.additional_findings // "") != "" then .additional_findings else "verifier reported FAIL" end)
+  ' "$artefact_abs" 2>/dev/null || printf 'verifier reported FAIL')"
+  [[ -n "$object" && "$object" != "null" ]] || object="verifier reported FAIL"
+  facts_oneline "$object"
+}
+
+# facts_repair_relation <card-path> <commit-subject> <stage-id>
+#
+# Print "predicate<TAB>subject<TAB>object<TAB>confidence" when this stage
+# names an earlier one it repairs, else nothing. Two forms are read: a card
+# metadata line,
+#
+#     - **Fixes:** 30-effort-flags-ifs-wordsplit
+#     - **Supersedes:** 43-alert-worthy-status
+#
+# and, in the card's objective or the commit subject, a verb immediately
+# followed by a stage id. The id has to follow the verb directly. Cards say
+# "card 37 fixes two panels" constantly and a ledger line is permanent, so a
+# loose match is worse than no match at all. A declared metadata line is
+# high confidence; one read out of prose is medium, because the sentence may
+# be describing some third card's work rather than this one's.
+facts_repair_relation() {
+  local card_path="$1" subject_line="$2" stage_id="$3"
+  local id_re='[0-9]{2}[a-z]*-[a-z0-9-]+'
+  local declared="" hit="" haystack="$subject_line"
+
+  if [[ -n "$card_path" && -f "$card_path" ]]; then
+    declared="$(grep -E '^- \*\*Fixes:\*\*' "$card_path" 2>/dev/null | head -n1 \
+      | sed -E 's/^- \*\*Fixes:\*\*[[:space:]]*//' | grep -oE "^$id_re" || true)"
+    if [[ -n "$declared" && "$declared" != "$stage_id" ]]; then
+      printf 'fixed-by\t%s\t%s\thigh\n' "$declared" "$stage_id"
+      return 0
+    fi
+    declared="$(grep -E '^- \*\*Supersedes:\*\*' "$card_path" 2>/dev/null | head -n1 \
+      | sed -E 's/^- \*\*Supersedes:\*\*[[:space:]]*//' | grep -oE "^$id_re" || true)"
+    if [[ -n "$declared" && "$declared" != "$stage_id" ]]; then
+      printf 'supersedes\t%s\t%s\thigh\n' "$stage_id" "$declared"
+      return 0
+    fi
+    haystack="$haystack
+$(awk '/^## Objective/{found=1;next} /^## /{found=0} found' "$card_path" 2>/dev/null || true)"
+  fi
+
+  hit="$(printf '%s' "$haystack" | grep -oiE "(fixes|fixed|repairs|closes)[[:space:]]+$id_re" | head -n1 || true)"
+  hit="$(printf '%s' "$hit" | grep -oE "$id_re\$" || true)"
+  if [[ -n "$hit" && "$hit" != "$stage_id" ]]; then
+    printf 'fixed-by\t%s\t%s\tmedium\n' "$hit" "$stage_id"
+    return 0
+  fi
+
+  hit="$(printf '%s' "$haystack" | grep -oiE "(supersedes|supersede|superseded|replaces)[[:space:]]+$id_re" | head -n1 || true)"
+  hit="$(printf '%s' "$hit" | grep -oE "$id_re\$" || true)"
+  if [[ -n "$hit" && "$hit" != "$stage_id" ]]; then
+    printf 'supersedes\t%s\t%s\tmedium\n' "$stage_id" "$hit"
+    return 0
+  fi
+
+  printf ''
+}
+
+# facts_record_landing <commit-dir> <repo-root> <state-yaml> <stage-id>
+#                      <verifier-identity> <artefact-rel> <card-path> <commit-subject>
+#
+# Called from inside the landing commit's subshell, after the worker diff is
+# staged and before the commit, so everything written here is part of the same
+# commit as the work. Any facts an earlier FAIL spooled are drained on the way
+# past; the spool is cleared by facts_clear_pending once the commit exists, so
+# a commit that never happens does not lose them.
+facts_record_landing() {
+  local commit_dir="$1" repo_root="$2" state_yaml="$3" stage_id="$4"
+  local verifier_identity="$5" artefact_rel="$6" card_path="$7" commit_subject="$8"
+  local ledger="$commit_dir/memory/facts.jsonl"
+  local pending run_id source_rel written=0
+  pending="$(facts_pending_path "$repo_root")"
+  run_id="$(facts_stage_field "$state_yaml" "$stage_id" run_id)"
+  source_rel="$artefact_rel"
+  [[ -n "$source_rel" ]] || source_rel="state/verifiers/${stage_id}.json"
+
+  if [[ -s "$pending" ]]; then
+    local queued
+    while IFS= read -r queued; do
+      [[ -n "$queued" ]] || continue
+      if facts_append "$ledger" "$queued"; then
+        written=$((written + 1))
+      fi
+    done < "$pending"
+  fi
+
+  if [[ -n "$verifier_identity" ]]; then
+    if facts_append "$ledger" \
+        "$(facts_line "$stage_id" verified-by "$verifier_identity" "$source_rel" "$stage_id" "$run_id")"; then
+      written=$((written + 1))
+    fi
+  else
+    log "stage ${stage_id} PASS: no verifier identity in state.yaml; no verified-by fact recorded"
+  fi
+
+  local relation predicate rel_subject rel_object rel_confidence
+  relation="$(facts_repair_relation "$card_path" "$commit_subject" "$stage_id")"
+  if [[ -n "$relation" ]]; then
+    IFS=$'\t' read -r predicate rel_subject rel_object rel_confidence <<<"$relation"
+    if facts_append "$ledger" \
+        "$(facts_line "$rel_subject" "$predicate" "$rel_object" "$source_rel" "$stage_id" "$run_id" "$rel_confidence")"; then
+      written=$((written + 1))
+    fi
+  fi
+
+  log "stage ${stage_id} PASS: ${written} fact(s) written to memory/facts.jsonl"
+  return 0
+}
+
+# Clear the FAIL spool. Only ever called once the landing commit exists, so a
+# fact is dropped from the spool because it is in a commit, never because a
+# tick read it.
+facts_clear_pending() {
+  local pending
+  pending="$(facts_pending_path "$1")"
+  [[ -f "$pending" ]] || return 0
+  if ! : > "$pending" 2>/dev/null; then
+    log "facts: could not clear ${pending}; queued facts may be recorded twice"
+    return 1
+  fi
+  return 0
+}
+
+# facts_queue_failed_criterion: a FAIL has no landing commit to ride, so the
+# fact is spooled instead. commit_state_branch captures the spool with the
+# state commit this tick is about to make, and the next landing drains it into
+# the ledger. See the section header for why this does not write the ledger
+# directly.
+facts_queue_failed_criterion() {
+  local repo_root="$1" state_yaml="$2" stage_id="$3" artefact_rel="$4" artefact_abs="$5"
+  facts_ledger_enabled "$repo_root" || return 0
+  local source_rel object run_id line
+  source_rel="$artefact_rel"
+  [[ -n "$source_rel" ]] || source_rel="state/verifiers/${stage_id}.json"
+  object="$(facts_failed_criterion_object "$artefact_abs")"
+  run_id="$(facts_stage_field "$state_yaml" "$stage_id" run_id)"
+  line="$(facts_line "$stage_id" failed-criterion "$object" "$source_rel" "$stage_id" "$run_id")"
+  if facts_append "$(facts_pending_path "$repo_root")" "$line"; then
+    log "stage ${stage_id} FAIL: queued a failed-criterion fact for the next landing"
+    return 0
+  fi
+  return 1
+}
+
 # Decide what to do with a verifier artefact: commit-on-PASS or
 # mark-verifier_failed-on-FAIL. Treats a missing / malformed 'overall'
 # field as FAIL (fail-safe). The working tree on the operator branch
@@ -1694,6 +1989,7 @@ _process_verifier_artefact() {
 
   if [[ "$overall" == "FAIL" ]]; then
     preserve_failed_work "$repo_root" "$state_yaml" "$stage_id" "$artefact_abs" || true
+    facts_queue_failed_criterion "$repo_root" "$state_yaml" "$stage_id" "$artefact_rel" "$artefact_abs" || true
     state_apply_json "$state_yaml" \
       '(.stages[] | select(.id == $id)).status = "verifier_failed" | .current_stage = null' \
       --arg id "$stage_id"
@@ -1750,6 +2046,18 @@ _process_verifier_artefact() {
       log "stage ${stage_id} PASS: nothing staged after add (state-only diff); skipping worker commit"
       exit 0
     fi
+    # The ledger is written after the worker diff is staged and before the
+    # commit, so the facts about this landing are part of it. It runs after
+    # the two guards above rather than before them, so a stage with nothing
+    # to commit still takes the path it always took. Nothing here may fail
+    # the landing: facts_record_landing swallows its own errors and the add
+    # is best-effort.
+    if facts_ledger_enabled "$commit_dir"; then
+      facts_record_landing "$commit_dir" "$repo_root" "$state_yaml" "$stage_id" \
+        "$verifier_identity" "$artefact_rel" "$card_path" "$commit_subject" || true
+      git add -- memory/facts.jsonl >/dev/null 2>&1 \
+        || log "stage ${stage_id} PASS: memory/facts.jsonl could not be staged; landing continues without it"
+    fi
     # Author is the worker (the coder). Trailers carry the full role record:
     # plain Co-Authored-By lines for the orchestrator and verifier (git-native
     # convention), plus role-keyed Autometta-* trailers for analysis. The role
@@ -1771,6 +2079,7 @@ _process_verifier_artefact() {
       log "stage ${stage_id} PASS: git commit failed; leaving working tree intact"
       exit 2
     fi
+    facts_clear_pending "$repo_root" || true
   ) || commit_rc=$?
   if (( commit_rc != 0 )); then
     state_apply_json "$state_yaml" \
