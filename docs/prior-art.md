@@ -61,6 +61,31 @@ What everyone landed on, regardless of framework:
 - **Ignore LangGraph, CrewAI, AutoGen, OpenHands, the Kanban GUIs.** Wrong abstraction level (in-process LLM) or wrong audience (human-in-loop). Re-evaluate only if you grow past ~10 concurrent workers.
 - **Adopt MCP as the only integration boundary.** Workers expose tools via MCP; orchestrator consumes via MCP. No bespoke RPC. This is the bet Anthropic, OpenAI and Cline are all making.
 
+## Postscript (2026-06): the platform caught up
+
+Anthropic's Managed Agents (June 2026) now ships the two pieces of
+infrastructure this repo hand-rolls: scheduled (cron) deployments, which
+replace the launchd/cron `tick` heartbeat, and environment-variable
+credentials in vaults, which replace `op-fetch` secret injection into the
+dispatched process. The pattern autometta encodes was right; the hosted
+platform converged on it.
+
+We keep autometta's version because:
+
+- **Cross-family verification.** Codex checking Claude, and the reverse, is
+  the core safety property. Managed Agents is Anthropic-only and cannot
+  place a Codex or GPT verifier opposite a Claude worker.
+- **Git as state, no hosted dependency.** The loop, the audit trail, and the
+  budget live in your own repo, not on someone else's orchestration layer.
+- **Single-machine and family-agnostic.** Codex, Claude, and Gemini run
+  under one dispatch contract on one laptop.
+- **History.** Autometta predates the hosted equivalent. This note records
+  that the bet paid off and the platform caught up.
+
+A second convergence landed with Karpathy's "Delete Everything, Keep Graph"
+lecture and the graph engineering playbook; the assessment of where
+autometta stands against it is `graph-engineering.md`.
+
 Net: Autometta should ship a thin, opinionated runtime - `autometta tick` + state.yaml FSM + stage-card dispatch + sandbox-as-role-boundary + cross-family verifier - that does one thing the existing tools don't: run *unattended overnight* on a solo developer's laptop with a budget file as the only safety. The lessons file from fractals already encodes the failure modes; the pass-29 scaffold already encodes the happy path. Package those, name the patterns, write the bugs into tests, and don't take a framework dependency.
 
 ## Sources
