@@ -137,3 +137,40 @@ destroying the instrument. Check `additionalProperties` specifically, at every
 level. Second, that `state/state.yaml` is unmodified: `git diff` it. Making
 the file fit the schema is the easy wrong answer to this card, and it would
 silently discard real accounting fields.
+
+## Re-brief 2026-09-01: the work passed, the gate did not
+
+Every one of the six acceptance criteria PASSed on the 2026-09-01 attempt.
+The stage was failed by the contract-test gate, outside the criteria, and the
+schema work itself is not in question. Read
+`state/verifiers/102-the-state-schema-describes-the-state.json` before
+starting: the previous attempt is preserved on
+`wip/102-the-state-schema-describes-the-state-attempt-1`, and adopting it
+wholesale is a reasonable starting position.
+
+The gate reported:
+
+```
+CONTRACT TEST GATE FAIL: scripts/check-contract-test-gate.sh print
+scripts/state-schema-smoke.sh exited 1 with 'no AUTOMETTA-CONTRACT-BEGIN
+marker found'
+```
+
+Two things caused it, both in this card and its test rather than in the code:
+
+1. `scripts/state-schema-smoke.sh` begins directly with prose and assertions
+   and carries no `AUTOMETTA-CONTRACT-BEGIN` / `AUTOMETTA-CONTRACT-END` block.
+   Frame the assertions in one, naming this card.
+2. The Contract test section above declares its Assertions digest as prose
+   ("both repos' live state files validate clean; a misspelled field, a wrong
+   type and a missing id each fail"). That sentence describes the assertions;
+   it is not a digest. Replace it with a real sha256 over the frozen block.
+
+Scope for this round is those two things plus whatever the preserved attempt
+needs to land. Do not re-litigate the schema: criteria 1 to 6 are already
+satisfied and re-deriving them risks losing a pass that was genuinely earned.
+
+Note for context, not for action: the gate that failed this stage lets the
+same condition through when it is invoked on staged files rather than by
+name, and that inconsistency is card 106's subject. It does not change what
+this card must do -- the markers and the digest are required either way.
