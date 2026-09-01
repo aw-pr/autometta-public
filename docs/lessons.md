@@ -490,3 +490,72 @@ The general rule: a preflight must check the property the dispatch actually
 depends on, not the nearest cheap proxy for it. "Is it downloaded" is a proxy
 for "can it run", and the gap between them is exactly where a wasted attempt
 lives.
+
+## Headless gotcha 20: the card path displaced the worker's repository root
+
+### One-sentence summary
+A local Codex worker received the run worktree through `-C`, but the prompt
+named only a stage card in the subscriber checkout, so the model explicitly
+ran every shell tool from that checkout and the sandbox correctly refused its
+deliverable writes outside the worktree.
+
+### Incident origin
+The 2026-08-28 `gpt-oss:20b` worker for `autometta-testing` announced the
+linked run worktree as `workdir` and `workspace-write` as its sandbox. Its tool
+trace then placed the card read and every later shell command in the subscriber
+checkout. Writes to `test.txt`, `tests/test_stats.txt` and the existing
+`calc/core.py` all failed with `Operation not permitted`, while the same shell
+wrote `/tmp/test.txt` successfully. The sandbox therefore enforced the roots
+it reported; the worker was targeting a different checkout.
+
+Changing the launching process cwd was falsified independently. With the
+process started from the subscriber checkout, a real Codex probe using the
+same `-C` reported the linked worktree from `pwd`, both directly and through
+`op-fetch`. Codex takes its default tool directory from `-C`; the failed
+worker's model overrode that default after treating the card's parent as the
+project root.
+
+The earlier gotcha 14, "the sandbox refused the one write the loop was waiting
+for", transfers one important rule: the sandbox judges the physical target of
+each write. Its specific cause does not transfer. That incident concerned the
+`state/` symlink leaving the worktree, whereas this worker failed on ordinary
+deliverables because its shell calls named the subscriber checkout directly.
+
+### Failure mode if ignored
+The banner looks correct and the worker can read every subscriber-side input,
+so the route appears healthy until its first edit. Repeated write mechanisms
+all fail because they retain the same explicit tool directory. The worker then
+spends its budget diagnosing a read-only repository, produces no deliverables
+or handoff envelope, and the loop attributes a dispatch-boundary error to the
+model.
+
+### Mitigation
+`spawn-worker.sh` now puts the run worktree path in the prompt's per-dispatch
+notes and states that every repository-relative command must use it. It also
+states that reading a card from another checkout does not change the project
+root. `-C` remains the Codex default and the sandbox remains
+`workspace-write`; the change closes the separate model-selected tool-directory
+path without widening permissions.
+
+`scripts/local-worktree-write-smoke.sh` creates a real linked worktree while
+leaving its stage card only in the subscriber checkout, then launches the real
+`codex exec --oss` route through `spawn-worker.sh`. The subscriber fixture sits
+outside the worktree, `/tmp`, `$TMPDIR` and the separately granted state path,
+so a pre-fix wrong-checkout write is refused by the sandbox rather than
+succeeding silently. The fixed prompt selects the linked worktree and the same
+write succeeds there.
+
+That arm is not fully mechanical, and the smoke should not be read as proving
+the fix necessary. The pre-fix prompt only asks the model to use the checkout
+holding the card; a 20B model that instead takes the `-C` default writes into
+the worktree and passes on unfixed code. Measured across fourteen pre-fix
+trials on 2026-08-30, eleven failed as intended and three passed anyway. The
+smoke is a sound regression test of the fixed route and a weak proof of
+necessity; making the pre-fix arm turn on a sandbox property rather than an
+instruction would close the gap. The smoke uses no Codex stub, provider credential or
+internet access.
+
+The general rule: a CLI working-directory flag is only a default when the
+agent can choose a directory per tool call. Tell the agent which checkout owns
+repository-relative work, especially when its card is deliberately stored
+elsewhere.

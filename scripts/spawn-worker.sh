@@ -144,11 +144,11 @@ main() {
   # that does not exist: three stages stalled that way with
   # worker_envelope_missing_after_exit on 2026-08-28, one of them after 681k
   # tokens. exec_command works on this route, so name the edit path that does.
-  worker_family_notes="None"
+  worker_family_notes="Repository worktree: ${work_dir}. Use it as the working directory for every repository-relative command. The stage card may live in another checkout; reading it must not change the repository root."
   if [[ "$family" == codex ]]; then
     worker_route_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" codex --print-mode --role worker 2>/dev/null || printf '')"
     if [[ "$worker_route_mode" == local ]]; then
-      worker_family_notes="The apply_patch tool is NOT registered on this local route. Do not call it; every call fails with \"unsupported call: apply_patch\". Create and edit files with shell commands through exec_command instead, for example a python3 heredoc, or a shell heredoc that writes the file. Read each file back after writing it to confirm the change landed."
+      worker_family_notes="${worker_family_notes} The apply_patch tool is NOT registered on this local route. Do not call it; every call fails with \"unsupported call: apply_patch\". Create and edit files with shell commands through exec_command instead, for example a python3 heredoc, or a shell heredoc that writes the file. Read each file back after writing it to confirm the change landed."
     fi
   fi
   prompt="$(render_prompt "$work_dir" "$card_path" "$worker_identity" "$stage_id" "$(basename "$repo_root")" "$worker_family_notes")"
