@@ -10,7 +10,7 @@ AUTOMETTA_MODEL_SONNET="claude-sonnet-5"
 AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5-20251001"
 # Frontier tier a step above Opus. Opt-in per card only: no existing identity
 # resolves here, so a stage uses it only when its card names a *Fable* role.
-AUTOMETTA_MODEL_FABLE="claude-fable-5"
+AUTOMETTA_MODEL_FABLE="claude-fable-5-1"
 # The fallback codex cloud model: what a codex identity dispatches to when it
 # names no model of its own. Cards that name Sol, Terra or Luna resolve through
 # codex_cloud_model_for_identity below and reach those weights directly, so the
