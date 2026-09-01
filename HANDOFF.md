@@ -109,13 +109,15 @@ enter (`907628a`).
   fifteen refusals; the common refusals are missing or overlapping
   `path_claims`. Parallelism comes from authoring cards with accurate disjoint
   claims, not from the config key.
-- **`handoff.mode=envelope` still misclassifies this repo**, and this file was
-  again written in spite of the mode rather than because of it. Following the
-  skill literally would write a per-stage envelope, which is the worker->tick
-  dispatch protocol, not a session handoff — and card 100's envelope belongs to
-  its live worker. `HANDOFF.md` is gitignored (`.gitignore:31`) so this reaches
-  no clone or worktree. **Decide which artefact is the session handoff and set
-  the key to match**; this is the second session to raise it.
+- **Resolved: `handoff.mode` set to `tracked`.** `de863ba` (this repo) moved
+  the key from `envelope` to `tracked`, untracked `HANDOFF.md` from
+  `.gitignore` and git-tracked it; `a9d938e` (`mcp-hub`) updated the fleet
+  dev-rules to say a dispatch envelope and a session handoff are different
+  artefacts, and seeded `registry/repo-policies.json` so the sync script
+  won't revert this. Privacy did not regress: `publishguard.privatefile`
+  already named `HANDOFF.md`, verified by dry-run to block it at the
+  `publish` boundary. Card 104 is queued to remove the name collision itself
+  by renaming the envelope artefact.
 - **Machine state changed outside any repo:** the duplicate LaunchAgent plist
   was moved to the session scratchpad rather than deleted, and
   `.autometta.local.yaml` gained `base_branch: dev` (gitignored, local). Both
@@ -213,13 +215,12 @@ status panel around.
 - **`BUILD STALE` prints two identical SHAs** when only files have drifted
   (uncommitted edits), which reads as a false positive. It should name the file
   count.
-- **`handoff.mode=envelope` misclassifies this repo.**
-  `state/handoffs/<stage>.json` is the worker→tick completion protocol, not a
-  session handoff. Following the handoff skill literally under that mode writes
-  *no* session handoff at all, and `HANDOFF.md` is gitignored (`.gitignore:31`)
-  so it reaches no clone or worktree. This file was written in spite of the mode,
-  not because of it. Decide which artefact is the session handoff and set the key
-  to match.
+- **Resolved later the same day: `handoff.mode=envelope` misclassified this
+  repo.** `state/handoffs/<stage>.json` is the worker→tick completion
+  protocol, not a session handoff, and following the handoff skill literally
+  under that mode wrote no session handoff at all. Fixed in `de863ba` /
+  `a9d938e`; see the resolved entry in the "SDK that was the other SDK"
+  session above for the detail.
 - **Per-repo dashboards under `~/.phat-controller/dashboard/repos/`** are only
   regenerated on demand; one sat a day stale with nothing on the page saying so.
 - **The TUI's empty run state** cannot tell "no run yet" from "the run just

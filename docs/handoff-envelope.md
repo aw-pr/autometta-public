@@ -2,6 +2,20 @@
 
 A worker writes a JSON file to `state/handoffs/<stage-id>.json` as its final action. `tick.sh` treats this file as the sole completion signal. Process exit and log-tail inspection are fallback stuck-worker signals only, not success signals.
 
+## Not the session handoff
+
+This document describes the **dispatch envelope**: a worker's completion signal to `tick.sh`, scoped to a single dispatch. It is a different artefact from `HANDOFF.md`, the **session handoff**: dated prose for the next chat, governed by `git config handoff.mode`, which is `tracked` in this repo.
+
+| | Dispatch envelope | Session handoff |
+|---|---|---|
+| File | `state/handoffs/<stage-id>.json` | `HANDOFF.md` |
+| Read by | `tick.sh`, once | the next agent, in a fresh chat |
+| Scope | one dispatch | the whole working line |
+
+The two are unrelated despite sharing the word "handoff". Conflating them is what put `handoff.mode` on `envelope` in this repo until 2026-09-01.
+
+Card 104 will rename this artefact to the "dispatch envelope" and move it to `state/envelopes/`, via a dual-read shim, at which point this document becomes `docs/dispatch-envelope.md`.
+
 ## Shape
 
 ```json
