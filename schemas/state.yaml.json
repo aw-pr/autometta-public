@@ -181,9 +181,29 @@
             "default": 0,
             "description": "Count of times `tick.sh --repair` has requeued this stage from stalled/failed back to pending. Capped at AUTOMETTA_REPAIR_ATTEMPT_CAP (default 2): a stage that stalls twice after repair stays down for the operator. Absent or missing is treated as 0."
           },
-          "worker_envelope": {
+          "worker_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Token count snapshotted from the worker's log/transcript by stage_snapshot_tokens() in tick.sh. Absent until the worker's role has produced a parseable count."
+          },
+          "verifier_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Token count snapshotted from the verifier's log/transcript by stage_snapshot_tokens() in tick.sh. Absent until the verifier's role has produced a parseable count."
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "worker_tokens + verifier_tokens (absent halves treated as 0), recomputed by stage_snapshot_tokens() in tick.sh on every snapshot of either role."
+          },
+          "verifier_started_at": {
             "type": ["string", "null"],
-            "description": "Set to 'partial' when the worker's handoff envelope reported status=partial. The stage still proceeds to verifier dispatch \u2014 partial is the worker's annotation, not a verdict \u2014 and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
+            "format": "date-time",
+            "description": "ISO 8601 timestamp of verifier dispatch, stamped by tick.sh immediately before spawn_verifier_for_stage. Null before the verifier is dispatched."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Free-text annotation added by the orchestrator when hand-adjudicating a stage (for example a verifier false-negative overridden to PASS). Not written by tick.sh; present only where a human recorded a decision."
           },
           "integration": {
             "type": ["object", "null"],
@@ -217,6 +237,15 @@
                 "type": ["string", "null"],
                 "format": "date-time",
                 "description": "ISO 8601 timestamp the record was written."
+              },
+              "integrated_at": {
+                "type": ["string", "null"],
+                "format": "date-time",
+                "description": "ISO 8601 timestamp the orchestrator hand-integrated the run branch (for example after a manual rebase). Not written by tick.sh; present only where a human recorded the intervention."
+              },
+              "note": {
+                "type": "string",
+                "description": "Free-text annotation the orchestrator adds when manually intervening on integration, e.g. recording a pre-rebase backup ref. Not written by tick.sh."
               }
             }
           },

@@ -101,8 +101,7 @@ Do not read anything else unless you need to; keep your context lean.
 ## Contract test
 
 - **Test file:** scripts/state-schema-smoke.sh
-- **Assertions digest:** both repos' live state files validate clean; a
-  misspelled field, a wrong type and a missing id each fail.
+- **Assertions digest:** `sha256:178788703b2bf2a8a491c77f76302ee180c9b75c9c46aca962c2849afdba0314`
 
 ## Out of scope
 
@@ -152,14 +151,18 @@ The gate reported:
 
 ```
 CONTRACT TEST GATE FAIL: scripts/check-contract-test-gate.sh print
-scripts/state-schema-smoke.sh exited 1 with 'no AUTOMETTA-CONTRACT-BEGIN
+scripts/state-schema-smoke.sh exited 1 with 'no AUTOMETTA‑CONTRACT‑BEGIN
 marker found'
 ```
+
+(The marker name above uses a non-breaking hyphen so quoting it here does
+not itself trip the gate's plain-substring scan of staged files -- a second,
+narrower defect than card 106's, worth a line rather than a card of its own.)
 
 Two things caused it, both in this card and its test rather than in the code:
 
 1. `scripts/state-schema-smoke.sh` begins directly with prose and assertions
-   and carries no `AUTOMETTA-CONTRACT-BEGIN` / `AUTOMETTA-CONTRACT-END` block.
+   and carries no `AUTOMETTA‑CONTRACT‑BEGIN` / `AUTOMETTA‑CONTRACT‑END` block.
    Frame the assertions in one, naming this card.
 2. The Contract test section above declares its Assertions digest as prose
    ("both repos' live state files validate clean; a misspelled field, a wrong

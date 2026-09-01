@@ -120,7 +120,7 @@ lands, while the remaining queue proceeds serially where safe.
 
 **Location.** Per repo: `state/state.yaml` at the repo root. State lives in the repo it describes; one repo's state is never visible to another repo's tick except through the subscriber index (see section (f)).
 
-**Schema.** `schemas/state.yaml.json` (JSON Schema draft 2020-12). The schema is committed in this stage; the tick script (stage 5) will validate `state.yaml` against it on every read.
+**Schema.** `schemas/state.yaml.json` (JSON Schema draft 2020-12). The schema is committed in this stage; the tick script (stage 5) will validate `state.yaml` against it on every read. As of stage 102 the schema is enforceable: it declares every field `tick.sh` writes (including `tokens`, `worker_tokens`, `verifier_tokens`, `verifier_started_at`, and the orchestrator's hand-added `notes` / `integration.integrated_at` / `integration.note`), so both autometta's and a subscriber's live `state.yaml` validate with zero errors while `additionalProperties: false` still rejects a typo or a stray field. `scripts/state-schema-smoke.sh` is the regression guard. When the tick gains a field, add it to `schemas/state.yaml.json` in the same change that adds the write, note which code path writes it, and re-run the smoke script before landing.
 
 **Lifecycle.** The file is created when a repo first subscribes to the tick loop (see section (f)). It is mutated only by `autometta tick`; humans may read but should not edit, because human edits without a tick will silently desync `tick_count` from `last_tick_at`. If a human must edit, they must run `autometta tick --repair`.
 
