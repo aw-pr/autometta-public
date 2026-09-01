@@ -119,7 +119,7 @@ fi
 done_ids=""
 if [[ -f "$plan_path" ]]; then
   done_ids="$(grep -E '\| done \|' "$plan_path" 2>/dev/null \
-    | sed -nE 's/.*\[`([0-9]{2}[a-z]*-[a-z0-9-]+)\.md`\].*/\1/p' \
+    | sed -nE 's/.*\[`([0-9]{2,}[a-z]*-[a-z0-9-]+)\.md`\].*/\1/p' \
     || true)"
 fi
 if [[ -d "$repo_root/state/recent-agents" ]]; then
@@ -191,7 +191,7 @@ classify() {
       [[ -f "$candidate" ]] || continue
       card_id="$(basename "$candidate" .md)"
       # Skip non-stage-card files
-      if [[ ! "$card_id" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]; then
+      if [[ ! "$card_id" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]; then
         continue
       fi
       case "$seen" in

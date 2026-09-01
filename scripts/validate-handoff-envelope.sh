@@ -49,8 +49,8 @@ errors=()
 
 if [[ -z "$stage_id" ]]; then
   errors+=("missing required field: stage_id")
-elif ! [[ "$stage_id" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]; then
-  errors+=("stage_id '${stage_id}' does not match pattern ^[0-9]{2}[a-z]*-[a-z0-9-]+\$")
+elif ! [[ "$stage_id" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]; then
+  errors+=("stage_id '${stage_id}' does not match pattern ^[0-9]{2,}[a-z]*-[a-z0-9-]+\$")
 fi
 
 if [[ -z "$status" ]]; then

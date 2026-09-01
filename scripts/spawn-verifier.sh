@@ -57,7 +57,7 @@ extract_stage_id() {
   local base
   base="$(basename "$card_path")"
   base="${base%.md}"
-  if [[ ! "$base" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]; then
+  if [[ ! "$base" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]; then
     log_msg "rejecting malformed stage id derived from ${card_path}: ${base}"
     exit 1
   fi
@@ -116,7 +116,7 @@ render_prompt() {
 extract_gate_stage_ids() {
   local card_path="$1"
   grep -E '^[-[:space:]]+\*\*Gate:\*\*' "$card_path" 2>/dev/null \
-    | grep -oE '[0-9]{2}[a-z]*-[a-z0-9-]+' || true
+    | grep -oE '[0-9]{2,}[a-z]*-[a-z0-9-]+' || true
 }
 
 build_established_facts_slice() {

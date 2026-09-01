@@ -778,7 +778,7 @@ costlog_emit_verifier() {
 # 00-bootstrap, 06-real-dispatch-test, 05a-phat-controller-hardening, etc.
 validate_stage_id() {
   local stage_id="$1"
-  [[ "$stage_id" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]
+  [[ "$stage_id" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]
 }
 
 # Print the first pending stage whose declared dispatch precondition is met.
@@ -1836,7 +1836,7 @@ facts_append() {
 facts_line() {
   local subject="$1" predicate="$2" object="$3" source="$4"
   local stage_id="${5:-}" run_id="${6:-}" confidence="${7:-}"
-  [[ "$stage_id" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]] || stage_id=""
+  [[ "$stage_id" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]] || stage_id=""
   [[ "$run_id" =~ ^run-[0-9]{8}-[0-9]{6}$ ]] || run_id=""
   case "$confidence" in high|medium|low) ;; *) confidence="" ;; esac
   jq -nc \
@@ -1897,7 +1897,7 @@ facts_failed_criterion_object() {
 # be describing some third card's work rather than this one's.
 facts_repair_relation() {
   local card_path="$1" subject_line="$2" stage_id="$3"
-  local id_re='[0-9]{2}[a-z]*-[a-z0-9-]+'
+  local id_re='[0-9]{2,}[a-z]*-[a-z0-9-]+'
   local declared="" hit="" haystack="$subject_line"
 
   if [[ -n "$card_path" && -f "$card_path" ]]; then

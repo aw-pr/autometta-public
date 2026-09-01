@@ -30,11 +30,11 @@
       "properties": {
         "head": {
           "type": "string",
-          "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$"
+          "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$"
         },
         "tail": {
           "type": "string",
-          "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$"
+          "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$"
         },
         "base_tip": {
           "type": "string",
@@ -52,7 +52,7 @@
     },
     "pairing_disabled_stage": {
       "type": "string",
-      "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+      "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$",
       "description": "Stage whose active-pair failure latched this repo to serial dispatch. Cleared when that stage's re-brief lands."
     },
     "pairing_disabled_reason": {
@@ -69,7 +69,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+            "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$",
             "description": "Stage id; convention is NN[a-z*]-kebab-slug matching the card filename in stage-cards/. Optional lowercase letters between the NN prefix and the first dash allow sub-stages like 05a, 05b, 05c."
           },
           "run_id": {
@@ -102,7 +102,7 @@
               },
               "stage_id": {
                 "type": "string",
-                "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+                "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$",
                 "description": "Full prerequisite stage id. Present only when type is stage_completed."
               }
             },
@@ -146,7 +146,7 @@
           },
           "wip_branch": {
             "type": ["string", "null"],
-            "pattern": "^wip/[0-9]{2}[a-z]*-[a-z0-9-]+-attempt-[1-9][0-9]*$",
+            "pattern": "^wip/[0-9]{2,}[a-z]*-[a-z0-9-]+-attempt-[1-9][0-9]*$",
             "description": "Append-only local branch pinning wip_commit for the latest verifier-FAILed attempt. Requeue and retention never delete wip refs."
           },
           "worker_pid": {

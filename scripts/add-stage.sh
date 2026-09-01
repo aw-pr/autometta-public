@@ -21,7 +21,7 @@ extract_gate() {
     printf '\t\n'
   elif [[ "$gate_line" =~ ^-\ \*\*Gate:\*\*\ queue-empty([.]([[:space:]].*)?)?$ ]]; then
     printf 'queue_empty\t\n'
-  elif [[ "$gate_line" =~ ^-\ \*\*Gate:\*\*\ stage-completed:\ ([0-9]{2}[a-z]*-[a-z0-9-]+)([.]([[:space:]].*)?)?$ ]]; then
+  elif [[ "$gate_line" =~ ^-\ \*\*Gate:\*\*\ stage-completed:\ ([0-9]{2,}[a-z]*-[a-z0-9-]+)([.]([[:space:]].*)?)?$ ]]; then
     printf 'stage_completed\t%s\n' "${BASH_REMATCH[1]}"
   else
     log_msg "refusing unparseable Gate line: ${gate_line}"
@@ -67,7 +67,7 @@ extract_stage_id() {
   local base
   base="$(basename "$card_path")"
   base="${base%.md}"
-  if [[ ! "$base" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]; then
+  if [[ ! "$base" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]; then
     log_msg "rejecting malformed stage id derived from ${card_path}: ${base}"
     exit 1
   fi

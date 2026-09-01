@@ -57,7 +57,7 @@ PY
 
 while IFS=$'\x1f' read -r sha subject verifier worker orchestrator controller; do
   [[ -n "$sha" ]] || continue
-  [[ "$subject" =~ ^([0-9]{2}[a-z]*-[a-z0-9-]+): ]] || continue
+  [[ "$subject" =~ ^([0-9]{2,}[a-z]*-[a-z0-9-]+): ]] || continue
   stage_id="${BASH_REMATCH[1]}"
 
   if [[ -n "$verifier" ]]; then
