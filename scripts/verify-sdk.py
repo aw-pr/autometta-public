@@ -14,8 +14,15 @@ import tempfile
 from typing import Any
 
 
-REQUIREMENTS = "scripts/requirements-sdk.txt"
-SCHEMA = Path("schemas/verifier.json")
+# The verifier runs with cwd set to the subscriber's run worktree, not to the
+# autometta root (spawn-verifier.sh: `cd "$work_dir" && python3 "$sdk_script"`).
+# The template is deliberately cwd-relative -- a subscriber vendors its own
+# copy and may fill its placeholders. The schema is not vendored and not
+# customisable, so it has to be found next to this script or the SDK route
+# dies on `verifier schema not found` in every repo but autometta itself.
+AUTOMETTA_ROOT = Path(__file__).resolve().parent.parent
+REQUIREMENTS = str(AUTOMETTA_ROOT / "scripts" / "requirements-sdk.txt")
+SCHEMA = AUTOMETTA_ROOT / "schemas" / "verifier.json"
 TEMPLATE = Path("templates/verifier-prompt.md")
 VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
 MODEL = "claude-sonnet-4-6"
