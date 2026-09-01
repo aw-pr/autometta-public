@@ -1,4 +1,4 @@
-# API SDK verifier
+# API SDK and Agent SDK verifiers
 
 ## The two SDKs, and why the distinction is load-bearing
 
@@ -29,12 +29,25 @@ statement of preference, not a licence to mix. A refused pairing resolves to
 never changes route in silence. `scripts/verifier-route-matrix-smoke.sh`
 covers the matrix.
 
-`agent-sdk` is a declared surface with no verifier entrypoint behind it yet;
-declaring it is refused by name rather than quietly becoming something else.
-Porting this entrypoint to it is the open piece of work -- `claude-agent-sdk`
-is already pinned in `scripts/requirements-sdk.txt` and would take the
-subscription token officially, which is what "the SDK verifier runs on the
-subscription" was always meant to mean.
+`agent-sdk` now has a verifier entrypoint: `scripts/verify-sdk-agent.py`
+imports `claude_agent_sdk`, the Claude Code harness as a library, and
+authenticates the way the `claude` binary does -- on either credential, per
+the table above. This is what "the SDK verifier runs on the subscription" was
+always meant to mean; card 89 shipped an entrypoint under that description
+that actually took `ANTHROPIC_API_KEY`.
+
+**Choosing a surface:** `agent-sdk` is the one to reach for on a subscription
+route -- it is the only SDK surface an OAuth token can authenticate. On an API
+key route either SDK surface works; `api-sdk` (`scripts/verify-sdk.py`) is the
+more mature of the two (prompt caching, the Fable-as-advisor option), so stay
+on it there unless a manifest has a specific reason to prefer `agent-sdk`'s
+native structured-output contract (below) instead of prompt-parsed JSON.
+
+**No default changed.** Declaring `agent-sdk` no longer refuses the dispatch,
+but nothing resolves to it on its own: the transport-resolution default (see
+below) still only ever offers `sdk` (api-sdk). A repo reaches `agent-sdk` only
+by naming it explicitly, in `verifier.claude.transport` or
+`AUTOMETTA_CLAUDE_TRANSPORT`.
 
 ## The entrypoint
 
@@ -85,6 +98,75 @@ The output envelope intentionally matches the existing verifier artefact shape:
   "overall": "PASS"
 }
 ```
+
+## The Agent SDK entrypoint
+
+`scripts/verify-sdk-agent.py` is the **agent-sdk** surface: it imports
+`claude_agent_sdk` and drives one stateless turn through `claude_agent_sdk.query()`.
+It reuses `scripts/verify-sdk.py`'s rubric, artefact glob collection, static
+and variable prompt blocks, schema loading, and envelope validation by loading
+that module directly (`importlib`) rather than re-implementing them; the only
+function it never calls is `verify-sdk.py`'s `load_anthropic()`, so this file
+never imports `anthropic`.
+
+Unlike the api-sdk route, it does not parse JSON out of a prose response.
+`ClaudeAgentOptions.output_format` is set to `{"type": "json_schema", "schema":
+<schemas/verifier.json>}`, which the `claude` CLI turns into its own
+`--json-schema` flag and returns as `ResultMessage.structured_output` --
+schema-conformant structured output from the harness itself, not a markdown
+code fence this script has to strip. The turn runs with `tools=[]` (`--tools
+""`): no filesystem, network or Bash access, so the verifier reasons over the
+artefacts embedded in the prompt exactly as the api-sdk route does, rather
+than being handed the browsing access card 98's worker prototype grants a
+worker (out of scope here).
+
+Authentication is whatever `op-fetch` placed in the process env: the `claude`
+CLI subprocess the SDK spawns inherits it the same way it inherits any other
+environment variable, so `CLAUDE_CODE_OAUTH_TOKEN` reaches it exactly as it
+would reach `claude -p`. There is no `resolve_auth()` step to duplicate here,
+unlike `verify-sdk.py` -- the credential choice already happened in
+`spawn-verifier.sh`/`op-fetch`, and both credentials are valid for this
+surface.
+
+Manual smoke test:
+
+```sh
+python3 scripts/verify-sdk-agent.py --help
+
+source op-refs.sh
+op-fetch CLAUDE_CODE_OAUTH_TOKEN="$OP_REF_CLAUDE_CODE_OAUTH_TOKEN" -- \
+  python3 scripts/verify-sdk-agent.py \
+    --stage-id 14-auth-route-toggle \
+    --card stage-cards/14-auth-route-toggle.md \
+    --artefact-glob 'scripts/auth*.sh' \
+    --out state/verifiers/14-auth-route-toggle.json \
+    --effort high
+```
+
+The same invocation with `ANTHROPIC_API_KEY="$OP_REF_ANTHROPIC_API_KEY"` in
+place of the OAuth pair runs the api mode; both are valid credentials for this
+surface. `--effort` takes the same `low`, `medium`, `high`, `xhigh`, `max`
+vocabulary as the other SDK routes, passed straight through to
+`ClaudeAgentOptions.effort` (the CLI's own `--effort` flag).
+
+Exit codes, identical to `verify-sdk.py`:
+
+- `0`: the turn returned `overall: "PASS"` and the JSON artefact was written.
+- `1`: the turn returned `overall: "FAIL"`, the JSON was malformed, or the
+  turn itself came back as an SDK-level error (`ResultMessage.is_error`).
+- `2`: environment error -- missing `claude-agent-sdk` or `jsonschema`,
+  missing card, missing verifier prompt template or schema, or a
+  `ClaudeSDKError` from the underlying transport (CLI not found, connection
+  failure, malformed stream).
+- `3`: the turn returned JSON that failed `schemas/verifier.json`; an invalid
+  report is written to `<out>.invalid.json`.
+
+The verifier identity this route writes into every artefact is fixed --
+`Claude Agent SDK verifier <claude-agent-sdk@local>` -- rather than varying by
+`--model` the way `verify-sdk.py`'s tiered identities do. Reusing that
+per-tier scheme here would tag an agent-sdk artefact with the same generic
+`(SDK)` suffix an api-sdk artefact carries, recreating on the git-attribution
+side the exact ambiguity this card exists to remove from the credential side.
 
 ## Rubric schema
 
@@ -202,13 +284,20 @@ artefacts contain personal data.
 | `transport: sdk` + `auth.claude.mode: subscription` + `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` unset or still a `YOUR_VAULT` placeholder | Exits non-zero before spawning any process. Message names the ref and `claude setup-token`. |
 | `transport: sdk` + `auth.claude.mode: api` + `OP_REF_ANTHROPIC_API_KEY` unresolved | Exits non-zero before spawning any process. Message names the ref. |
 | `transport: sdk` + `auth.claude.mode: local` | Refused by `auth-route.sh`: the local route is codex-family only. |
-| `transport` value other than `cli` or `sdk` | Exits non-zero before spawning any process. |
+| `transport` value other than `cli`, `sdk`, or `agent-sdk` | Exits non-zero before spawning any process. |
 | `transport: sdk` + `scripts/verify-sdk.py` missing | Falls back to `cli`, logged as `fallback-cli`. |
 | Unset transport + any missing precondition from the table above | Resolves to `cli`, logged as `fallback-cli` with the reason. Never an error. |
 | `transport: sdk` + SDK package missing | `verify-sdk.py` exits `2`; logged to the stage log. |
 | `transport: sdk` + declared `Verifier effort` | Passes the level through `output_config.effort`; it is not discarded. |
 | `advisor` weaker than `--model` (inverted #66714 pair) | `verify-sdk.py` exits `2` before any API call, naming both models. |
 | `advisor` set + `auth.claude.mode` other than `api` | Exits non-zero before spawning any process. The advisor is an API-only feature. |
+| `transport: agent-sdk` + `auth.claude.mode: subscription` + `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` unset or still a `YOUR_VAULT` placeholder | Exits non-zero before spawning any process. Message names the ref and `claude setup-token`. |
+| `transport: agent-sdk` + `auth.claude.mode: api` + `OP_REF_ANTHROPIC_API_KEY` unresolved | Exits non-zero before spawning any process. Message names the ref. |
+| `transport: agent-sdk` + `auth.claude.mode: local` | Refused by `auth-route.sh`: the local route is codex-family only. |
+| `transport: agent-sdk` + `scripts/verify-sdk-agent.py` missing | Falls back to `cli`, logged as `fallback-cli`. |
+| `transport: agent-sdk` + `claude-agent-sdk` package missing | `verify-sdk-agent.py` exits `2`; logged to the stage log. |
+| `transport: agent-sdk` + declared `Verifier effort` | Passes the level through `ClaudeAgentOptions.effort` (the CLI's `--effort` flag); it is not discarded. |
+| `transport: agent-sdk` + `advisor` set | Not supported by this entrypoint; `resolve_claude_advisor` is not consulted on this branch. Set `transport: sdk` with `auth.claude.mode: api` for Fable-as-advisor. |
 
 ### Artefact glob derivation
 
@@ -244,6 +333,16 @@ Store the result in 1Password and point `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` at it i
 `verify-sdk.py` sends the token as a bearer credential with the `anthropic-beta: oauth-2025-04-20` header the Claude Code entitlement requires. When the ref is unset or still a `YOUR_VAULT` placeholder, `spawn-verifier.sh` exits before spawning anything; it never falls back to `ANTHROPIC_API_KEY` or to the `cli` transport, because a silent fallback is how billing goes wrong invisibly.
 
 The api-only requirement this replaced was a leftover from before Anthropic supported subscription auth in the Agent SDK, not a limit of the SDK. No doc in this repo should steer the SDK route back to API keys on those grounds. The one thing that genuinely stays api-only is the Fable-as-advisor option, whose advisor tool is an API feature; requesting an advisor on the subscription route fails closed.
+
+**`scripts/verify-sdk-agent.py` is the production route for this credential.**
+The paragraph above describes what `verify-sdk.py` (api-sdk) does when handed
+an OAuth token directly -- true, and useful for manual testing, but no longer
+how the subscription route is dispatched: `spawn-verifier.sh`'s route guard
+refuses that pairing (see the table at the top of this document) and downgrades
+to the `cli`. `transport: agent-sdk` is the surface `claude_route_refusal`
+actually permits on `CLAUDE_CODE_OAUTH_TOKEN`, and its entrypoint takes the
+same token by inheriting the process env the `claude` CLI subprocess it spawns
+would read anyway -- see [The Agent SDK entrypoint](#the-agent-sdk-entrypoint).
 
 ## Prompt caching
 
@@ -344,17 +443,24 @@ CODEX_HOME="$HOME/.codex" op-fetch --pass CODEX_HOME -- \
 
 Verifier transport resolution is independent for each family:
 
-| Role | Family | Manifest key | SDK entrypoint | Auth modes |
-|---|---|---|---|---|
-| verifier | claude | `verifier.claude.transport` | `scripts/verify-sdk.py` | api, subscription |
-| verifier | codex | `verifier.codex.transport` | `scripts/verify-sdk-openai.py` | api, subscription |
-| orchestrator | claude | `orchestrator.claude.transport` | design only | design-pending card 23 |
-| orchestrator | codex | `orchestrator.codex.transport` | design only | design-pending card 23 |
+| Role | Family | Manifest key | Transport value | SDK entrypoint | Auth modes |
+|---|---|---|---|---|---|
+| verifier | claude | `verifier.claude.transport` | `sdk` (legacy spelling: `api-sdk`) | `scripts/verify-sdk.py` | api only -- subscription route-guards to `cli` |
+| verifier | claude | `verifier.claude.transport` | `agent-sdk` | `scripts/verify-sdk-agent.py` | api, subscription |
+| verifier | codex | `verifier.codex.transport` | `sdk` | `scripts/verify-sdk-openai.py` | api, subscription |
+| orchestrator | claude | `orchestrator.claude.transport` | design only | design only | design-pending card 23 |
+| orchestrator | codex | `orchestrator.codex.transport` | design only | design only | design-pending card 23 |
+
+`claude_entrypoint_for_surface` in `scripts/models.sh` is the single source of
+truth mapping a resolved claude surface to the script that implements it;
+`spawn-verifier.sh` dispatches through it rather than hard-coding either path.
 
 An unset verifier key resolves to `sdk` on both families wherever the
-preconditions hold, and to `cli` where one is missing.
-`AUTOMETTA_CLAUDE_TRANSPORT` and `AUTOMETTA_CODEX_TRANSPORT` override their
-matching manifest key for an A/B run without editing the manifest.
+preconditions hold, and to `cli` where one is missing -- this default is
+unchanged by `agent-sdk` existing. `agent-sdk` is reached only by naming it
+explicitly. `AUTOMETTA_CLAUDE_TRANSPORT` and `AUTOMETTA_CODEX_TRANSPORT`
+override their matching manifest key for an A/B run without editing the
+manifest.
 
 For a Codex SDK verifier, `spawn-verifier.sh` selects and checks `CODEX_HOME`
 before the process starts:

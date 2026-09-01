@@ -16,8 +16,8 @@
 #      legacy `sdk` still means api-sdk so existing manifests keep working.
 #   2. The matrix refuses api-sdk on a subscription token, and only that
 #      pairing -- api-sdk on a key, and the cli on either, all stand.
-#   3. agent-sdk is refused as unimplemented rather than silently becoming
-#      something else, because no verifier entrypoint targets it yet.
+#   3. agent-sdk is a routable surface, permitted on both credentials, now
+#      that scripts/verify-sdk-agent.py targets it.
 #   4. The guard applies to every provenance: an explicit env or manifest
 #      transport is a preference, not a licence to mix.
 #   5. It leaves the codex family alone.
@@ -61,11 +61,9 @@ check "api-sdk on an API key stands"               "$(eq no  "$(refused api-sdk 
 check "cli on a subscription token stands"         "$(eq no  "$(refused cli "$OAUTH")")"
 check "cli on an API key stands"                   "$(eq no  "$(refused cli "$KEY")")"
 
-printf '== 3. agent-sdk is refused as unimplemented, not silently swapped ==\n' >&2
-check "agent-sdk is refused on a subscription token" "$(eq yes "$(refused agent-sdk "$OAUTH")")"
-check "agent-sdk is refused on an API key too"       "$(eq yes "$(refused agent-sdk "$KEY")")"
-check "the refusal names the missing entrypoint" \
-  "$(claude_route_refusal agent-sdk "$OAUTH" | grep -q 'no verifier entrypoint' && printf 'ok\n' || printf 'reason does not name it\n')"
+printf '== 3. agent-sdk is permitted on both credentials, not refused ==\n' >&2
+check "agent-sdk stands on a subscription token" "$(eq no "$(refused agent-sdk "$OAUTH")")"
+check "agent-sdk stands on an API key too"       "$(eq no "$(refused agent-sdk "$KEY")")"
 
 printf '== 4. the guard applies to every provenance ==\n' >&2
 repo="$(mktemp -d)"

@@ -594,9 +594,9 @@ main() {
     local resolved_transport resolved_transport_provenance resolved_transport_reason
     IFS=' ' read -r resolved_transport resolved_transport_provenance resolved_transport_reason <<<"$transport_result"
     case "$resolved_transport" in
-      cli|sdk) ;;
+      cli|sdk|agent-sdk) ;;
       *)
-        log_msg "verifier-transport: invalid value ${resolved_transport} (expected cli | sdk)"
+        log_msg "verifier-transport: invalid value ${resolved_transport} (expected cli | sdk | agent-sdk)"
         exit 1
         ;;
     esac
@@ -699,13 +699,14 @@ main() {
       fi
       ;;
     claude)
-      # Fail closed on a route the sdk transport cannot authenticate. Mode
-      # resolution is duplicated inside this guard rather than hoisted above
-      # the transport branch: between entering this case and taking the cli
-      # arm, execution must traverse nothing it did not traverse before, so
-      # the cli dispatch can never abort on a resolver call it does not need.
-      if [[ "$claude_transport" == "sdk" ]]; then
-        local claude_mode
+      # Fail closed on a route the resolved sdk-family transport cannot
+      # authenticate. Mode resolution is duplicated inside this guard rather
+      # than hoisted above the transport branch: between entering this case
+      # and taking the cli arm, execution must traverse nothing it did not
+      # traverse before, so the cli dispatch can never abort on a resolver
+      # call it does not need.
+      local claude_mode=""
+      if [[ "$claude_transport" == "sdk" || "$claude_transport" == "agent-sdk" ]]; then
         if ! claude_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" claude --print-mode --role verifier)"; then
           log_msg "auth-route mode resolution failed for family=claude"
           exit 1
@@ -713,7 +714,7 @@ main() {
         case "$claude_mode" in
           api)
             if [[ "$auth_pairs" != *ANTHROPIC_API_KEY* ]]; then
-              log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk with auth.claude.mode=api requires ANTHROPIC_API_KEY in the route"
+              log_msg "verifier-transport: fail-closed; verifier.claude.transport=${claude_transport} with auth.claude.mode=api requires ANTHROPIC_API_KEY in the route"
               log_msg "  set OP_REF_ANTHROPIC_API_KEY in ~/.config/autometta/op-refs.local.sh"
               exit 1
             fi
@@ -723,34 +724,45 @@ main() {
             # is set and is not the YOUR_VAULT placeholder, so an absent pair is an
             # unusable subscription route and never a silent ANTHROPIC_API_KEY
             # fallback. The CLI route needs the same token, so this check stands
-            # ahead of the downgrade below.
+            # ahead of the api-sdk downgrade below.
             if [[ "$auth_pairs" != *CLAUDE_CODE_OAUTH_TOKEN* ]]; then
               log_msg "verifier-transport: fail-closed; auth.claude.mode=subscription requires OP_REF_CLAUDE_CODE_OAUTH_TOKEN, which is unset or still the YOUR_VAULT placeholder"
               log_msg "  mint the token once with: claude setup-token"
               log_msg "  store it in 1Password, then point OP_REF_CLAUDE_CODE_OAUTH_TOKEN at it in ~/.config/autometta/op-refs.local.sh"
               exit 1
             fi
-            # The route matrix in models.sh already downgraded this to the
-            # cli in resolve_verifier_transport, so reaching here with an sdk
-            # transport means the guard was bypassed. Refuse rather than
-            # dispatch the api-sdk at a token it cannot use.
-            log_msg "verifier-transport: fail-closed; api-sdk with auth.claude.mode=subscription bypassed the route guard"
-            exit 1
+            if [[ "$claude_transport" == "sdk" ]]; then
+              # The route matrix in models.sh already downgraded this to the
+              # cli in resolve_verifier_transport, so reaching here with an
+              # sdk transport means the guard was bypassed. Refuse rather
+              # than dispatch the api-sdk at a token it cannot use.
+              log_msg "verifier-transport: fail-closed; api-sdk with auth.claude.mode=subscription bypassed the route guard"
+              exit 1
+            fi
+            # agent-sdk takes the subscription token the way the `claude`
+            # binary does -- this pairing is the reason this transport exists.
             ;;
           *)
-            log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk does not support auth.claude.mode=${claude_mode}"
+            log_msg "verifier-transport: fail-closed; verifier.claude.transport=${claude_transport} does not support auth.claude.mode=${claude_mode}"
             exit 1
             ;;
         esac
       fi
 
-      # Fall back to cli if verify-sdk.py is missing. An unset key never
-      # reaches here on a missing entrypoint (the precondition already caught
-      # it); this catches an explicit sdk pointed at a tree without the script.
-      local sdk_script="$script_dir/verify-sdk.py"
+      # Fall back to cli if the resolved transport's entrypoint is missing.
+      # An unset key never reaches here on a missing entrypoint (the
+      # precondition already caught it); this catches an explicit sdk or
+      # agent-sdk pointed at a tree without the script.
+      local sdk_script agent_sdk_script
+      sdk_script="$script_dir/$(claude_entrypoint_for_surface api-sdk)"
+      agent_sdk_script="$script_dir/$(claude_entrypoint_for_surface agent-sdk)"
       if [[ "$claude_transport" == "sdk" && ! -f "$sdk_script" ]]; then
         claude_transport="cli"
         log_msg "verifier-transport: $(format_transport_resolution cli fallback-cli "$sdk_script not found")"
+      fi
+      if [[ "$claude_transport" == "agent-sdk" && ! -f "$agent_sdk_script" ]]; then
+        claude_transport="cli"
+        log_msg "verifier-transport: $(format_transport_resolution cli fallback-cli "$agent_sdk_script not found")"
       fi
 
       if [[ "$claude_transport" == "sdk" ]]; then
@@ -790,6 +802,32 @@ main() {
               --model "$(claude_model_for_identity "$verifier_identity")" \
               ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} \
               ${advisor_arg[@]+"${advisor_arg[@]}"} \
+              ${notes_arg[@]+"${notes_arg[@]}"} \
+            </dev/null >"$log_path" 2>&1 ) &
+      elif [[ "$claude_transport" == "agent-sdk" ]]; then
+        local artefact_glob sdk_out notes_arg
+        artefact_glob="$(derive_artefact_glob "$card_path")"
+        sdk_out="$repo_root/$artefact_path"
+        # Route evidence: names the resolved mode and the single credential
+        # op-fetch will place in the child env. auth_pairs is NAME=op://ref;
+        # only the NAME is logged, never the reference or the secret.
+        log_msg "verifier-transport: agent-sdk auth-route=${claude_mode} credential=${auth_pairs%%=*}"
+        # The agent-sdk transport builds its own prompt from the same static
+        # and variable blocks as the api-sdk transport, so the cli path's
+        # family-specific-notes substitution never reaches it either.
+        notes_arg=()
+        if [[ "$family_notes" != "None" ]]; then
+          notes_arg=(--worker-notes "$family_notes")
+        fi
+        # shellcheck disable=SC2086
+        ( cd "$work_dir" && op-fetch $auth_pairs -- \
+            python3 "$agent_sdk_script" \
+              --stage-id "$stage_id" \
+              --card "$card_path" \
+              --artefact-glob "$artefact_glob" \
+              --out "$sdk_out" \
+              --model "$(claude_model_for_identity "$verifier_identity")" \
+              ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} \
               ${notes_arg[@]+"${notes_arg[@]}"} \
             </dev/null >"$log_path" 2>&1 ) &
       else

@@ -422,8 +422,9 @@ codex_local_preflight() {
 # subscription token: measured 2026-09-01, a max_tokens=4 request returned 429
 # rate_limit_error on the OAuth token and 200 on the API key, same model and
 # minute. agent-sdk is Claude Code as a library, so it takes the subscription
-# token the way the CLI does -- but no verifier entrypoint targets it yet, so
-# declaring it is an error rather than a silent fall-through to something else.
+# token the way the CLI does, and scripts/verify-sdk-agent.py is the
+# entrypoint that targets it, so declaring it dispatches that script rather
+# than being refused.
 #
 # `sdk` is the legacy spelling of `api-sdk`. It is what every existing manifest
 # says and it keeps working; new config should name the surface it means.
@@ -433,6 +434,21 @@ claude_surface_for_transport() {
     agent-sdk)   printf 'agent-sdk\n' ;;
     cli)         printf 'cli\n' ;;
     *)           printf 'unknown\n' ;;
+  esac
+}
+
+# claude_entrypoint_for_surface <surface>
+# The script that implements one claude verifier surface, kept next to the
+# surface-to-credential matrix above so there is one source of truth for both
+# what a surface is and what runs it. spawn-verifier.sh dispatches through
+# this rather than hard-coding a script name per transport branch. Prints
+# nothing for `cli` (the `claude` binary itself, not a script this repo
+# ships) or an unrecognised surface.
+claude_entrypoint_for_surface() {
+  case "$1" in
+    api-sdk)   printf 'verify-sdk.py\n' ;;
+    agent-sdk) printf 'verify-sdk-agent.py\n' ;;
+    *)         printf '\n' ;;
   esac
 }
 
@@ -447,10 +463,6 @@ claude_route_refusal() {
   [[ "$auth_pairs" == *CLAUDE_CODE_OAUTH_TOKEN* ]] && has_oauth=true
 
   case "$surface" in
-    agent-sdk)
-      printf 'no verifier entrypoint targets claude-agent-sdk yet; scripts/verify-sdk.py is the api-sdk surface\n'
-      return 0
-      ;;
     api-sdk)
       if [[ "$has_key" == false && "$has_oauth" == true ]]; then
         printf 'the api-sdk calls the raw Messages API, which does not accept a subscription OAuth token; set auth.claude.mode=api or use the cli\n'
