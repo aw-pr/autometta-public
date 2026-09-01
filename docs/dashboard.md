@@ -13,6 +13,10 @@ path. The repo and fleet tickers, and the full-screen `autometta tui`, read the
 same payload from `scripts/aggregate-dashboard.sh`; `--repo <path>` narrows it
 to the subscriber those terminal surfaces display.
 
+A reporting surface says when it cannot answer: an unavailable query is shown
+as unavailable, never as a confident zero. A repo with no cost log is different
+and correctly reports zero spend.
+
 ## Subcommand
 
 ```
