@@ -248,6 +248,35 @@ codex_state_argv_for_repo() {
   AUTOMETTA_CODEX_STATE_ARGV=(--add-dir "$state_dir")
 }
 
+# Codex's workspace-write sandbox denies network to every model-generated
+# shell command. That is the right default: a worker editing files has no
+# business reaching the internet, and the loopback denial is what stopped a
+# sandboxed role dialling ollama. But a stage whose deliverable is itself an
+# agent session cannot run at all under it -- card 23's SDK experiment died on
+# "API Error: Unable to connect to API (FailedToOpenSocket)" before its Bash
+# tool ever executed, on both of its synthetic stages.
+#
+# A card declares `- **Requires network:** true` to lift it. This is
+# deliberately not the same grant as Requires GUI: that one drops to
+# danger-full-access and hands the agent the whole machine, where this keeps
+# workspace-write's filesystem confinement and opens only the socket. Measured
+# on 2026-09-01 with codex-cli 0.150.1: a sandboxed `curl https://example.com`
+# returns exit 6 "Could not resolve host" without it and HTTP 200 with it.
+#
+# Emits nothing under danger-full-access, which already has network, and
+# nothing for a card that does not ask.
+codex_network_argv_for_card() {
+  local requires_network="$1"
+  local codex_sandbox="$2"
+  AUTOMETTA_CODEX_NETWORK_ARGV=()
+  [[ "$codex_sandbox" == "workspace-write" ]] || return 0
+  case "$requires_network" in
+    true|True|TRUE|yes|1)
+      AUTOMETTA_CODEX_NETWORK_ARGV=(-c sandbox_workspace_write.network_access=true)
+      ;;
+  esac
+}
+
 resolve_codex_sandbox_for_card() {
   local repo_root="$1"
   local requires_gui="$2"

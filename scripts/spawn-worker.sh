@@ -44,6 +44,11 @@ extract_requires_gui() {
   sed -n 's/^- \*\*Requires GUI:\*\* //p' "$card_path" | head -n1
 }
 
+extract_requires_network() {
+  local card_path="$1"
+  sed -n 's/^- \*\*Requires network:\*\* //p' "$card_path" | head -n1
+}
+
 extract_stage_id() {
   local card_path="$1"
   local base
@@ -129,11 +134,16 @@ main() {
   if [[ ${#AUTOMETTA_EFFORT_ARGV[@]} -gt 0 ]]; then
     log_msg "worker effort: ${effort} (${stage_id})"
   fi
-  local requires_gui codex_sandbox
+  local requires_gui codex_sandbox requires_network
   requires_gui="$(extract_requires_gui "$card_path")"
   codex_sandbox="$(resolve_codex_sandbox_for_card "$repo_root" "$requires_gui")"
   if [[ "$codex_sandbox" == "danger-full-access" ]]; then
     log_msg "worker runs codex unsandboxed: card declares Requires GUI (${stage_id})"
+  fi
+  requires_network="$(extract_requires_network "$card_path")"
+  codex_network_argv_for_card "$requires_network" "$codex_sandbox"
+  if [[ ${#AUTOMETTA_CODEX_NETWORK_ARGV[@]} -gt 0 ]]; then
+    log_msg "worker keeps workspace-write but opens the network: card declares Requires network (${stage_id})"
   fi
   codex_state_argv_for_repo "$repo_root"
   # Codex registers apply_patch from per-model metadata fetched from OpenAI's
@@ -219,13 +229,13 @@ main() {
           exit 1
         fi
         # shellcheck disable=SC2086
-        op-fetch $auth_pairs -- codex exec --oss --local-provider=ollama -m "$local_model" -C "$work_dir" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec --oss --local-provider=ollama -m "$local_model" -C "$work_dir" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_NETWORK_ARGV[@]+"${AUTOMETTA_CODEX_NETWORK_ARGV[@]}"} ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       elif [[ -n "$codex_home_override" ]]; then
         # shellcheck disable=SC2086
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_NETWORK_ARGV[@]+"${AUTOMETTA_CODEX_NETWORK_ARGV[@]}"} ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       else
         # shellcheck disable=SC2086
-        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_NETWORK_ARGV[@]+"${AUTOMETTA_CODEX_NETWORK_ARGV[@]}"} ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)

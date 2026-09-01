@@ -18,6 +18,7 @@ Dispatch happens in an ephemeral worktree cut from the base branch (`git worktre
 - **Worker effort:** <<low|medium|high|xhigh|max — optional, omit to leave the CLI on its default>>
 - **Verifier effort:** <<low|medium|high|xhigh|max — optional. Honoured by the Claude and Codex CLI routes, the Claude SDK route, and every verifier panel member. Omit to leave each route on its default.>>
 - **Requires GUI:** <<true if any role must drive a browser, screenshot, or otherwise reach the window server; omit otherwise. Codex roles are sandboxed and every browser aborts at NSApplication init without this, headless included. It grants that agent full machine access, so declare it only when the acceptance criteria genuinely need it.>>
+- **Requires network:** <<true if any role must reach the network from a shell command it runs, for example a stage whose deliverable is itself an agent session; omit otherwise. Codex roles run under workspace-write, which denies the socket: an agent session started without this dies on "Unable to connect to API (FailedToOpenSocket)" before its first tool call. Unlike Requires GUI this keeps the filesystem sandbox and opens only the socket, so prefer it whenever the network is all that is missing.>>
 - **Verifier panel:** false
 <!--
 Optional dispatch gate. Omit the Gate line for an ungated stage. These are the
