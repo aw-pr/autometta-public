@@ -142,6 +142,16 @@ read_subscriber_fields() {
 
 state_yaml_to_json() { yq -o=json '.' "$1"; }
 
+append_state_error() {
+  local message="$1"
+  if [[ "$state_error" == null ]]; then
+    state_error="$(jq -nc --arg message "$message" '$message')"
+  else
+    state_error="$(jq -nc --argjson current "$state_error" --arg message "$message" \
+      '$current + "; " + $message')"
+  fi
+}
+
 epoch_iso() {
   local epoch="${1:-0}"
   [[ "$epoch" =~ ^[0-9]+$ && "$epoch" -gt 0 ]] || return 0
@@ -166,6 +176,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   repo_path="$subscriber_repo_path"
   manifest_path="$subscriber_manifest_path"
   [[ -n "$repo_path" ]] || continue
+  state_error=null
 
   if [[ -n "$match_filter" ]]; then
     # The literal comparison first, so the common case never forks a subshell
@@ -178,8 +189,11 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
 
   card_globs=()
   if [[ -n "$manifest_path" && -f "$manifest_path" ]]; then
-    while IFS= read -r g; do [[ -n "$g" ]] && card_globs+=("$g"); done \
-      < <(yq -r '.stage_card_globs[]? // empty' "$manifest_path" 2>/dev/null || true)
+    if card_glob_output="$(yq -r '.stage_card_globs[]? // empty' "$manifest_path" 2>/dev/null)"; then
+      while IFS= read -r g; do [[ -n "$g" ]] && card_globs+=("$g"); done <<<"$card_glob_output"
+    else
+      append_state_error "subscriber manifest unparseable"
+    fi
   fi
   card_globs+=("stage-cards/*.md")
   # Legacy fallbacks for subscribers that have not migrated their cards yet.
@@ -208,7 +222,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
 
   cards_json='{}'
   if [[ ${#card_paths[@]} -gt 0 ]]; then
-    cards_json="$(awk '
+    if ! cards_json="$(awk '
       FNR == 1 { matched = 0 }
       !matched && /^- \*\*Orchestrator:\*\*/ {
         value = $0
@@ -225,7 +239,10 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
         else . + {($row[0]): {path: $row[1],
           orchestrator: (($orchestrators[$row[1]] // "") |
             if . == "" then null else . end)}} end)' \
-      || printf '{}')"
+      )"; then
+      cards_json='{}'
+      append_state_error "stage cards unreadable"
+    fi
   fi
 
   state_yaml="$repo_path/state/state.yaml"
@@ -253,25 +270,39 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       IFS= read -r consecutive_failures; IFS= read -r consecutive_failure_cap
       IFS= read -r paused_until; IFS= read -r paused_reason
     } <<<"$budget_fields"
+  elif [[ -f "$budget_path" ]]; then
+    append_state_error "budget.json unparseable"
   fi
   # Resolved cap (drain > repo cap > host default > floor) and which rule
   # won, so the ticker's CAP row never shows a resting number while a drain
   # or host default is actually what binds.
-  effective_token_cap="$(budget_effective_token_cap "$repo_path" 2>/dev/null || printf '%s' "$token_cap_total")"
-  cap_source="$(budget_cap_source "$repo_path" 2>/dev/null || printf 'host-default')"
+  if ! effective_token_cap="$(budget_effective_token_cap "$repo_path" 2>/dev/null)"; then
+    effective_token_cap="$token_cap_total"
+    append_state_error "effective token cap unavailable"
+  fi
+  if ! cap_source="$(budget_cap_source "$repo_path" 2>/dev/null)"; then
+    cap_source=host-default
+    append_state_error "token cap source unavailable"
+  fi
 
   drain_active=false; drain_cap=null; drain_expires_at=null
   if active_cap="$(budget_drain_active "$repo_path" 2>/dev/null)" && [[ -n "$active_cap" ]]; then
     drain_active=true
     drain_cap="$active_cap"
-    drain_epoch="$(jq -r '.expires_at // 0' "$(budget_drain_file)" 2>/dev/null || printf 0)"
+    if ! drain_epoch="$(jq -r '.expires_at // 0' "$(budget_drain_file)" 2>/dev/null)"; then
+      drain_epoch=0
+      append_state_error "drain budget unparseable"
+    fi
     drain_iso="$(epoch_iso "$drain_epoch")"
     [[ -n "$drain_iso" ]] && drain_expires_at="$(jq -nc --arg value "$drain_iso" '$value')"
   fi
 
   heartbeat_json='{}'
   if [[ -f "$heartbeat_path" ]]; then
-    heartbeat_json="$(jq -c '.' "$heartbeat_path" 2>/dev/null || printf '{}')"
+    if ! heartbeat_json="$(jq -c '.' "$heartbeat_path" 2>/dev/null)"; then
+      heartbeat_json='{}'
+      append_state_error "heartbeat.json unparseable"
+    fi
   fi
   # Heartbeat owns the expensive tree walk. Missing or over-age evidence is
   # unreadable, so a stopped cadence cannot leave an old "current" verdict on
@@ -311,10 +342,10 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     fi
   fi
 
-  stages_json='[]'; state_error=null; last_tick_at=null; tick_count=0; current_stage=null; run_started_at=null
+  stages_json='[]'; last_tick_at=null; tick_count=0; current_stage=null; run_started_at=null
   current_run_id=null; current_run_started_at=null; current_run_stages='[]'
   if [[ ! -r "$state_yaml" ]]; then
-    state_error='"state.yaml unreadable"'
+    append_state_error "state.yaml unreadable"
   elif state_doc="$(state_yaml_to_json "$state_yaml" 2>/dev/null)" \
     && state_fields="$(printf '%s' "$state_doc" | jq -r '
       [.stages[]? | {
@@ -370,7 +401,12 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
         # costs a slow walk rather than values read against the wrong stage.
         overall_values=()
         for artefact_path in "${artefact_paths[@]}"; do
-          overall_values+=("$(jq -c '.overall // null' "$artefact_path" 2>/dev/null || printf null)")
+          if overall_value="$(jq -c '.overall // null' "$artefact_path" 2>/dev/null)"; then
+            overall_values+=("$overall_value")
+          else
+            overall_values+=(null)
+            append_state_error "verifier artefact unparseable"
+          fi
         done
       fi
       mtime_values=()
@@ -428,15 +464,19 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
         else ("\($run_id[4:8])-\($run_id[8:10])-\($run_id[10:12])T\($run_id[13:15]):\($run_id[15:17]):\($run_id[17:19])Z" | tojson)
         end)] | .[]')"
   else
-    stages_json='[]'; state_error='"state.yaml unparseable"'
+    stages_json='[]'
+    append_state_error "state.yaml unparseable"
   fi
 
   alerts_json='[]'
   if [[ -x "$script_dir/scan-usage-limits.sh" ]]; then
-    alerts_json="$("$script_dir/scan-usage-limits.sh" "$repo_path" 2>/dev/null \
+    if ! alerts_json="$("$script_dir/scan-usage-limits.sh" "$repo_path" 2>/dev/null \
       | jq -R -s -c 'split("\n") | map(select(length > 0)) |
         map(split("\t") | {log:.[0], line:(.[1] // ""), occurred_at:(.[2] // null)})' \
-      || printf '[]')"
+      )"; then
+      alerts_json='[]'
+      append_state_error "usage alerts unavailable"
+    fi
   fi
 
   # Registry pass: one jq per agent file for the three things the shell needs
@@ -454,7 +494,10 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
         IFS= read -r agent_log || agent_log=""
         IFS= read -r registration || registration=""
       } <<<"$(jq -r '(.pid // 0), (.log_path // ""), tojson' "$agent_file" 2>/dev/null || true)"
-      [[ -n "$registration" ]] || continue
+      if [[ -z "$registration" ]]; then
+        append_state_error "agent registry unreadable"
+        continue
+      fi
       [[ "$agent_pid" =~ ^[0-9]+$ ]] || continue
       if ! kill -0 "$agent_pid" 2>/dev/null; then
         case ",$heartbeat_alive_pids," in *",$agent_pid,"*) ;; *) continue ;; esac
@@ -503,9 +546,13 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
   # scripts/agent-ticker.sh already used for this, so the two never disagree
   # about how much of a transcript has been consumed.
   if [[ -n "$match_filter" && "$agents_json" != "[]" ]]; then
-    agents_json="$(python3 "$script_dir/lib/transcript-tokens.py" "$active_agents_dir" \
+    if ! enriched_agents_json="$(python3 "$script_dir/lib/transcript-tokens.py" "$active_agents_dir" \
       "${AUTOMETTA_CLAUDE_PROJECTS:-$HOME/.claude/projects}" \
-      "${AUTOMETTA_CODEX_SESSIONS:-$HOME/.codex/sessions}" <<<"$agents_json" 2>/dev/null || printf '%s' "$agents_json")"
+      "${AUTOMETTA_CODEX_SESSIONS:-$HOME/.codex/sessions}" <<<"$agents_json" 2>/dev/null)"; then
+      append_state_error "live token reading unavailable"
+    else
+      agents_json="$enriched_agents_json"
+    fi
   fi
 
   # The queue and, below it, the stages done/outstanding/escalated counts for
@@ -528,16 +575,19 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
 
   quota='{"read_at":null,"families":{"claude":{"family":"claude","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]},"codex":{"family":"codex","status":"unknown","reason":"no tick reading","source":null,"fetched_at":null,"windows":[]}}}'
   if [[ -f "$quota_path" ]]; then
-    quota="$(jq -c '
+    if ! quota="$(jq -c '
       {read_at:(.read_at // null), families:{
         claude:(.families.claude // {family:"claude",status:"unknown",reason:"missing from tick reading",source:null,fetched_at:null,windows:[]}),
         codex:(.families.codex // {family:"codex",status:"unknown",reason:"missing from tick reading",source:null,fetched_at:null,windows:[]})}}
-    ' "$quota_path" 2>/dev/null || printf '%s' "$quota")"
+    ' "$quota_path" 2>/dev/null)"; then
+      quota='{"read_at":null,"families":{"claude":{"family":"claude","status":"unknown","reason":"quota reading unavailable","source":null,"fetched_at":null,"windows":[]},"codex":{"family":"codex","status":"unknown","reason":"quota reading unavailable","source":null,"fetched_at":null,"windows":[]}}}'
+      append_state_error "quota window unparseable"
+    fi
   fi
 
   spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"by_stage":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0,"history":{"summary":{"card_count":0,"lost_seven_day_tokens":0,"lost_seven_day_marked":false,"seven_day_cost_usd_est":0,"seven_day_cost_marked":false},"cards":[],"fortnight":{"by_day":[],"by_model":[]}}}'
   if [[ -f "$cost_log_path" ]]; then
-    spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" \
+    if ! spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" \
       --argjson ledger_stages "$stages_json" '
       # epoch, token sum and the zero-output test are asked of every row by
       # thirty-odd separate comprehensions below, and the fortnight chart asks
@@ -678,7 +728,10 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
              sort_by(.cost_usd_est) | reverse)
          }
        }}
-    ' "$cost_log_path" 2>/dev/null || printf '%s' "$spend")"
+    ' "$cost_log_path" 2>/dev/null)"; then
+      spend='{"state_error":"spend unavailable","scope":"today_utc","input_tokens":null,"cached_input_tokens":null,"output_tokens":null,"tokens_total":null,"cost_usd_est":null,"productive":{"tokens":null,"cost_usd_est":null},"lost":{"tokens":null,"cost_usd_est":null},"lost_seven_day":{"tokens":null,"cost_usd_est":null},"openai_zero_output_caveat":null,"by_role":[],"by_stage":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":null,"last_hour_tokens":null,"history":{"state_error":"spend unavailable","summary":{"card_count":null,"lost_seven_day_tokens":null,"lost_seven_day_marked":null,"seven_day_cost_usd_est":null,"seven_day_cost_marked":null},"cards":[],"fortnight":{"by_day":[],"by_model":[]}}}'
+      append_state_error "spend unavailable"
+    fi
   fi
 
   # The spend block arrives on stdin, not in argv. It carries a dispatch object

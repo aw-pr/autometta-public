@@ -501,6 +501,21 @@ def history_cards(payload):
     return (payload.get("history") or {}).get("cards") or []
 
 
+def spend_error(payload):
+    spend = payload.get("spend") or {}
+    history = payload.get("history") or {}
+    return spend.get("state_error") or history.get("state_error")
+
+
+def spend_error_message(payload):
+    error = spend_error(payload)
+    if not error:
+        return None
+    if str(error).startswith("spend unavailable"):
+        return error
+    return "spend unavailable: %s" % error
+
+
 def marked_tokens(value, marked=False):
     """History figures in thousands, matching the panels and the detail pane.
 
@@ -538,6 +553,9 @@ def sparkline(values):
 
 
 def history_table_lines(state, inner_width, inner_height=None):
+    message = spend_error_message(state.payload)
+    if message:
+        return [content_line(message, [(0, len(message), ALERT)])]
     rows = history_cards(state.payload)
     summary = (state.payload.get("history") or {}).get("summary") or {}
     summary_text = "%d cards · %s lost 7d · %s cost 7d" % (
@@ -619,6 +637,9 @@ def history_table_lines(state, inner_width, inner_height=None):
 
 
 def history_detail_lines(state, inner_width):
+    message = spend_error_message(state.payload)
+    if message:
+        return [content_line(message, [(0, len(message), ALERT)])]
     card = next((row for row in history_cards(state.payload)
                  if row.get("id") == state.pinned_history_card), None)
     if not card:
@@ -761,8 +782,12 @@ def status_lines(state):
         # cap. Read left to right that invited "6.9M of 600.0M is 53%", which is
         # wrong by a factor of forty, and a figure that will not reconcile reads
         # as a budget rather than a measurement. They get a line each.
-        settled = "run spend %s  $%.2f actual" % (
-            tick_tokens(run.get("tokens_total", 0)), run.get("cost_usd_est", 0) or 0)
+        error = spend_error(payload)
+        if error:
+            settled = "run spend unavailable"
+        else:
+            settled = "run spend %s  $%.2f actual" % (
+                tick_tokens(run.get("tokens_total", 0)), run.get("cost_usd_est", 0) or 0)
         # An in-flight role is counted nowhere in that figure: the cost log gets
         # its row when the role exits, so on the CLI route the settled number
         # holds still for the length of a worker and reads as a static budget.
@@ -771,7 +796,7 @@ def status_lines(state):
         # folded in: a role half-landed in the cost log and half in a live
         # transcript would otherwise be counted twice.
         suffix = live_spend_suffix(payload, state)
-        spans = [(len(settled) - 6, 6, DIM)]
+        spans = [] if error else [(len(settled) - 6, 6, DIM)]
         if suffix:
             spans.append((len(settled) + 2, 1, ACTIVE))
         lines.extend([
