@@ -350,7 +350,10 @@ assert_contains "$frame119" 'GPT-5.6 Sol <gpt-5-6-sol@local>' "detail omitted wo
 assert_contains "$frame119" 'Claude Fable 5 <claude-fable-5@local>' "detail omitted verifier identity"
 assert_contains "$frame119" 'attempt   2 of 3' "detail omitted attempt"
 assert_contains "$frame119" 'budget    3m17s / 30m00s (10% used)' "detail omitted budget"
-assert_contains "$frame119" 'tokens  in 2.0M  cached 300.0K  out 2.2K' "detail omitted token breakdown"
+# Thousands, comma-grouped, matching the panels and the history cards: one
+# unit across the surface. The old assertion pinned 'in 2.0M cached 300.0K
+# out 2.2K', a single line that changed unit twice mid-sentence.
+assert_contains "$frame119" 'tokens  in 2,000k  cached 300k  out 2k' "detail omitted token breakdown"
 assert_contains "$frame119" "\$1.87" "detail omitted stage cost"
 assert_contains "$frame119" '14.4K/min' "burn rate was not computed from the 1,200-token poll delta"
 assert_contains "$frame119" 'run start 07:30:00Z  elapsed 30m05s' "run start or elapsed did not use the mint time"

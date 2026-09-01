@@ -476,7 +476,15 @@ def history_cards(payload):
 
 
 def marked_tokens(value, marked=False):
-    return short_tokens(value or 0) + ("?" if marked else "")
+    """History figures in thousands, matching the panels and the detail pane.
+
+    short_tokens' 1.1M loses the resolution a reader needs to compare two
+    stages: 1.1M against 1.4M hides three hundred thousand tokens, and beside
+    a detail pane reading `in 159.5K cached 2.9M out 20.8K` the same line
+    changed unit twice mid-sentence. One unit across the surface, and the
+    reader can subtract in their head.
+    """
+    return tick_tokens(value or 0) + ("?" if marked else "")
 
 
 def marked_cost(value, marked=False):
@@ -857,7 +865,7 @@ def agent_lines(state):
             live_tokens = (int(live_usage.get("input_tokens") or 0)
                            + int(live_usage.get("output_tokens") or 0))
             burn = "LIVE %s%s" % (
-                short_tokens(live_tokens),
+                tick_tokens(live_tokens),
                 " stale" if not live_usage.get("updated_at") else "",
             )
         else:
@@ -988,7 +996,7 @@ def detail_lines(state, inner_width, inner_height=None):
         live_input = int(live_usage.get("input_tokens") or 0)
         live_output = int(live_usage.get("output_tokens") or 0)
         live_text = "LIVE in %s out %s%s" % (
-            short_tokens(live_input), short_tokens(live_output),
+            tick_tokens(live_input), tick_tokens(live_output),
             " stale" if not live_usage.get("updated_at") else "",
         )
     else:
@@ -1014,10 +1022,14 @@ def detail_lines(state, inner_width, inner_height=None):
         content_line(stage.get("acceptance") or "see stage card"),
         content_line(""),
         content_line("tokens  in %s  cached %s  out %s  $%.2f" % (
-            short_tokens(usage.get("input_tokens", 0)), short_tokens(usage.get("cached_input_tokens", 0)),
-            short_tokens(usage.get("output_tokens", 0)), usage.get("cost_usd_est", 0) or 0)),
+            tick_tokens(usage.get("input_tokens", 0)), tick_tokens(usage.get("cached_input_tokens", 0)),
+            tick_tokens(usage.get("output_tokens", 0)), usage.get("cost_usd_est", 0) or 0)),
         content_line("live      %s" % live_text,
                      [(10, 10 + len(live_text), ACTIVE)] if live_text != "n/a" else [(10, 13, DIM)]),
+        # The burn rate stays on short_tokens. It is a per-minute figure in the
+        # low thousands, so it never reaches the millions this change is about,
+        # and 14.4K/min carries a decimal that 14k/min would floor away --
+        # on the one number here whose movement is the point.
         content_line("%s  burn last 8 polls (%s/min)" % (spark, short_tokens(rate))),
     ])
     lines = wrap_content_lines(lines, inner_width)
