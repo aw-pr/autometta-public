@@ -494,14 +494,27 @@
       // noise; the filter narrows which repos appear, the grouping keeps each
       // one's run legible once several are showing.
       var group = r.stages.map(function (s) { return { repo: r.name, stage: s }; });
-      // Newest queue time at the top, with stages not yet dispatched above the
-      // dated ones: page one is then the live end of the run, not its oldest card.
+      // Queue position, last first. The queue array is the order the tick will
+      // actually dispatch in, so it is the only thing that knows a stage's
+      // place in the run; a timestamp cannot, because a stage waiting to run
+      // has none. Reading "no timestamp" as "queued" put every never-dispatched
+      // terminal stage -- a failed card from May with both dates null -- at the
+      // top of the table, where the next stage to run belongs.
+      var queuePos = Object.create(null);
+      (r.queue || []).forEach(function (q, i) { queuePos[q.stage_id] = i + 1; });
+      // Three bands, in this order: still queued (descending position, so the
+      // last-queued card leads), then everything with a clock on it (newest
+      // first, which lands the in-flight stage directly under the queue on its
+      // own merit rather than by pinning it), then the undated remainder --
+      // terminal stages that never ran, which belong at the bottom.
+      function band(s) { return queuePos[s.id] ? 0 : (s.started_at || s.completed_at) ? 1 : 2; }
       group.sort(function (a, b) {
+        var ab = band(a.stage), bb = band(b.stage);
+        if (ab !== bb) return ab - bb;
+        if (ab === 0) return queuePos[b.stage.id] - queuePos[a.stage.id];
+        if (ab === 2) return 0;
         var at = a.stage.started_at || a.stage.completed_at;
         var bt = b.stage.started_at || b.stage.completed_at;
-        if (!at && !bt) return 0;
-        if (!at) return -1;
-        if (!bt) return 1;
         return at < bt ? 1 : at > bt ? -1 : 0;
       });
       group.forEach(function (row, i) { row.groupStart = i === 0; rows.push(row); });
