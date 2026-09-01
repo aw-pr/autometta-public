@@ -34,6 +34,37 @@ A tick is a single non-interactive invocation of `autometta tick`, which delegat
 
 A tick is one transition, not a loop within the tick. This is the "cron + tick > daemon" belief from `docs/philosophy.md`. The cron schedule defines the loop; the script is a one-shot.
 
+### Tick cost model
+
+The floor for an idle fleet tick is controller-wide work plus the per-repo
+work. On 2026-09-01, three six-subscriber runs measured 90.20s, 90.22s and
+91.54s wall time, with 63-64s user and 30-31s system time. The high system
+share pointed to process creation rather than YAML parsing, quota reads,
+state hashing or an explicit sleep.
+
+The profile isolated the cost to the installed-build comparison inside
+`heartbeat.sh`. It walked and SHA-256 hashed the installed and checkout trees
+once for every subscriber, even though both trees are controller-wide facts.
+Measured directly on the same host, that one comparison took 14.65s / 10.33s
+user / 4.76s system, then 14.35s / 10.24s / 4.70s, then 14.25s / 10.25s /
+4.57s. Six copies explain the observed floor.
+
+`tick.sh` now obtains one sanitised build-check JSON result per fleet fire and
+passes it to each heartbeat. Every repo still writes its own heartbeat report
+and receives the same build-drift verdict; only the repeated tree walk is
+removed. The resulting model is `fixed tick work + one build comparison`,
+rather than `fixed tick work + subscribers × build comparison`. The offline
+six-repo cost smoke uses a one-second stand-in for that comparison: the
+pre-change path took 9.51s with six calls; the cached path took 3.81s with one,
+below its 6.0s fixture budget. The fixture leaves every repo idle, with one
+`idle_ticks_used` increment and no `clock_ticks_used` increment.
+
+The cost smoke is deliberately a regression guard, not a substitute for a
+live fleet measurement. Re-measure three clean live runs after installing the
+changed build before changing the LaunchAgent cadence. Record wall, user and
+system time together, because a later regression may move cost between those
+categories without changing wall time.
+
 ### Pipeline pairs
 
 Serial remains the default. Two adjacent stages become a pipeline pair only

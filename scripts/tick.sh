@@ -2325,11 +2325,28 @@ warn_if_vendor_stale() {
 # Best-effort: walk the per-agent liveness registry and surface stalls /
 # overruns into state/heartbeat.json. Never fatal; the heartbeat itself
 # is a watchdog, not a gate.
+heartbeat_build_check_json=""
+refresh_heartbeat_build_check() {
+  [[ -n "$heartbeat_build_check_json" ]] && return 0
+  heartbeat_build_check_json="$("$script_dir/heartbeat.sh" --build-check-json 2>/dev/null || true)"
+  if ! printf '%s' "$heartbeat_build_check_json" | jq -e '
+    (.status == "current" or .status == "stale" or .status == "unreadable") and
+    (.stale | type == "boolean") and
+    ((.installed_sha == null) or (.installed_sha | type == "string")) and
+    ((.checkout_sha == null) or (.checkout_sha | type == "string")) and
+    (.checked_at | type == "string")' >/dev/null 2>&1; then
+    heartbeat_build_check_json="$(jq -nc --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '{status:"unreadable",stale:false,installed_sha:null,checkout_sha:null,checked_at:$checked_at}')"
+  fi
+}
+
 run_heartbeat() {
   local repo_root="$1"
   if [[ -x "$script_dir/heartbeat.sh" ]]; then
     local heartbeat_output
-    heartbeat_output="$("$script_dir/heartbeat.sh" "$repo_root" 2>&1 || true)"
+    refresh_heartbeat_build_check
+    heartbeat_output="$(AUTOMETTA_BUILD_CHECK_JSON="$heartbeat_build_check_json" \
+      "$script_dir/heartbeat.sh" "$repo_root" 2>&1 || true)"
     while IFS= read -r heartbeat_line; do
       # `if`, not `[[ ]] &&`: on empty output the herestring still feeds one
       # empty line, and a guard-list returning 1 as the loop's last body
