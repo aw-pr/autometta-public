@@ -11,6 +11,7 @@
 - **Run branch:** autometta/23-sdk-controller-experiment
 - **Worker effort:** high
 - **Verifier effort:** high
+- **Requires network:** true
 - **Verifier panel:** false
 - **Gate:** stage-completed: 97-a-pause-is-not-a-stall
 - **Path claims:** scripts/controller-sdk-experiment.py, tests/sdk-controller-experiment/, docs/experiments/sdk-controller-postmortem.md, memory/decision-sdk-controller-experiment.md, docs/philosophy.md
@@ -142,3 +143,36 @@ retried.
 
 Prior attempt's work is preserved at `wip/23-sdk-controller-experiment-attempt-1`
 (commit `94570284`). Start from it rather than from an empty tree.
+
+
+## Re-brief note (2026-09-01, orchestrator) — attempt 3
+
+Attempt 2 answered the question attempt 1 could not. The worker sent a real
+SIGTERM this time (exit 143, the interrupted stage recorded `failed` with the
+expected stall marker), so **criterion 4 is satisfied** and the postmortem
+reports an observation rather than a design claim. Do not redo it.
+
+**Criterion 2's cause is now known and has been removed.** Both synthetic
+stages died on `API Error: Unable to connect to API (FailedToOpenSocket)`
+before the SDK session's Bash tool ever ran. That was codex's `workspace-write`
+sandbox denying the socket to every shell command a worker starts, which is
+this repo's default and was never a fault in the experiment. The card now
+declares `- **Requires network:** true`, so this dispatch keeps the filesystem
+sandbox and opens the socket. Measured before granting it: a sandboxed
+`curl https://example.com` returned exit 6 "Could not resolve host" without the
+grant and HTTP 200 with it.
+
+So stage A should now run for real. Hold the same bar as before: capture the
+worker subprocess's exit status, stdout and stderr in the log rather than
+collapsing every outcome to `failed: worker`, and if it still cannot complete,
+report what the log actually says instead of inferring. The experiment's value
+is a Decision that rests on an observation, and stage A completing is what
+makes the "keep cron+tick" conclusion honest rather than assumed.
+
+**Criterion 7 is still open**: `memory/decision-sdk-controller-experiment.md`
+needs the frontmatter `memory/README.md` mandates (`name`, `description`,
+`metadata.type`, and a **Why:** / **How to apply:** pair for a project memory).
+The `[[decision-handoff-envelope]]` wikilink is already correct; keep it.
+
+Attempt 2's work is preserved at `wip/23-sdk-controller-experiment-attempt-2`.
+Start from it: the SIGTERM evidence and the postmortem structure are sound.
