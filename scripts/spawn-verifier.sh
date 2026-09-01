@@ -719,18 +719,43 @@ main() {
             fi
             ;;
           subscription)
-            # The Agent SDK runs the Claude Code harness, which authenticates
-            # with the OAuth token `claude setup-token` mints once. auth-route.sh
-            # emits the pair only when OP_REF_CLAUDE_CODE_OAUTH_TOKEN is set and
-            # is not the YOUR_VAULT placeholder, so an absent pair here is an
+            # auth-route.sh emits the pair only when OP_REF_CLAUDE_CODE_OAUTH_TOKEN
+            # is set and is not the YOUR_VAULT placeholder, so an absent pair is an
             # unusable subscription route and never a silent ANTHROPIC_API_KEY
-            # or cli fallback.
+            # fallback. The CLI route needs the same token, so this check stands
+            # ahead of the downgrade below.
             if [[ "$auth_pairs" != *CLAUDE_CODE_OAUTH_TOKEN* ]]; then
-              log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk with auth.claude.mode=subscription requires OP_REF_CLAUDE_CODE_OAUTH_TOKEN, which is unset or still the YOUR_VAULT placeholder"
+              log_msg "verifier-transport: fail-closed; auth.claude.mode=subscription requires OP_REF_CLAUDE_CODE_OAUTH_TOKEN, which is unset or still the YOUR_VAULT placeholder"
               log_msg "  mint the token once with: claude setup-token"
               log_msg "  store it in 1Password, then point OP_REF_CLAUDE_CODE_OAUTH_TOKEN at it in ~/.config/autometta/op-refs.local.sh"
               exit 1
             fi
+            # Downgrade to the CLI. This branch used to read "the Agent SDK runs
+            # the Claude Code harness, which authenticates with the OAuth token",
+            # and that is true of the Agent SDK -- but verify-sdk.py imports
+            # `anthropic`, the API SDK, and calls the raw Messages API. A Claude
+            # Code subscription token is not a credential for that surface. The
+            # comment described an intention the code never implemented.
+            #
+            # Measured 2026-09-01, one request each, same model and minute:
+            # a max_tokens=4 call returned 429 rate_limit_error on the OAuth
+            # token (x-should-retry, no retry-after, no ratelimit headers -- not
+            # a spent quota), the identical call on ANTHROPIC_API_KEY returned
+            # 200, and `claude -p` on that same OAuth token answered. Card 89
+            # passed because ANTHROPIC_API_KEY was presumably in the environment
+            # and wins verify-sdk.py's resolution order, so the subscription
+            # token was never the credential under test.
+            #
+            # Every subscriber has taken this route since card 90 made the SDK
+            # the default on 2026-08-31, and each dispatch was classified as a
+            # provider refusal and parked behind an hour of blind backoff --
+            # correct handling of a wrong diagnosis. Downgrading keeps stages
+            # moving on a route that works. Set auth.claude.mode: api to take
+            # the SDK, or port verify-sdk.py to claude-agent-sdk, which is
+            # already pinned in scripts/requirements-sdk.txt and does accept
+            # this token.
+            claude_transport="cli"
+            log_msg "verifier-transport: $(format_transport_resolution cli fallback-cli "the API SDK cannot authenticate with a subscription OAuth token; set auth.claude.mode=api to keep the SDK")"
             ;;
           *)
             log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk does not support auth.claude.mode=${claude_mode}"
