@@ -98,3 +98,47 @@ req_011CebX8zh975kvsSmKpt2ST, while `claude -p` on the same account worked
 throughout). If any API call in this experiment is refused with a 429 on
 the first request, stop and record the refusal in the postmortem rather
 than retrying; a first-request 429 here means the auth route, not load.
+
+## Re-brief note (2026-09-01, orchestrator) — attempt 2
+
+Attempt 1 returned a `partial` envelope and the verifier scored 7 of 10.
+Criteria 1, 3, 5, 6, 8, 9 and 10 passed and the work behind them is sound;
+do not rebuild them. Three criteria failed, and all three are in reach.
+
+**Criterion 2 — stage A never completed.** This is the one that matters,
+because it is the apparatus failing rather than the experiment returning a
+negative result. `tests/sdk-controller-experiment/stage-A.md` is correct as
+written: its worker command is `echo hello > /tmp/sdk-exp-A.txt`, a command
+that cannot fail on its own merits. The run log
+(`state/logs/23-sdk-controller-experiment-worker.log:11682-11686`) shows
+`stage-A: worker dispatched` then `stage-A: failed: worker` for it and for
+stage B alike, so the session reported failure for a command that should
+have succeeded. Diagnose why before changing anything: capture the worker
+subprocess's exit status, stdout and stderr and put them in the log, rather
+than collapsing every outcome to `failed: worker`. If the cause is that the
+session's own sandbox refuses the `/tmp` write, say so plainly and move the
+fixture's target inside `tests/sdk-controller-experiment/`, updating the
+acceptance criterion's path in the postmortem to match. An experiment whose
+apparatus cannot run its own success case has not tested the hypothesis, so
+the Decision cannot rest on it until stage A completes for a real reason.
+
+**Criterion 4 — the SIGTERM was asserted, not observed.** The postmortem
+describes what would happen on SIGTERM as a design property. Actually send
+it: start the session against a stage, `kill -TERM` the process mid-run,
+and record what the test `state.yaml` and the log hold afterwards. Quote
+the observed state in the comparison matrix. If the observed behaviour
+differs from the design claim, the observation wins and the matrix says so.
+
+**Criterion 7 — the decision memo has no frontmatter.** `memory/README.md`
+mandates YAML frontmatter with `name`, `description` and `metadata.type`,
+plus a **Why:** / **How to apply:** pair for a project-type memory. The
+`[[decision-handoff-envelope]]` wikilink is already present and correct;
+keep it and add the missing envelope.
+
+The 2026-08-31 auth-route finding below still stands in full: build on
+`claude-agent-sdk`, never the raw `anthropic` client, and treat a
+first-request 429 as an auth-route verdict to be recorded rather than
+retried.
+
+Prior attempt's work is preserved at `wip/23-sdk-controller-experiment-attempt-1`
+(commit `94570284`). Start from it rather than from an empty tree.
