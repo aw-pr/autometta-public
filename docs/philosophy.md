@@ -20,6 +20,7 @@ Autometta is that packaging.
 1. **Git is the state store.** State lives in files, files live in git, git is the audit log. No daemon, no database, no service.
 2. **The filesystem is the message bus.** One stage card per dispatch. The card path is the prompt. The worker reads it, the verifier reads it, nothing is in flight.
 3. **Sandbox is the role boundary.** The Codex `workspace-write` sandbox makes worker-self-verification structurally impossible. We exploit this accident rather than try to lift it.
+   See [the bounded worker SDK postmortem](experiments/worker-sdk-postmortem.md): an SDK worker still needs an independently enforced role boundary.
 4. **Cross-family verification by default.** Worker in family A, verifier in family B. Reduces collusion on hallucinated green.
 5. **Cron + tick > daemon.** Long-running != resident process. A tick that reads state, makes one transition, writes state, exits, is easier to reason about, debug, kill, and resume than any long-lived process. *Exception:* a sweep stage (opt-in, `Sweep: true` on the card) dispatches N workers in parallel into N scratch worktrees, then a synthesis agent. The tick model still holds; the exception is in the number of dispatches per card, not in the tick structure.
    See [the bounded SDK controller postmortem](experiments/sdk-controller-postmortem.md).
