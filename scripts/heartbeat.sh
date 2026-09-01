@@ -9,13 +9,44 @@ IFS=$'\n\t'
 # This is a watchdog, not a gate. It never kills, retries, or escalates.
 # Exit is always 0 so it cannot break a tick.
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The installed-build comparison walks and hashes both trees. It belongs to
+# the controller, not an individual subscriber, so tick.sh obtains it once
+# and passes the same sanitised JSON to each per-repo heartbeat. Keeping the
+# calculation here also leaves direct heartbeat.sh calls self-contained.
+build_check_json() {
+  local build_checked_at build_check build_check_output build_check_rc
+  build_checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  build_check="$(jq -nc --arg checked_at "$build_checked_at" \
+    '{status:"unreadable",stale:false,installed_sha:null,checkout_sha:null,checked_at:$checked_at}')"
+  set +e
+  build_check_output="$("$script_dir/check-installed-build.sh" --json 2>/dev/null)"
+  build_check_rc=$?
+  set -e
+  if [[ "$build_check_rc" -le 2 ]] \
+    && printf '%s' "$build_check_output" | jq -e '
+      (.status == "current" or .status == "stale" or .status == "unreadable") and
+      (.stale | type == "boolean") and
+      ((.installed_sha == null) or (.installed_sha | type == "string")) and
+      ((.checkout_sha == null) or (.checkout_sha | type == "string")) and
+      (.checked_at | type == "string")' >/dev/null 2>&1; then
+    build_check="$(printf '%s' "$build_check_output" | jq -c '.')"
+  fi
+  printf '%s\n' "$build_check"
+}
+
+if [[ "${1:-}" == "--build-check-json" && $# -eq 1 ]]; then
+  build_check_json
+  exit 0
+fi
+
 if [[ $# -ne 1 ]]; then
   printf 'usage: %s <repo_root>\n' "$(basename "$0")" >&2
   exit 1
 fi
 
 repo_root="$1"
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 active_dir="$repo_root/state/active-agents"
 recent_dir="$repo_root/state/recent-agents"
 heartbeat_path="$repo_root/state/heartbeat.json"
@@ -283,21 +314,16 @@ PY
 # observability seam slower than its own refresh interval. Exit 1 means stale;
 # exit 2, malformed output, or a missing helper all become an unreadable
 # verdict. Heartbeat remains a watchdog and still exits 0.
-build_checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-build_check="$(jq -nc --arg checked_at "$build_checked_at" \
-  '{status:"unreadable",stale:false,installed_sha:null,checkout_sha:null,checked_at:$checked_at}')"
-set +e
-build_check_output="$("$script_dir/check-installed-build.sh" --json 2>/dev/null)"
-build_check_rc=$?
-set -e
-if [[ "$build_check_rc" -le 2 ]] \
-  && printf '%s' "$build_check_output" | jq -e '
+if [[ -n "${AUTOMETTA_BUILD_CHECK_JSON:-}" ]] \
+  && printf '%s' "$AUTOMETTA_BUILD_CHECK_JSON" | jq -e '
     (.status == "current" or .status == "stale" or .status == "unreadable") and
     (.stale | type == "boolean") and
     ((.installed_sha == null) or (.installed_sha | type == "string")) and
     ((.checkout_sha == null) or (.checkout_sha | type == "string")) and
     (.checked_at | type == "string")' >/dev/null 2>&1; then
-  build_check="$(printf '%s' "$build_check_output" | jq -c '.')"
+  build_check="$(printf '%s' "$AUTOMETTA_BUILD_CHECK_JSON" | jq -c '.')"
+else
+  build_check="$(build_check_json)"
 fi
 jq --argjson build_check "$build_check" '. + {build_check:$build_check}' \
   "$tmp_report" > "${tmp_report}.next"
