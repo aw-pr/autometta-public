@@ -537,13 +537,27 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
 
   spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"by_stage":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0,"history":{"summary":{"card_count":0,"lost_seven_day_tokens":0,"lost_seven_day_marked":false,"seven_day_cost_usd_est":0,"seven_day_cost_marked":false},"cards":[],"fortnight":{"by_day":[],"by_model":[]}}}'
   if [[ -f "$cost_log_path" ]]; then
-    spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" '
+    spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" \
+      --argjson ledger_stages "$stages_json" '
       # epoch, token sum and the zero-output test are asked of every row by
       # thirty-odd separate comprehensions below, and the fortnight chart asks
       # fourteen more times again. Answering them once per row on the way in
       # turns a date parse and a regex per row per pass into a field read: on
       # a five-thousand-row log that is most of the query. The three carrier
       # fields never reach the payload, which builds its objects by name.
+      # Stages the ledger calls completed. Their dispatch rows may include
+      # failures -- a verifier FAIL followed by an orchestrator adjudication is
+      # the ordinary shape -- but the stage landed, so that spend bought
+      # something and is not lost. Without this the cost log is the only
+      # authority on whether work succeeded, and adjudication is invisible to
+      # it: stages 23, 79 and 98 were each landed on dev on 2026-09-01 and each
+      # went on reporting FAIL with its whole spend counted as lost, 17.3M
+      # tokens between two of them.
+      ($ledger_stages | map(select(.status == "completed") | .id)) as $landed |
+      # Takes the id as an argument rather than reading it off `.`: inside
+      # index() the input is $landed, so `.stage_id` there indexes the array
+      # and dies with "Cannot index array with string".
+      def not_landed($sid): ($landed | index($sid)) == null;
       def parse_epoch: try (.ts | fromdateiso8601) catch 0;
       def sum_tokens: ((.input_tokens // 0) + (.cached_input_tokens // 0) + (.output_tokens // 0));
       def read_zero_output:
@@ -567,9 +581,9 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
         row_epoch: parse_epoch, row_tokens: sum_tokens, row_zero_output: read_zero_output}] as $all |
       [$all[] | select(epoch >= $today)] as $rows |
       [$rows[] | select((.result // "") == "pass")] as $pass |
-      [$rows[] | select((.result // "") != "pass")] as $lost |
+      [$rows[] | select((.result // "") != "pass" and not_landed(.stage_id // ""))] as $lost |
       [$all[] | select(epoch >= ($today - 518400))] as $week_rows |
-      [$week_rows[] | select((.result // "") != "pass")] as $lost_week |
+      [$week_rows[] | select((.result // "") != "pass" and not_landed(.stage_id // ""))] as $lost_week |
       [$all[] | select((.role // "") != "phat-controller")] as $dispatches |
       [$dispatches[] | select(epoch >= ($today - 1123200))] as $fortnight_rows |
       ([$fortnight_rows[] | dispatch_cost] | add // 0) as $fortnight_cost |
@@ -593,10 +607,10 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
        by_role: ([$rows | group_by(.role)[] | . as $role_rows |
          (totals($role_rows)) + {role:($role_rows[0].role // "unknown"),
            productive_tokens:([$role_rows[] | select((.result // "") == "pass") | tok] | add // 0),
-           lost_tokens:([$role_rows[] | select((.result // "") != "pass") | tok] | add // 0)}]),
+           lost_tokens:([$role_rows[] | select((.result // "") != "pass" and not_landed(.stage_id // "")) | tok] | add // 0)}]),
        by_stage: ([$all | group_by(.stage_id)[] | . as $stage_rows |
          (totals($stage_rows)) + {stage_id:($stage_rows[0].stage_id // "unknown")}]),
-       failures: ([$all[] | select((.result // "") != "pass" and epoch >= ($today - 518400)) |
+       failures: ([$all[] | select((.result // "") != "pass" and not_landed(.stage_id // "") and epoch >= ($today - 518400)) |
          {ts, stage_id, role, result, input_tokens:(.input_tokens // 0),
           cached_input_tokens:(.cached_input_tokens // 0), output_tokens:(.output_tokens // 0),
           tokens_lost:tok, cost_usd_est:(.cost_usd_est // 0)}] | sort_by(.ts) | reverse),
@@ -607,10 +621,10 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
          summary: {
            card_count: ([$dispatches[].stage_id] | unique | length),
            lost_seven_day_tokens: ([$dispatches[] |
-             select(epoch >= ($today - 518400) and (.result // "") != "pass") |
+             select(epoch >= ($today - 518400) and (.result // "") != "pass" and not_landed(.stage_id // "")) |
              dispatch_tokens] | add // 0),
            lost_seven_day_marked: (any($dispatches[]?;
-             epoch >= ($today - 518400) and (.result // "") != "pass" and zero_output_read)),
+             epoch >= ($today - 518400) and (.result // "") != "pass" and not_landed(.stage_id // "") and zero_output_read)),
            seven_day_cost_usd_est: ([$dispatches[] |
              select(epoch >= ($today - 518400)) | dispatch_cost] | add // 0),
            seven_day_cost_marked: (any($dispatches[]?;
@@ -619,14 +633,22 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
          cards: ([$dispatches | group_by(.stage_id)[] | sort_by(.ts) as $stage_rows |
            {
              id: ($stage_rows[0].stage_id // "unknown"),
-             result: (($stage_rows[-1].result // "unknown") | ascii_upcase),
+             # The ledger outranks the cost log on whether a stage stands.
+             # A stage landed by adjudication has a failed last dispatch and a
+             # completed status; saying FAIL there contradicts the ledger, and
+             # saying PASS would hide that a verifier refused it. LANDED says
+             # both, and the dispatches list below still shows every verdict.
+             result: (if (not_landed($stage_rows[0].stage_id // "") | not)
+                        and (($stage_rows[-1].result // "") != "pass")
+                      then "LANDED"
+                      else (($stage_rows[-1].result // "unknown") | ascii_upcase) end),
              attempts: ([$stage_rows | group_by(.role)[] | length] | max // 0),
              tokens: ([$stage_rows[] | dispatch_tokens] | add // 0),
              tokens_marked: (any($stage_rows[]?; zero_output_read)),
-             lost_tokens: ([$stage_rows[] | select((.result // "") != "pass") |
+             lost_tokens: ([$stage_rows[] | select((.result // "") != "pass" and not_landed(.stage_id // "")) |
                dispatch_tokens] | add // 0),
              lost_marked: (any($stage_rows[]?;
-               (.result // "") != "pass" and zero_output_read)),
+               (.result // "") != "pass" and not_landed(.stage_id // "") and zero_output_read)),
              cost_usd_est: ([$stage_rows[] | dispatch_cost] | add // 0),
              cost_marked: (any($stage_rows[]?; zero_output_read)),
              worker: ([$stage_rows[] | select(.role == "worker") | .identity] | last // null),
