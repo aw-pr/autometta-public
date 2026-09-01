@@ -175,3 +175,63 @@ vendored `worker-prompt.md` still names `state/handoffs/`, run a stage through
 it, and confirm it completes. That is the case that breaks the fleet if it is
 wrong, it is the one a worker is least likely to test because it requires
 building the old world on purpose, and it cannot be judged by reading the diff.
+
+## Re-brief 2026-09-01: two real failures, two you did not cause
+
+Attempt 1 scored 5 of 7 and is preserved at
+`wip/104-the-envelope-stops-being-called-a-handoff-attempt-1` (`ec153c9`).
+Read it before starting; most of the rename is done and re-deriving it wastes
+the pass. Three things to fix, and one thing to stop worrying about.
+
+### 1. The old-path grep still returns stragglers (criterion, genuine)
+
+Five files still name `state/handoffs` outside the compatibility shim and the
+migration note:
+
+- `scripts/render-controller-seed.sh:213` — declares only `state/verifiers`
+  and `state/handoffs` as artefacts
+- `docs/tick-loop.md:294` — says snapshots hold `state/handoffs`, omits
+  `state/envelopes`
+- `docs/lessons.md:411` — describes the current prompt as naming
+  `state/handoffs`
+- `docs/design/sweep-stage.md:34,57,76` — specifies *new* completion envelopes
+  at the old path
+- `docs/design/mcp-cards.md:45` — defines emitted message traffic under
+  `state/handoffs`
+
+`sweep-stage.md` is the one to think about rather than sed: it specifies new
+work at the old path, so changing the string is not the same as changing what
+it means.
+
+### 2. Two smokes you did break (criterion, genuine)
+
+`local-route-smoke.sh` (CODEX_HOME route assertions at `:277-290`, `:359-374`)
+and `state-writable-smoke.sh` (the verifier `--add-dir` assertion at
+`:177-179`). Both **pass on a clean `dev`** and fail against attempt 1, so
+they are this stage's to fix.
+
+### 3. The contract gate is not armed
+
+`scripts/envelope-migration-smoke.sh` carries no freeze markers and this card
+declares a prose Assertions digest, so the gate exits 1 the way it did for
+stage 102. Add the markers and record a real sha256. Stage 102 closed exactly
+this and its verifier artefact shows the gate then recomputing a real digest —
+copy that shape. Keep the literal marker tokens out of card prose; a card file
+containing the begin-token trips the gate on itself when staged.
+
+### What you did not cause
+
+The verifier reported four failing smokes. Two of them fail on a clean `dev`
+with nothing of yours applied, measured at `d894ad0`:
+
+- `state-branch-smoke.sh` — the worktree-reaper failure stage 100's worker also
+  hit and recorded as unrelated
+- `superseded-status-smoke.sh` — the duplicate alert-status enumeration at
+  `scripts/lib/tui/render.py:454,491`; it also fails at `e057331`, before stage
+  103 touched `render.py`, so 103 did not introduce it either
+
+**Do not fix either one in this card, and do not let them stop you.** They are
+pre-existing defects that predate this batch and deserve their own cards. If
+your run shows them failing, that is expected; say so in the envelope and move
+on. Fixing them here would put unrelated changes in a rename stage and make
+this card's diff impossible to review.
