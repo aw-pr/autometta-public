@@ -284,6 +284,22 @@ class TuiState:
     def compose_failed(self, notice):
         self.compose_notice = "not queued: " + notice
 
+    def _follow_selection(self, rows):
+        """Point the detail pane at whatever the cursor is now on.
+
+        Only the run list (focus 2) drives the card detail pane; the agents and
+        escalations panels have their own selections that no pane reads, so
+        moving in them must not repoint the card.
+        """
+        if self.focus != 2 or not rows:
+            return
+        selected = rows[self.selection[2]].get("id")
+        if selected and selected != self.pinned_stage:
+            self.pinned_stage = selected
+            # A new card starts at its own first line, not at the offset the
+            # reader had scrolled the previous one to.
+            self.card_offset = 0
+
     def rows_for_focus(self):
         if self.focus == 2:
             return ordered_run_stages(self.payload)
@@ -374,8 +390,10 @@ class TuiState:
             rows = history_cards(self.payload)
             if key in ("j", "DOWN") and rows:
                 self.history_selection = min(len(rows) - 1, self.history_selection + 1)
+                self.pinned_history_card = rows[self.history_selection].get("id")
             elif key in ("k", "UP") and rows:
                 self.history_selection = max(0, self.history_selection - 1)
+                self.pinned_history_card = rows[self.history_selection].get("id")
             elif key in ("ENTER", "\n", "\r") and rows:
                 self.pinned_history_card = rows[self.history_selection].get("id")
             return
@@ -390,8 +408,14 @@ class TuiState:
                 self.compose_buffer = ""
                 self.compose_notice = ""
             return None
-        # The detail pane carries the card body, which is longer than the pane
-        # and so is the one panel that scrolls rather than selects.
+        # The detail pane follows the cursor. It used to update only on enter,
+        # so arrowing down the run list left the pane describing the card you
+        # had moved away from: every intermediate row was rendered against the
+        # wrong detail, and the reader had to press a key to find out what they
+        # were already looking at.
+        #
+        # Enter still works and still does the one thing j/k cannot, which is
+        # re-assert the pin after the poll above has re-derived it.
         if self.focus == 0:
             if key in ("j", "DOWN"):
                 self.card_offset = min(max(0, len(self.card_body) - 1), self.card_offset + 1)
@@ -401,8 +425,10 @@ class TuiState:
         rows = self.rows_for_focus()
         if key in ("j", "DOWN") and rows:
             self.selection[self.focus] = min(len(rows) - 1, self.selection[self.focus] + 1)
+            self._follow_selection(rows)
         elif key in ("k", "UP") and rows:
             self.selection[self.focus] = max(0, self.selection[self.focus] - 1)
+            self._follow_selection(rows)
         elif key in ("ENTER", "\n", "\r") and self.focus == 2 and rows:
             self.pinned_stage = rows[self.selection[2]].get("id")
             self.card_offset = 0

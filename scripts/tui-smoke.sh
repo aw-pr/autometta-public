@@ -343,6 +343,33 @@ assert all(len(line) <= width for line in os.environ["AUTOMETTA_TEST_FRAME"].spl
 PY
 done
 
+# The detail pane follows the cursor. It used to update only on enter, so
+# arrowing down the run list left the pane describing the card you had moved
+# away from -- every intermediate row rendered against the wrong detail, and
+# the reader had to press a key to learn what they were already looking at.
+# Keys are comma-separated: "2,j" is focus-the-run-panel then down, where
+# "2j" would be one unrecognised key.
+run_row1="$(capture 119 40 '2')"
+run_row2="$(capture 119 40 '2,j')"
+run_row3="$(capture 119 40 '2,j,j')"
+if [ "$run_row1" = "$run_row2" ] || [ "$run_row2" = "$run_row3" ]; then
+  fail "run detail pane did not follow the cursor without enter"
+fi
+
+hist_row1="$(capture 119 40 'h')"
+hist_row2="$(capture 119 40 'h,j')"
+if [ "$hist_row1" = "$hist_row2" ]; then
+  fail "history detail pane did not follow the cursor without enter"
+fi
+
+# Moving inside the agents panel must not repoint the card: that panel has its
+# own selection and nothing on the right reads it.
+agents_still="$(capture 119 40 '3,j')"
+agents_base="$(capture 119 40 '3')"
+if [ "$agents_still" != "$agents_base" ]; then
+  fail "moving in the agents panel repointed the card detail pane"
+fi
+
 ansi="$(capture 119 40 '' true)"
 assert_contains "$ansi" $'\033[1;36msol' "active worker alias was not emphasised"
 
