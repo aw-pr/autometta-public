@@ -10,6 +10,7 @@
 - **Run branch:** autometta/98-the-worker-takes-the-sdk-route
 - **Worker effort:** high
 - **Verifier effort:** high
+- **Requires network:** true
 - **Verifier panel:** false
 - **Gate:** stage-completed: 23-sdk-controller-experiment
 - **Path claims:** scripts/worker-sdk-experiment.py, tests/worker-sdk-experiment/, docs/experiments/worker-sdk-postmortem.md, memory/decision-worker-sdk-experiment.md, docs/philosophy.md
@@ -159,3 +160,50 @@ Same auth-route finding as card 23's re-brief note: build on the
 instantly on subscription OAuth. `scripts/verify-sdk.py` is the broken
 pattern, not prior art. A first-request 429 means the auth route, not
 load; stop and report rather than retry.
+
+
+## Re-brief note (2026-09-01, orchestrator) — before first dispatch
+
+Card 23 landed while this card sat queued, and what it found is the reason
+this note exists. Read
+[`docs/experiments/sdk-controller-postmortem.md`](../docs/experiments/sdk-controller-postmortem.md)
+section "The sandbox is the finding" before you write any code: it cost three
+attempts and roughly seventeen million tokens to learn, and none of it needs
+learning twice.
+
+A Claude Agent SDK session spawned from inside a dispatched role hits two
+sandbox walls, one at a time.
+
+1. **The socket.** Codex's `workspace-write` denies network to every shell
+   command a model starts. The session cannot reach the API and dies on
+   `FailedToOpenSocket` before its first tool call. This card now declares
+   `- **Requires network:** true`, which lifts it, so you should not see this
+   one. If you do, say so plainly rather than working around it.
+
+2. **The session directory.** With the socket open, the session next dies on
+   `EPERM ... mkdir '~/.claude/session-env/<session-id>'`: the same sandbox
+   confines writes to the workspace, and Claude Code wants a per-session
+   directory under `$HOME`. **This one is not solved, and solving it is part of
+   your job.** The obvious candidate is pointing the session's config directory
+   inside the run worktree, which is writable, via `CLAUDE_CONFIG_DIR` or by
+   setting `HOME` for the child process. Try it, and report what actually
+   happened: if it works, say which knob and quote the run; if it does not,
+   quote the error and stop rather than escalating the sandbox.
+
+**Do not widen the sandbox to make this pass.** `Requires GUI: true` would drop
+the role to `danger-full-access` and hand the agent the machine; that would
+make the experiment succeed by removing the very confinement it is supposed to
+be measured under, which destroys the result. If the SDK worker can only run
+unconfined, that is the finding, and the postmortem should say so.
+
+Card 23's Decision was keep cron+tick, and its central evidence was that a
+resident session needs the dispatch sandbox opened before it can start. Your
+axis "sandbox enforcement" is where the worker-side version of that question
+gets answered, so treat it as the load-bearing row of your matrix rather than
+one of five. If the honest answer is that the SDK worker cannot be confined the
+way the CLI worker is, say it in plain words in the Decision.
+
+The rest of the card is unchanged. `scripts/verify-sdk.py` remains prior art
+for envelope handling only: it drives the raw `anthropic` client against the
+Messages API, which is refused instantly with a 429 on subscription OAuth. Use
+`claude-agent-sdk` for anything that must talk to a model.
