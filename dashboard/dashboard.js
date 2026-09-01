@@ -87,13 +87,22 @@
   // drew empty charts. Fall back to the cost log, which carries the same
   // figures per stage and per role.
   function stageSpend(repo, stage) {
+    var spend = repo.spend || {};
+    // A spend query that could not run reports null figures and a state_error,
+    // and the cost-log fallback below is empty because there was nothing to
+    // fall back through. Coercing those nulls with `|| 0` would restate the
+    // failure as a confident zero -- the one thing docs/dashboard.md forbids.
+    // Absent is the other case and stays truthful: a repo with no cost log
+    // really has spent nothing, carries no state_error, and still counts zero.
+    if (spend.state_error) {
+      return { worker: null, verifier: null, total: null, logged: false, unavailable: true };
+    }
     var worker = Number(stage.worker_tokens || 0);
     var verifier = Number(stage.verifier_tokens || 0);
     var total = Number(stage.tokens || 0);
     if (total || worker || verifier) {
       return { worker: worker, verifier: verifier, total: total || worker + verifier, logged: false };
     }
-    var spend = repo.spend || {};
     var logged = 0;
     (spend.by_stage || []).forEach(function (row) {
       if (row.stage_id === stage.id) logged += Number(row.tokens || 0);
@@ -517,6 +526,10 @@
       // A figure recovered from the cost log is marked, because it is a
       // different measurement from one the stage recorded on completion.
       var mark = spend.logged ? "*" : "";
+      // fmtInt already renders null as "-"; the title says why it is a dash
+      // rather than leaving the reader to guess at a missing number.
+      var spendTitle = spend.unavailable
+        ? ' title="' + esc(byName[row.repo].spend.state_error) + '"' : "";
       var cardPath = s.card || ("stage-cards/" + s.id + ".md");
       // The same answer the TUI's detail pane gives: the card is the prompt the
       // worker was handed, so "why did it do that" is usually read from it
@@ -531,9 +544,9 @@
         { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
         shortIdentity(s.worker),
         shortIdentity(s.verifier),
-        { html: fmtInt(spend.worker) + mark, cls: "num" },
-        { html: fmtInt(spend.verifier) + mark, cls: "num" },
-        { html: fmtInt(spend.total) + mark, cls: "num" },
+        { html: '<span' + spendTitle + ">" + fmtInt(spend.worker) + mark + "</span>", cls: "num" },
+        { html: '<span' + spendTitle + ">" + fmtInt(spend.verifier) + mark + "</span>", cls: "num" },
+        { html: '<span' + spendTitle + ">" + fmtInt(spend.total) + mark + "</span>", cls: "num" },
         s.started_at || "",
         s.completed_at || ""
       ] };
