@@ -25,7 +25,7 @@ REQUIREMENTS = str(AUTOMETTA_ROOT / "scripts" / "requirements-sdk.txt")
 SCHEMA = AUTOMETTA_ROOT / "schemas" / "verifier.json"
 TEMPLATE = Path("templates/verifier-prompt.md")
 VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"
 MAX_TOKENS = 4096
 # Keep a broad fallback from consuming an unbounded portion of the verifier
 # context. This applies to source bytes before line numbering expands them.
@@ -90,12 +90,26 @@ def live_anthropic_usage(usage: Any, prior_input: int) -> tuple[int, int]:
 
 
 def identity_for_model(model: str) -> str:
+    # This string is written into the verifier artefact, so it is git-style
+    # attribution: it has to name the weights that did the judging. Superseded
+    # ids stay in the table because an artefact from an older run must still
+    # resolve to the identity it actually carried; only the current tier is
+    # added on a model bump. An id that reaches none of these falls through to
+    # the generic label, which is what claude-sonnet-5 and claude-opus-5 did
+    # between the 2026-07-26 model bump and this fix -- a real verifier's work
+    # filed under a name no shortlog can group.
+    if "fable-5" in model:
+        return f"Claude Fable 5 (SDK) <{model}@local>"
+    if "opus-5" in model:
+        return f"Claude Opus 5 (SDK) <{model}@local>"
     if "opus-4-8" in model:
         return f"Claude Opus 4.8 (SDK) <{model}@local>"
     if "opus-4-7" in model:
         return f"Claude Opus 4.7 (SDK) <{model}@local>"
     if "opus-4" in model:
         return f"Claude Opus 4 (SDK) <{model}@local>"
+    if "sonnet-5" in model:
+        return f"Claude Sonnet 5 (SDK) <{model}@local>"
     if "sonnet-4-6" in model:
         return f"Claude Sonnet 4.6 (SDK) <{model}@local>"
     if "sonnet-4" in model:

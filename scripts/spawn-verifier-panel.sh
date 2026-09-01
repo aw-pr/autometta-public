@@ -8,8 +8,8 @@
 #              to stdout, do not mutate state.yaml. Used by autometta panel.
 #
 # Fixed panel composition for v1:
-#   panel-0: Claude Opus 4.8  via SDK (scripts/verify-sdk.py --model claude-opus-4-8)
-#   panel-1: Claude Sonnet 4.6 via SDK (scripts/verify-sdk.py --model claude-sonnet-4-6)
+#   panel-0: Claude Opus 5   via SDK (scripts/verify-sdk.py --model claude-opus-5)
+#   panel-1: Claude Sonnet 5 via SDK (scripts/verify-sdk.py --model claude-sonnet-5)
 #   panel-2: GPT-5.6 Sol      via codex exec
 #
 # Requires: auth.claude.mode: api (ANTHROPIC_API_KEY must be in claude auth_pairs).
@@ -26,8 +26,8 @@ source "$script_dir/budget.sh"
 # shellcheck source=./models.sh
 source "$script_dir/models.sh"
 
-PANELLIST_OPUS="Claude Opus 4.8 <claude-opus-4-8@local>"
-PANELLIST_SONNET="Claude Sonnet 4.6 <claude-sonnet-4-6@local>"
+PANELLIST_OPUS="Claude Opus 5 <claude-opus-5@local>"
+PANELLIST_SONNET="Claude Sonnet 5 <claude-sonnet-5@local>"
 PANELLIST_CODEX="GPT-5.6 Sol <gpt-5-6-sol@local>"
 
 QUORUM_REQUIRED=2
