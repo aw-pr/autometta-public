@@ -354,7 +354,59 @@ assert_contains "$frame119" 'tokens  in 2.0M  cached 300.0K  out 2.2K' "detail o
 assert_contains "$frame119" "\$1.87" "detail omitted stage cost"
 assert_contains "$frame119" '14.4K/min' "burn rate was not computed from the 1,200-token poll delta"
 assert_contains "$frame119" 'run start 07:30:00Z  elapsed 30m05s' "run start or elapsed did not use the mint time"
-assert_contains "$frame119" 'run tokens 12.4M  $9.12  repo cap 150.0M (8%)' "status figures are not run-scoped"
+assert_contains "$frame119" 'run spend 12.4M  $9.12 actual' "status lost the run-scoped actual spend"
+# The run's own spend and the repo's lifetime percentage of the cap used to
+# share a line, so "12.4M ... 150.0M (8%)" invited the reading that 12.4M of
+# 150.0M is 8%. It is not; 8% is the repo's lifetime 12.4M against the cap. A
+# figure that will not reconcile reads as a budget rather than a measurement,
+# so each quantity gets a line and the cap line names both of its numbers.
+assert_contains "$frame119" 'repo 12.4M of 150.0M cap (8%)' "cap line does not name what the percentage is of"
+assert_not_contains "$frame119" 'run tokens 12.4M  $9.12  repo cap' "run spend and repo cap still share a line"
+# The in-flight role is in no settled figure until it exits, so without this
+# the number sits still for the length of a worker and reads as a static
+# budget. The turning bar moves every second whether or not the figures do.
+assert_contains "$frame119" 'worker 3m17s +2.3M live' "status lost the in-flight live spend ticker"
+
+# The data-age line comes and goes with every poll. While it sat mid-block each
+# appearance shoved run start, run spend and the cap line down a row and each
+# disappearance pulled them back, so the panel a reader glances at never held
+# still. Its position is the contract, not merely its presence, so assert the
+# ordering directly rather than through a rendered frame.
+printf '3b. the data-age line is last, so nothing below it moves\n' >&2
+AUTOMETTA_LIB="$script_dir/lib" python3 - <<'PYEOF' || fail "the data-age line is not last in the status panel"
+import os, sys, time
+sys.path.insert(0, os.environ["AUTOMETTA_LIB"])
+from tui import render
+
+payload = {
+    "name": "smoke", "tick_count": 7, "last_tick_at": "2026-08-26T07:59:00Z",
+    "tokens_spent": 12_400_000, "token_cap_total": 150_000_000,
+    "current_run": {"id": "run-1", "started_at": "2026-08-26T07:30:00Z",
+                    "tokens_total": 12_400_000, "cost_usd_est": 9.12,
+                    "stages": [{"id": "68-a-pipeline-pair", "status": "in_progress"}]},
+    "stages": [{"id": "68-a-pipeline-pair", "status": "in_progress"}],
+    "agents": [{"stage_id": "68-a-pipeline-pair", "role": "worker",
+                "started_at": "2026-08-26T07:56:48Z", "live_total_tokens": 2_300_000}],
+    "_now": int(time.mktime(time.strptime("2026-08-26 08:00:05", "%Y-%m-%d %H:%M:%S"))),
+}
+
+state = render.TuiState(interval=5.0)
+state.update(payload)
+
+state.data_started_at = None
+without = [line[0] for line in render.status_lines(state)]
+
+state.data_started_at = state.monotonic_now - 30.0
+with_age = [line[0] for line in render.status_lines(state)]
+
+age_rows = [i for i, text in enumerate(with_age) if text.startswith("data ") and text.endswith(" old")]
+if len(age_rows) != 1:
+    raise SystemExit("expected exactly one data-age line, got %d: %r" % (len(age_rows), with_age))
+if age_rows[0] != len(with_age) - 1:
+    raise SystemExit("data-age line is at index %d of %d: %r" % (age_rows[0], len(with_age), with_age))
+if with_age[:-1] != without:
+    raise SystemExit("adding the data-age line moved the lines above it:\n  %r\n  %r" % (without, with_age[:-1]))
+PYEOF
 
 after="$(capture 119 40 '2,j,ENTER')"
 assert_contains "$frame119" 'stage-cards/68-a-pipeline-pair.md' "initial detail card is wrong"

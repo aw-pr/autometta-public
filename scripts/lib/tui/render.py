@@ -633,6 +633,43 @@ def draw_box(canvas, rect, title, lines, focused=False):
         canvas.line(x + 2, y + 1 + offset, text[:max(0, width - 4)], spans)
 
 
+SPINNER = "|/-\\"
+
+
+def live_spend_suffix(payload, state):
+    """The in-flight tail of the run spend line: which role is running, for how
+    long, and what its transcript has cost so far. Empty when nothing is live.
+
+    It shares the spend line rather than taking one of its own because the
+    status panel is height-constrained and an extra row costs the run panel a
+    stage."""
+    parts = []
+    for agent in payload.get("agents") or []:
+        started = agent.get("started_at")
+        epoch = parse_iso(started) if isinstance(started, str) else None
+        if epoch is not None:
+            ran = short_secs(max(0, state.now - epoch))
+        elif isinstance(agent.get("elapsed_seconds"), (int, float)):
+            ran = short_secs(max(0, int(agent["elapsed_seconds"])))
+        else:
+            ran = "?"
+        live = agent.get("live_total_tokens")
+        role = agent.get("role") or "agent"
+        if live is None:
+            # No transcript total read yet. Say so rather than printing a zero,
+            # which would read as a role that is burning nothing.
+            parts.append("%s %s live ?" % (role, ran))
+        else:
+            parts.append("%s %s +%s live" % (role, ran, short_tokens(int(live))))
+    if not parts:
+        return ""
+    # The turning bar is the liveness cue. observe_time already re-renders on
+    # every whole second, so it moves once a second whether or not the figures
+    # do: a number that has not changed in ten minutes and a loop that has died
+    # look identical without it.
+    return "  %s %s" % (SPINNER[int(state.monotonic_now) % len(SPINNER)], "  ".join(parts))
+
+
 def status_lines(state):
     payload = state.payload
     agents = payload.get("agents") or []
@@ -658,20 +695,41 @@ def status_lines(state):
     elif payload.get("state_error"):
         message = "state error: %s" % payload["state_error"]
         lines.append(content_line(message, [(0, len("state error:"), ALERT)]))
+    if run:
+        # Two quantities that do not divide into one another used to share a
+        # line: the run's own spend, then the repo's lifetime percentage of the
+        # cap. Read left to right that invited "6.9M of 600.0M is 53%", which is
+        # wrong by a factor of forty, and a figure that will not reconcile reads
+        # as a budget rather than a measurement. They get a line each.
+        settled = "run spend %s  $%.2f actual" % (
+            short_tokens(run.get("tokens_total", 0)), run.get("cost_usd_est", 0) or 0)
+        # An in-flight role is counted nowhere in that figure: the cost log gets
+        # its row when the role exits, so on the CLI route the settled number
+        # holds still for the length of a worker and reads as a static budget.
+        # The transcript total the heartbeat already reads is the same
+        # measurement arriving sooner, so it rides alongside rather than being
+        # folded in: a role half-landed in the cost log and half in a live
+        # transcript would otherwise be counted twice.
+        suffix = live_spend_suffix(payload, state)
+        spans = [(len(settled) - 6, 6, DIM)]
+        if suffix:
+            spans.append((len(settled) + 2, 1, ACTIVE))
+        lines.extend([
+            content_line("run start %s  elapsed %s" % (run_start[-9:], elapsed)),
+            content_line(settled + suffix, spans),
+            content_line("repo %s of %s cap (%d%%)" % (
+                short_tokens(spent), short_tokens(cap), pct)),
+        ])
+    else:
+        lines.append(content_line("repo cap %s (%d%% lifetime used)" % (short_tokens(cap), pct)))
+    # Last, because it comes and goes with every poll. Anywhere else in the
+    # block and each appearance shoves every line beneath it down a row, which
+    # is the one thing a status panel a reader glances at must not do.
     if state.data_started_at is not None:
         age = max(0, state.monotonic_now - state.data_started_at)
         if age >= state.interval:
             message = "data %s old" % short_secs(age)
             lines.append(content_line(message, [(0, len(message), DIM)]))
-    if run:
-        lines.extend([
-            content_line("run start %s  elapsed %s" % (run_start[-9:], elapsed)),
-            content_line("run tokens %s  $%.2f  repo cap %s (%d%%)" % (
-                short_tokens(run.get("tokens_total", 0)), run.get("cost_usd_est", 0) or 0,
-                short_tokens(cap), pct)),
-        ])
-    else:
-        lines.append(content_line("repo cap %s (%d%% lifetime used)" % (short_tokens(cap), pct)))
     if state.focus == 1:
         lines[0][1].insert(0, (0, len(lines[0][0]), REVERSE))
     return lines
@@ -1125,7 +1183,7 @@ def render(state, width, height):
         right_x = left_width + 1
         right_width = width - right_x
         panel_total = usable - 3
-        heights = fit_heights([7, 16, 6, inbox_desired], [5, 5, 4, 3], panel_total, [1, 2, 0, 3])
+        heights = fit_heights([8, 16, 6, inbox_desired], [5, 5, 4, 3], panel_total, [1, 2, 0, 3])
         status_h, run_h, agents_h, inbox_h = heights
         y1 = 0
         y2 = y1 + status_h + 1
@@ -1143,7 +1201,7 @@ def render(state, width, height):
                  state.focus == 0)
     else:
         available = usable - 4
-        heights = fit_heights([7, 18, 6, inbox_desired, 18], [4, 5, 3, 3, 6], available, [1, 4, 2, 0, 3])
+        heights = fit_heights([8, 18, 6, inbox_desired, 18], [4, 5, 3, 3, 6], available, [1, 4, 2, 0, 3])
         status_h, run_h, agents_h, inbox_h, detail_h = heights
         rects = []
         cursor = 0
