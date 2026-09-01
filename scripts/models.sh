@@ -277,6 +277,42 @@ codex_network_argv_for_card() {
   esac
 }
 
+# workspace-write confines writes to the workspace, so an agent session
+# spawned inside a dispatched role cannot create the per-session directory
+# Claude Code wants under $HOME. Card 98's SDK worker died on
+# `EPERM ... mkdir '~/.claude/session-env/<session-id>'`, and card 23's before
+# it.
+#
+# A card declares `- **Requires agent home:** true` to add that one directory
+# to the sandbox's writable set, through the same --add-dir mechanism the
+# shared state dir already uses.
+#
+# Measured on 2026-09-01, codex-cli 0.150.1, both runs under workspace-write:
+#
+#           without --add-dir            with --add-dir
+#   read    READABLE                     READABLE
+#   mkdir   Operation not permitted      MKDIR_OK
+#
+# Reads of $HOME are already permitted, so this grants no new sight of
+# ~/.claude/.credentials.json: a sandboxed role could always read it. What it
+# adds is write access, and only to that directory.
+#
+# Emits nothing under danger-full-access, which can already write anywhere, and
+# nothing for a card that does not ask.
+codex_agent_home_argv_for_card() {
+  local requires_agent_home="$1"
+  local codex_sandbox="$2"
+  AUTOMETTA_CODEX_AGENT_HOME_ARGV=()
+  [[ "$codex_sandbox" == "workspace-write" ]] || return 0
+  case "$requires_agent_home" in
+    true|True|TRUE|yes|1)
+      local agent_home="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+      [[ -d "$agent_home" ]] || return 0
+      AUTOMETTA_CODEX_AGENT_HOME_ARGV=(--add-dir "$agent_home")
+      ;;
+  esac
+}
+
 resolve_codex_sandbox_for_card() {
   local repo_root="$1"
   local requires_gui="$2"

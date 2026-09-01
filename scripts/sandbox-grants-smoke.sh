@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires-network-smoke.sh: offline proof of the card-level network grant.
+# sandbox-grants-smoke.sh: offline proof of the card-level sandbox grants.
 # No auth, no network, no token spend.
 #
 # Codex's workspace-write sandbox denies network to every model-generated
@@ -57,6 +57,11 @@ argc_of() {
   printf '%s' "${#AUTOMETTA_CODEX_NETWORK_ARGV[@]}"
 }
 
+home_argv_of() {
+  codex_agent_home_argv_for_card "$1" "$2"
+  ( IFS=' '; printf '%s' "${AUTOMETTA_CODEX_AGENT_HOME_ARGV[*]-}" )
+}
+
 granted='-c sandbox_workspace_write.network_access=true'
 
 printf '== 1. the flag appears only for a card that asks ==\n' >&2
@@ -89,6 +94,23 @@ check "a GUI card resolves to danger-full-access" \
 check "a network card leaves the sandbox at workspace-write" \
   "$(eq workspace-write "$(resolve_codex_sandbox_for_card "$tmp_root" false)")"
 
+printf '== 3b. the agent-home grant is separate, and write-only ==\n' >&2
+# Reads of $HOME are already permitted under workspace-write, measured
+# 2026-09-01: ~/.claude/.credentials.json read fine without this and the mkdir
+# did not. So the grant adds write access to one directory and no new sight of
+# anything, which is why it is not gated behind the network grant and does not
+# widen the sandbox mode.
+check "an agent-home card gets --add-dir for the claude home" \
+  "$(eq "--add-dir $HOME/.claude" "$(home_argv_of true workspace-write)")"
+check "a card that does not ask gets nothing" \
+  "$(eq "" "$(home_argv_of false workspace-write)")"
+check "danger-full-access needs no add-dir, it can already write" \
+  "$(eq "" "$(home_argv_of true danger-full-access)")"
+check "read-only does not gain a writable home" \
+  "$(eq "" "$(home_argv_of true read-only)")"
+check "the network grant does not imply the home grant" \
+  "$(eq "" "$(home_argv_of "" workspace-write)")"
+
 printf '== 4. both spawners read the field off a real card ==\n' >&2
 card="$tmp_root/91-a-card.md"
 cat > "$card" <<'CARD'
@@ -99,16 +121,19 @@ cat > "$card" <<'CARD'
 - **Worker effort:** high
 - **Requires GUI:** false
 - **Requires network:** true
+- **Requires agent home:** true
 - **Verifier panel:** false
 CARD
 for spawn in spawn-worker spawn-verifier; do
-  extracted="$(
-    # shellcheck disable=SC1090
-    sed -n '/^extract_requires_network() {$/,/^}$/p' "$script_dir/$spawn.sh" > "$tmp_root/fn.sh"
-    source "$tmp_root/fn.sh"
-    extract_requires_network "$card"
-  )"
-  check "$spawn extracts Requires network from the card" "$(eq true "$extracted")"
+  for field in network agent_home; do
+    extracted="$(
+      # shellcheck disable=SC1090
+      sed -n "/^extract_requires_${field}() {\$/,/^}\$/p" "$script_dir/$spawn.sh" > "$tmp_root/fn.sh"
+      source "$tmp_root/fn.sh"
+      "extract_requires_${field}" "$card"
+    )"
+    check "$spawn extracts Requires ${field//_/ } from the card" "$(eq true "$extracted")"
+  done
 done
 
 printf '== 5. every codex dispatch site threads the argv ==\n' >&2
@@ -117,13 +142,16 @@ printf '== 5. every codex dispatch site threads the argv ==\n' >&2
 for spawn in spawn-worker spawn-verifier; do
   sandbox_sites="$(grep -c -- '--sandbox "$codex_sandbox"' "$script_dir/$spawn.sh" || true)"
   network_sites="$(grep -c -- 'AUTOMETTA_CODEX_NETWORK_ARGV\[@\]+' "$script_dir/$spawn.sh" || true)"
+  home_sites="$(grep -c -- 'AUTOMETTA_CODEX_AGENT_HOME_ARGV\[@\]+' "$script_dir/$spawn.sh" || true)"
   check "$spawn threads the network argv at all $sandbox_sites sandbox sites" \
     "$(eq "$sandbox_sites" "$network_sites")"
+  check "$spawn threads the agent-home argv at all $sandbox_sites sandbox sites" \
+    "$(eq "$sandbox_sites" "$home_sites")"
 done
 
 if [[ "$fail" -eq 0 ]]; then
-  printf 'requires-network-smoke: PASS\n' >&2
+  printf 'sandbox-grants-smoke: PASS\n' >&2
 else
-  printf 'requires-network-smoke: FAIL\n' >&2
+  printf 'sandbox-grants-smoke: FAIL\n' >&2
 fi
 exit "$fail"
