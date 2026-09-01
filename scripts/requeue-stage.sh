@@ -157,6 +157,7 @@ yq -o=json '.' "$state_yaml" | jq --arg id "$stage_id" '
           | .worker_pid = null
           | .verifier_pid = null
           | .worker_tokens = 0
+          | .verifier_tokens = 0
           | .tokens = 0
           | .stall_marker = null
           | .worker_envelope = null
