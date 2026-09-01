@@ -286,15 +286,15 @@ assert "✔  " + long_id in lines[long_index], lines[long_index]
 assert long_index + 1 < len(lines), lines[long_index]
 continuation = lines[long_index + 1]
 assert "└─" in continuation, continuation
-assert "done" in continuation and "terra→fable" in continuation and "776.8K" in continuation, continuation
+assert "done" in continuation and "terra→fable" in continuation and "776k" in continuation, continuation
 print("%s columns:\n%s\n%s" % (os.environ["AUTOMETTA_TEST_WIDTH"],
                                  lines[long_index], continuation))
 stages = {
-    "65-loop-stamps-hb": ("done", "sol→fable", "412.0K"),
-    "66-fleet-view-fits": ("done", "gpt-5.3→opus-4.7", "3.9M"),
-    "67-outlier-says-so": ("done", "terra→fable", "1.2M"),
-    "50-cards": ("done", "unknown-worker-slug→codex", "3.8M"),
-    "68-a-pipeline-pair": ("WORKER", "sol→fable", "2.3M"),
+    "65-loop-stamps-hb": ("done", "sol→fable", "412k"),
+    "66-fleet-view-fits": ("done", "gpt-5.3→opus-4.7", "3,911k"),
+    "67-outlier-says-so": ("done", "terra→fable", "1,200k"),
+    "50-cards": ("done", "unknown-worker-slug→codex", "3,800k"),
+    "68-a-pipeline-pair": ("WORKER", "sol→fable", "2,301k"),
     "69-tui": ("queued", "fable→gpt-5.3", "0"),
 }
 offsets = set()
@@ -354,26 +354,27 @@ assert_contains "$frame119" 'tokens  in 2.0M  cached 300.0K  out 2.2K' "detail o
 assert_contains "$frame119" "\$1.87" "detail omitted stage cost"
 assert_contains "$frame119" '14.4K/min' "burn rate was not computed from the 1,200-token poll delta"
 assert_contains "$frame119" 'run start 07:30:00Z  elapsed 30m05s' "run start or elapsed did not use the mint time"
-assert_contains "$frame119" 'run spend 12.4M  $9.12 actual' "status lost the run-scoped actual spend"
+assert_contains "$frame119" 'run spend 12,401k  $9.12 actual' "status lost the run-scoped actual spend"
 # The run's own spend and the repo's lifetime percentage of the cap used to
 # share a line, so "12.4M ... 150.0M (8%)" invited the reading that 12.4M of
 # 150.0M is 8%. It is not; 8% is the repo's lifetime 12.4M against the cap. A
 # figure that will not reconcile reads as a budget rather than a measurement,
 # so each quantity gets a line and the cap line names both of its numbers.
-assert_contains "$frame119" 'repo 12.4M of 150.0M cap (8%)' "cap line does not name what the percentage is of"
+assert_contains "$frame119" 'repo 12,401k of 150,000k cap (8%)' "cap line does not name what the percentage is of"
 assert_not_contains "$frame119" 'run tokens 12.4M  $9.12  repo cap' "run spend and repo cap still share a line"
 # The in-flight role is in no settled figure until it exits, so without this
 # the number sits still for the length of a worker and reads as a static
 # budget. The turning bar moves every second whether or not the figures do.
-assert_contains "$frame119" 'worker 3m17s +2.3M live' "status lost the in-flight live spend ticker"
+assert_contains "$frame119" 'worker 3m17s +2,301k live' "status lost the in-flight live spend ticker"
 
-# The data-age line comes and goes with every poll. While it sat mid-block each
-# appearance shoved run start, run spend and the cap line down a row and each
-# disappearance pulled them back, so the panel a reader glances at never held
-# still. Its position is the contract, not merely its presence, so assert the
-# ordering directly rather than through a rendered frame.
-printf '3b. the data-age line is last, so nothing below it moves\n' >&2
-AUTOMETTA_LIB="$script_dir/lib" python3 - <<'PYEOF' || fail "the data-age line is not last in the status panel"
+# The refresh line comes and goes with every poll. It used to sit in the
+# status panel, where each appearance shoved run start, run spend and the cap
+# line down a row and each disappearance pulled them back, so the panel a
+# reader glances at never held still. It now belongs to panel 5, whose subject
+# it is. Two halves to the contract: the status panel never carries it at any
+# poll age, and panel 5 always does.
+printf '3b. the refresh line lives on panel 5, and the status panel holds still\n' >&2
+AUTOMETTA_LIB="$script_dir/lib" python3 - <<'PYEOF' || fail "the refresh line is not confined to panel 5"
 import os, sys, time
 sys.path.insert(0, os.environ["AUTOMETTA_LIB"])
 from tui import render
@@ -392,20 +393,37 @@ payload = {
 
 state = render.TuiState(interval=5.0)
 state.update(payload)
+state.update_status_updates([("07:59:00", "dispatched 68-a-pipeline-pair")])
 
-state.data_started_at = None
-without = [line[0] for line in render.status_lines(state)]
+def status_texts():
+    return [line[0] for line in render.status_lines(state)]
 
+def panel5_texts():
+    return [line[0] for line in render.status_update_lines(state, 70)]
+
+fresh = status_texts()
 state.data_started_at = state.monotonic_now - 30.0
-with_age = [line[0] for line in render.status_lines(state)]
+stale = status_texts()
+if fresh != stale:
+    raise SystemExit("poll age moved the status panel:\n  %r\n  %r" % (fresh, stale))
+if any(text.startswith("data ") or "refreshed" in text for text in stale):
+    raise SystemExit("the status panel still carries a refresh line: %r" % stale)
 
-age_rows = [i for i, text in enumerate(with_age) if text.startswith("data ") and text.endswith(" old")]
-if len(age_rows) != 1:
-    raise SystemExit("expected exactly one data-age line, got %d: %r" % (len(age_rows), with_age))
-if age_rows[0] != len(with_age) - 1:
-    raise SystemExit("data-age line is at index %d of %d: %r" % (age_rows[0], len(with_age), with_age))
-if with_age[:-1] != without:
-    raise SystemExit("adding the data-age line moved the lines above it:\n  %r\n  %r" % (without, with_age[:-1]))
+rows = panel5_texts()
+if not any("refreshed" in text for text in rows):
+    raise SystemExit("panel 5 lost the refresh line: %r" % rows)
+if rows[-1] != "refreshed 30s ago":
+    raise SystemExit("the refresh line is not panel 5's last row: %r" % rows)
+if not any("dispatched 68-a-pipeline-pair" in text for text in rows):
+    raise SystemExit("panel 5 lost the loop's status updates: %r" % rows)
+
+# A poll in flight is a marker on the age line, never a replacement for it:
+# the age is a fact about the figures on screen, and a slow poll is exactly
+# when a reader needs to know how old they are.
+state.polling = True
+polling_line = render.status_update_lines(state, 70)[-1][0]
+if polling_line != "refreshed 30s ago · refreshing":
+    raise SystemExit("panel 5 lost the age or the in-flight marker: %r" % polling_line)
 PYEOF
 
 after="$(capture 119 40 '2,j,ENTER')"
@@ -430,7 +448,7 @@ empty_frame="$(capture 119 40 '' false "$empty_polls")"
 assert_contains "$empty_frame" 'no current run · use the history tab' "empty run state does not name the history tab"
 assert_not_contains "$empty_frame" 'run start' "empty run state fabricated a run start"
 assert_not_contains "$empty_frame" 'elapsed' "empty run state fabricated elapsed time"
-assert_contains "$empty_frame" 'repo cap 150.0M (8% lifetime used)' "empty run state lost the repo-lifetime cap"
+assert_contains "$empty_frame" 'repo cap 150,000k (8% lifetime used)' "empty run state lost the repo-lifetime cap"
 
 AUTOMETTA_TEST_80="$frame80" AUTOMETTA_TEST_119="$frame119" AUTOMETTA_TEST_160="$frame160" python3 - <<'PY' || fail "layouts were not genuinely different"
 import os
@@ -490,6 +508,7 @@ import json
 import os
 import pty
 import queue
+import re
 import signal
 import struct
 import sys
@@ -659,12 +678,26 @@ try:
     primary.frame(lambda row: "[0]─History:" in row["text"], 1.0,
                   "page switch was not applied during the first poll")
     primary.send(b"[")
+    # The refresh line moved off the status panel onto panel 5, so the age a
+    # slow poll leaves behind is now "refreshed Ns ago" rather than the old
+    # "data Ns old". What is being proved is unchanged: a payload that took ten
+    # seconds to arrive is drawn, and says how stale it is, without the loop
+    # having blocked on it.
     stale = primary.frame(
-        lambda row: "slow-old" in row["text"] and "data " in row["text"] and " old" in row["text"],
-        11.0, "slow payload did not replace loading with a data-age line")
-    fresh = primary.frame(lambda row: "fresh" in row["text"], 1.0,
+        lambda row: "slow-old" in row["text"] and "refreshed " in row["text"] and " ago" in row["text"],
+        11.0, "slow payload did not replace loading with a refresh-age line")
+    # Matched on the marker as the status panel draws it. A bare "fresh" also
+    # matches "refreshed" in the new panel-5 age line, so the stale frame
+    # satisfied it and the age never appeared to reset.
+    fresh = primary.frame(lambda row: "● fresh" in row["text"], 1.0,
                           "fresh payload did not replace the slow payload")
-    assert "data " not in fresh["text"], "data-age line remained after a fresh payload"
+    # Age in whole seconds against a real clock: pinning an exact 0s makes the
+    # test lose on scheduling jitter. What matters is that the ten-second age
+    # the slow poll left behind is gone.
+    fresh_age = re.search(r"refreshed (\d+)s ago", fresh["text"])
+    assert fresh_age and int(fresh_age.group(1)) <= 2, \
+        "a fresh payload did not reset the refresh age: %r" % (
+            fresh_age.group(0) if fresh_age else None)
     primary.event(lambda row: row["event"] == "start" and row["call"] == 2, 6.0,
                   "third poll did not start")
     primary.send(b"2j\r")

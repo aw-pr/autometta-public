@@ -18,7 +18,29 @@ def _load(name, filename):
 
 _repo = _load("autometta_repo_ticker", "repo-ticker-render.py")
 _fleet = _load("autometta_fleet_ticker", "fleet-ticker-render.py")
+# Loaded by path like its siblings above, not by `import`: render.py is
+# exec'd straight from its file by the smoke and by any tool that wants the
+# pure renderer, and a bare import needs this directory on sys.path, which
+# such a caller has no reason to have arranged.
+status_updates = _load("autometta_tui_status_updates",
+                       os.path.join("tui", "status_updates.py"))
+
 short_tokens = _repo.short_tokens
+
+
+def tick_tokens(n):
+    """Token counts in thousands, comma-grouped: 1,143k.
+
+    short_tokens' 1.1M is the right unit for a total nobody watches change,
+    but it is the wrong one for the run and status panels: a worker adding
+    twenty thousand tokens between polls does not move the first decimal
+    place, so the figure looks frozen and the loop looks dead. Thousands are
+    fine-grained enough that every poll visibly moves the number.
+    """
+    n = int(n or 0)
+    if n < 1000:
+        return str(n)
+    return "{:,}k".format(n // 1000)
 short_secs = _repo.short_secs
 parse_iso = _repo.parse_iso
 build_warning = _repo.build_warning
@@ -174,11 +196,12 @@ class TuiState:
         self.payload = {}
         self.focus = 2
         self.page = 1
-        self.selection = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+        self.selection = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
         self.pinned_stage = None
         self.history_selection = 0
         self.pinned_history_card = None
         self.controller = {"journal": [], "conversation": []}
+        self.status_updates = []
         self.journal_offset = 0
         self.composing = False
         self.compose_buffer = ""
@@ -245,6 +268,9 @@ class TuiState:
         self.monotonic_now = float(now)
         return int(self.monotonic_now) != previous
 
+    def update_status_updates(self, rows):
+        self.status_updates = list(rows or [])
+
     def update_controller(self, controller):
         self.controller = controller or {"journal": [], "conversation": []}
         maximum = max(0, len(self.controller.get("journal") or []) - 1)
@@ -307,7 +333,7 @@ class TuiState:
             self.compose_buffer = ""
             self.compose_notice = ""
             return None
-        if key in ("0", "1", "2", "3", "4"):
+        if key in ("0", "1", "2", "3", "4", "5"):
             # The number row means two things, and which one depends on what is
             # on screen. The run page draws panels labelled [0]-[4], so there a
             # number focuses a panel. The other pages draw no numbered panels,
@@ -336,7 +362,7 @@ class TuiState:
             self.page = 1
             return
         if key in ("TAB", "\t"):
-            self.focus = self.focus % 4 + 1
+            self.focus = self.focus % 5 + 1
             return
         if key in ("PAGE_NEXT", "]"):
             self.page = self.page % 3 + 1
@@ -660,7 +686,7 @@ def live_spend_suffix(payload, state):
             # which would read as a role that is burning nothing.
             parts.append("%s %s live ?" % (role, ran))
         else:
-            parts.append("%s %s +%s live" % (role, ran, short_tokens(int(live))))
+            parts.append("%s %s +%s live" % (role, ran, tick_tokens(int(live))))
     if not parts:
         return ""
     # The turning bar is the liveness cue. observe_time already re-renders on
@@ -702,7 +728,7 @@ def status_lines(state):
         # wrong by a factor of forty, and a figure that will not reconcile reads
         # as a budget rather than a measurement. They get a line each.
         settled = "run spend %s  $%.2f actual" % (
-            short_tokens(run.get("tokens_total", 0)), run.get("cost_usd_est", 0) or 0)
+            tick_tokens(run.get("tokens_total", 0)), run.get("cost_usd_est", 0) or 0)
         # An in-flight role is counted nowhere in that figure: the cost log gets
         # its row when the role exits, so on the CLI route the settled number
         # holds still for the length of a worker and reads as a static budget.
@@ -718,20 +744,37 @@ def status_lines(state):
             content_line("run start %s  elapsed %s" % (run_start[-9:], elapsed)),
             content_line(settled + suffix, spans),
             content_line("repo %s of %s cap (%d%%)" % (
-                short_tokens(spent), short_tokens(cap), pct)),
+                tick_tokens(spent), tick_tokens(cap), pct)),
         ])
     else:
-        lines.append(content_line("repo cap %s (%d%% lifetime used)" % (short_tokens(cap), pct)))
-    # Last, because it comes and goes with every poll. Anywhere else in the
-    # block and each appearance shoves every line beneath it down a row, which
-    # is the one thing a status panel a reader glances at must not do.
-    if state.data_started_at is not None:
-        age = max(0, state.monotonic_now - state.data_started_at)
-        if age >= state.interval:
-            message = "data %s old" % short_secs(age)
-            lines.append(content_line(message, [(0, len(message), DIM)]))
+        lines.append(content_line("repo cap %s (%d%% lifetime used)" % (tick_tokens(cap), pct)))
     if state.focus == 1:
         lines[0][1].insert(0, (0, len(lines[0][0]), REVERSE))
+    return lines
+
+
+def status_update_lines(state, inner_width):
+    """Panel 5: what the loop last said about this repo, newest at the bottom,
+    with the refresh line beneath it.
+
+    The refresh line used to live in the status panel, where it appeared and
+    vanished with every poll and moved four lines under the reader's eye. It
+    is the subject of this panel rather than an interruption in another one,
+    so it can change as often as it likes."""
+    lines = []
+    rows = state.status_updates or []
+    if not rows:
+        lines.append(content_line("no tick log entries for this repo yet",
+                                  [(0, 37, DIM)]))
+    else:
+        for clock, text in rows:
+            prefix = ("%s  " % clock) if clock else ""
+            body = (prefix + text)[:max(1, inner_width)]
+            spans = [(0, len(prefix), DIM)] if prefix else []
+            lines.append(content_line(body, spans))
+    refresh = status_updates.age_line(
+        state.data_started_at, state.monotonic_now, state.polling)
+    lines.append(content_line(refresh, [(0, len(refresh), DIM)]))
     return lines
 
 
@@ -749,7 +792,7 @@ def run_lines(state, inner_width):
         verifier = identity_alias(stage.get("verifier"))
         pair = "%s→%s" % (worker, verifier)
         rows.append(({"glyph": glyph, "id": stage.get("id") or "?", "role": status,
-                      "pair": pair, "tokens": short_tokens(stage_total(payload, stage.get("id")))},
+                      "pair": pair, "tokens": tick_tokens(stage_total(payload, stage.get("id")))},
                      worker, verifier, active_role))
 
     gap = 2
@@ -1118,7 +1161,7 @@ def footer(canvas, state):
         return
     tabs = "[r]un [h]istory [m]essages"
     if state.page == 1:
-        hints = ("  1-4 focus · 0 card · j/k select · enter detail · [ ] page"
+        hints = ("  1-5 focus · 0 card · j/k select · enter detail · [ ] page"
                  " · o page card · O default viewer · q quit")
     else:
         hints = "  j/k scroll · enter reply · esc run page · q quit"
@@ -1126,7 +1169,7 @@ def footer(canvas, state):
     if len(text) > canvas.width:
         # The narrow fallback still has to name a way off this page, which is
         # the thing a reader is stuck without.
-        text = tabs + ("  1-4 focus · [ ] page · q quit" if state.page == 1
+        text = tabs + ("  1-5 focus · [ ] page · q quit" if state.page == 1
                        else "  esc run page · q quit")
     # A card-open result replaces the hint line until the next keypress. The
     # hints are always recoverable; a silent failure to open a card is not.
@@ -1182,13 +1225,18 @@ def render(state, width, height):
         left_width = min(left_width, width - 45)
         right_x = left_width + 1
         right_width = width - right_x
-        panel_total = usable - 3
-        heights = fit_heights([8, 16, 6, inbox_desired], [5, 5, 4, 3], panel_total, [1, 2, 0, 3])
-        status_h, run_h, agents_h, inbox_h = heights
+        panel_total = usable - 4
+        # Panel 5 shrinks first and to the smallest floor: it is the one panel
+        # whose content is a tail, so losing rows costs the reader the oldest
+        # lines rather than a whole subject.
+        heights = fit_heights([8, 16, 6, inbox_desired, 8], [5, 5, 4, 3, 3],
+                              panel_total, [4, 1, 2, 0, 3])
+        status_h, run_h, agents_h, inbox_h, updates_h = heights
         y1 = 0
         y2 = y1 + status_h + 1
         y3 = y2 + run_h + 1
         y4 = y3 + agents_h + 1
+        y5 = y4 + inbox_h + 1
         draw_box(canvas, (0, y1, left_width, status_h), "[1]─Status", status_lines(state), state.focus == 1)
         draw_box(canvas, (0, y2, left_width, run_h), run_title,
                  run_lines(state, left_width - 4), state.focus == 2)
@@ -1196,13 +1244,16 @@ def render(state, width, height):
                  agent_lines(state), state.focus == 3)
         draw_box(canvas, (0, y4, left_width, inbox_h), "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
+        draw_box(canvas, (0, y5, left_width, updates_h), "[5]─Status updates",
+                 status_update_lines(state, left_width - 4), state.focus == 5)
         draw_box(canvas, (right_x, 0, right_width, usable), "[0]─Card detail",
                  detail_lines(state, right_width - 4, max(0, usable - 2)),
                  state.focus == 0)
     else:
-        available = usable - 4
-        heights = fit_heights([8, 18, 6, inbox_desired, 18], [4, 5, 3, 3, 6], available, [1, 4, 2, 0, 3])
-        status_h, run_h, agents_h, inbox_h, detail_h = heights
+        available = usable - 5
+        heights = fit_heights([8, 18, 6, inbox_desired, 6, 18], [4, 5, 3, 3, 3, 6],
+                              available, [4, 1, 5, 2, 0, 3])
+        status_h, run_h, agents_h, inbox_h, updates_h, detail_h = heights
         rects = []
         cursor = 0
         for panel_height in heights:
@@ -1213,7 +1264,9 @@ def render(state, width, height):
         draw_box(canvas, rects[2], agents_title, agent_lines(state), state.focus == 3)
         draw_box(canvas, rects[3], "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
-        draw_box(canvas, rects[4], "[0]─Card detail",
+        draw_box(canvas, rects[4], "[5]─Status updates",
+                 status_update_lines(state, width - 4), state.focus == 5)
+        draw_box(canvas, rects[5], "[0]─Card detail",
                  detail_lines(state, width - 4, max(0, detail_h - 2)), state.focus == 0)
     footer(canvas, state)
     return canvas

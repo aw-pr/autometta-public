@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render import (ACTIVE, ALERT, BOLD, DIM, NORMAL, REVERSE, TuiState,
                     ordered_run_stages, render)
 from messages import read_bus, write_pending
+from status_updates import read_status_updates
 
 
 def payload_from_aggregator(aggregator, repo_root):
@@ -82,6 +83,9 @@ def fixture_polls(path):
 
 def refresh_controller(state, repo_root):
     state.update_controller(read_bus(repo_root))
+    # Read on the same beat as the controller bus: both are small local files
+    # the tick appends to, and panel 5 is stale the moment the loop speaks.
+    state.update_status_updates(read_status_updates(repo_root))
 
 
 def open_card(repo_root, card_path):
