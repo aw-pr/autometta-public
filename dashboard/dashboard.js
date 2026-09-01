@@ -762,13 +762,21 @@
     });
   }
 
-  function loadData() {
+  function loadData(allowEmbedded) {
     if (isFile) {
       // No fetch on a file:// origin, and no http fallback to try.
       return loadViaScript();
     }
     return loadViaFetch().catch(function (err) {
-      if (window.AUTOMETTA_DATA) return window.AUTOMETTA_DATA;
+      // The snapshot index.html embedded at page load is a first-paint
+      // courtesy, not a standing fallback. Returning it on every failed poll
+      // resolved the promise, so the poll took its success path, reset the
+      // failure counter, found generated_at unchanged and reported
+      // "live - unchanged" -- forever, against a server that had died. A dead
+      // server read exactly like an idle run, which is the one thing this
+      // status line exists to tell apart. Observed 2026-09-01: a page sat on
+      // an 08:39Z snapshot until 11:10 still calling itself live.
+      if (allowEmbedded && window.AUTOMETTA_DATA) return window.AUTOMETTA_DATA;
       throw err;
     });
   }
@@ -802,7 +810,7 @@
   }
 
   function poll() {
-    loadData()
+    loadData(false)
       .then(function (data) {
         state.pollFailures = 0;
         var fresh = applyData(data);
@@ -818,7 +826,13 @@
         // through replacing; the mv is atomic but the read can still lose the
         // race on some filesystems. Only say something once it persists.
         if (state.pollFailures >= 3) {
-          setLiveStatus("stale - " + err.message, "warn");
+          // Name the age, not just the error. "Cannot reach the server" says
+          // the poll failed; the age says how far what is on screen has
+          // drifted from the run, which is the number a reader acts on.
+          var shown = state.lastGeneratedAt
+            ? " - showing data generated " + state.lastGeneratedAt
+            : "";
+          setLiveStatus("NOT LIVE" + transportNote() + " - " + err.message + shown, "warn");
         }
       });
   }
@@ -827,7 +841,7 @@
   // uses what is in hand rather than re-reading it.
   var first = isFile && window.AUTOMETTA_DATA
     ? Promise.resolve(window.AUTOMETTA_DATA)
-    : loadData();
+    : loadData(true);
 
   first
     .then(function (data) {
