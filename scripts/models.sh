@@ -406,3 +406,87 @@ codex_local_preflight() {
   fi
   return 0
 }
+
+# The Claude verifier's three surfaces, and the credential each one accepts.
+#
+# "SDK" named two different products for a day and cost a fleet-wide outage.
+# They are both valid; what is not valid is crossing a surface with the other's
+# credential:
+#
+#   surface     package             ANTHROPIC_API_KEY   CLAUDE_CODE_OAUTH_TOKEN
+#   cli         the `claude` binary        yes                    yes
+#   api-sdk     anthropic                  yes                    NO
+#   agent-sdk   claude-agent-sdk           yes                    yes
+#
+# api-sdk calls the raw Messages API, which does not accept a Claude Code
+# subscription token: measured 2026-09-01, a max_tokens=4 request returned 429
+# rate_limit_error on the OAuth token and 200 on the API key, same model and
+# minute. agent-sdk is Claude Code as a library, so it takes the subscription
+# token the way the CLI does -- but no verifier entrypoint targets it yet, so
+# declaring it is an error rather than a silent fall-through to something else.
+#
+# `sdk` is the legacy spelling of `api-sdk`. It is what every existing manifest
+# says and it keeps working; new config should name the surface it means.
+claude_surface_for_transport() {
+  case "$1" in
+    sdk|api-sdk) printf 'api-sdk\n' ;;
+    agent-sdk)   printf 'agent-sdk\n' ;;
+    cli)         printf 'cli\n' ;;
+    *)           printf 'unknown\n' ;;
+  esac
+}
+
+# claude_route_refusal <surface> <auth_pairs>
+# Print why this surface cannot run on this credential, or nothing when it can.
+# Exit 0 when the pairing is refused, 1 when it is fine, so the caller reads it
+# as "if a refusal was printed".
+claude_route_refusal() {
+  local surface="$1" auth_pairs="${2:-}"
+  local has_key=false has_oauth=false
+  [[ "$auth_pairs" == *ANTHROPIC_API_KEY* ]] && has_key=true
+  [[ "$auth_pairs" == *CLAUDE_CODE_OAUTH_TOKEN* ]] && has_oauth=true
+
+  case "$surface" in
+    agent-sdk)
+      printf 'no verifier entrypoint targets claude-agent-sdk yet; scripts/verify-sdk.py is the api-sdk surface\n'
+      return 0
+      ;;
+    api-sdk)
+      if [[ "$has_key" == false && "$has_oauth" == true ]]; then
+        printf 'the api-sdk calls the raw Messages API, which does not accept a subscription OAuth token; set auth.claude.mode=api or use the cli\n'
+        return 0
+      fi
+      ;;
+    unknown)
+      printf 'unrecognised transport; expected cli, api-sdk (legacy: sdk) or agent-sdk\n'
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# claude_route_guard <family> <transport> <provenance> <auth_pairs>
+# Print the resolution, downgraded to the cli when the surface cannot run on
+# the credential this route carries. A surface and its credential are one
+# route: models.sh holds the matrix, this is the only place a resolution is
+# allowed to cross it, and it refuses rather than dispatching into a failure
+# an operator then has to diagnose from a provider error code.
+#
+# Applied to every provenance on purpose. An explicit `transport: sdk` in a
+# manifest is a statement of preference, not a licence to mix -- the manifest
+# that had it plus auth.claude.mode: subscription is exactly what dispatched
+# into an instant 429 on every subscriber for a day.
+claude_route_guard() {
+  local family="$1" transport="$2" provenance="$3" auth_pairs="${4:-}"
+  if [[ "$family" != claude ]]; then
+    printf '%s %s\n' "$transport" "$provenance"
+    return 0
+  fi
+  local surface refusal
+  surface="$(claude_surface_for_transport "$transport")"
+  if refusal="$(claude_route_refusal "$surface" "$auth_pairs")"; then
+    printf 'cli route-guard %s\n' "$refusal"
+    return 0
+  fi
+  printf '%s %s\n' "$transport" "$provenance"
+}

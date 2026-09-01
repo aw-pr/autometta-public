@@ -314,7 +314,7 @@ resolve_verifier_transport() {
   override_var="AUTOMETTA_${family_upper}_TRANSPORT"
 
   if [[ -n "${!override_var:-}" ]]; then
-    printf '%s env\n' "${!override_var}"
+    claude_route_guard "$family" "${!override_var}" env "$auth_pairs"
     return 0
   fi
 
@@ -322,14 +322,14 @@ resolve_verifier_transport() {
     local from_manifest
     from_manifest="$(yq -r ".verifier.${family}.transport // \"\"" "$manifest" 2>/dev/null || true)"
     if [[ -n "$from_manifest" ]]; then
-      printf '%s manifest\n' "$from_manifest"
+      claude_route_guard "$family" "$from_manifest" manifest "$auth_pairs"
       return 0
     fi
   fi
 
   local reason
   if reason="$(verifier_sdk_precondition "$family" "$repo_root" "$auth_pairs")"; then
-    printf 'sdk default-sdk\n'
+    claude_route_guard "$family" sdk default-sdk "$auth_pairs"
   else
     printf 'cli fallback-cli %s\n' "$reason"
   fi
@@ -730,32 +730,12 @@ main() {
               log_msg "  store it in 1Password, then point OP_REF_CLAUDE_CODE_OAUTH_TOKEN at it in ~/.config/autometta/op-refs.local.sh"
               exit 1
             fi
-            # Downgrade to the CLI. This branch used to read "the Agent SDK runs
-            # the Claude Code harness, which authenticates with the OAuth token",
-            # and that is true of the Agent SDK -- but verify-sdk.py imports
-            # `anthropic`, the API SDK, and calls the raw Messages API. A Claude
-            # Code subscription token is not a credential for that surface. The
-            # comment described an intention the code never implemented.
-            #
-            # Measured 2026-09-01, one request each, same model and minute:
-            # a max_tokens=4 call returned 429 rate_limit_error on the OAuth
-            # token (x-should-retry, no retry-after, no ratelimit headers -- not
-            # a spent quota), the identical call on ANTHROPIC_API_KEY returned
-            # 200, and `claude -p` on that same OAuth token answered. Card 89
-            # passed because ANTHROPIC_API_KEY was presumably in the environment
-            # and wins verify-sdk.py's resolution order, so the subscription
-            # token was never the credential under test.
-            #
-            # Every subscriber has taken this route since card 90 made the SDK
-            # the default on 2026-08-31, and each dispatch was classified as a
-            # provider refusal and parked behind an hour of blind backoff --
-            # correct handling of a wrong diagnosis. Downgrading keeps stages
-            # moving on a route that works. Set auth.claude.mode: api to take
-            # the SDK, or port verify-sdk.py to claude-agent-sdk, which is
-            # already pinned in scripts/requirements-sdk.txt and does accept
-            # this token.
-            claude_transport="cli"
-            log_msg "verifier-transport: $(format_transport_resolution cli fallback-cli "the API SDK cannot authenticate with a subscription OAuth token; set auth.claude.mode=api to keep the SDK")"
+            # The route matrix in models.sh already downgraded this to the
+            # cli in resolve_verifier_transport, so reaching here with an sdk
+            # transport means the guard was bypassed. Refuse rather than
+            # dispatch the api-sdk at a token it cannot use.
+            log_msg "verifier-transport: fail-closed; api-sdk with auth.claude.mode=subscription bypassed the route guard"
+            exit 1
             ;;
           *)
             log_msg "verifier-transport: fail-closed; verifier.claude.transport=sdk does not support auth.claude.mode=${claude_mode}"

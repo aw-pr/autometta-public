@@ -24,7 +24,11 @@ AUTOMETTA_ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS = str(AUTOMETTA_ROOT / "scripts" / "requirements-sdk.txt")
 SCHEMA = AUTOMETTA_ROOT / "schemas" / "verifier.json"
 TEMPLATE = Path("templates/verifier-prompt.md")
-VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
+# This entrypoint is the api-sdk surface: it imports `anthropic` and calls the
+# raw Messages API. It is not claude-agent-sdk, whatever the file name
+# suggests, and artefacts carried the Agent SDK's name until 2026-09-01.
+# Superseded artefacts keep the label they were written with.
+VERIFIER_IDENTITY = "Claude API SDK verifier <claude-api-sdk@local>"
 MODEL = "claude-sonnet-5"
 MAX_TOKENS = 4096
 # Keep a broad fallback from consuming an unbounded portion of the verifier

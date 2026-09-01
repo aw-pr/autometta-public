@@ -1,8 +1,46 @@
-# SDK verifier prototype
+# API SDK verifier
 
-`scripts/verify-sdk.py` is the entrypoint for running a verifier through the Claude Agent SDK, and the route a claude verifier takes by default. It reads a stage card, expands a worker artefact glob, renders `templates/verifier-prompt.md`, asks the SDK for structured JSON, validates it against `schemas/verifier.json`, and writes the verifier artefact to the path supplied by `--out`.
+## The two SDKs, and why the distinction is load-bearing
 
-Direct use of `scripts/verify-sdk.py` does not read 1Password, choose an auth route, register heartbeat state, or provide fallback behaviour to `claude -p`. The caller must install `scripts/requirements-sdk.txt` once and inject one credential through `op-fetch`: `ANTHROPIC_API_KEY` on the api route, or `CLAUDE_CODE_OAUTH_TOKEN` on the subscription route. Production dispatch goes through `scripts/spawn-verifier.sh`, which owns auth-route selection, fallback, and registration.
+"SDK" names two different Anthropic products, and for one day that ambiguity
+was a fleet-wide outage. This page is about the first of them.
+
+| Surface | Package | What it is | `ANTHROPIC_API_KEY` | `CLAUDE_CODE_OAUTH_TOKEN` |
+|---|---|---|---|---|
+| `cli` | the `claude` binary | Claude Code itself | yes | yes |
+| `api-sdk` | `anthropic` | the raw Messages API | yes | **no** |
+| `agent-sdk` | `claude-agent-sdk` | Claude Code as a library | yes | yes |
+
+`scripts/verify-sdk.py` is the **api-sdk** surface: it imports `anthropic` and
+calls the Messages API. It is not `claude-agent-sdk`, whatever the file name
+suggests. A Claude Code subscription token is not a credential for that
+surface -- measured 2026-09-01, same model and minute, one request each, a
+`max_tokens=4` call returned `429 rate_limit_error` on the OAuth token and
+`200` on the API key, while `claude -p` on that same OAuth token answered.
+The 429 carried `x-should-retry` with no `retry-after` and no
+`anthropic-ratelimit-*` headers, so it was never a spent quota.
+
+Both surfaces are valid. Crossing one with the other's credential is not, and
+`claude_route_refusal` in `scripts/models.sh` is the single place that rule
+lives. `resolve_verifier_transport` applies it to every provenance -- env
+override, manifest, and default alike -- so an explicit `transport: sdk` is a
+statement of preference, not a licence to mix. A refused pairing resolves to
+`cli (route-guard: <reason>)`, which `--print-transport` shows, so a dispatch
+never changes route in silence. `scripts/verifier-route-matrix-smoke.sh`
+covers the matrix.
+
+`agent-sdk` is a declared surface with no verifier entrypoint behind it yet;
+declaring it is refused by name rather than quietly becoming something else.
+Porting this entrypoint to it is the open piece of work -- `claude-agent-sdk`
+is already pinned in `scripts/requirements-sdk.txt` and would take the
+subscription token officially, which is what "the SDK verifier runs on the
+subscription" was always meant to mean.
+
+## The entrypoint
+
+`scripts/verify-sdk.py` is the route a claude verifier takes by default when its credential is an API key. It reads a stage card, expands a worker artefact glob, renders `templates/verifier-prompt.md`, asks the SDK for structured JSON, validates it against `schemas/verifier.json`, and writes the verifier artefact to the path supplied by `--out`.
+
+Direct use of `scripts/verify-sdk.py` does not read 1Password, choose an auth route, register heartbeat state, or provide fallback behaviour to `claude -p`. The caller must install `scripts/requirements-sdk.txt` once and inject `ANTHROPIC_API_KEY` through `op-fetch`. It also accepts `CLAUDE_CODE_OAUTH_TOKEN` and will attempt the call with it, which is how the mismatch above went unnoticed; production dispatch no longer routes that pairing here. Production dispatch goes through `scripts/spawn-verifier.sh`, which owns auth-route selection, fallback, and registration.
 
 Manual smoke test:
 
@@ -24,7 +62,7 @@ Exit codes:
 
 - `0`: SDK returned `overall: "PASS"` and the JSON artefact was written.
 - `1`: SDK returned `overall: "FAIL"` or the returned JSON was malformed.
-- `2`: environment error, including neither `ANTHROPIC_API_KEY` nor `CLAUDE_CODE_OAUTH_TOKEN` being set, missing `claude-agent-sdk`, missing card, or missing verifier prompt template.
+- `2`: environment error, including neither `ANTHROPIC_API_KEY` nor `CLAUDE_CODE_OAUTH_TOKEN` being set, missing `anthropic` or `jsonschema`, missing card, or missing verifier prompt template.
 - `3`: SDK returned JSON that failed `schemas/verifier.json`; an invalid report is written to `<out>.invalid.json`.
 
 The output envelope intentionally matches the existing verifier artefact shape:
@@ -32,7 +70,7 @@ The output envelope intentionally matches the existing verifier artefact shape:
 ```json
 {
   "stage_id": "14-auth-route-toggle",
-  "verifier_identity": "Claude Agent SDK verifier <claude-agent-sdk@local>",
+  "verifier_identity": "Claude API SDK verifier <claude-api-sdk@local>",
   "verifier_invocation": "scripts/verify-sdk.py --stage-id 14-auth-route-toggle --card stage-cards/14-auth-route-toggle.md --artefact-glob <redacted> --out state/verifiers/14-auth-route-toggle.json",
   "ran_at": "2026-05-27T12:00:00Z",
   "criteria": [
@@ -160,7 +198,7 @@ artefacts contain personal data.
 
 | Condition | Outcome |
 |---|---|
-| `transport: sdk` + `auth.claude.mode: subscription` + resolvable `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` | Dispatches, with `CLAUDE_CODE_OAUTH_TOKEN` as the only credential in the child env. |
+| `transport: sdk` + `auth.claude.mode: subscription` + resolvable `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` | Resolves to `cli (route-guard: ...)`. The api-sdk cannot authenticate with a subscription token, so the route guard downgrades to the CLI, which can. Set `auth.claude.mode: api` to keep the api-sdk. |
 | `transport: sdk` + `auth.claude.mode: subscription` + `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` unset or still a `YOUR_VAULT` placeholder | Exits non-zero before spawning any process. Message names the ref and `claude setup-token`. |
 | `transport: sdk` + `auth.claude.mode: api` + `OP_REF_ANTHROPIC_API_KEY` unresolved | Exits non-zero before spawning any process. Message names the ref. |
 | `transport: sdk` + `auth.claude.mode: local` | Refused by `auth-route.sh`: the local route is codex-family only. |
