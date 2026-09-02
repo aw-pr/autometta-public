@@ -452,7 +452,12 @@ def stage_state(payload, stage):
     if status == "pending":
         return "○", "queued", None
     if status in ("stalled", "verifier_failed", "failed"):
-        return "✖", "ESCALTD", None
+        # One label for three outcomes said only "this needs you", which is the
+        # part the ✖ already carries. Which of the three it is decides what to
+        # do next: a stall is re-queued, a verifier failure is read and
+        # re-briefed, a plain failure produced nothing to read.
+        return "✖", {"stalled": "STALLED", "verifier_failed": "V-FAILED",
+                     "failed": "FAILED"}[status], None
     if status == "superseded":
         return "○", "superseded", None
     role = (agent or {}).get("role") or "worker"
@@ -1029,14 +1034,19 @@ def wrap_content_lines(lines, inner_width):
     return wrapped
 
 
-def stage_timing_line(stage, now):
+def stage_timing_line(stage, now, agent=None):
     """When the run started, and when it stopped if it has.
 
     The pane showed elapsed-against-budget, which answers "how long has this
     been going" but not "when did it go" -- the question asked when reading a
     stage that finished hours ago, or matching a run against a log line.
     """
-    started = parse_iso(stage.get("started_at")) if isinstance(stage.get("started_at"), str) else None
+    # A live dispatch dates from when *it* started, not from when the stage
+    # first did. A re-queued stage keeps its original started_at, so pairing
+    # that with this attempt's budget put "12h26m ago" beside "12m34s used" on
+    # one line and left the reader to work out they were different clocks.
+    source = agent if (agent or {}).get("started_at") else stage
+    started = parse_iso(source.get("started_at")) if isinstance(source.get("started_at"), str) else None
     ended = parse_iso(stage.get("completed_at")) if isinstance(stage.get("completed_at"), str) else None
     if started is None and ended is None:
         return "not started"
@@ -1086,9 +1096,19 @@ def detail_lines(state, inner_width, inner_height=None):
     usage = usage_for_stage(state.payload, stage.get("id"))
     attempts = stage.get("verifier_attempts") or 0
     cap = state.payload.get("verifier_attempt_cap") or 3
-    elapsed = agent.get("elapsed_seconds") or 0
+    # elapsed_seconds is written by the heartbeat, which the tick runs about
+    # once a minute; the TUI polls every five seconds. Deriving it from
+    # started_at against the poll clock makes the number move at the rate the
+    # reader is watching it, which is the whole point of showing it: a figure
+    # that only changes once a minute cannot tell you a worker is still alive.
+    started_epoch = parse_iso(agent.get("started_at")) if isinstance(agent.get("started_at"), str) else None
+    if started_epoch is not None:
+        elapsed = max(0, state.now - started_epoch)
+    else:
+        elapsed = agent.get("elapsed_seconds") or 0
     budget = agent.get("budget_seconds") or 0
     budget_pct = int(elapsed * 100 / budget) if budget else 0
+    run_line = stage_timing_line(stage, state.now, agent)
     live_usage = agent.get("live_usage")
     if isinstance(live_usage, dict):
         live_input = int(live_usage.get("input_tokens") or 0)
@@ -1112,14 +1132,17 @@ def detail_lines(state, inner_width, inner_height=None):
         else:
             lines.extend((content_line(label), content_line("  " + identity)))
     lines.extend([
-        content_line("attempt   %s of %s" % (attempts, cap)),
-        # Both facts share a row on purpose. At 80 columns the detail pane's
-        # line budget is spent by the stage card below it, and tui-smoke
-        # asserts that card is never truncated there -- two rows here cost two
-        # rows of the card and turned it into "and 2 more".
-        content_line("queue     %s · %s" % (stage_queue_line(state.payload, stage),
-                                            stage_timing_line(stage, state.now))),
-        content_line("budget    %s / %s (%d%% used)" % (short_secs(elapsed), short_secs(budget), budget_pct)),
+        # attempt and queue share a row so the pane costs the stage card below
+        # it nothing. At 80 columns tui-smoke asserts that card is never
+        # truncated, and every row taken here is a row taken from it.
+        content_line("attempt   %s of %s · %s" % (attempts, cap,
+                                                  stage_queue_line(state.payload, stage))),
+        # The budget line keeps its exact shape -- tui-smoke pins it literally --
+        # and the run clock rides on the end of it rather than taking a row of
+        # its own, because at 80 columns every row here is one the stage card
+        # below loses.
+        content_line("budget    %s / %s (%d%% used) · %s" % (
+            short_secs(elapsed), short_secs(budget), budget_pct, run_line)),
         content_line("card      %s" % (stage.get("card") or "stage-cards/%s.md" % stage.get("id"))),
         content_line(""),
         content_line("─ acceptance " + "─" * max(0, inner_width - 13)),
