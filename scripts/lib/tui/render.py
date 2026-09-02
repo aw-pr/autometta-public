@@ -1029,6 +1029,53 @@ def wrap_content_lines(lines, inner_width):
     return wrapped
 
 
+def stage_timing_line(stage, now):
+    """When the run started, and when it stopped if it has.
+
+    The pane showed elapsed-against-budget, which answers "how long has this
+    been going" but not "when did it go" -- the question asked when reading a
+    stage that finished hours ago, or matching a run against a log line.
+    """
+    started = parse_iso(stage.get("started_at")) if isinstance(stage.get("started_at"), str) else None
+    ended = parse_iso(stage.get("completed_at")) if isinstance(stage.get("completed_at"), str) else None
+    if started is None and ended is None:
+        return "not started"
+    if started is None:
+        return "ended %s (%s ago)" % (time.strftime("%d %b %H:%M", time.localtime(ended)),
+                                      short_secs(max(0, now - ended)))
+    text = time.strftime("%d %b %H:%M", time.localtime(started))
+    if ended is not None:
+        text += " → %s  (ran %s)" % (time.strftime("%H:%M", time.localtime(ended)),
+                                     short_secs(max(0, ended - started)))
+    else:
+        text += "  (%s ago)" % short_secs(max(0, now - started))
+    return text
+
+
+def stage_queue_line(payload, stage):
+    """Where this stage sits in the queue the tick will actually dispatch from.
+
+    Position comes from the queue array rather than from the stage's own id or
+    its place in the table: the id is an authoring order and the table is
+    sorted for reading, while the queue is the order work will really be taken
+    in. A stage that is not in it is not waiting, and says what it is instead.
+    """
+    queue = [q.get("stage_id") for q in (payload.get("queue") or []) if isinstance(q, dict)]
+    stage_id = stage.get("id")
+    depth = len(queue)
+    if stage_id in queue:
+        position = queue.index(stage_id) + 1
+        nxt = " — next up" if position == 1 else ""
+        return "%d of %d waiting%s" % (position, depth, nxt)
+    status = (stage.get("status") or "").replace("_", " ")
+    if stage.get("status") == "in_progress":
+        # Depth is worth saying only while something is running: it answers
+        # "what happens when this finishes". On a stage that finished hours ago
+        # it is a fact about the queue, not about the stage being read.
+        return "running now (%d waiting behind)" % depth if depth else "running now (nothing waiting)"
+    return "not queued — %s" % (status or "unknown")
+
+
 def detail_lines(state, inner_width, inner_height=None):
     stages = ordered_run_stages(state.payload)
     stage = next((item for item in stages if item.get("id") == state.pinned_stage), None)
@@ -1066,6 +1113,12 @@ def detail_lines(state, inner_width, inner_height=None):
             lines.extend((content_line(label), content_line("  " + identity)))
     lines.extend([
         content_line("attempt   %s of %s" % (attempts, cap)),
+        # Both facts share a row on purpose. At 80 columns the detail pane's
+        # line budget is spent by the stage card below it, and tui-smoke
+        # asserts that card is never truncated there -- two rows here cost two
+        # rows of the card and turned it into "and 2 more".
+        content_line("queue     %s · %s" % (stage_queue_line(state.payload, stage),
+                                            stage_timing_line(stage, state.now))),
         content_line("budget    %s / %s (%d%% used)" % (short_secs(elapsed), short_secs(budget), budget_pct)),
         content_line("card      %s" % (stage.get("card") or "stage-cards/%s.md" % stage.get("id"))),
         content_line(""),
