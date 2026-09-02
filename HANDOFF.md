@@ -1,10 +1,55 @@
 # Handover
 
-**Status (2026-09-01):** Four cards queued — 100 (tick cost, in flight), 101
-(verifier argv), 102 (state schema), 103 (dashboard zero). The Claude verifier
-was dead in every subscriber repo for a day: the API SDK was being handed a
-subscription token, fixed at `361b43c`. Tick cadence 300s -> 30s (~120s
-effective, floored by a 90s tick). `dev` pushed.
+**Status (2026-09-02):** Outlier detector now kills at 15x baseline (proven
+against four real processes); TUI stage-state and queue-position rework
+landed; the yq/jq dashboard bug is fixed and verified. Cards 105/106 queued;
+104 needs a third re-brief and 106 needs a design decision on gate
+self-verification. `dev` pushed.
+
+## Recent activity (2026-09-02 — the guard that acts instead of narrating)
+
+- **Token-outlier detector now kills, not just watches.** `AUTOMETTA_OUTLIER_KILL_MULTIPLE`
+  (default 15x baseline, 0 disables) terminates a runaway stage rather than
+  merely flagging it. 15x was chosen against the largest legitimate stage
+  spend on record — 19,502,742 tokens against a 1.64M median, 11.9x — so
+  honest slow stages are never killed; stage 73 hit 22.2x and was the
+  motivating case. Proven against four real processes: 11.9x survives, 14.9x
+  survives, 22x with the kill disabled survives, 22x with it enabled is
+  killed. `tui-smoke` and `tui-messages-smoke` pass.
+- **`heartbeat.sh` is not vendored** — it runs centrally from the checkout via
+  `AUTOMETTA_ROOT`, so the kill-path fix reached every subscriber on commit
+  with nothing to distribute per-repo.
+- **`aggregate-dashboard.sh` was reading `stage_card_globs` with jq's
+  `// empty` syntax, which mikefarah `yq` rejects.** Broken since `ad16c1c`
+  (2026-05-26): manifest globs were never actually read, and hardcoded
+  fallbacks silently did all the work. Surfaced only because stage 103 added
+  `append_state_error` to that code path. Verified fixed by re-running
+  `aggregate-dashboard` and confirming the `state_error` cleared.
+- **TUI stage-state split `ESCALTD` into `STALLED` / `V-FAILED` / `FAILED`**,
+  and `elapsed` now derives from `started_at` against the 5s poll clock
+  instead of the heartbeat's ~60s `elapsed_seconds` — a live dispatch dates
+  from the agent's own start, not the stage's. Queue position now rides the
+  attempt row and the run clock rides the budget row, because `tui-smoke`
+  asserts the stage card is never truncated at 80 columns and every metadata
+  row is one the card loses; two attempts at a dedicated row both failed that
+  assertion. The dashboard's stage table now sorts by queue position (last
+  first), then newest-dated-first, then undated terminal stages last.
+- **Cards 105 and 106 authored and queued; 102 re-briefed and landed clean**
+  (6/6, contract gate recomputed a real sha256 for the first time).
+- **Deferred:** stage 104 verifier_failed a second time (4/7) — needs a third
+  re-brief with a straggler grep actually run, not transcribed from the
+  verifier; it missed `skills/autometta-requeue/SKILL.md:8-10,21-26`. Stage
+  105 verifier_failed on a one-token marker mismatch (`stage=105-...` vs the
+  gate's required `card=<path>`) despite 6/6 criteria passing. Stage 106
+  verifier_failed on its **own** contract test — `gate-smoke.sh` necessarily
+  contains marker-token fixtures, so `cmd_gate` counts several frozen blocks
+  and rejects the file; the gate cannot verify its own test and this needs a
+  design decision (open question below). The installed Homebrew build has
+  drifted again (checkout at `831fb07` or later); nothing was in flight at
+  last check, `scripts/install-homebrew-local.sh` closes it.
+- **Direction:** guard philosophy shifted — detection must act, not narrate.
+  The consecutive-failure cap and the drain cap are backstops; the outlier
+  kill is the guard that actually bounds a runaway.
 
 ## Recent activity (2026-09-01 — the SDK that was the other SDK)
 
@@ -77,6 +122,20 @@ enter (`907628a`).
 
 ## Open questions and known-bad, for the next agent
 
+- **Should the 80-column no-truncation guarantee in `tui-smoke` be relaxed**
+  so the TUI can give run timing its own labelled row? The operator asked to
+  see the time and it is currently appended to the budget row rather than
+  broken out.
+- **How should `check-contract-test-gate.sh` handle a test file whose content
+  is legitimately markers** (`gate-smoke.sh`)? Candidates: heredoc-quoted
+  fixtures, a scoped block, or exempting that file by name. Blocks stage 106.
+- **Does the token-burn sparkline need the same poll-clock treatment as
+  elapsed?** `live_usage` still comes from the heartbeat, not the 5s poll
+  clock that `elapsed` was moved onto this session.
+- **`state-branch-smoke.sh` and `superseded-status-smoke.sh` both fail on a
+  clean `dev`**, predating this session's batch. `superseded-status-smoke`
+  also fails at `e057331` — i.e. before stage 103 touched `render.py` — so
+  103 did not introduce it. Neither is carded yet.
 - **A fleet tick costs 90 seconds** — 90.20 / 90.22 / 91.54 wall, 63-64s user,
   30-31s sys, six subscribers, four of them drained. That is now the loop's
   response floor: launchd will not restart a running job, so the effective
@@ -664,3 +723,9 @@ Three commits (`f333ed3`, `3990f5b`, `16c1c6c`) carrying an earlier wrong-shape 
 - 2026-08-31T21:34:53Z: stage 96-no-verdict-left-behind: dev moved since dispatch; autometta/96-no-verdict-left-behind left standing; push to origin also failed, integrate locally
 
 - 2026-08-31T21:59:42Z: stage 97-a-pause-is-not-a-stall: dev moved since dispatch; autometta/97-a-pause-is-not-a-stall left standing, pushed to origin/autometta/97-a-pause-is-not-a-stall for manual integration
+
+- 2026-09-01T18:14:20Z: stage 100-the-tick-stops-costing-ninety-seconds: dev moved since dispatch; autometta/100-the-tick-stops-costing-ninety-seconds left standing, pushed to origin/autometta/100-the-tick-stops-costing-ninety-seconds for manual integration
+
+- 2026-09-01T18:25:25Z: stage 101-the-verifier-passes-its-flags-the-way-the-worker-does: dev moved since dispatch; autometta/101-the-verifier-passes-its-flags-the-way-the-worker-does left standing, pushed to origin/autometta/101-the-verifier-passes-its-flags-the-way-the-worker-does for manual integration
+
+- 2026-09-01T18:46:30Z: stage 103-the-dashboard-does-not-invent-a-zero: dev moved since dispatch; autometta/103-the-dashboard-does-not-invent-a-zero left standing, pushed to origin/autometta/103-the-dashboard-does-not-invent-a-zero for manual integration
