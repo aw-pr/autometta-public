@@ -189,7 +189,12 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
 
   card_globs=()
   if [[ -n "$manifest_path" && -f "$manifest_path" ]]; then
-    if card_glob_output="$(yq -r '.stage_card_globs[]? // empty' "$manifest_path" 2>/dev/null)"; then
+    # `// empty` is jq's alternative operator; mikefarah yq rejects it with
+    # `lexer: invalid input text "empty"`, so this query has failed for every
+    # subscriber since ad16c1c and the manifest's globs were never read -- the
+    # hardcoded fallbacks below did all the work. `[]?` alone already yields
+    # nothing for a missing key, which is what the alternative was reaching for.
+    if card_glob_output="$(yq -r '.stage_card_globs[]?' "$manifest_path" 2>/dev/null)"; then
       while IFS= read -r g; do [[ -n "$g" ]] && card_globs+=("$g"); done <<<"$card_glob_output"
     else
       append_state_error "subscriber manifest unparseable"
