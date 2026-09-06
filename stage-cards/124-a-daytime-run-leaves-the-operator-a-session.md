@@ -5,7 +5,7 @@
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
 - **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** Codex GPT-5.6 Sol <codex-gpt-5-6-sol@local>
+- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/124-a-daytime-run-leaves-the-operator-a-session
 - **Worker effort:** high
@@ -240,6 +240,14 @@ Attempt 1 was worked by Claude Sonnet 5 and verified by Claude Opus 5, which
 failed it correctly. Attempt 2 was worked by Claude Opus 5 directly from the
 orchestrator session, so the authored Opus verifying seat would have put the
 same model on both sides of the gate, which this batch's seat rule forbids.
-The seat moves to Codex, restoring the cross-family default now that the
-Codex window has reopened. It is not moved because attempt 1's verifier was
-wrong: it was right, and its criterion-3 finding is what attempt 2 fixes.
+The seat is not moved because attempt 1's verifier was wrong: it was right,
+and its criterion-3 finding is what attempt 2 fixes.
+
+It moved to Codex first, to restore the cross-family default once the Codex
+window reopened. That dispatch could not run: codex's local command runner
+failed to start on every attempt ("timed out negotiating with the code-mode
+host"), and the verifier correctly declined to write a verdict it had read no
+evidence for. The seat is therefore Claude Sonnet 5 -- a different model from
+the working seat, which is the binding rule, but same-family, so the
+judgement diversity a Codex seat would have given is not there. Read this
+stage's verdict knowing that.
