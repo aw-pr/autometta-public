@@ -481,8 +481,8 @@ check "the run worktree is left standing for the merge" \
   "$([[ -d "$moved_wt" ]] && printf 'ok\n' || printf 'removed\n')"
 check "repo_root is still on the operator's branch" \
   "$(eq dev "$(git -C "$moved" rev-parse --abbrev-ref HEAD)")"
-check "HANDOFF.md still gets its line too" \
-  "$(grep -q 'moved since dispatch' "$moved/HANDOFF.md" && printf 'ok\n' || printf 'no handoff line\n')"
+check "a parked branch leaves the base checkout clean" \
+  "$(test -z "$(git -C "$moved" status --porcelain)" && printf 'ok\n' || printf 'base checkout dirtied\n')"
 
 # The other half of the same path: base did not move, so it merges and the
 # record says there is nothing outstanding.

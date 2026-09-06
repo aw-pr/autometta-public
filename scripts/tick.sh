@@ -1091,7 +1091,7 @@ pipeline_try_dispatch_tail() {
     return 1
   fi
 
-  local card_path base_branch work_dir now_iso base_tip
+  local card_path base_branch work_dir now_iso base_tip dispatch_base_tip
   card_path="$(stage_card_for_id "$repo_root" "$tail_stage" "$manifest_path")"
   [[ -n "$card_path" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: tail card missing"; return 1; }
   if ! quota_gate_role_dispatch "$repo_root" "$state_yaml" "$tail_stage" worker; then
@@ -1115,17 +1115,22 @@ pipeline_try_dispatch_tail() {
     log "pipeline pair ${head_stage} + ${tail_stage} refused: tail run worktree failed"
     return 1
   fi
+  dispatch_base_tip="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)"
+  [[ -n "$dispatch_base_tip" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: tail dispatch base tip unresolved"; return 1; }
+  base_tip="$dispatch_base_tip"
 
   now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   state_apply_json "$state_yaml" '
     (.stages[] | select(.id == $tail)).status = "in_progress"
     | (.stages[] | select(.id == $tail)).started_at = $now
     | (.stages[] | select(.id == $tail)).base_branch = $base
+    | (.stages[] | select(.id == $tail)).dispatch_base_tip = $dispatch_base_tip
     | (.stages[] | select(.id == $tail)).reserve_exempt = $exempt
     | .pipeline_pair = {head:$head, tail:$tail, base_tip:$tip,
                         phase:"workers-overlapped", rebase_required:false}' \
     --arg head "$head_stage" --arg tail "$tail_stage" --arg now "$now_iso" \
-    --arg base "$base_branch" --arg tip "$base_tip" --argjson exempt "$tail_reserve_exempt"
+    --arg base "$base_branch" --arg tip "$base_tip" --arg dispatch_base_tip "$dispatch_base_tip" \
+    --argjson exempt "$tail_reserve_exempt"
   local worker_spawn_rc=0
   spawn_worker_for_stage "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
   if (( worker_spawn_rc != 0 )); then
@@ -1183,6 +1188,55 @@ pipeline_escalate_tail() {
   log "pipeline pair controller escalation for ${tail_stage}: ${reason}; no headless conflict resolution attempted"
 }
 
+# file_path_overlap: print the first path shared by two newline-delimited path
+# lists. Both pipeline preparation and post-verdict landing use the same
+# file-level rule; a later Git conflict is still an unconditional park.
+file_path_overlap() {
+  local left_paths="$1" right_paths="$2"
+  comm -12 <(printf '%s\n' "$left_paths" | sed '/^$/d' | sort -u) \
+           <(printf '%s\n' "$right_paths" | sed '/^$/d' | sort -u) | head -n1
+}
+
+# rebase_disjoint_run_branch: mechanically rebase a committed, verified run
+# branch only when the base movement and the run's verified diff are
+# file-disjoint. Its stdout is one of rebased:<new-tip>, overlap:<path>, or
+# conflict. A conflict is always aborted in the run worktree; callers park it.
+rebase_disjoint_run_branch() {
+  local repo_root="$1" work_dir="$2" dispatch_base_tip="$3" base_branch="$4" run_branch="$5"
+  local base_tip run_tip base_paths run_paths overlap rebase_rc=0 rebased_tip
+  base_tip="$(git -C "$repo_root" rev-parse -q --verify "refs/heads/${base_branch}" 2>/dev/null || true)"
+  run_tip="$(git -C "$repo_root" rev-parse -q --verify "refs/heads/${run_branch}" 2>/dev/null || true)"
+  if [[ -z "$dispatch_base_tip" || -z "$base_tip" || -z "$run_tip" ]] \
+     || ! git -C "$repo_root" merge-base --is-ancestor "$dispatch_base_tip" "$base_tip" 2>/dev/null \
+     || ! git -C "$repo_root" merge-base --is-ancestor "$dispatch_base_tip" "$run_tip" 2>/dev/null; then
+    printf 'unavailable\n'
+    return 0
+  fi
+
+  base_paths="$(git -C "$repo_root" diff --name-only "$dispatch_base_tip" "$base_tip" -- \
+    . ':(exclude)state' 2>/dev/null | sort -u)"
+  run_paths="$(git -C "$repo_root" diff --name-only "$dispatch_base_tip" "$run_tip" -- \
+    . ':(exclude)state' 2>/dev/null | sort -u)"
+  overlap="$(file_path_overlap "$base_paths" "$run_paths")"
+  if [[ -n "$overlap" ]]; then
+    printf 'overlap:%s\n' "$overlap"
+    return 0
+  fi
+
+  git -C "$work_dir" rebase "$base_tip" >/dev/null 2>&1 || rebase_rc=$?
+  if (( rebase_rc != 0 )); then
+    git -C "$work_dir" rebase --abort >/dev/null 2>&1 || true
+    printf 'conflict\n'
+    return 0
+  fi
+  rebased_tip="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -z "$rebased_tip" ]]; then
+    printf 'conflict\n'
+    return 0
+  fi
+  printf 'rebased:%s\n' "$rebased_tip"
+}
+
 pipeline_prepare_tail_rebase() {
   local repo_root="$1" state_yaml="$2" tail_stage="$3"
   local pair_tail required worker_pid head_stage old_base base_branch head_commit work_dir
@@ -1215,8 +1269,7 @@ pipeline_prepare_tail_rebase() {
                     . ':(exclude)state' 2>/dev/null; \
                   git -C "$work_dir" ls-files --others --exclude-standard -- \
                     . ':(exclude)state' 2>/dev/null; } | sort -u)"
-  overlap="$(comm -12 <(printf '%s\n' "$head_paths" | sed '/^$/d') \
-                       <(printf '%s\n' "$tail_paths" | sed '/^$/d') | head -n1)"
+  overlap="$(file_path_overlap "$head_paths" "$tail_paths")"
   if [[ -n "$overlap" ]]; then
     pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" "pipeline-actual-diff-overlap:${overlap}"
     return 1
@@ -1687,16 +1740,21 @@ preserve_failed_work() {
 # worktree while it says 'awaiting'.
 integration_record() {
   local state="$1" base_branch="$2" run_branch="$3" head="$4" pushed="$5"
+  local rebased="${6:-}" rebased_tip="${7:-}"
   jq -nc \
     --arg state "$state" \
     --arg base "$base_branch" \
     --arg run "$run_branch" \
     --arg head "$head" \
     --arg pushed "$pushed" \
+    --arg rebased "$rebased" \
+    --arg rebased_tip "$rebased_tip" \
     --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{state: $state, base_branch: $base, run_branch: $run,
       head: (if $head == "" then null else $head end),
       pushed: (if $pushed == "" then null else ($pushed == "true") end),
+      rebased: (if $rebased == "" then null else ($rebased == "true") end),
+      rebased_tip: (if $rebased_tip == "" then null else $rebased_tip end),
       recorded_at: $now}'
 }
 
@@ -2221,17 +2279,14 @@ _process_verifier_artefact() {
   local commit_sha
   commit_sha="$(cd "$commit_dir" && git rev-parse HEAD 2>/dev/null || true)"
 
-  # Integrate the run branch: ff-merge into base if base hasn't moved,
-  # otherwise leave the run branch standing for a person to merge. Either
-  # way the outcome is written to the stage's .integration record, which is
-  # what `autometta status` reads and what reap-worktrees.sh consults before
-  # it removes anything. Before that record existed, the only trace of an
-  # outstanding merge was one appended line in HANDOFF.md, and the stage
-  # read as plain "completed" everywhere an operator actually looks. No-op
-  # on the deprecated repo_root-commit path (base_branch empty / no
-  # worktree).
+  # Integrate the run branch. An unchanged base fast-forwards immediately. If
+  # it moved after dispatch, a file-disjoint verified branch rebases in its
+  # own worktree and then fast-forwards; overlap or any rebase conflict parks
+  # it for phat-controller. The verifier's verdict is never re-run after a
+  # mechanical disjoint rebase. No-op on the deprecated repo_root-commit path
+  # (base_branch empty / no worktree).
   if [[ -n "$base_branch" && -d "$work_dir" ]]; then
-    local merge_result run_branch run_tip
+    local merge_result run_branch run_tip dispatch_base_tip rebase_result rebased_tip current_base_tip
     run_branch="$(run_branch_for_stage "$stage_id")"
     run_tip="$(cd "$repo_root" && git rev-parse -q --verify "refs/heads/${run_branch}" 2>/dev/null || true)"
     merge_result="$(finalize_run_worktree "$repo_root" "$stage_id" "$base_branch")"
@@ -2241,19 +2296,42 @@ _process_verifier_artefact() {
         "$(integration_record merged "$base_branch" "$run_branch" "$run_tip" "")"
       log "stage ${stage_id} PASS: fast-forwarded ${base_branch} to ${run_branch} and removed the run worktree"
     else
-      local push_note pushed=false
-      push_note="stage ${stage_id}: ${base_branch} moved since dispatch; ${run_branch} left standing"
-      if (cd "$repo_root" && git push origin "$run_branch" >/dev/null 2>&1); then
-        pushed=true
-        push_note="${push_note}, pushed to origin/${run_branch} for manual integration"
-      else
-        push_note="${push_note}; push to origin also failed, integrate locally"
+      dispatch_base_tip="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+        '.stages[] | select(.id == $id) | .dispatch_base_tip // empty')"
+      current_base_tip="$(git -C "$repo_root" rev-parse -q --verify "refs/heads/${base_branch}" 2>/dev/null || true)"
+      rebase_result="unavailable"
+      if [[ -n "$dispatch_base_tip" && -n "$current_base_tip" && "$dispatch_base_tip" != "$current_base_tip" ]]; then
+        rebase_result="$(rebase_disjoint_run_branch "$repo_root" "$work_dir" "$dispatch_base_tip" "$base_branch" "$run_branch")"
       fi
-      record_stage_integration "$state_yaml" "$stage_id" \
-        "$(integration_record awaiting "$base_branch" "$run_branch" "$run_tip" "$pushed")"
-      log "stage ${stage_id} PASS: ${push_note}"
-      if [[ -f "$repo_root/HANDOFF.md" ]]; then
-        printf '\n- %s: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$push_note" >> "$repo_root/HANDOFF.md"
+      if [[ "$rebase_result" == rebased:* ]]; then
+        rebased_tip="${rebase_result#rebased:}"
+        merge_result="$(finalize_run_worktree "$repo_root" "$stage_id" "$base_branch")"
+        if [[ "$merge_result" == "merged" ]]; then
+          teardown_run_worktree "$repo_root" "$stage_id"
+          record_stage_integration "$state_yaml" "$stage_id" \
+            "$(integration_record merged "$base_branch" "$run_branch" "$run_tip" "" true "$rebased_tip")"
+          log "stage ${stage_id} PASS: rebased disjoint ${run_branch} onto ${base_branch}, fast-forwarded, and removed the run worktree"
+          rebase_result="landed"
+        fi
+      fi
+      if [[ "$rebase_result" != "landed" ]]; then
+        local push_note pushed=false
+        case "$rebase_result" in
+          overlap:*) push_note="stage ${stage_id}: ${base_branch} moved with overlapping path ${rebase_result#overlap:}; ${run_branch} left standing" ;;
+          conflict)  push_note="stage ${stage_id}: disjoint rebase conflicted and was aborted; ${run_branch} left standing" ;;
+          unavailable) push_note="stage ${stage_id}: ${base_branch} moved since dispatch; ${run_branch} left standing" ;;
+          rebased:*) push_note="stage ${stage_id}: rebased ${run_branch} could not fast-forward ${base_branch}; ${run_branch} left standing" ;;
+          *) push_note="stage ${stage_id}: ${base_branch} moved since dispatch; ${run_branch} left standing" ;;
+        esac
+        if (cd "$repo_root" && git push origin "$run_branch" >/dev/null 2>&1); then
+          pushed=true
+          push_note="${push_note}, pushed to origin/${run_branch} for manual integration"
+        else
+          push_note="${push_note}; push to origin also failed, integrate locally"
+        fi
+        record_stage_integration "$state_yaml" "$stage_id" \
+          "$(integration_record awaiting "$base_branch" "$run_branch" "$run_tip" "$pushed")"
+        log "stage ${stage_id} PASS: ${push_note}"
       fi
     fi
   fi
@@ -3149,7 +3227,7 @@ _process_repo_locked() {
         local next_stage_reserve_exempt=false
         [[ "$QUOTA_GATE_RESOLVED_WINDOW" == "overnight" || "$QUOTA_GATE_RESOLVED_WINDOW" == "drain-ignore-reserve" ]] \
           && next_stage_reserve_exempt=true
-        local base_branch work_dir
+        local base_branch work_dir dispatch_base_tip
         base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
         if [[ -z "$base_branch" ]]; then
           log "could not resolve a base branch for ${next_stage} in ${repo_root}, stalling stage"
@@ -3164,10 +3242,20 @@ _process_repo_locked() {
             --arg id "$next_stage"
           budget_record_failure "$repo_root"
         else
+          dispatch_base_tip="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)"
+          if [[ -z "$dispatch_base_tip" ]]; then
+            log "could not record dispatch base tip for ${next_stage} in ${repo_root}, stalling stage"
+            state_apply_json "$state_yaml" \
+              '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "dispatch_base_tip_unresolved"' \
+              --arg id "$next_stage"
+            budget_record_failure "$repo_root"
+            return 0
+          fi
           now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           state_apply_json "$state_yaml" \
-            '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | (.stages[] | select(.id == $id)).base_branch = $base | (.stages[] | select(.id == $id)).reserve_exempt = $exempt | .current_stage = $id' \
-            --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch" --argjson exempt "$next_stage_reserve_exempt"
+            '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | (.stages[] | select(.id == $id)).base_branch = $base | (.stages[] | select(.id == $id)).dispatch_base_tip = $dispatch_base_tip | (.stages[] | select(.id == $id)).reserve_exempt = $exempt | .current_stage = $id' \
+            --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch" --arg dispatch_base_tip "$dispatch_base_tip" \
+            --argjson exempt "$next_stage_reserve_exempt"
           local worker_spawn_rc=0
           "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
           if (( worker_spawn_rc != 0 )); then

@@ -297,9 +297,11 @@ The replacement builds the commit with plumbing: `git add` into a throwaway `GIT
 
 `state/state.yaml.bak`, the rolling copy `state_apply_json` writes, stays. It recovers the previous good state within the same tick; the snapshot ref recovers a history of them.
 
-**The fast-forward never checks base out either.** On PASS, `finalize_run_worktree` advances `base_branch` to the run branch when base has not moved since dispatch. It used to `git checkout "$base_branch"` in `repo_root` to do it, which moves an operator working on some other branch onto base mid-session. A fast-forward is a ref move, so the tick does the ref move where it can: base checked out in `repo_root` is merged in place (HEAD stays on the branch it was already on, and the tree has to be updated anyway), base checked out in another worktree is merged there, and base checked out nowhere is moved with `git update-ref` behind an ancestry check.
+**Landing has three outcomes.** On PASS, `finalize_run_worktree` first attempts the ordinary fast-forward when base has not moved since dispatch. It never checks base out in `repo_root`: a fast-forward is a ref move, so the tick updates the branch where it is checked out, or with `git update-ref` when it is not.
 
-**When base has moved.** That is the common case, not an edge case: any orchestrator commit to base between dispatch and PASS produces it. The run branch is pushed to `origin` and left standing, and the stage's `integration` record in `state.yaml` says so:
+When base has moved, the tick compares the files changed by `dispatch_base_tip..base` with those changed by `dispatch_base_tip..run_tip`. File-disjoint changes are mechanically rebased in the run worktree, then fast-forwarded and torn down. The verified pre-rebase tip remains in `integration.head`; `integration.rebased_tip` records the new tip and `integration.rebased: true` records the route. The verifier's verdict is not re-run after this rebase: the disjoint-file test is the premise for carrying its verdict forward.
+
+Any file overlap, unavailable dispatch tip, or rebase conflict takes the third route: the tick aborts the rebase, leaves the run branch and worktree standing, and records `awaiting`. It never resolves a conflict headlessly or writes a note into the base checkout. The state record and tick log are the integration ledger:
 
 ```yaml
 integration:
@@ -311,7 +313,7 @@ integration:
   recorded_at: 2026-08-23T14:02:11Z
 ```
 
-`autometta status` prints an `awaiting integration` line per outstanding stage under the repo's row. Before the record existed the stage read as plain `completed` everywhere an operator looks, and the only trace of the outstanding merge was one appended line in `HANDOFF.md`.
+`autometta status` prints an `awaiting integration` line per outstanding stage under the repo's row. `phat-controller merge-awaiting` remains the route for a parked branch that can later be merged cleanly.
 
 **Reaping.** `scripts/reap-worktrees.sh` runs after every tick as part of `sweep_repo_retention`, and by hand with `--dry-run`. It removes a run worktree whose stage is finished with it, through `requeue-stage.sh --worktree-only` so that removal has one implementation. It refuses to remove a worktree whose stage is `in_progress`, one holding uncommitted work that is not the known `state/` symlink artefact (a verifier FAIL leaves the worker's diff uncommitted by design, and that diff is what the operator inspects), one whose run branch holds commits that are not on base, and one whose stage it cannot find in `state.yaml`. Those it reports instead, on every tick until someone deals with them. When a person merges an `awaiting` branch by hand, the next sweep notices the containment, closes the record out to `merged`, and collects the worktree.
 
