@@ -427,8 +427,12 @@ c113_queue_time_refusal() {
 }
 
 # Acceptance 2. A member failure is a fact about one stage, not a repo-wide
-# latch. Autometta had been latched serial on stage 106 since 2026-09-01,
-# which is five days of every pair refused by one stale failure.
+# latch -- autometta had been latched serial on stage 106 since 2026-09-01,
+# five days of every pair refused by one stale failure. And the counter that
+# replaces the latch only counts failures that are evidence about pairing.
+# Four pairings against 24 refusals is not enough history to read a verifier
+# FAIL as a pairing fault, and a threshold on an undiscriminated signal
+# trips on noise.
 c113_failure_is_per_stage() {
   new_fixture c113-member-failure
   local head_work head_pid tail_pid
@@ -449,26 +453,70 @@ c113_failure_is_per_stage() {
   assert_eq "$(state_json "$fixture_repo/state/state.yaml" \
     | jq -r '.pairing_disabled_stage // ""')" \
     "" "113: a member failure still set the repo-wide pairing latch"
+  # A verifier FAIL on the merits is not evidence about pairing.
   assert_eq "$(state_json "$fixture_repo/state/state.yaml" \
     | jq -r '.stages[] | select(.id == "01-head") | .pairing_failures // 0')" \
-    1 "113: the per-stage pairing_failures counter was not incremented"
+    0 "113: a verifier FAIL on the merits incremented pairing_failures"
 
-  # One failure does not disqualify the stage; two do. The counter is the
-  # whole mechanism, so assert the threshold in both directions.
+  # A tail that cannot rebase onto the landed head is evidence about
+  # pairing, and is the case the counter exists for. It records the count
+  # and the cause together, so a later refusal can be explained from state.
+  new_fixture c113-rebase-failure head.txt tail.txt
+  local rf_head_pid rf_tail_pid rf_head_work rf_tail_work
+  rf_head_work="$(ensure_run_worktree "$fixture_repo" 01-head dev)"
+  printf 'head shared\n' >>"$rf_head_work/shared.txt"
+  start_head_verifier "$fixture_repo"
+  rf_head_pid="$started_pid"
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head ""
+  rf_tail_pid="$(state_json "$fixture_repo/state/state.yaml" \
+    | jq -r '.stages[] | select(.id == "02-tail") | .worker_pid')"
+  rf_tail_work="$(worktree_path_for_stage "$fixture_repo" 02-tail)"
+  printf 'tail shared\n' >>"$rf_tail_work/shared.txt"
+  stop_pid "$rf_head_pid"
+  write_verdict "$fixture_repo" 01-head PASS
+  _process_verifier_artefact "$fixture_repo" "$fixture_repo/state/state.yaml" \
+    01-head state/verifiers/01-head.json ""
+  pipeline_after_head_resolution "$fixture_repo/state/state.yaml" 01-head
+  stop_pid "$rf_tail_pid"
+  pipeline_prepare_tail_rebase "$fixture_repo" "$fixture_repo/state/state.yaml" 02-tail \
+    && fail "113: the rebase-failure fixture did not fail to rebase"
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" \
+    | jq -r '.stages[] | select(.id == "02-tail") | .pairing_failures // 0')" \
+    1 "113: a tail that could not rebase onto the landed head recorded no pairing failure"
+  [[ -n "$(state_json "$fixture_repo/state/state.yaml" \
+    | jq -r '.stages[] | select(.id == "02-tail") | .pairing_failure_causes // [] | .[-1] // ""')" ]] \
+    || fail "113: the increment recorded no attributed cause alongside the count"
+
+  # One attributed failure does not disqualify the stage; two do.
   new_fixture c113-one-failure
   state_apply_json "$fixture_repo/state/state.yaml" \
-    '(.stages[] | select(.id == "01-head")).pairing_failures = 1'
+    '(.stages[] | select(.id == "01-head")).pairing_failures = 1
+     | (.stages[] | select(.id == "01-head")).pairing_failure_causes = ["tail-rebase-failed"]'
   pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" || true
   if grep -Fq 'pairing_failures' "$smoke_log"; then
-    fail "113: a stage with one prior paired failure was refused on the counter"
+    fail "113: a stage with one attributed pairing failure was refused on the counter"
   fi
 
   new_fixture c113-two-failures
   state_apply_json "$fixture_repo/state/state.yaml" \
-    '(.stages[] | select(.id == "01-head")).pairing_failures = 2'
+    '(.stages[] | select(.id == "01-head")).pairing_failures = 2
+     | (.stages[] | select(.id == "01-head")).pairing_failure_causes = ["tail-rebase-failed","claim-collision"]'
   pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
-    && fail "113: a stage with two prior paired failures still formed a pair"
+    && fail "113: a stage with two attributed pairing failures still formed a pair"
   assert_log 'pairing_failures'
+
+  # The counter clears when a re-brief lands for that stage, as the latch it
+  # replaces did. Otherwise it is the same permanent disqualification with a
+  # per-stage scope.
+  new_fixture c113-rebrief-clears
+  state_apply_json "$fixture_repo/state/state.yaml" \
+    '(.stages[] | select(.id == "01-head")).pairing_failures = 2
+     | (.stages[] | select(.id == "01-head")).pairing_failure_causes = ["tail-rebase-failed","claim-collision"]
+     | (.stages[] | select(.id == "01-head")).status = "completed"'
+  pipeline_pairing_disabled_refresh "$fixture_repo/state/state.yaml" || true
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" \
+    | jq -r '.stages[] | select(.id == "01-head") | .pairing_failures // 0')" \
+    0 "113: a landed re-brief did not clear the stage's pairing_failures"
 }
 
 # Acceptance 3. The serial-only claim rule is about what the *head* may do

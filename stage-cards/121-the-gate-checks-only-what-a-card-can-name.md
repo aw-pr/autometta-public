@@ -119,3 +119,29 @@ was sized for, the verifying seat moved to the free local route
 (`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
 afternoon and the card is back on the seats it was authored with. Nothing
 about the work changed across either move.
+
+## Confirmed in the wild (2026-09-06)
+
+Stage 113's verifier hit this while checking an unrelated stage, and its
+reproduction is worth keeping as a ready test case.
+
+Running the gate over a full staged change set exits 1 on two files that no
+card names as a contract test:
+
+- `docs/dispatch-contract.md` carries two `AUTOMETTA-CONTRACT-BEGIN`
+  strings, a fenced example at :142 and prose at :168, so `extract_block`
+  reports "more than one frozen block in file" (exit 4).
+- `templates/stage-card.md`:75 mentions the marker in prose with no
+  `card=` attribute, which draws the no-card warning.
+
+Both were reproduced against pristine HEAD content in a scratch repo with
+only those files staged, so **any commit touching either file trips the gate
+regardless of its content**. Two cards in this batch claim
+`docs/dispatch-contract.md` (113 and 131), so this is in the way now rather
+than theoretical.
+
+It is also a reason to prefer the objective's rule over a narrower fix: a
+gate keyed to "does this file contain the token" cannot tell a document
+*about* the markers from a test *using* them, and both of these files exist
+to describe the mechanism.
+

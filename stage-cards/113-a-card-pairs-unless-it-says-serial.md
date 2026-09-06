@@ -12,7 +12,7 @@
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Gate:** stage-completed: 111-dev-moving-does-not-park-a-disjoint-landing
-- **Path claims:** scripts/add-stage.sh, scripts/tick.sh, scripts/pipeline-pair-smoke.sh, schemas/state.yaml.json, templates/stage-card.md, docs/tick-loop.md, docs/dispatch-contract.md, stage-cards/113-a-card-pairs-unless-it-says-serial.md
+- **Path claims:** scripts/add-stage.sh, scripts/tick.sh, scripts/pipeline-pair-smoke.sh, scripts/gate-smoke.sh, scripts/tui-smoke.sh, scripts/phat-controller-smoke.sh, schemas/state.yaml.json, templates/stage-card.md, docs/tick-loop.md, docs/dispatch-contract.md, stage-cards/113-a-card-pairs-unless-it-says-serial.md
 - **Pairing rationale:** cross-family. The Codex seat changes the pairing rules; the Opus seat
   verifies because the change is to *when* two agents may share a repo, and
   the failure mode is a collision that only shows under a real double
@@ -70,27 +70,48 @@ All files listed here must be created or modified. Paths are relative to repo ro
    line nor a line `- **Dispatch:** serial`, with a message quoting both
    forms. `templates/stage-card.md` documents the choice as required.
 2. `scripts/tick.sh`: a member failure drops the *current* pair to serial
-   (unchanged) but does not set `pairing_disabled_stage`; instead a
-   per-stage `pairing_failures` counter is kept and pairing is refused only
-   for a stage that has failed while paired twice. Remove the latch and its
-   refresh, or leave them reachable only via a manifest key
+   (unchanged) but does not set `pairing_disabled_stage`. In its place a
+   per-stage `pairing_failures` counter records only failures attributable
+   to pairing -- the tail failing to rebase onto the moved head, or a claim
+   collision detected at reap. A verifier FAIL on the merits, an agent
+   death, and a provider refusal each increment nothing, because none of
+   them is evidence about pairing. Each increment records the attributed
+   cause alongside the count, so a later refusal can be explained from
+   state. The counter is cleared when a re-brief lands for that stage, as
+   the latch it replaces was. Pairing is refused for a stage whose
+   attributed count reaches two. Remove the latch and its refresh, or
+   leave them reachable only via a manifest key
    `pipeline.latch_on_failure: true`.
 
    `schemas/state.yaml.json` permits the new per-stage `pairing_failures`
-   field. The repo's strict state-schema invariant means a state field that
-   the schema does not permit is a defect, so the schema edit is part of
-   this deliverable rather than a consequence of it. Add the field and
-   nothing else; do not relax the schema's additional-properties handling to
-   avoid naming it.
+   and `pairing_failure_causes` fields. The repo's strict state-schema
+   invariant means a state field the schema does not permit is a defect, so
+   the schema edit is part of this deliverable rather than a consequence of
+   it. Add the fields and nothing else; do not relax the schema's
+   additional-properties handling to avoid naming them.
+
 3. `pipeline_claims_require_serial` applies to the head always, and to the
    tail only when the tail's claims include `scripts/tick.sh` or
    `scripts/lib`; a docs-only or smoke-only tail behind a `tick.sh` head is
    allowed when their claims are disjoint.
-4. `scripts/pipeline-pair-smoke.sh` gains: a claimless card is refused at
-   queue time; a `serial` card queues; a pair forms after a prior member
-   failure; a docs-only tail pairs behind a `tick.sh` head; a tail claiming
-   `scripts/lib` behind any head is still refused. Frozen block around the
-   new assertions.
+4. The frozen assertion block in `scripts/pipeline-pair-smoke.sh` is
+   authored by the orchestrator and is the oracle for deliverables 1-3. Do
+   not edit it; scaffolding outside the markers may be added or changed as
+   the behaviour change forces.
+
+   Deliverable 1's queue-time refusal breaks three existing offline smokes
+   whose fixture cards predate it and declare neither claims nor a
+   dispatch: `scripts/gate-smoke.sh`, `scripts/tui-smoke.sh` and
+   `scripts/phat-controller-smoke.sh`. Add `- **Dispatch:** serial` to each
+   of their fixture cards. All three are in the Path claims for exactly this
+   edit. `scripts/phat-controller.sh`'s `smokes` verb globs
+   `scripts/*-smoke.sh`, so leaving them red takes the controller's own
+   check down with them.
+
+   A stage that fails while paired for a reason unrelated to pairing -- take
+   a verifier FAIL -- does not increment `pairing_failures`, and the next
+   pair including that stage still forms.
+
 5. `docs/tick-loop.md` and `docs/dispatch-contract.md` state the new rules,
    and list the risks this card knowingly accepts: two dispatches may share a
    provider window when `pair_on` is `off`; budget headroom is checked at
@@ -111,20 +132,26 @@ The verifier will check each of these. Failure of any one is a failure of the st
 
 1. `add-stage.sh` refuses a fixture card with no claims and no `serial` line,
    accepts one with `serial`, accepts one with claims.
-2. In a fixture repo, after a paired member fails and is re-queued, the next
-   eligible pair forms on the following tick without any hand edit.
+2. A verifier FAIL on a paired member increments `pairing_failures` by
+   nothing and sets no repo-wide latch. A tail that cannot rebase onto the
+   landed head increments it by one and records the attributed cause beside
+   it. One attributed failure still pairs; two refuse; a landed re-brief
+   clears the count.
 3. A docs-only tail pairs behind a head claiming `scripts/tick.sh`; a tail
    claiming `scripts/lib/tui/render.py` does not.
 4. `scripts/pipeline-pair-smoke.sh` (which also carries card 96's
    no-verdict-left-behind assertions; keep them green) and
    `scripts/state-branch-smoke.sh` are no more red than on clean `dev`; the
-   new cases fail against the pre-change scripts.
+   new cases fail against the pre-change scripts. `scripts/gate-smoke.sh`,
+   `scripts/tui-smoke.sh` and `scripts/phat-controller-smoke.sh` all pass:
+   attempt 2 took all three from green to red and that regression is this
+   attempt's to fix.
 5. `docs/tick-loop.md` names the accepted risks in the words of deliverable 5.
 
 ## Contract test
 
 - **Test file:** scripts/pipeline-pair-smoke.sh
-- **Assertions digest:** `sha256:85bce562a4b57974b77d6125ef8179e59a9c29616db3da2212f0bc028be1702b`
+- **Assertions digest:** `sha256:4da381c92ac297627f99d57c032ba6f4de6439f99f622546d36e0e6d42788665`
 
 The frozen block is **already written**, by the orchestrator, before any
 implementation exists. Do not author, extend or edit it: satisfy it by
@@ -274,3 +301,42 @@ reading its verdict.
 
 Attempt 1 modified no product deliverables. It cost 822k tokens and its
 finding was worth more than that.
+
+## Re-brief 2 (2026-09-06)
+
+Attempt 2 passed all five acceptance criteria and the contract-test gate,
+and was failed on two findings outside them. Both are orchestrator errors.
+
+1. **The queue-time refusal broke three smokes and the card did not let the
+   worker fix them.** `gate-smoke.sh`, `tui-smoke.sh` and
+   `phat-controller-smoke.sh` all carry fixture cards written before
+   deliverable 1 existed, so each now dies at queue time and the
+   controller's own `smokes` verb goes down with them. One line per fixture
+   card fixes it, and none of the three was in the Path claims. This is the
+   same class of defect as attempt 1's missing schema, and it shipped
+   silently this time instead of being surfaced.
+
+2. **The frozen block contradicted the card's own amendment.** The
+   PROPOSED-AMENDMENT above asks that only pairing-attributable failures
+   count, with the cause stored and the counter cleared on a re-brief. The
+   block I authored asserted the opposite -- `pairing_failures == 1` after a
+   plain verifier FAIL. The block is the authoritative oracle and the worker
+   may not edit it, so satisfying it was the only move available, and the
+   shipped implementation is the naive counter the amendment argues against.
+   The fault is mine for authoring assertions without reading the amendment
+   already recorded on the card.
+
+**The amendment is accepted and applied**, to deliverable 2, deliverable 4
+and acceptance 2. The reasoning that persuaded me is its own: four pairings
+against 24 refusals is not enough history to read a verifier FAIL as a
+pairing fault, and a threshold on an undiscriminated signal trips on noise.
+The frozen block is re-authored to match and its digest re-recorded above.
+Attempt 2's implementation of the counter will need reworking, not just
+extending -- it increments on any non-completed member status
+(`scripts/tick.sh:1271`, `:1418`), logs the cause without storing it, and
+never clears.
+
+Attempt 2's other work stands, and its verifier's report is worth reading in
+full before starting: it confirms the block was satisfied by implementation
+change only, that scope was clean, and that the new schema fields validate
+as intended.

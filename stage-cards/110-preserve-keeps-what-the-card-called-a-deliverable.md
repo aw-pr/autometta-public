@@ -138,3 +138,30 @@ was sized for, the verifying seat moved to the free local route
 (`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
 afternoon and the card is back on the seats it was authored with. Nothing
 about the work changed across either move.
+
+## Re-brief (2026-09-06)
+
+Attempt 1 passed four of five criteria and the contract-test gate. Its work
+stands and is preserved at `wip/110-preserve-keeps-what-the-card-called-a-deliverable-attempt-1`;
+build on it rather than starting again.
+
+The one failure is real and precise. `scripts/requeue-stage.sh`'s refusal
+loop leaks its last iteration's exit status into a command substitution
+under `set -euo pipefail`. The final command of each iteration is
+`[ "$mtime" -gt "$started_epoch" ] && printf ...`, so when the last ignored
+entry is older than `started_at` the test is false, the loop exits 1, the
+enclosing assignment fails, and `set -e` aborts the whole script with a bare
+exit 1 -- no message, no refusal, and the caller cannot tell a refusal from
+a crash. Criterion 4 needs the exit status **and** the named file, and this
+gives neither.
+
+Fix the status leak, not the criterion. The usual shapes are a trailing
+`|| true` inside the loop body, an `if` rather than a `&&` chain, or
+collecting into a variable and testing after the loop.
+
+Note also that attempt 1's envelope was destroyed in the 2026-09-06
+state-wipe incident and the one the verifier read was reconstructed by the
+orchestrator from the worker's closing summary. That is why the envelope
+carries a warning at its head. It has no bearing on this finding, which the
+verifier made from the code.
+
