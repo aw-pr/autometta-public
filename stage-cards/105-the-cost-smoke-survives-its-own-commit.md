@@ -11,7 +11,7 @@
 - **Worker effort:** medium
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Path claims:** scripts/tick-cost-smoke.sh
+- **Path claims:** scripts/tick-cost-smoke.sh, stage-cards/105-the-cost-smoke-survives-its-own-commit.md
 - **Pairing rationale:** cross-family, and deliberately the seat that wrote the
   test in stage 100. The defect is a blind spot in how the baseline was
   constructed rather than a coding error, so the author's own seat is the one
@@ -98,8 +98,8 @@ Do not read anything else unless you need to; keep your context lean.
 ## Contract test
 
 - **Test file:** `scripts/tick-cost-smoke.sh`
-- **Assertions digest:** frame the assertions in an
-  `AUTOMETTA-CONTRACT-BEGIN`/`AUTOMETTA-CONTRACT-END` block naming this card,
+- **Assertions digest:** frame the assertions in a
+  begin-marker/end-marker block naming this card,
   with a real sha256. Stage 102 failed its gate for lacking exactly this, and
   a prose digest is what let the gate pass without checking anything.
 
@@ -129,3 +129,27 @@ tree -- a dirty tree is what hid the defect the first time, and reproducing the
 original mistake is the single most likely way to pass this card wrongly. Then
 break the caching in a copy of `tick.sh` and confirm the test notices. Judge
 criterion 3 by doing it, not by reading that it was done.
+
+## Re-brief 2026-09-06: the work passed, the marker did not
+
+Attempt 1 passed all six criteria and is preserved at
+`98ab52fbe5134552318a87d45621fb68cb0895af`
+(`wip/105-the-cost-smoke-survives-its-own-commit-attempt-1`). Adopt it. It
+failed only the contract gate, for three mechanical reasons the gate itself
+reports, and the card as written did not let you fix the third. Path claims now
+include this card so that you can.
+
+1. The begin marker at `scripts/tick-cost-smoke.sh:127` carries
+   `stage=105-...`. `check-contract-test-gate.sh:43-50` requires the field to
+   be `card=stage-cards/105-the-cost-smoke-survives-its-own-commit.md`.
+2. Line 128, a `# sha256:` comment, sits inside the frozen block, so it states a
+   digest that its own presence changes. Delete it. The digest belongs in the
+   card, nowhere in the test.
+3. This card's Assertions digest line is prose. Replace its text with the real
+   digest: run `scripts/check-contract-test-gate.sh print scripts/tick-cost-smoke.sh`
+   after steps 1 and 2 and record what it prints. With line 128 removed the
+   orchestrator measured `sha256:957f60be8ea37be5b1f7ad96b588a01cd3dbee1a9d857efb84d52eba3454de23`;
+   confirm rather than copy.
+
+Then run `scripts/check-contract-test-gate.sh gate` with both files staged and
+paste its output in the envelope. Nothing else changes; criteria 1 to 6 stand.
