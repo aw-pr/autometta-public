@@ -146,3 +146,37 @@ a way a Codex verifier did not, so a wrong assumption the worker makes is
 likelier to survive verification. Two different Claude models recover part
 of that and not all of it. Read this card's acceptance criteria as needing
 more, not less, evidence than usual.
+
+## Re-brief (attempt 2, 2026-09-06, after the Codex subscription closed mid-write)
+
+Attempt 1 was not judged. Its worker was refused by the provider partway
+through the run, at 77,488 tokens, and never wrote an envelope: there is no
+verdict on this card and nothing below is a criticism of the work.
+
+The work is real and it is preserved at
+`4676fdd6aa8e8b5d7187ba7f239c99f78847f9d6` on
+`wip/107-status-says-when-the-loop-is-not-loaded-attempt-1`. Restore it
+rather than starting over. It carries 131 insertions across three files:
+
+- `scripts/status-loop-smoke.sh`, new, 61 lines.
+- `scripts/status.sh`, +75, including a `latest_controller_log` helper
+  extracted from an inline loop.
+- this card, where the contract-test digest line was edited.
+
+Two things attempt 1 did not reach, both of them the end of the job rather
+than a defect in what exists:
+
+1. **The digest is a placeholder.** The card's contract-test line reads
+   `sha256:TO_FILL`. Run `scripts/check-contract-test-gate.sh print
+   scripts/status-loop-smoke.sh` and put the real digest there. Attempt 1
+   wrote the literal `TO_FILL` string into the card and stopped; leaving it
+   is an automatic gate failure.
+2. **Nothing was run.** Neither the new smoke nor the reworked `status.sh`
+   was executed once. Run the smoke, and run `scripts/status.sh` against
+   both states the card cares about: the fleet LaunchAgent loaded, and
+   bootted out.
+
+This stage is also re-seated. The worker is now Claude Sonnet 5 and the
+verifier Claude Opus 5; the batch runs on one family until the Codex window
+reopens, and the card's re-seat note says what that costs. Nothing in the
+deliverables or the acceptance criteria changed.
