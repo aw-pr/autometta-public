@@ -87,13 +87,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/landing-dispatch-smoke.sh
-- **Assertions digest:** `sha256:5d02881896ba14887992a5706738572dfbcdbd44969741a753c66eafa8d81e8f`; frame the assertions in a block between the begin
-  marker and the end marker, the begin marker naming this card by its
-  `card=stage-cards/115-the-fire-that-lands-a-stage-starts-the-next.md` field, and replace this line's text with the real
-  digest printed by `scripts/check-contract-test-gate.sh print scripts/landing-dispatch-smoke.sh`. Do not
-  write a `sha256:` comment inside the block, and do not spell the marker
-  tokens anywhere in this card's prose; the card is in your path claims for
-  exactly this edit.
+- **Assertions digest:** `sha256:5d02881896ba14887992a5706738572dfbcdbd44969741a753c66eafa8d81e8f`
 
 ## Out of scope
 
@@ -130,3 +124,23 @@ was sized for, the verifying seat moved to the free local route
 (`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
 afternoon and the card is back on the seats it was authored with. Nothing
 about the work changed across either move.
+
+## Orchestrator note (2026-09-06): the digest line, not the work
+
+Attempt 1's verifier passed all four acceptance criteria and failed the
+stage on the mandatory contract-test gate. Its diagnosis was exact: the
+digest's closing backtick was glued to a semicolon, so the gate's
+whitespace-tokenising `declared_digest()` read the value as
+`sha256:...e8f;` and no recomputation could ever equal it. The hex the
+worker recorded was byte-for-byte correct.
+
+The cause is the template, not the worker. Its Contract test section tells
+whoever holds the card to "replace this line's text with the real digest",
+and the worker replaced the front of the sentence and left the rest of it
+attached. Card 131 fixes the template and the queue-time check.
+
+Only the punctuation is changed here. No acceptance criterion, no
+assertion, and no deliverable has been touched, and the frozen block is
+byte-identical -- the recomputed digest still matches the value above. The
+stage is re-verified rather than re-worked, because attempt 1's work was
+sound and its verifier said so on every criterion it was asked about.
