@@ -44,41 +44,71 @@ quota_log_tick_readings() {
   done
 }
 
+# QUOTA_GATE_RESOLVED_WINDOW: which window_reserve rule the most recent
+# quota_gate_family_dispatch call resolved under (default|daytime|overnight|
+# drain-ignore-reserve). Set from quota_reserve_settings' own stdout rather
+# than trusting its QUOTA_RESERVE_WINDOW global directly: this function
+# reads that stdout through a $(...) command substitution, which forks a
+# subshell, and a global written only inside that subshell never reaches
+# back out even one level. The 3rd tab field is what actually survives.
+QUOTA_GATE_RESOLVED_WINDOW="default"
+
 # quota_gate_family_dispatch <repo> claude|codex <description>
 # Returns 1 only after recording a pause at the published reset. Zero covers
 # outside-reserve, reserve off, observe and every unknown reading.
 quota_gate_family_dispatch() {
   local repo_root="$1" family="$2" what="$3"
-  local settings reserve action reading
+  local settings reserve action window reading
+  QUOTA_GATE_RESOLVED_WINDOW="default"
   case "$family" in claude|codex) ;; *)
     log "quota ${what}: family unknown; dispatch remains fail-open"
     return 0
   esac
-  settings="$(quota_reserve_settings "${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}")"
-  IFS=$'\t' read -r reserve action <<<"$settings"
+  settings="$(quota_reserve_settings "${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}" "$repo_root")"
+  IFS=$'\t' read -r reserve action window <<<"$settings"
+  QUOTA_GATE_RESOLVED_WINDOW="${window:-default}"
   reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
   if quota_gate_reading "$reading" "$reserve" "$action"; then
     if [[ "$QUOTA_GATE_REASON" == reading\ unknown:* ]]; then
       log "quota ${what} (${family}): ${QUOTA_GATE_REASON}; dispatch remains fail-open"
     elif [[ "$QUOTA_GATE_REASON" == *"inside reserve"* ]]; then
-      log "quota ${what} (${family}): ${QUOTA_GATE_REASON}; dispatch proceeds"
+      log "quota ${what} (${family}): ${QUOTA_GATE_REASON} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); dispatch proceeds"
     fi
     return 0
   fi
   budget_pause_until "$repo_root" "$QUOTA_GATE_RESET" \
     "quota reserve: ${family} ${QUOTA_GATE_WINDOW}; resets at $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
-  log "quota ${what} (${family}): held in ${reserve}% reserve on ${QUOTA_GATE_WINDOW}; paused until $(date -r "$QUOTA_GATE_RESET" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+  log "quota ${what} (${family}): held in ${reserve}% reserve on ${QUOTA_GATE_WINDOW} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); paused until $(date -r "$QUOTA_GATE_RESET" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
   return 1
 }
 
 # Resolve a stage role to its family, then use the same gate as the controller
 # pass. Keeping one family gate prevents the two dispatch paths drifting.
+#
+# A verifier is exempt from the gate when the stage's worker was itself
+# dispatched under a suspended reserve (the overnight window, or an
+# --ignore-reserve drain) -- .reserve_exempt, stamped at worker-dispatch time
+# below. An in-flight stage is not killed by the schedule stop and must still
+# reap and land once its worker finishes, even if the clock has since crossed
+# back into a protected daytime window; only *new* worker dispatch is subject
+# to the schedule. A stage whose worker started under the ordinary daytime
+# reserve carries no exemption and its verifier is gated exactly as before
+# this card.
 quota_gate_role_dispatch() {
   local repo_root="$1" state_yaml="$2" stage_id="$3" role="$4"
   local identity family
   identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" --arg role "$role" \
     '.stages[] | select(.id == $id) | .[$role] // empty')"
   family="$(costlog_family_for_identity "$identity")"
+  if [[ "$role" == "verifier" ]]; then
+    local exempt
+    exempt="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+      '[.stages[] | select(.id == $id)][0].reserve_exempt // false')"
+    if [[ "$exempt" == "true" ]]; then
+      log "quota verifier ${stage_id} (${family}): reserve exempt, worker was dispatched under a suspended reserve; dispatch proceeds"
+      return 0
+    fi
+  fi
   quota_gate_family_dispatch "$repo_root" "$family" "${role} ${stage_id}"
 }
 
@@ -1055,6 +1085,12 @@ pipeline_try_dispatch_tail() {
     log "pipeline pair ${head_stage} + ${tail_stage} refused: provider-window reserve held"
     return 1
   fi
+  # Captured immediately: the tail's own reserve_exempt stamp below records
+  # the rule that let this dispatch through, so its verifier can still land
+  # the stage even if the clock has moved on by the time it is reaped.
+  local tail_reserve_exempt=false
+  [[ "$QUOTA_GATE_RESOLVED_WINDOW" == "overnight" || "$QUOTA_GATE_RESOLVED_WINDOW" == "drain-ignore-reserve" ]] \
+    && tail_reserve_exempt=true
   if ! budget_gate_dispatch "$repo_root" "worker dispatch for ${tail_stage}"; then
     log "pipeline pair ${head_stage} + ${tail_stage} refused: budget gate refused"
     return 1
@@ -1072,10 +1108,11 @@ pipeline_try_dispatch_tail() {
     (.stages[] | select(.id == $tail)).status = "in_progress"
     | (.stages[] | select(.id == $tail)).started_at = $now
     | (.stages[] | select(.id == $tail)).base_branch = $base
+    | (.stages[] | select(.id == $tail)).reserve_exempt = $exempt
     | .pipeline_pair = {head:$head, tail:$tail, base_tip:$tip,
                         phase:"workers-overlapped", rebase_required:false}' \
     --arg head "$head_stage" --arg tail "$tail_stage" --arg now "$now_iso" \
-    --arg base "$base_branch" --arg tip "$base_tip"
+    --arg base "$base_branch" --arg tip "$base_tip" --argjson exempt "$tail_reserve_exempt"
   local worker_spawn_rc=0
   spawn_worker_for_stage "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
   if (( worker_spawn_rc != 0 )); then
@@ -3093,6 +3130,12 @@ _process_repo_locked() {
         # rather than being left in_progress with nothing running.
         log "not dispatching worker for ${next_stage}: budget gate refused"
       else
+        # Captured immediately after the gate passed: records which rule let
+        # this worker start, so its verifier can still land the stage later
+        # even if the clock has since crossed back into a protected window.
+        local next_stage_reserve_exempt=false
+        [[ "$QUOTA_GATE_RESOLVED_WINDOW" == "overnight" || "$QUOTA_GATE_RESOLVED_WINDOW" == "drain-ignore-reserve" ]] \
+          && next_stage_reserve_exempt=true
         local base_branch work_dir
         base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
         if [[ -z "$base_branch" ]]; then
@@ -3110,8 +3153,8 @@ _process_repo_locked() {
         else
           now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           state_apply_json "$state_yaml" \
-            '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | (.stages[] | select(.id == $id)).base_branch = $base | .current_stage = $id' \
-            --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch"
+            '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | (.stages[] | select(.id == $id)).base_branch = $base | (.stages[] | select(.id == $id)).reserve_exempt = $exempt | .current_stage = $id' \
+            --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch" --argjson exempt "$next_stage_reserve_exempt"
           local worker_spawn_rc=0
           "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
           if (( worker_spawn_rc != 0 )); then

@@ -147,3 +147,20 @@ choices and exceptions rather than extending this runbook.
    autometta status
    autometta drain status
    ```
+
+8. Leave the daytime session protected by default. If the controller
+   mandate's `window_reserve.overnight` is declared, the fleet holds new
+   dispatch under the daytime reserve and spends freely only inside the
+   declared overnight window, stopping again the moment it ends -- see
+   [the tick loop](tick-loop.md) for the full resolution rule. **Accepted
+   risk:** this depends on the host clock and the `timezone: local` reading
+   being correct; a wrong clock silently changes when the loop runs, and the
+   only signal is the tick log's resolved-window line. To spend the daytime
+   session down on purpose instead, open a bounded, self-expiring drain
+   rather than editing the mandate; a `--hours` that would outlive the
+   overnight window is refused up front, naming the window.
+
+   ```sh
+   scripts/drain.sh start --cap <n> --hours <h> --ignore-reserve
+   scripts/drain.sh status
+   ```
