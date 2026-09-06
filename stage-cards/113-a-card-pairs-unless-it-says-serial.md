@@ -12,7 +12,7 @@
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Gate:** stage-completed: 111-dev-moving-does-not-park-a-disjoint-landing
-- **Path claims:** scripts/add-stage.sh, scripts/tick.sh, scripts/pipeline-pair-smoke.sh, templates/stage-card.md, docs/tick-loop.md, docs/dispatch-contract.md, stage-cards/113-a-card-pairs-unless-it-says-serial.md
+- **Path claims:** scripts/add-stage.sh, scripts/tick.sh, scripts/pipeline-pair-smoke.sh, schemas/state.yaml.json, templates/stage-card.md, docs/tick-loop.md, docs/dispatch-contract.md, stage-cards/113-a-card-pairs-unless-it-says-serial.md
 - **Pairing rationale:** cross-family. The Codex seat changes the pairing rules; the Opus seat
   verifies because the change is to *when* two agents may share a repo, and
   the failure mode is a collision that only shows under a real double
@@ -75,6 +75,13 @@ All files listed here must be created or modified. Paths are relative to repo ro
    for a stage that has failed while paired twice. Remove the latch and its
    refresh, or leave them reachable only via a manifest key
    `pipeline.latch_on_failure: true`.
+
+   `schemas/state.yaml.json` permits the new per-stage `pairing_failures`
+   field. The repo's strict state-schema invariant means a state field that
+   the schema does not permit is a defect, so the schema edit is part of
+   this deliverable rather than a consequence of it. Add the field and
+   nothing else; do not relax the schema's additional-properties handling to
+   avoid naming it.
 3. `pipeline_claims_require_serial` applies to the head always, and to the
    tail only when the tail's claims include `scripts/tick.sh` or
    `scripts/lib`; a docs-only or smoke-only tail behind a `tick.sh` head is
@@ -117,13 +124,16 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/pipeline-pair-smoke.sh
-- **Assertions digest:** frame the assertions in a block between the begin
-  marker and the end marker, the begin marker naming this card by its
-  `card=stage-cards/113-a-card-pairs-unless-it-says-serial.md` field, and replace this line's text with the real
-  digest printed by `scripts/check-contract-test-gate.sh print scripts/pipeline-pair-smoke.sh`. Do not
-  write a `sha256:` comment inside the block, and do not spell the marker
-  tokens anywhere in this card's prose; the card is in your path claims for
-  exactly this edit.
+- **Assertions digest:** `sha256:85bce562a4b57974b77d6125ef8179e59a9c29616db3da2212f0bc028be1702b`
+
+The frozen block is **already written**, by the orchestrator, before any
+implementation exists. Do not author, extend or edit it: satisfy it by
+changing the implementation. It currently fails at the first assertion,
+which is correct -- deliverable 1 does not exist yet. Fixtures, helpers and
+scaffolding you need may be added outside the markers. If you become
+convinced an assertion is wrong, stop and surface it as a blocker rather
+than editing it; the verifier recomputes this digest and fails the stage if
+the assertions moved.
 
 ## Out of scope
 
@@ -236,3 +246,31 @@ was sized for, the verifying seat moved to the free local route
 (`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
 afternoon and the card is back on the seats it was authored with. Nothing
 about the work changed across either move.
+
+## Re-brief (2026-09-06)
+
+Attempt 1 was refused before implementation by the Codex worker, correctly,
+on two card defects. Both are fixed above and neither was the worker's to
+fix.
+
+1. Deliverable 2 required a per-stage `pairing_failures` field, but
+   `schemas/state.yaml.json` appeared in neither the Deliverables nor the
+   Path claims. Adding the field would have violated scope; omitting it
+   would have violated the strict state-schema invariant. The schema is now
+   named in both.
+
+2. The card told the worker to author the frozen assertion block and record
+   its own digest. That contradicts `docs/dispatch-contract.md:131` -- the
+   orchestrator authors the assertions so the test cannot be tautological,
+   and `templates/worker-prompt.md:22` forbids the worker to touch them. The
+   worker was right to stop. The block is now authored and the real digest
+   is recorded.
+
+The second defect is not specific to this card: it is the shipped wording of
+the Contract test section, so every card carrying that template asks the
+worker to write its own oracle. Card 131 covers it. Stage 124 landed with a
+worker-authored contract test for this reason, which is worth knowing when
+reading its verdict.
+
+Attempt 1 modified no product deliverables. It cost 822k tokens and its
+finding was worth more than that.

@@ -103,12 +103,24 @@ The verifier will check each of these. Failure of any one is a failure of the st
    with the stage's completion artefact absent and log mtime within two
    seconds of `started_at` is classified as an instant configuration fault;
    the repo halts with that text in `halt_reason`.
-3. The preflight passes on the operator's machine in under two seconds and
-   the tick dispatches normally.
+3. With a resolver stub on PATH that answers, `scripts/preflight-network.sh`
+   exits 0 in under two seconds and a fixture tick dispatches normally.
+   Assert this against the stub, not against live DNS: a verifier runs
+   inside a sandbox with no network, so a criterion phrased as "resolves on
+   the operator's machine" is one the verifier cannot reach, and attempt 1
+   correctly reported three failures that were its own sandbox rather than
+   the implementation. The live check belongs to the orchestrator and is
+   recorded in the re-brief below, not re-run by the verifier.
 4. `scripts/network-fault-smoke.sh` passes and both cases fail against the
    pre-change `tick.sh`.
-5. `scripts/tick-cost-smoke.sh` and `scripts/budget-cap-smoke.sh` are no more
-   red than on clean `dev`.
+5. `scripts/tick-cost-smoke.sh` and `scripts/budget-cap-smoke.sh` both pass.
+   Attempt 1 broke the second one and that regression is this attempt's to
+   fix: the new gate returns before the stubbed verifier spawn the fixture
+   requires. Fix it by making the fixture's environment answer the preflight
+   -- a resolver stub, the same one criterion 3 uses -- not by weakening or
+   moving the gate. A dispatch gate that steps aside for a test is not a
+   gate. `scripts/budget-cap-smoke.sh` is in the path claims for exactly
+   this edit; do not touch its frozen block.
 
 ## Contract test
 
@@ -160,3 +172,37 @@ was sized for, the verifying seat moved to the free local route
 (`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
 afternoon and the card is back on the seats it was authored with. Nothing
 about the work changed across either move.
+
+## Re-brief (2026-09-06)
+
+Attempt 1 was failed by its Codex verifier on criteria 3 and 5. One finding
+was real, one was an artefact of where the verifier ran, and the card was
+wrong to make the second one checkable only from outside a sandbox.
+
+**Criterion 5 is a real regression and stands.** The new live network gate
+(`scripts/tick.sh:3094-3099`) returns before the verifier spawn that
+`scripts/budget-cap-smoke.sh:318-370` stubs and then requires a witness for,
+so a smoke that passes on clean `dev` fails on the branch. The criterion now
+says how to fix it: give the fixture a resolver the preflight can satisfy,
+rather than moving the gate out of its way.
+
+**Criterion 3 was unreachable.** The verifier ran three live default
+preflights and got `api.anthropic.com did not resolve: dig exited 1` at
+0.11s, 0.17s and 0.14s. That is its sandbox, which has no network, not the
+operator's machine: on the machine itself `dig +short api.anthropic.com`
+returns `160.79.104.10` and `host` and `getaddrinfo` agree. The verifier
+reported honestly what it saw and the card asked it for something it
+structurally could not do. Criterion 3 is now phrased against a resolver
+stub.
+
+This is gotcha 4 inverted. The documented shadow is a worker that appears to
+pass inside its sandbox while lying about side-effects it could not perform;
+this is a verifier failing a criterion it could not perform. Both come from
+the same place -- the sandbox is the role boundary -- and an acceptance
+criterion that needs the network is one no verifier in this system can
+check. Worth carrying into future cards.
+
+One thing the next worker should know: the preflight runs from the tick,
+which is a LaunchAgent and unsandboxed, so it resolves normally in
+production. It must never be run from inside a sandboxed agent, where it
+will always defer.

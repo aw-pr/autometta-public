@@ -375,6 +375,128 @@ orphaned_verdict_scan_smoke() {
     completed "single current-stage verdict was not consumed"
 }
 
+# The assertions below are the frozen acceptance spec for stage card 113,
+# authored by the orchestrator before any implementation existed
+# (docs/dispatch-contract.md:131). A worker satisfies them by changing the
+# implementation, never by editing them; fixtures and scaffolding may be
+# added outside the markers.
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/113-a-card-pairs-unless-it-says-serial.md
+c113_write_bare_card() {
+  local path="$1" claims="${2-}" dispatch="${3-}"
+  {
+    printf '# Stage card %s: smoke fixture\n\n' "$(basename "$path" .md)"
+    printf '## Metadata\n\n'
+    printf '%s\n' '- **Orchestrator:** Smoke <smoke@local>'
+    printf '%s\n' '- **Worker:** Codex Smoke <codex-smoke@local>'
+    printf '%s\n' '- **Verifier:** Claude Verify <claude-verify@local>'
+    [[ -z "$claims" ]]   || printf '%s\n' "- **Path claims:** ${claims}"
+    [[ -z "$dispatch" ]] || printf '%s\n' "- **Dispatch:** ${dispatch}"
+    printf '\n## Budget\n\n- **Worker wall-clock:** 10 minutes\n'
+  } >"$path"
+}
+
+# Acceptance 1. A card says how it dispatches, or it does not queue. The
+# silent-serial default is the defect: 58 of 86 stage records carry no
+# claims and were made serial by omission, with no line in any log saying so.
+c113_queue_time_refusal() {
+  local repo="$smoke_tmp/c113-queue" cards="$smoke_tmp/c113-cards"
+  mkdir -p "$repo/state" "$cards"
+  printf '{"current_stage":null,"stages":[]}\n' >"$repo/state/state.yaml"
+
+  c113_write_bare_card "$cards/05-bare.md"
+  if "$repo_source/scripts/add-stage.sh" "$repo" "$cards/05-bare.md" \
+       >"$smoke_tmp/c113-bare.out" 2>&1; then
+    fail "113: a card with neither Path claims nor a Dispatch line was queued"
+  fi
+  grep -Fq 'Path claims' "$smoke_tmp/c113-bare.out" \
+    || fail "113: the refusal does not quote the Path claims form"
+  grep -Fq 'Dispatch:' "$smoke_tmp/c113-bare.out" \
+    || fail "113: the refusal does not quote the serial Dispatch form"
+
+  c113_write_bare_card "$cards/06-serial.md" "" serial
+  "$repo_source/scripts/add-stage.sh" "$repo" "$cards/06-serial.md" >/dev/null 2>&1 \
+    || fail "113: a card declaring serial dispatch was refused"
+
+  c113_write_bare_card "$cards/07-claims.md" "src/b.sh, docs/b.md"
+  "$repo_source/scripts/add-stage.sh" "$repo" "$cards/07-claims.md" >/dev/null 2>&1 \
+    || fail "113: a card declaring path claims was refused"
+
+  assert_eq "$(yq -o=json '.' "$repo/state/state.yaml" \
+    | jq -r '[.stages[].id] | sort | join(",")')" \
+    "06-serial,07-claims" "113: exactly the two declaring cards did not queue"
+}
+
+# Acceptance 2. A member failure is a fact about one stage, not a repo-wide
+# latch. Autometta had been latched serial on stage 106 since 2026-09-01,
+# which is five days of every pair refused by one stale failure.
+c113_failure_is_per_stage() {
+  new_fixture c113-member-failure
+  local head_work head_pid tail_pid
+  head_work="$(ensure_run_worktree "$fixture_repo" 01-head dev)"
+  printf 'rejected head\n' >>"$head_work/head.txt"
+  start_head_verifier "$fixture_repo"
+  head_pid="$started_pid"
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head ""
+  tail_pid="$(state_json "$fixture_repo/state/state.yaml" \
+    | jq -r '.stages[] | select(.id == "02-tail") | .worker_pid')"
+  stop_pid "$head_pid"
+  write_verdict "$fixture_repo" 01-head FAIL
+  _process_verifier_artefact "$fixture_repo" "$fixture_repo/state/state.yaml" \
+    01-head state/verifiers/01-head.json ""
+  pipeline_after_head_resolution "$fixture_repo/state/state.yaml" 01-head
+  stop_pid "$tail_pid"
+
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" \
+    | jq -r '.pairing_disabled_stage // ""')" \
+    "" "113: a member failure still set the repo-wide pairing latch"
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" \
+    | jq -r '.stages[] | select(.id == "01-head") | .pairing_failures // 0')" \
+    1 "113: the per-stage pairing_failures counter was not incremented"
+
+  # One failure does not disqualify the stage; two do. The counter is the
+  # whole mechanism, so assert the threshold in both directions.
+  new_fixture c113-one-failure
+  state_apply_json "$fixture_repo/state/state.yaml" \
+    '(.stages[] | select(.id == "01-head")).pairing_failures = 1'
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" || true
+  if grep -Fq 'pairing_failures' "$smoke_log"; then
+    fail "113: a stage with one prior paired failure was refused on the counter"
+  fi
+
+  new_fixture c113-two-failures
+  state_apply_json "$fixture_repo/state/state.yaml" \
+    '(.stages[] | select(.id == "01-head")).pairing_failures = 2'
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
+    && fail "113: a stage with two prior paired failures still formed a pair"
+  assert_log 'pairing_failures'
+}
+
+# Acceptance 3. The serial-only claim rule is about what the *head* may do
+# while a tail runs behind it. A docs-only tail cannot collide with anything,
+# so refusing it buys nothing and costs a third of a stage's wall-clock.
+c113_serial_rule_applies_to_the_head() {
+  new_fixture c113-docs-tail scripts/tick.sh docs/tick-loop.md
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" || true
+  if grep -Fq 'tick.sh and scripts/lib claims are serial-only' "$smoke_log"; then
+    fail "113: a docs-only tail was refused behind a tick.sh head"
+  fi
+
+  new_fixture c113-lib-tail scripts/tick.sh scripts/lib/tui/render.py
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
+    && fail "113: a scripts/lib tail formed a pair"
+  assert_log 'tick.sh and scripts/lib claims are serial-only'
+
+  new_fixture c113-lib-head scripts/lib/tui/render.py tail.txt
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
+    && fail "113: a scripts/lib head formed a pair"
+  assert_log 'tick.sh and scripts/lib claims are serial-only'
+}
+
+c113_queue_time_refusal
+c113_failure_is_per_stage
+c113_serial_rule_applies_to_the_head
+# AUTOMETTA-CONTRACT-END
+
 queue_parser_smoke
 formation_and_ordered_landing_smoke
 refusal_smoke
