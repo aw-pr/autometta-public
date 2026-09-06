@@ -401,9 +401,23 @@ wrapping window, since it can never match at all.
 **The stop at the end of the overnight window only refuses new dispatch.**
 Nothing installs a stop job (the emergence-lab 2026-09-03 hand-installed
 LaunchAgent that failed to remove itself is exactly the failure mode this
-avoids): the tick simply reads the clock on every fire and, once the
-schedule resolves back to the daytime reserve, declines a *new* worker start
-under the same fail-closed `hold` logic as any other daytime dispatch. A
+avoids): the tick reads the clock on every fire and, outside the declared
+window, refuses to start a *new* worker at all.
+
+The stop is a separate gate sitting above the reserve, and it deliberately
+reads no quota. The reserve is reading-driven: it binds only when a known
+window is near exhaustion, and an unknown reading fails open by design. That
+is right for a guard against spending the last of a window and useless as a
+stop, because the case a stop exists for -- an overnight run that must not
+still be dispatching at nine the next morning -- is exactly the case where
+the reading is healthy (the window reset in the night) or unknown (no
+snapshot). A stop built on the reading fails open precisely when it is
+needed, and leaves the operator no session and no alarm saying why. So the
+clock alone decides, and the refusal is logged as `schedule stop worker
+<stage> (<family>): clock HH:MM is outside the <start>-<end> dispatch
+window`. The consequence worth stating plainly: **once a schedule is
+declared, the loop starts no new work outside the window**, and burning the
+day is the opt-in `drain.sh start --ignore-reserve` below. A
 stage already in flight when the window closes is never killed to enforce
 this, and its verifier is not held by the resumed daytime reserve either: the
 stage's `reserve_exempt` flag, stamped at worker-dispatch time whenever the

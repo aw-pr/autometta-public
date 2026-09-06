@@ -169,7 +169,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/session-window-smoke.sh
-- **Assertions digest:** `sha256:893b049668d23afc8aa390d4f9ef8cc41e9334585f77347811bd2d02bc628a7a`
+- **Assertions digest:** `sha256:1df36051a73a1c85117cd97d133dcc1e0aef649f38425711aac86072aafe2462`
 
 ## Out of scope
 
@@ -203,3 +203,33 @@ snapshot. That is the failure this card is most likely to ship.
 ## Family-specific notes
 
 None
+
+## PROPOSED-AMENDMENT (attempt 2, 2026-09-06): acceptance 4 and the stop
+
+Recorded, not applied: no acceptance criterion above has been edited.
+
+Attempt 1 was failed on criterion 3 because it shipped no stop -- the tick
+read no clock, and the only refusal was the pre-existing reserve. Attempt 2
+implements the stop as a clock-driven gate above the reserve, which is what
+criterion 3 asks for and what the card's title is about.
+
+That change makes criterion 4 unreachable as literally worded. Criterion 4
+says an unknown reading "fails open at both times, as it does today", where
+the two times are 14:00 and 23:00. It still does -- of the *reserve*, which
+is untouched. But a daytime worker dispatch now stops on the clock before
+the reserve is consulted, so read at the level of a whole dispatch decision,
+14:00 no longer fails open. The two criteria cannot both hold at the
+dispatch level: a stop that lets an unknown reading through in the daytime
+is not a stop, and it is the precise hole that failed attempt 1.
+
+The smoke therefore exercises criterion 4 against `quota_gate_family_
+dispatch` (the reserve gate) rather than `quota_gate_role_dispatch` (the
+whole decision), which proves what criterion 4 is about and stops it
+re-proving the stop.
+
+**Proposed wording, for the operator to accept or reject:** criterion 4
+gains "at the reserve gate" after "fails open at both times", and criterion
+3 gains "whatever the quota reading says" after "no new dispatch". If the
+operator instead wants daytime dispatch to remain possible on a healthy
+reading, that is a different card: the stop would need to be scoped to runs
+that began overnight, which is state the tick does not currently keep.

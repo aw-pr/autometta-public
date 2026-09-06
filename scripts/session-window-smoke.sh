@@ -2,8 +2,12 @@
 # Offline contract proof for the schedule-aware window_reserve: the resolved
 # reserve varies by wall-clock time, an in-flight stage still lands past the
 # window's end, and a --ignore-reserve drain cannot outlive the window that
-# permits it. Every case below drives an injected clock (AUTOMETTA_SCHEDULE_
-# CLOCK) rather than the hour this happens to run in.
+# permits it. Every schedule-resolution case drives an injected clock
+# (AUTOMETTA_SCHEDULE_CLOCK) rather than the hour it happens to run in. The
+# one exception is the live-drain case in acceptance 5, which cannot: a
+# drain's expiry is read against the real clock by budget.sh, outside this
+# card's path claims. That case builds a window positioned relative to the
+# real now instead, so it too reads the same at any hour.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -116,6 +120,17 @@ reading_85() {
       codex:{family:"codex", status:"unknown", reason:"no rollout files", source:null, fetched_at:null, windows:[]}
     }}'
 }
+# A window that reset in the night and is barely touched. The reserve has
+# nothing to bind on here, which is the whole point: this is what an
+# overnight run looks like at nine the next morning.
+reading_healthy() {
+  jq -nc '
+    {read_at:null, families:{
+      claude:{family:"claude", status:"known", reason:null, source:"fixture", fetched_at:null,
+              windows:[{key:"five_hour", label:"5-hour", utilization:10, resets_at:"2033-05-18T03:38:20Z"}]},
+      codex:{family:"codex", status:"unknown", reason:"no rollout files", source:null, fetched_at:null, windows:[]}
+    }}'
+}
 AUTOMETTA_QUOTA_TICK_JSON="$(reading_85 "2033-05-18T03:38:20Z")"
 
 # --- Acceptance 3: at 01:30, past the overnight window's end, a fresh
@@ -128,6 +143,55 @@ fresh_rc=0
 AUTOMETTA_SCHEDULE_CLOCK=01:30 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
   fresh-stage worker || fresh_rc=$?
 assert_eq 1 "$fresh_rc" "fresh stage worker held at 01:30 (daytime reserve resumed)"
+
+# The stop must not be the reserve wearing a hat. Every case below drives a
+# reading the reserve cannot act on -- healthy, then unknown -- so a refusal
+# can only have come from the clock. Without this, the assertion above passes
+# against a tree that has no stop in it at all, because the 85%% reading is
+# inside the daytime reserve and the reserve alone accounts for the 1.
+AUTOMETTA_QUOTA_TICK_JSON="$(reading_healthy)"
+healthy_rc=0
+AUTOMETTA_SCHEDULE_CLOCK=01:30 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
+  fresh-stage worker || healthy_rc=$?
+assert_eq 1 "$healthy_rc" "stop refuses a fresh worker at 01:30 on a healthy reading"
+assert_eq null "$(jq -r '.paused_until' "$repo/state/budget.json")" "the stop refuses the dispatch without pausing the repo"
+
+morning_rc=0
+AUTOMETTA_SCHEDULE_CLOCK=09:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
+  fresh-stage worker || morning_rc=$?
+assert_eq 1 "$morning_rc" "stop refuses a fresh worker at 09:00 on a healthy reading"
+
+AUTOMETTA_QUOTA_TICK_JSON="$(jq -nc '{read_at:null, families:{
+  claude:{family:"claude", status:"unknown", reason:"snapshot absent", source:null, fetched_at:null, windows:[]},
+  codex:{family:"codex", status:"unknown", reason:"no rollout files", source:null, fetched_at:null, windows:[]}
+}}')"
+unknown_stop_rc=0
+AUTOMETTA_SCHEDULE_CLOCK=09:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
+  fresh-stage worker || unknown_stop_rc=$?
+assert_eq 1 "$unknown_stop_rc" "stop refuses a fresh worker at 09:00 on an unknown reading"
+
+# Inside the window the stop is silent and the dispatch proceeds on the same
+# healthy reading, so the refusals above are the clock and not a blanket no.
+AUTOMETTA_QUOTA_TICK_JSON="$(reading_healthy)"
+inside_rc=0
+AUTOMETTA_SCHEDULE_CLOCK=23:30 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
+  fresh-stage worker || inside_rc=$?
+assert_eq 0 "$inside_rc" "stop permits a fresh worker inside the window"
+
+# The reason the tick logs, asserted directly rather than scraped from a log.
+stop_reason_rc=0
+AUTOMETTA_SCHEDULE_CLOCK=09:00 quota_schedule_permits_dispatch \
+  "$AUTOMETTA_HOME/phat-controller-mandate.yaml" "$repo" || stop_reason_rc=$?
+assert_eq 1 "$stop_reason_rc" "quota_schedule_permits_dispatch refuses outside the window"
+assert_contains "$QUOTA_SCHEDULE_STOP_REASON" "22:00-01:00" "the refusal names the window"
+assert_contains "$QUOTA_SCHEDULE_STOP_REASON" "09:00" "the refusal names the clock it read"
+
+# An unconfigured mandate must never be stopped: no schedule, no stop.
+plain_stop_rc=0
+AUTOMETTA_SCHEDULE_CLOCK=09:00 quota_schedule_permits_dispatch "$plain_mandate" "$repo" || plain_stop_rc=$?
+assert_eq 0 "$plain_stop_rc" "no schedule declared means no stop"
+
+AUTOMETTA_QUOTA_TICK_JSON="$(reading_85 "2033-05-18T03:38:20Z")"
 
 jq '.paused_until=null | .paused_reason=null' "$repo/state/budget.json" > "$repo/state/budget.next"
 mv "$repo/state/budget.next" "$repo/state/budget.json"
@@ -142,9 +206,13 @@ printf 'PASS acceptance 3: schedule stop refuses new dispatch only; an in-flight
 # (15%% remaining <= 20%%) and pauses to the published reset; the same
 # reading at 23:00 (reserve suspended for the night) dispatches; an unknown
 # reading fails open at both times, exactly as it does today.
+# Criterion 4 is a statement about the reserve, so it is exercised against
+# the reserve gate directly. Since the stop landed above it, a daytime
+# quota_gate_role_dispatch refuses on the clock before the reserve is ever
+# consulted, and asserting criterion 4 through the role gate would only
+# re-prove the stop. See the PROPOSED-AMENDMENT on the card.
 day_rc=0
-AUTOMETTA_SCHEDULE_CLOCK=14:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
-  fresh-stage worker || day_rc=$?
+AUTOMETTA_SCHEDULE_CLOCK=14:00 quota_gate_family_dispatch "$repo" claude "daytime reserve" || day_rc=$?
 assert_eq 1 "$day_rc" "85%% utilisation held under the 20%% daytime reserve"
 assert_eq 2000000300 "$(jq -r '.paused_until' "$repo/state/budget.json")" "pause carries the snapshot reset"
 
@@ -162,11 +230,9 @@ AUTOMETTA_QUOTA_TICK_JSON="$(jq -nc '{read_at:null, families:{
   codex:{family:"codex", status:"unknown", reason:"no rollout files", source:null, fetched_at:null, windows:[]}
 }}')"
 unknown_day_rc=0
-AUTOMETTA_SCHEDULE_CLOCK=14:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
-  fresh-stage worker || unknown_day_rc=$?
+AUTOMETTA_SCHEDULE_CLOCK=14:00 quota_gate_family_dispatch "$repo" claude "daytime unknown" || unknown_day_rc=$?
 unknown_night_rc=0
-AUTOMETTA_SCHEDULE_CLOCK=23:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
-  fresh-stage worker || unknown_night_rc=$?
+AUTOMETTA_SCHEDULE_CLOCK=23:00 quota_gate_family_dispatch "$repo" claude "overnight unknown" || unknown_night_rc=$?
 assert_eq 0 "$unknown_day_rc" "unknown reading fails open in daytime"
 assert_eq 0 "$unknown_night_rc" "unknown reading fails open overnight"
 printf 'PASS acceptance 4: 85%% held in daytime, dispatches overnight; unknown always fails open\n'
@@ -177,20 +243,56 @@ printf 'PASS acceptance 4: 85%% held in daytime, dispatches overnight; unknown a
 # reads the real clock by default; AUTOMETTA_DRAIN_NOW_EPOCH pins it here to
 # 14:00 local so the refusal is reachable regardless of the hour this test
 # happens to run in.
-now_14=$(python3 -c 'import datetime; print(int(datetime.datetime.now().replace(hour=14, minute=0, second=0, microsecond=0).timestamp()))')
-AUTOMETTA_DRAIN_NOW_EPOCH="$now_14" "$script_dir/drain.sh" start --cap 999999999 --hours 2 --ignore-reserve >/dev/null
+# A live drain is the one thing here that cannot run on an injected clock.
+# budget_drain_active compares the drain's expires_at against the real clock
+# (budget.sh is outside this card's path claims and is deliberately not
+# touched), so back-dating the drain's start to a fixed 14:00 made it
+# already-expired for any run after 16:00 local -- the case was red for
+# roughly two thirds of the day. Both clocks are therefore made real here:
+# the drain is opened from the actual now, and the schedule is driven by a
+# window positioned relative to that same now, so this case reads the same
+# at any hour. The fixed-clock fixture returns for the refusal below, which
+# is a start-time check and never consults budget_drain_active.
+rel_mandate="$fixture/relative-mandate.yaml"
+python3 - "$rel_mandate" <<'PY'
+import datetime as dt, sys
+now = dt.datetime.now()
+start = (now + dt.timedelta(hours=3)).strftime("%H:%M")
+end = (now + dt.timedelta(hours=5)).strftime("%H:%M")
+open(sys.argv[1], "w").write(
+    "window_reserve:\n"
+    "  percent: 20\n"
+    "  action: hold\n"
+    "  overnight:\n"
+    f'    start: "{start}"\n'
+    f'    end: "{end}"\n'
+    "    percent: 0\n"
+    "  timezone: local\n"
+)
+PY
+cp "$rel_mandate" "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+
+"$script_dir/drain.sh" start --cap 999999999 --hours 2 --ignore-reserve >/dev/null
 AUTOMETTA_QUOTA_TICK_JSON="$(reading_85 "2033-05-18T03:38:20Z")"
 ignore_rc=0
-AUTOMETTA_SCHEDULE_CLOCK=14:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
-  fresh-stage worker || ignore_rc=$?
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" fresh-stage worker || ignore_rc=$?
 assert_eq 0 "$ignore_rc" "--ignore-reserve suspends the daytime reserve for its duration"
 "$script_dir/drain.sh" end >/dev/null
 
 expired_rc=0
-AUTOMETTA_SCHEDULE_CLOCK=14:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
-  fresh-stage worker || expired_rc=$?
-assert_eq 1 "$expired_rc" "reserve is not suspended once the drain has ended"
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" fresh-stage worker || expired_rc=$?
+assert_eq 1 "$expired_rc" "dispatch is refused again once the drain has ended"
+reserve_back_rc=0
+quota_gate_family_dispatch "$repo" claude "post-drain reserve" || reserve_back_rc=$?
+assert_eq 1 "$reserve_back_rc" "reserve is not suspended once the drain has ended"
 
+jq '.paused_until=null | .paused_reason=null' "$repo/state/budget.json" > "$repo/state/budget.next"
+mv "$repo/state/budget.next" "$repo/state/budget.json"
+cp "$sched_mandate" "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+
+# A start-time refusal only: this path never consults budget_drain_active,
+# so it can keep the fixed clock the fixed-window fixture is written against.
+now_14=$(python3 -c 'import datetime; print(int(datetime.datetime.now().replace(hour=14, minute=0, second=0, microsecond=0).timestamp()))')
 overrun_rc=0
 AUTOMETTA_DRAIN_NOW_EPOCH="$now_14" "$script_dir/drain.sh" start --cap 999999999 --hours 12 --ignore-reserve \
   >"$fixture/overrun.log" 2>&1 || overrun_rc=$?

@@ -149,9 +149,10 @@ choices and exceptions rather than extending this runbook.
    ```
 
 8. Leave the daytime session protected by default. If the controller
-   mandate's `window_reserve.overnight` is declared, the fleet holds new
-   dispatch under the daytime reserve and spends freely only inside the
-   declared overnight window, stopping again the moment it ends -- see
+   mandate's `window_reserve.overnight` is declared, the fleet starts no new
+   worker outside that window at all, whatever the quota reading says, and
+   spends freely inside it, stopping again the moment it ends. A stage
+   already in flight is never killed for this; it finishes and lands -- see
    [the tick loop](tick-loop.md) for the full resolution rule. **Accepted
    risk:** this depends on the host clock and the `timezone: local` reading
    being correct; a wrong clock silently changes when the loop runs, and the

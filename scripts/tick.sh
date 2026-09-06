@@ -100,6 +100,19 @@ quota_gate_role_dispatch() {
   identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" --arg role "$role" \
     '.stages[] | select(.id == $id) | .[$role] // empty')"
   family="$(costlog_family_for_identity "$identity")"
+  # The schedule stop, before the reserve and before any reading is
+  # consulted: outside a declared dispatch window no new work starts, however
+  # healthy the quota looks. Refusing here rather than pausing the repo is
+  # what lets an in-flight stage still land -- a budget pause returns before
+  # any stage work at all, verifier included, so a stop implemented as a
+  # pause would strand the very work the card says must finish.
+  if [[ "$role" == "worker" ]]; then
+    if ! quota_schedule_permits_dispatch \
+         "${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}" "$repo_root"; then
+      log "schedule stop ${role} ${stage_id} (${family}): ${QUOTA_SCHEDULE_STOP_REASON}; no new dispatch this tick"
+      return 1
+    fi
+  fi
   if [[ "$role" == "verifier" ]]; then
     local exempt
     exempt="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \

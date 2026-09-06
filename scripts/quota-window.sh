@@ -201,6 +201,63 @@ quota_reserve_settings() {
   printf '%s\t%s\t%s\n' "$percent" "$action" "$QUOTA_RESERVE_WINDOW"
 }
 
+QUOTA_SCHEDULE_STOP_REASON=""
+
+# quota_schedule_permits_dispatch <mandate-path> [repo-root]
+#
+# The stop (deliverable 3). Returns 0 when a *new* worker dispatch is
+# permitted at this moment, 1 when the declared schedule refuses it, with
+# QUOTA_SCHEDULE_STOP_REASON carrying the reason the caller logs.
+#
+# This deliberately does not read the quota. The reserve below is a
+# reading-driven hold: it binds only when a known window is near exhaustion,
+# and every unknown reading fails open. That is right for a guard against
+# spending the last of a window and useless as a stop, because the case the
+# stop exists for -- an overnight run that must not still be dispatching at
+# nine the next morning -- is exactly the case where the reading is healthy
+# (the window reset in the night) or unknown (no snapshot). A stop built on
+# the reading fails open precisely when it is needed, which leaves the
+# operator no session and no alarm saying why.
+#
+# Precedence, first hit wins:
+#   1. no schedule declared -- permitted, today's behaviour for every
+#      subscriber that never configures this.
+#   2. an active --ignore-reserve drain -- permitted. Burning the daytime
+#      session is opt-in and self-expiring (deliverable 4).
+#   3. inside the declared window -- permitted.
+#   4. otherwise -- refused.
+#
+# Only new worker dispatch reaches this. An in-flight stage is never killed
+# by the stop: its verifier runs under the reserve_exempt path in tick.sh, so
+# work already claimed still reaps and lands after the window closes.
+quota_schedule_permits_dispatch() {
+  local mandate_path="$1" repo_root="${2:-}"
+  QUOTA_SCHEDULE_STOP_REASON=""
+
+  [[ -f "$mandate_path" ]] && command -v yq >/dev/null 2>&1 || return 0
+  local ov_start ov_end
+  ov_start="$(yq -r '.window_reserve.overnight.start // ""' "$mandate_path" 2>/dev/null || true)"
+  ov_end="$(yq -r '.window_reserve.overnight.end // ""' "$mandate_path" 2>/dev/null || true)"
+  if [[ ! "$ov_start" =~ ^[0-2][0-9]:[0-5][0-9]$ || ! "$ov_end" =~ ^[0-2][0-9]:[0-5][0-9]$ ]]; then
+    QUOTA_SCHEDULE_STOP_REASON="no schedule declared"
+    return 0
+  fi
+
+  if [[ -n "$repo_root" ]] && quota_drain_ignore_reserve_active "$repo_root"; then
+    QUOTA_SCHEDULE_STOP_REASON="--ignore-reserve drain in force"
+    return 0
+  fi
+
+  local now_hm
+  now_hm="$(quota_schedule_now_hm)"
+  if quota_time_in_window "$now_hm" "$ov_start" "$ov_end"; then
+    QUOTA_SCHEDULE_STOP_REASON="clock ${now_hm} is inside the ${ov_start}-${ov_end} dispatch window"
+    return 0
+  fi
+  QUOTA_SCHEDULE_STOP_REASON="clock ${now_hm} is outside the ${ov_start}-${ov_end} dispatch window; it next opens at ${ov_start}"
+  return 1
+}
+
 # quota_gate_reading <reading-json> <reserve-percent> <action>
 # Returns 1 only when a known window is inside a non-zero hold reserve and has
 # a future reset. Unknown, zero and observe all fail open with an explicit
