@@ -67,6 +67,39 @@ staged_content() {
   fi
 }
 
+# Every path declared as a "Test file:" line in any stage card on disk,
+# paired with the card that names it, as "<path>\t<card>". Reads
+# to-be-committed content so a card and the test it names can be staged in
+# the same commit. Same glob set list-cards.sh uses, so a card is found
+# under whichever layout (current or legacy) the repo actually has.
+test_file_declarations() {
+  local pattern card
+  for pattern in stage-cards/*.md docs/stages/*.md examples/self-host/*.md; do
+    for card in $pattern; do
+      [ -f "$card" ] || continue
+      staged_content "$card" \
+        | awk '
+            /Test file:/ {
+              line = $0
+              gsub(/[*`]/, "", line)
+              sub(/^.*Test file:[[:space:]]*/, "", line)
+              print line
+            }' \
+        | tr ',' '\n' \
+        | while IFS= read -r path; do
+            path="$(printf '%s' "$path" \
+              | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+                    -e 's/[[:space:]]*([^)]*)[[:space:]]*$//')"
+            [ -n "$path" ] || continue
+            case "$path" in
+              None|'<<fill at dispatch>>'|'<<contract-test-path-or-None>>') continue ;;
+            esac
+            printf '%s\t%s\n' "$path" "$card"
+          done
+    done
+  done
+}
+
 # Digest the frozen block arriving on stdin. Uniform across print and gate so
 # the two always agree on the same bytes.
 digest_block() {
@@ -86,35 +119,50 @@ cmd_print() {
 }
 
 cmd_gate() {
-  local staged f card recomputed declared violations=0
+  local staged f card recomputed declared violations=0 declarations naming_card
 
   staged="$(git diff --cached --name-only --diff-filter=ACM)"
   [ -n "$staged" ] || exit 0
 
+  declarations="$(test_file_declarations)"
+
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    staged_content "$f" | grep -q "$MARKER_BEGIN" || continue
 
-    card="$(staged_content "$f" | card_path_from_marker)"
-    if [ -z "$card" ]; then
-      warn "$f: $MARKER_BEGIN marker has no card=<path>"
-      violations=$((violations + 1)); continue
-    fi
-
-    recomputed="$(staged_content "$f" | digest_block)" || { violations=$((violations + 1)); continue; }
-    declared="$(staged_content "$card" | declared_digest || true)"
-
-    if [ -z "$declared" ]; then
-      warn "$f: card $card has no 'Assertions digest' line"
-      violations=$((violations + 1)); continue
-    fi
-
-    if [ "$recomputed" != "$declared" ]; then
-      if printf '%s\n' "$staged" | grep -qx -- "$card"; then
-        warn "$f: assertions changed but card $card still declares $declared (recomputed $recomputed); update the card's 'Assertions digest' line in this commit"
-      else
-        warn "$f: frozen assertions changed but their card $card is not in this commit (declared $declared, recomputed $recomputed)"
+    if staged_content "$f" | grep -q "$MARKER_BEGIN"; then
+      card="$(staged_content "$f" | card_path_from_marker)"
+      if [ -z "$card" ]; then
+        warn "$f: $MARKER_BEGIN marker has no card=<path>"
+        violations=$((violations + 1)); continue
       fi
+
+      recomputed="$(staged_content "$f" | digest_block)" || { violations=$((violations + 1)); continue; }
+      declared="$(staged_content "$card" | declared_digest || true)"
+
+      if [ -z "$declared" ]; then
+        warn "$f: card $card has no 'Assertions digest' line"
+        violations=$((violations + 1)); continue
+      fi
+
+      if [ "$recomputed" != "$declared" ]; then
+        if printf '%s\n' "$staged" | grep -qx -- "$card"; then
+          warn "$f: assertions changed but card $card still declares $declared (recomputed $recomputed); update the card's 'Assertions digest' line in this commit"
+        else
+          warn "$f: frozen assertions changed but their card $card is not in this commit (declared $declared, recomputed $recomputed)"
+        fi
+        violations=$((violations + 1))
+      fi
+      continue
+    fi
+
+    # No marker in this file. A file no card names as its contract test is
+    # genuinely not this gate's business and is skipped, as before. A file a
+    # card DOES name as its contract test is supposed to carry a frozen
+    # block; its absence is a violation, not a skip -- that gap is the
+    # fail-open defect this rewrite closes.
+    naming_card="$(printf '%s\n' "$declarations" | awk -F'\t' -v f="$f" '$1 == f { print $2; exit }')"
+    if [ -n "$naming_card" ]; then
+      warn "$f: no $MARKER_BEGIN marker found, but $naming_card names it as this stage's contract test"
       violations=$((violations + 1))
     fi
   done <<EOF

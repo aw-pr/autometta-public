@@ -39,7 +39,7 @@ nothing. It fails open.
 
 Both outcomes were observed on 2026-09-01, hours apart, from the same
 underlying condition -- a contract test with no marker block and a card whose
-Assertions digest is prose rather than a sha256:
+Assertions digest field is prose rather than a real digest.
 
 - autometta stage 102 (`state/verifiers/102-the-state-schema-describes-the-state.json`):
   every one of its six criteria PASSed, and the stage was failed by the gate
@@ -111,10 +111,7 @@ Do not read anything else unless you need to; keep your context lean.
 ## Contract test
 
 - **Test file:** `scripts/gate-smoke.sh`
-- **Assertions digest:** frame the assertions in a
-  begin-marker/end-marker block naming this card,
-  with a real sha256. This card is about the gate; it would be absurd for it
-  to arrive with the same prose digest that is the defect.
+- **Assertions digest:** `sha256:d666fc1d10348307f97a75d722d26cef13aa30f48d656f627397c234d94fb082`
 
 ## Out of scope
 

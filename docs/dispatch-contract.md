@@ -165,6 +165,8 @@ The gate fires only on assertion changes, never on scaffolding. A worker that re
 
 To regenerate the digest after a deliberate assertion change, run `scripts/check-contract-test-gate.sh print <test-file>` and paste the result into the card's `Assertions digest` line, in the same commit as the assertion change. The gate then sees a matching digest and a card that moved with the test, and passes.
 
+The gate distinguishes three states for a staged file, not two. A file no card names as its contract test is genuinely not the gate's business and is skipped. A file a card names as its contract test but that carries no `AUTOMETTA-CONTRACT-BEGIN`/`AUTOMETTA-CONTRACT-END` block is a violation, not a skip: absent and broken are different, and a gate that treats "nothing to check" as "nothing wrong" fails open, which is worse than no gate at all, because a passing gate is read as evidence. A marked file is recomputed and compared to its card's declared digest as described above. Consequently, a card whose `Assertions digest` line is prose rather than a real `sha256:` digest does not satisfy the contract-test requirement, and a card naming a test that carries no marker block will not dispatch clean: the worker prompt calls for the frozen block to exist and the card to record its real digest before the stage is considered done.
+
 ### When a contract test is not warranted
 
 Not every stage earns one. A pure-prose stage with no structural acceptance, a throwaway spike, or an exploratory card can state its acceptance in prose alone and leave the card's Contract test section as "None". The cost is real: authoring frozen assertions up front slows card creation, so spend it on durable behaviour, not on stages you expect to discard.
