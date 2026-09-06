@@ -103,13 +103,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/stall-kill-smoke.sh
-- **Assertions digest:** frame the assertions in a block between the begin
-  marker and the end marker, the begin marker naming this card by its
-  `card=stage-cards/109-a-worker-retrying-a-dead-api-is-not-working.md` field, and replace this line's text with the real
-  digest printed by `scripts/check-contract-test-gate.sh print scripts/stall-kill-smoke.sh`. Do not
-  write a `sha256:` comment inside the block, and do not spell the marker
-  tokens anywhere in this card's prose; the card is in your path claims for
-  exactly this edit.
+- **Assertions digest:** `sha256:c275eaafa8e6bc2c97aa35e7c944495b55375b2c73723fbf83c3cd7a85068ce6`
 
 ## Out of scope
 
