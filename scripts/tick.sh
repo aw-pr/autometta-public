@@ -1713,6 +1713,88 @@ teardown_run_worktree() {
   remove_run_worktree "$repo_root" "$stage_id"
 }
 
+# card_deliverable_paths: repo-relative paths named as deliverables on a
+# stage card. Only the backticked-path form is honoured (see card 110's
+# Escalation section) -- a backticked token containing a "/" and no
+# whitespace or shell metacharacters. This deliberately also matches a
+# card's own path-claim prose (e.g. `scripts/tick.sh`), which is harmless:
+# force-adding an already-tracked, non-ignored file is a no-op.
+card_deliverable_paths() {
+  local card_path="$1"
+  [[ -n "$card_path" && -f "$card_path" ]] || return 0
+  awk '
+    /^## Deliverables/ { inblk=1; next }
+    /^## / { if (inblk) exit }
+    inblk { print }
+  ' "$card_path" | grep -oE '`[^`]+`' | tr -d '`' | while IFS= read -r tok; do
+    case "$tok" in
+      */*) ;;
+      *) continue ;;
+    esac
+    case "$tok" in
+      *[[:space:]]*|*'<'*|*'>'*|*'*'*|*'|'*) continue ;;
+    esac
+    printf '%s\n' "$tok"
+  done
+}
+
+# card_deliverables_exist: true if any card-named deliverable path has
+# uncommitted content in the worktree, ignored or not. `git status
+# --porcelain` (used to decide whether there is anything at all to preserve)
+# never reports an ignored path, so an ignored-only deliverable would
+# otherwise read as a clean worktree. `--ignored=matching` scoped to the
+# exact path also makes this false once that deliverable is already
+# committed, so re-running preserve on an already-preserved stage is a
+# no-op rather than a redundant attempt-N+1 commit.
+card_deliverables_exist() {
+  local work_dir="$1" card_path="$2" rel_path
+  while IFS= read -r rel_path; do
+    [[ -n "$rel_path" ]] || continue
+    [[ -e "$work_dir/$rel_path" ]] || continue
+    [[ -n "$(git -C "$work_dir" status --porcelain --ignored=matching -- "$rel_path" 2>/dev/null)" ]] && return 0
+  done < <(card_deliverable_paths "$card_path")
+  return 1
+}
+
+# file_size_bytes: portable stat -- BSD (macOS) and GNU (Linux) spell the
+# single-file-size flag differently.
+file_size_bytes() {
+  stat -f%z "$1" 2>/dev/null || stat -c%s "$1" 2>/dev/null || printf '0\n'
+}
+
+# force_add_card_deliverables: after the ordinary ignore-respecting add, walk
+# the card's declared deliverables and force-add whichever exist, ignored or
+# not. A directory is added file-by-file so the size limit applies inside it
+# too. Must run with $PWD == the worktree being preserved.
+force_add_card_deliverables() {
+  local repo_root="$1" stage_id="$2" reason_label="$3" card_path="$4"
+  local max_mb="${AUTOMETTA_PRESERVE_MAX_MB:-50}"
+  local max_bytes=$((max_mb * 1024 * 1024))
+  local rel_path
+  while IFS= read -r rel_path; do
+    [[ -n "$rel_path" ]] || continue
+    [[ -e "$rel_path" ]] || continue
+    if [[ -d "$rel_path" ]]; then
+      local f size
+      while IFS= read -r -d '' f; do
+        size="$(file_size_bytes "$f")"
+        if (( size > max_bytes )); then
+          log "stage ${stage_id} ${reason_label}: skipping oversized deliverable ${f} (${size} bytes > ${max_mb}MB limit)"
+          continue
+        fi
+        git add -f -- "$f" 2>/dev/null || true
+      done < <(find "$rel_path" -type f -print0 2>/dev/null)
+    else
+      size="$(file_size_bytes "$rel_path")"
+      if (( size > max_bytes )); then
+        log "stage ${stage_id} ${reason_label}: skipping oversized deliverable ${rel_path} (${size} bytes > ${max_mb}MB limit)"
+      else
+        git add -f -- "$rel_path" 2>/dev/null || true
+      fi
+    fi
+  done < <(card_deliverable_paths "$card_path")
+}
+
 # Preserve a verifier-FAILed attempt before the stage is released. The worker
 # diff is committed on the run branch and pinned on a per-attempt wip branch,
 # so requeue can remove the ephemeral run branch without orphaning useful work.
@@ -1752,9 +1834,12 @@ preserve_failed_work() {
     return 1
   fi
 
+  local card_path
+  card_path="$(stage_card_for_id "$repo_root" "$stage_id" "")"
+
   local non_state_changes
   non_state_changes="$(git -C "$work_dir" status --porcelain -- . ':(exclude)state' 2>/dev/null || true)"
-  if [[ -z "$non_state_changes" ]]; then
+  if [[ -z "$non_state_changes" ]] && ! card_deliverables_exist "$work_dir" "$card_path"; then
     log "stage ${stage_id} ${reason_label}: clean worktree, nothing to preserve"
     return 0
   fi
@@ -1791,6 +1876,7 @@ preserve_failed_work() {
     cd "$work_dir"
     git reset -q HEAD -- state
     git add -- . ':(exclude)state'
+    force_add_card_deliverables "$repo_root" "$stage_id" "$reason_label" "$card_path"
     git diff --cached --quiet && exit 3
     git commit --author="$worker_identity" \
       -m "wip(${stage_id}): attempt ${attempt}, ${reason_label}: ${reason}" >/dev/null
@@ -3097,6 +3183,8 @@ _process_repo_locked() {
           state_apply_json "$state_yaml" \
             '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
             --arg id "$current_stage"
+          preserve_failed_work "$repo_root" "$state_yaml" "$current_stage" "" \
+            "wall-clock stall after ${elapsed}s (budget ${budget_seconds}s + 50% grace)" "stalled" || true
           pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
           if (( paused_elapsed > 0 )); then
@@ -3198,6 +3286,8 @@ _process_repo_locked() {
              | (.stages[] | select(.id == $id)).stall_marker = "worker_envelope_missing_after_exit"
              | .current_stage = null' \
             --arg id "$current_stage"
+          preserve_failed_work "$repo_root" "$state_yaml" "$current_stage" "" \
+            "worker_envelope_missing_after_exit" "stalled" || true
           pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} stalled: worker exited but wrote no dispatch envelope (worker_envelope_missing_after_exit)"
@@ -3230,6 +3320,8 @@ _process_repo_locked() {
              | (.stages[] | select(.id == $id)).stall_marker = "worker_envelope_invalid"
              | .current_stage = null' \
             --arg id "$current_stage"
+          preserve_failed_work "$repo_root" "$state_yaml" "$current_stage" "" \
+            "worker_envelope_invalid" "stalled" || true
           pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
           log "stage ${current_stage} stalled: dispatch envelope failed schema validation (worker_envelope_invalid); moved to ${invalid_path}"
@@ -3383,6 +3475,8 @@ _process_repo_locked() {
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
           --arg id "$current_stage"
+        preserve_failed_work "$repo_root" "$state_yaml" "$current_stage" "" \
+          "verifier attempt cap reached without artefact" "stalled" || true
         pipeline_after_member_failure "$state_yaml" "$current_stage"
         budget_record_failure "$repo_root"
         budget_increment_tick "$repo_root" work

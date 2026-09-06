@@ -53,6 +53,25 @@ artefact the tick could misread as progress, resets the stage record to
 `current_stage` if it pointed at the stage, and clears the repo's halt.
 The next tick then cuts a fresh worktree and dispatches a fresh worker.
 
+**It refuses (exit 5, naming the files) when the worktree holds unpreserved
+ignored work.** If no `wip_commit` is recorded for the attempt and the run
+worktree has an ignored file (a deliverable outside `.gitignore`'s reach,
+per card 110) with an mtime after the stage's `started_at`, the script stops
+before touching anything and lists the paths — removing the worktree would
+discard that attempt's work for good. Preserve it first (`tick.sh`'s
+`preserve_failed_work`, or `phat-controller.sh preserve <repo> <stage-id>`)
+and re-run the plain command, or pass `--discard` to proceed and drop the
+files on purpose:
+
+```sh
+autometta/scripts/requeue-stage.sh --discard <repo-root> <stage-id>
+```
+
+The check is skipped when `started_at` is missing or unparsable (nothing to
+call "newer" than) and when a `wip_commit` is already recorded — a preserved
+attempt's ignored files are expected to still be sitting in the worktree and
+are not a reason to refuse.
+
 After running it:
 
 - If the card was re-briefed, append the re-brief **under the existing card**
