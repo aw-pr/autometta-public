@@ -4,8 +4,8 @@
 
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Fable 5.1 <claude-fable-5-1@local>
-- **Worker:** Claude Opus 5 <claude-opus-5@local>
-- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Worker:** Codex GPT-5.6 Sol <codex-gpt-5-6-sol@local>
+- **Verifier:** Claude Opus 5 <claude-opus-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/113-a-card-pairs-unless-it-says-serial
 - **Worker effort:** high
@@ -13,7 +13,7 @@
 - **Verifier panel:** false
 - **Gate:** stage-completed: 111-dev-moving-does-not-park-a-disjoint-landing
 - **Path claims:** scripts/add-stage.sh, scripts/tick.sh, scripts/pipeline-pair-smoke.sh, templates/stage-card.md, docs/tick-loop.md, docs/dispatch-contract.md, stage-cards/113-a-card-pairs-unless-it-says-serial.md
-- **Pairing rationale:** cross-model, single family (re-seated 2026-09-06, see below). The working seat changes the pairing rules; the verifying seat
+- **Pairing rationale:** cross-family. The Codex seat changes the pairing rules; the Opus seat
   verifies because the change is to *when* two agents may share a repo, and
   the failure mode is a collision that only shows under a real double
   dispatch, which the verifier must stage.
@@ -155,23 +155,6 @@ the head as well as the tail.
 
 None
 
-## Re-seat (2026-09-06, Codex subscription exhausted)
-
-Both Codex seats were unavailable from 10:31Z with the subscription window
-closed until 14:49Z, and every card in this batch carried one, so the queue
-could not move. On the operator's instruction the batch was re-seated onto
-Claude alone: high-effort cards run Opus as worker and Sonnet as verifier,
-the rest run Sonnet as worker and Opus as verifier, so worker and verifier
-are never the same model.
-
-What this keeps: the sandbox boundary, which is what makes worker
-self-verification structurally impossible, is a property of the dispatch and
-not of the vendor, so it is untouched. What it costs: judgement diversity.
-A Claude verifier shares training and failure modes with a Claude worker in
-a way a Codex verifier did not, so a wrong assumption the worker makes is
-likelier to survive verification. Two different Claude models recover part
-of that and not all of it. Read this card's acceptance criteria as needing
-more, not less, evidence than usual.
 
 ## PROPOSED-AMENDMENT (2026-09-06, before first dispatch)
 
@@ -244,3 +227,12 @@ and a counter that trips at two on an undiscriminated signal trips on noise.
 Prohibition 1. The operator authorised this amendment in session on
 2026-09-06 after being shown the reasoning; the wording above is the
 controller's, and the decision to adopt it remains the author's.
+
+## Seat history (2026-09-06)
+
+The Codex subscription closed at 10:31Z and this batch was re-seated onto
+Claude alone; when Claude session windows then drained faster than the batch
+was sized for, the verifying seat moved to the free local route
+(`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
+afternoon and the card is back on the seats it was authored with. Nothing
+about the work changed across either move.
