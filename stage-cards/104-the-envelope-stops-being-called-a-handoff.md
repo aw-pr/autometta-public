@@ -11,7 +11,7 @@
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Path claims:** scripts/tick.sh, scripts/spawn-worker.sh, scripts/validate-handoff-envelope.sh, scripts/envelope-migration-smoke.sh, schemas/handoff-envelope.json, templates/worker-prompt.md, templates/verifier-prompt.md, docs/handoff-envelope.md, docs/dispatch-contract.md
+- **Path claims:** scripts/tick.sh, scripts/spawn-worker.sh, scripts/validate-handoff-envelope.sh, scripts/envelope-migration-smoke.sh, schemas/handoff-envelope.json, templates/worker-prompt.md, templates/verifier-prompt.md, docs/handoff-envelope.md, docs/dispatch-contract.md, skills/autometta-requeue/SKILL.md, skills/phat-controller/SKILL.md, MANUAL.md, README.md, scripts/verify-sdk.py, scripts/verify-sdk-agent.py, scripts/verify-sdk-openai.py, schemas/state.yaml.json, docs/graph-engineering.md, docs/PUBLISH-WORKFLOW.md, docs/tick-loop.md, docs/lessons.md
 - **Pairing rationale:** cross-family. A rename that spans a vendored contract
   is exactly where a worker's "I updated all the references" needs an
   independent grep, so the verifier comes from the other family and is asked
@@ -235,3 +235,67 @@ pre-existing defects that predate this batch and deserve their own cards. If
 your run shows them failing, that is expected; say so in the envelope and move
 on. Fixing them here would put unrelated changes in a rename stage and make
 this card's diff impossible to review.
+
+## Re-brief 2026-09-06: the grep was transcribed, not run, and criteria 1-2 were never demonstrated
+
+Attempt 2 scored 4 of 7 and is preserved at
+`c625c9c3a71c7e73e139881c6ab0e9712556c624`
+(`wip/104-the-envelope-stops-being-called-a-handoff-attempt-2`). Adopt it.
+Criteria 3, 4, 6 and 7 pass on it and must keep passing. The two failures are
+below, and this time the orchestrator ran the grep rather than asking you to.
+
+### 1. The stragglers, listed, with path claims widened to reach them
+
+Attempt 2's envelope left `skills/autometta-requeue/SKILL.md`,
+`docs/graph-engineering.md` and `docs/PUBLISH-WORKFLOW.md` untouched as "outside
+this card's path claims". The verifier handoff names `skills/` in its grep scope,
+so that reasoning was wrong, and the Path claims line above is now widened so it
+cannot recur. Every hit below was found by running the card's own grep plus
+`git grep -n -i "handoff envelope"` against attempt 2. Fix all of them:
+
+Old path, current operational text:
+
+- `skills/autometta-requeue/SKILL.md:8-10` and `:21-26`. This file is consumed by
+  symlink from mcp-hub and `~/.claude`, so editing it here is sufficient; do not
+  touch the copies.
+- `docs/graph-engineering.md:69`
+- `docs/PUBLISH-WORKFLOW.md:81`. The tracked-files fact is still true (only
+  `state/handoffs/.gitkeep` and its README are tracked); reword so it reads as
+  the legacy path, do not claim `state/envelopes/` is tracked.
+
+The prose term "handoff envelope", which the card's Objective renames to
+"dispatch envelope" and which the three grep terms cannot catch:
+
+- `MANUAL.md:219`
+- `README.md:286`
+- `scripts/verify-sdk.py:202` and `:401`, `scripts/verify-sdk-agent.py:69`,
+  `scripts/verify-sdk-openai.py:34` (live prompt and help text)
+- `skills/phat-controller/SKILL.md:87`
+- `docs/graph-engineering.md:54`
+- `docs/tick-loop.md:411`
+- `docs/lessons.md:406` and `:529` (`:196` is a dated record; leave it)
+- `schemas/state.yaml.json:176`
+
+Everything else the grep returns on attempt 2 is the shim, a migration note, a
+dated incident or plan, or a smoke fixture criterion 6 requires unchanged.
+Leave those. When you are done, run both greps yourself and paste the full
+output into the envelope, classified line by line. A transcription of the
+verifier's list is not a grep.
+
+### 2. Criteria 1 and 2 need a stage to actually complete through each path
+
+`scripts/envelope-migration-smoke.sh:14-18` on attempt 2 says it does not drive
+the full tick reactor, so neither "a stage completes normally via the new path"
+nor "via the old path from a stale vendored template" was ever shown. The
+verifier was right to fail both. `scripts/pipeline-pair-smoke.sh` and
+`scripts/preserve-failed-work-smoke.sh` already build a throwaway subscriber
+and run a real tick against it; copy that fixture shape. The stale-subscriber
+case at the card's verifier handoff (`:173-177`) means a fixture whose vendored
+`worker-prompt.md` still says `state/handoffs/`, with the stage completing.
+
+### Unchanged
+
+The two smokes that fail on a clean `dev` are still not yours (see the previous
+re-brief), and `tui-history-smoke.sh` and `fleet-ticker-smoke.sh` are also red
+on clean `dev` as of `4b49a4f`. Say so in the envelope and move on. Keep the
+literal marker tokens out of this card if you touch it.
