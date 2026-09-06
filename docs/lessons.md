@@ -403,12 +403,12 @@ A healthy self-resuming pause can sleep through the next working window. The sta
 ## Headless gotcha 18: the agent wrote the file, but the tick looked through a different state path
 
 ### One-sentence summary
-An agent's log says it wrote its handoff envelope or verifier artefact, but the tick cannot find it: inspect the run worktree's `state` symlink before blaming the agent or spending a retry.
+An agent's log says it wrote its dispatch envelope or verifier artefact, but the tick cannot find it: inspect the run worktree's `state` symlink before blaming the agent or spending a retry.
 
 ### Incident origin
 On 2026-08-25 the verifier for stage 51 returned a genuine PASS on all six criteria and wrote a valid artefact under its working directory. The tick read the matching path under the subscriber root, found nothing, recorded the verifier as aborted, and dispatched it again. Two of the three verifier attempts were spent on a verdict that already existed.
 
-The apparent contradiction came from two views of one tree. Prompts give agents relative paths such as `state/handoffs/<stage-id>.json` and `state/verifiers/<stage-id>.json`, resolved from the run worktree. Readers anchor the same paths to the subscriber root. `ensure_run_worktree` normally replaces the worktree's tracked `state/` directory with a symlink to the subscriber's shared state, making both views agree. An operator script had replaced that symlink with a real directory, so the verifier's successful write landed in private worktree state while the tick kept reading shared state.
+The apparent contradiction came from two views of one tree. Prompts give agents relative paths such as `state/envelopes/<stage-id>.json` (`state/handoffs/<stage-id>.json` at the time of this incident, before card 104 renamed the artefact) and `state/verifiers/<stage-id>.json`, resolved from the run worktree. Readers anchor the same paths to the subscriber root. `ensure_run_worktree` normally replaces the worktree's tracked `state/` directory with a symlink to the subscriber's shared state, making both views agree. An operator script had replaced that symlink with a real directory, so the verifier's successful write landed in private worktree state while the tick kept reading shared state.
 
 This is the completion-path version of the card-sync race in gotcha 2. The writer and reader both behaved correctly against different physical files, and the missing-file branch erased that distinction by reporting an agent failure.
 
@@ -526,7 +526,7 @@ The banner looks correct and the worker can read every subscriber-side input,
 so the route appears healthy until its first edit. Repeated write mechanisms
 all fail because they retain the same explicit tool directory. The worker then
 spends its budget diagnosing a read-only repository, produces no deliverables
-or handoff envelope, and the loop attributes a dispatch-boundary error to the
+or dispatch envelope, and the loop attributes a dispatch-boundary error to the
 model.
 
 ### Mitigation

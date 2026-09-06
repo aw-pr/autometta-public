@@ -138,8 +138,7 @@ unambiguous once "handoff" is dropped, and continuity costs nothing.
 ## Contract test
 
 - **Test file:** scripts/envelope-migration-smoke.sh
-- **Assertions digest:** an envelope at either path completes a stage; the new
-  path wins when both exist; a subscriber on the old template is unaffected.
+- **Assertions digest:** `sha256:feb5456892f03ad9b99f41d31d58ce1fea05f4292c2f4f72cb5b7d17bcaf27fd`
 
 ## Out of scope
 

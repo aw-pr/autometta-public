@@ -384,7 +384,7 @@ field if set, else the repo's current branch at dispatch time). The stage's
 can detect whether the base moved in the meantime.
 
 `repo_root`'s `state/` directory stays the single source of truth for
-`state.yaml`, `budget.json`, logs, handoff envelopes, and verifier
+`state.yaml`, `budget.json`, logs, dispatch envelopes, and verifier
 artefacts — the worktree gets a symlink (`state -> ../<repo>/state`) rather
 than its own copy, so a worker or verifier writing to a `state/...`-relative
 path (as the worker/verifier prompt templates already instruct) lands in
@@ -417,7 +417,7 @@ or an interactive orchestrator turns a proposal into an actual criterion
 change.
 
 The same role covers the case where there is no verifier artefact at all: a
-stage that went `stalled` because its worker exited without a handoff
+stage that went `stalled` because its worker exited without a dispatch
 envelope still has its work preserved (`phat-controller.sh preserve`), its
 stall marker recorded, and a re-brief citing the preserved commit before it
 is requeued.
@@ -625,7 +625,7 @@ to change it and exactly one place to read it.
 | the `*-smoke.sh` harnesses | a smoke test exercises the tree it ships in |
 
 Scripts that compute a `repo_root` for their own fixtures
-(`validate-handoff-envelope.sh`, `validate-verifier-artefacts.sh`,
+(`validate-envelope.sh`, `validate-verifier-artefacts.sh`,
 `sdk-cache-smoke.sh`, `idle-tick-smoke.sh`, `superseded-status-smoke.sh`) are
 not resolving a dispatch root and are left alone.
 
@@ -796,6 +796,49 @@ It is a warning and only a warning. The stage still dispatches. Taking a
 release is the operator's decision, and a tick that refused to work until
 someone ran a refresh would turn a housekeeping note into an outage. A
 subscriber with a current stamp, or with no stamp at all, says nothing.
+
+### Envelope path migration (card 104)
+
+Card 104 (2026-09-01) renamed the worker's completion signal from "handoff
+envelope" to "dispatch envelope" and moved its path from
+`state/handoffs/<stage-id>.json` to `state/envelopes/<stage-id>.json`. The
+name was retired because it collided with the unrelated session handoff
+(`HANDOFF.md`) closely enough to cause a real misconfiguration:
+`handoff.mode` was set to `envelope` in this repo on the strength of the
+shared word, which silenced the session handoff outright. See
+`docs/dispatch-envelope.md` for the full account.
+
+The vendored set (above) is exactly what makes this migration reachable
+only through a dual read, never a flip. `tick.sh` is central and moves the
+instant this change lands in `autometta`, but the file that tells a worker
+*where to write* is `templates/worker-prompt.md`, a vendored copy each
+subscriber holds until an operator runs a refresh. A straight rename would
+have every un-refreshed subscriber's worker keep writing to the old path
+while a tick.sh that only read the new one found nothing there — every
+completed stage on every stale subscriber silently scored as stalled, one
+dispatch at a time, until someone happened to refresh. `worker_envelope_path()`
+in `tick.sh` reads `state/envelopes/<stage-id>.json` first and falls back to
+`state/handoffs/<stage-id>.json`; the new path always wins when both exist.
+`scripts/envelope-migration-smoke.sh` exercises all three path combinations
+(new only, old only, both) against the resolver directly, then drives a
+throwaway subscriber through the real `_process_repo_locked` reactor twice —
+once with a worker writing only the new path, once with a stale-subscriber
+worker writing only the legacy path — proving each one lands a stage as
+`completed`, not just that the resolver picks the right file.
+
+Only the writer moved. The 142 envelope files already sitting in
+`state/handoffs/` across the fleet as of 2026-09-01 were left exactly where
+they were — a stage mid-flight must not have its completion signal relocated
+underneath it, and the dual read makes moving them unnecessary.
+
+The old path is a compatibility shim, not a permanent second contract, and
+it stays until a checkable condition holds: every registered subscriber's
+`.autometta-vendor` stamp records a `vendored_from` sha that is a descendant
+of (or equal to) the commit that lands this migration, i.e.
+`git merge-base --is-ancestor <this-commit> <stamp-sha>` for every enabled
+entry in the subscriber registry. Nothing sweeps that automatically today.
+Retiring `state/handoffs/` from `worker_envelope_path()` once it does is a
+separate, later card.
 
 ## Reading order for a new operator
 

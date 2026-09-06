@@ -283,7 +283,7 @@ Full surface, including the op-refs file layout, the sibling `CODEX_HOME` requir
 | Free verifier tier, local (codex `auth.codex.mode: local`) | shipped      | Zero-cost Ollama route, measurement-backed default (`gpt-oss:120b`). See "Billing routes" above.                                |
 | Free verifier tier, cloud bake-off                         | experimental | Measured in `docs/verifier-bake-off.md`; run manually via `scripts/verifier-bake-off.sh`, not a stage-card-selectable mode yet. |
 | SDK verifier route + prompt caching                        | shipped      | Claude family only (stages 15-16).                                                                                              |
-| Worker handoff envelope                                    | shipped      | Sole worker completion signal (stage 17).                                                                                       |
+| Worker dispatch envelope                                   | shipped      | Sole worker completion signal (stage 17).                                                                                       |
 | Autonomous loop (pass 2)                                   | shipped      | Unattended macOS launchd path verified 2026-05-29 (gotcha 9 fix). Linux via cron.                                               |
 | OpenAI SDK verifier route                                  | planned      | Card 28; codex parallel to the Claude route.                                                                                    |
 | Per-role, per-family SDK transport matrix                  | design-only  | Card 28; orchestrator portion gated on card 23.                                                                                 |

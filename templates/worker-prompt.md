@@ -33,9 +33,9 @@ Before returning, verify:
 - None of the style or format constraints in the card are violated.
 - No file listed under "Out of scope" has been modified.
 
-## Step 6: Write the handoff envelope
+## Step 6: Write the dispatch envelope
 
-As your **final action**, write a JSON file to the handoff envelope path given in "This dispatch". This file is the sole signal that tick.sh uses to decide your work is done. Do not exit without writing it.
+As your **final action**, write a JSON file to the dispatch envelope path given in "This dispatch". This file is the sole signal that tick.sh uses to decide your work is done. Do not exit without writing it.
 
 The file must match this shape exactly:
 
@@ -72,7 +72,7 @@ If you could not complete within the budget stated in the card, write whatever i
 - Use relative paths inside the repo. Never embed absolute home-directory paths in committed content.
 - Do not run `git commit` or otherwise mutate git state. Leave the working tree dirty for the verifier; the orchestrator commits on verifier-pass.
 - Do not edit the frozen assertion block of any contract test (the lines between `AUTOMETTA-CONTRACT-BEGIN` and `AUTOMETTA-CONTRACT-END`). Satisfy it by changing your implementation, or surface a blocker.
-- Write the handoff envelope named in "This dispatch" as your final action. tick.sh will not treat your work as done without it.
+- Write the dispatch envelope named in "This dispatch" as your final action. tick.sh will not treat your work as done without it.
 
 <!--
 Everything below this line is the per-dispatch variable block. It sits after
@@ -86,5 +86,5 @@ dispatches. The spawn script fills every <<placeholder>> here. -->
 - Orchestrator: <<orchestrator-identity>>
 - Stage card: `<<stage-card-path>>`
 - Stage id: `<<stage-id>>`
-- Handoff envelope to write: `state/handoffs/<<stage-id>>.json`
+- Dispatch envelope to write: `state/envelopes/<<stage-id>>.json`
 - Family-specific notes: <<family-specific-notes-or-none>>

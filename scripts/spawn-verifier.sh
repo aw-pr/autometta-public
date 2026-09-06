@@ -159,7 +159,7 @@ build_established_facts_slice() {
     | head -n 20
 }
 
-# resolve_family_notes: when the worker's handoff envelope for this stage
+# resolve_family_notes: when the worker's dispatch envelope for this stage
 # reports status=partial, hand its notes to the verifier as an explicit
 # checklist. status=pass, or a missing or unreadable envelope (the
 # pre-stage-17 legacy path), falls back to "None" -- byte-identical to the
@@ -168,16 +168,23 @@ build_established_facts_slice() {
 # Reads the envelope off disk rather than taking it as an argument so the
 # run worktree's state symlink is the single source: tick.sh has already
 # validated this file against the schema before dispatching here.
+#
+# Checks state/envelopes/<stage-id>.json first, falling back to the legacy
+# state/handoffs/<stage-id>.json for a subscriber still vendoring a
+# pre-card-104 worker prompt -- the new path wins when both exist, matching
+# tick.sh's own worker_envelope_path(). See docs/dispatch-contract.md
+# (envelope migration).
 resolve_family_notes() {
   local repo_root="$1"
   local stage_id="$2"
-  local envelope_path="$repo_root/state/handoffs/${stage_id}.json"
+  local envelope_path="$repo_root/state/envelopes/${stage_id}.json"
+  [[ -f "$envelope_path" ]] || envelope_path="$repo_root/state/handoffs/${stage_id}.json"
   if [[ -f "$envelope_path" ]] && command -v jq >/dev/null 2>&1 && jq empty "$envelope_path" 2>/dev/null; then
     local env_status env_notes
     env_status="$(jq -r '.status // empty' "$envelope_path" 2>/dev/null || true)"
     if [[ "$env_status" == "partial" ]]; then
       env_notes="$(jq -r '.notes // empty' "$envelope_path" 2>/dev/null || true)"
-      printf 'The worker self-reported incomplete acceptance (handoff envelope status=partial) — treat the deferred criteria as your checklist and decide acceptability yourself; partial is the worker'"'"'s annotation, not a verdict. Worker notes: %s' \
+      printf 'The worker self-reported incomplete acceptance (dispatch envelope status=partial) — treat the deferred criteria as your checklist and decide acceptability yourself; partial is the worker'"'"'s annotation, not a verdict. Worker notes: %s' \
         "${env_notes:-(none provided)}"
       return 0
     fi

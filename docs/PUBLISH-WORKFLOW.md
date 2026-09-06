@@ -78,7 +78,7 @@ git config publishguard.sentinel      'PUBLISH_GUARD_OK'
 
 In a linear model there is **no private-tier branch**. Whatever is tracked and committed on `dev` reaches `PUB` on the next fast-forward. Privacy is enforced by `.gitignore` and the pre-commit guard, not by branch separation:
 
-- **Gitignored, never public:** `.env*`, `*.local`, `op-refs.local.sh`, `.publish-guard.local`, `.autometta.local.yaml`, `state/**` (runtime; only the `state/handoffs/` markers are tracked), and `HANDOFF.md` (the dated session log stays private).
+- **Gitignored, never public:** `.env*`, `*.local`, `op-refs.local.sh`, `.publish-guard.local`, `.autometta.local.yaml`, `state/**` (runtime; only the legacy `state/handoffs/` markers are tracked), and `HANDOFF.md` (the dated session log stays private).
 - **Tracked, intentionally public:** `memory/` is the in-repo shared agent memory and is part of the public mirror by design. Keep secrets and absolute home-dir paths out of it; the pre-commit guard patterns are the floor.
 
 If a file must never be public, it has to be gitignored. Keeping it only on `dev` is no longer protection.

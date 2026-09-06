@@ -31,7 +31,7 @@ The `Worker:` identity field on a sweep card names the synthesis agent. The per-
 1. Creates N scratch git worktrees at `state/sweep/<stage-id>/approach-{0..N-1}/`, each on a fresh branch named `sweep/<stage-id>/approach-{i}`.
 2. Writes the approach prompt file into each worktree as `/tmp/autometta-sweep-<stage>-<i>-prompt.txt`.
 3. Dispatches N workers in parallel via `op-fetch ... codex exec` (or `claude -p`), each running inside its own worktree. Uses `register-agent.sh` for liveness tracking.
-4. Polls with `watch-agent.sh` semantics, waiting for each worker's handoff envelope at `state/handoffs/<stage-id>-approach-{i}.json`.
+4. Polls with `watch-agent.sh` semantics, waiting for each worker's dispatch envelope at `state/envelopes/<stage-id>-approach-{i}.json`.
 5. Once all N envelopes are present (or the deadline is reached), dispatches the synthesis agent.
 
 Each approach worker runs inside its own worktree with `--sandbox workspace-write`. The sandbox boundary still holds: a worker in approach-0's worktree cannot see approach-1's files until the synthesis agent reads all worktrees.
@@ -54,7 +54,7 @@ If any approach produced code worth keeping, the synthesis card's "Inputs" secti
 
 Each approach worktree is on its own branch. `spawn-sweep.sh` must not run from within an existing worktree (the main checkout only). Worktrees are cleaned up after synthesis completes, or left for operator inspection if synthesis stalls.
 
-The main checkout's `state/` dir is the shared message bus. All handoff envelopes land there regardless of which worktree the worker ran in; the worker must use the repo root's `state/handoffs/` path, not a worktree-relative path.
+The main checkout's `state/` dir is the shared message bus. All dispatch envelopes land there regardless of which worktree the worker ran in; the worker must use the repo root's `state/envelopes/` path, not a worktree-relative path.
 
 The `git worktree prune` command is idempotent and safe to call after synthesis; `spawn-sweep.sh` runs it on clean exit.
 
@@ -73,7 +73,7 @@ Panel is about confidence in a judgement. Sweep is about exploring a problem spa
 | Belief | Status |
 |---|---|
 | Git is the state store | Respected: worktrees are git branches; outputs are tracked commits. |
-| Filesystem is the message bus | Respected: handoff envelopes at `state/handoffs/<stage-id>-approach-{i}.json` are the completion signals. |
+| Filesystem is the message bus | Respected: dispatch envelopes at `state/envelopes/<stage-id>-approach-{i}.json` are the completion signals. |
 | Sandbox is the role boundary | Respected: each approach worker runs in its own worktree; workers cannot see each other's files during the parallel phase. |
 | Cross-family verification by default | Respected: synthesis worker and verifier follow normal cross-family pairing. |
 | Cron + tick > daemon | Tension, mitigated: one card produces N+2 dispatches. The tick still exits after one state transition. Exception named in `docs/philosophy.md` belief 5. |

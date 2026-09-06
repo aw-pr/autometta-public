@@ -291,7 +291,7 @@ This gives the operator an attachable cockpit without creating a resident contro
 
 The replacement builds the commit with plumbing: `git add` into a throwaway `GIT_INDEX_FILE`, `git write-tree`, `git commit-tree`, one `git update-ref` with the previous tip as its compare-and-swap guard. No checkout, no HEAD move, no write to `repo_root`'s index or working tree, and nothing for a concurrent operator commit to race with. A dedicated worktree for the ref would also have kept HEAD still, but it is a fixture to create, maintain and reap, and the state files live in `repo_root/state`, so it would have to copy them across on every tick.
 
-**What a snapshot holds.** `state/state.yaml` and `state/budget.json`, plus whatever of `state/verifiers` and `state/handoffs` the repo does not ignore. Not `state/logs`, `state/cost-log.jsonl`, `state/active-agents`, `state/recent-agents` or `state/heartbeat.json`. The commit body names exactly what was captured, so the ref never claims more than it holds, and an unchanged state adds no commit.
+**What a snapshot holds.** `state/state.yaml` and `state/budget.json`, plus whatever of `state/verifiers`, `state/envelopes` and `state/handoffs` (the legacy path a stale subscriber still writes, see `docs/dispatch-contract.md` envelope migration) the repo does not ignore. Not `state/logs`, `state/cost-log.jsonl`, `state/active-agents`, `state/recent-agents` or `state/heartbeat.json`. The commit body names exactly what was captured, so the ref never claims more than it holds, and an unchanged state adds no commit.
 
 `state.yaml` and `budget.json` are gitignored in every subscriber, so the snapshot stages them with `git add -f`. That is deliberate. Before this, the plain `git add state/state.yaml` was a silent no-op (`docs/lessons.md` gotcha 10) and the ref held only the repo tree it had been reset to: the branch documented here as "committed state snapshots" had never contained one line of state. Forcing them onto this ref does not make them tracked on any working branch, `.gitignore` still governs every operator commit, and whether `state.yaml` should be tracked remains an open question this did not answer. The snapshot is local: the loop never pushes the ref, and nothing else should.
 
@@ -408,7 +408,7 @@ needed doing, `1` failed, `2` bad usage, `3` refused or held. A `3` is a
 deliberate answer, not an error.
 
 `preserve` covers the case card 54 missed. A stage that went `stalled`
-because its worker exited without a handoff envelope has no verifier artefact
+because its worker exited without a dispatch envelope has no verifier artefact
 to read a reason out of, and calling the preserved commit a verifier FAIL
 would be untrue, so `preserve_failed_work` in `tick.sh` takes an optional
 reason and label and the commit reads `wip(<stage>): attempt N, stalled:

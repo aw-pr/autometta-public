@@ -173,7 +173,7 @@
           },
           "worker_envelope": {
             "type": ["string", "null"],
-            "description": "Set to 'partial' when the worker's handoff envelope reported status=partial. The stage still proceeds to verifier dispatch — partial is the worker's annotation, not a verdict — and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
+            "description": "Set to 'partial' when the worker's dispatch envelope reported status=partial. The stage still proceeds to verifier dispatch — partial is the worker's annotation, not a verdict — and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
           },
           "repair_attempts": {
             "type": "integer",
