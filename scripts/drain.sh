@@ -19,18 +19,28 @@ IFS=$'\n\t'
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
 source "$script_dir/budget.sh"
+# shellcheck source=./quota-window.sh
+# Sourced only for quota_schedule_next_overnight_end_epoch, the one read
+# --ignore-reserve needs to refuse a --hours that would outlive the
+# overnight window. Token-cap logic stays exactly what it was; this drain
+# learns nothing new about caps.
+source "$script_dir/quota-window.sh"
 
 usage() {
   cat <<'USAGE' >&2
 Usage:
-  drain.sh start [--cap N | --lift] [--hours H] [--repo PATH]... [--reason TEXT]
+  drain.sh start [--cap N | --lift] [--hours H] [--repo PATH]... [--reason TEXT] [--ignore-reserve]
   drain.sh status
   drain.sh end
 
   start   open a drain. Default 8 hours, maximum 12 (AUTOMETTA_DRAIN_MAX_SECONDS).
-          --cap N   raise the token cap to N for the duration
-          --lift    raise it to the lift ceiling (AUTOMETTA_DRAIN_LIFT_CAP)
-          --repo    limit the drain to one repo; repeatable. Default: all.
+          --cap N            raise the token cap to N for the duration
+          --lift              raise it to the lift ceiling (AUTOMETTA_DRAIN_LIFT_CAP)
+          --repo              limit the drain to one repo; repeatable. Default: all.
+          --ignore-reserve    suspend the window_reserve hold for the life of this
+                              drain and no longer. When a schedule (window_reserve.
+                              overnight) is declared, a --hours that would still be
+                              running past the window's end is refused at start.
   status  print the drain in force, if any, and when it expires.
   end     close the drain now rather than waiting for it to expire.
 USAGE
@@ -66,6 +76,9 @@ cmd_status() {
     "$cap" "$(fmt_epoch "$expires")" "$(( (expires - now) / 60 ))"
   printf 'drain: scope %s\n' "$repos"
   printf 'drain: reason %s\n' "$reason"
+  if [[ "$(jq -r '.ignore_reserve // false' "$drain_path")" == "true" ]]; then
+    printf 'drain: ignore-reserve ACTIVE, window_reserve hold suspended until this drain ends\n'
+  fi
 }
 
 cmd_end() {
@@ -78,7 +91,7 @@ cmd_end() {
 }
 
 cmd_start() {
-  local cap="" hours=8 reason="operator drain" repos=()
+  local cap="" hours=8 reason="operator drain" repos=() ignore_reserve=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --cap) cap="${2:-}"; shift 2 ;;
@@ -86,6 +99,7 @@ cmd_start() {
       --hours) hours="${2:-}"; shift 2 ;;
       --reason) reason="${2:-}"; shift 2 ;;
       --repo) repos+=("${2:-}"); shift 2 ;;
+      --ignore-reserve) ignore_reserve=true; shift ;;
       *) usage ;;
     esac
   done
@@ -111,8 +125,22 @@ cmd_start() {
   fi
 
   local now expires resolved=()
-  now="$(date -u +%s)"
+  # AUTOMETTA_DRAIN_NOW_EPOCH: test-only clock override, so the --hours vs.
+  # overnight-window-end refusal below is reachable without waiting for a
+  # particular hour to run the test in.
+  now="${AUTOMETTA_DRAIN_NOW_EPOCH:-$(date -u +%s)}"
   expires=$(( now + seconds ))
+
+  if [[ "$ignore_reserve" == "true" ]]; then
+    local mandate_path window_end_epoch
+    mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(budget_controller_home)/phat-controller-mandate.yaml}"
+    if window_end_epoch="$(quota_schedule_next_overnight_end_epoch "$mandate_path" "$now")" \
+       && [[ "$window_end_epoch" =~ ^[0-9]+$ ]] && (( expires > window_end_epoch )); then
+      printf 'drain: --ignore-reserve for %s hours would still be running past the overnight window ending %s; refusing. A drain must not outlive the window that permits it.\n' \
+        "$hours" "$(fmt_epoch "$window_end_epoch")" >&2
+      exit 1
+    fi
+  fi
 
   local r
   for r in ${repos+"${repos[@]}"}; do
@@ -137,7 +165,8 @@ cmd_start() {
     --argjson repos "$repos_json" \
     --arg started "$(date -u -r "$now" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%dT%H:%M:%SZ")" \
     --arg reason "$reason" \
-    '{version: 1, token_cap_total: $cap, expires_at: $expires, started_at: $started, repos: $repos, reason: $reason}' \
+    --argjson ignore_reserve "$ignore_reserve" \
+    '{version: 1, token_cap_total: $cap, expires_at: $expires, started_at: $started, repos: $repos, reason: $reason, ignore_reserve: $ignore_reserve}' \
     > "$tmp_path"
   json_check "$tmp_path"
   mv "$tmp_path" "$drain_path"
@@ -147,6 +176,9 @@ cmd_start() {
   printf 'PASS drain scope %s\n' \
     "$(jq -r 'if ((.repos // []) | length) == 0 then "all subscribers" else (.repos | join(", ")) end' "$drain_path")"
   printf 'PASS drain expires by itself; no repo budget.json was modified\n'
+  if [[ "$ignore_reserve" == "true" ]]; then
+    printf 'PASS drain ignore-reserve: window_reserve hold suspended for the life of this drain and no longer\n'
+  fi
 }
 
 case "${1:-}" in

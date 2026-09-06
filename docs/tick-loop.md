@@ -373,6 +373,68 @@ the tick compares that role's family with the once-per-tick quota reading. A
 known window inside a `hold` reserve pauses until its own reset; an unknown
 reading and `observe` both proceed unchanged.
 
+**The reserve can carry a schedule, so a run knows what time it is (card
+124).** `percent`/`action` alone serve two different hours equally badly: the
+right reserve at 14:00, when the operator wants a usable Claude session, and
+at 23:00, when the intent is to spend the window down on purpose, are not the
+same number. `window_reserve.overnight` (`start`, `end`, `percent`,
+`timezone: local`) is the optional second answer. `quota_reserve_settings`
+resolves the reserve **for the current moment** rather than returning one
+static pair: inside the declared window it uses `overnight.percent`
+(typically `0`, meaning the reserve does not bind); outside it, the top-level
+`percent`/`action` apply exactly as they always have. A host that never
+declares `overnight` sees no change at all -- `quota_reserve_settings`
+returns byte-for-byte what it returned before this card.
+
+The clock read is **operator wall-clock, always local, never UTC** --
+`overnight` describes when a person is asleep, and sleep does not move with
+UTC. **Accepted risk:** a wrong system clock or a wrong timezone silently
+changes when the loop runs, with no alarm of its own; the only signal is the
+tick's own log line naming which rule resolved (`daytime`/`overnight`/
+`default`/`drain-ignore-reserve`) and the reserve percentage it carried. There
+is no independent check that the host clock is correct. A window whose `end`
+is earlier than its `start` (`22:00` to `01:00`) crosses midnight and is
+resolved as one interval (`now >= start OR now < end`), not two separate
+comparisons -- the obvious `start <= now < end` test is silently wrong for a
+wrapping window, since it can never match at all.
+
+**The stop at the end of the overnight window only refuses new dispatch.**
+Nothing installs a stop job (the emergence-lab 2026-09-03 hand-installed
+LaunchAgent that failed to remove itself is exactly the failure mode this
+avoids): the tick reads the clock on every fire and, outside the declared
+window, refuses to start a *new* worker at all.
+
+The stop is a separate gate sitting above the reserve, and it deliberately
+reads no quota. The reserve is reading-driven: it binds only when a known
+window is near exhaustion, and an unknown reading fails open by design. That
+is right for a guard against spending the last of a window and useless as a
+stop, because the case a stop exists for -- an overnight run that must not
+still be dispatching at nine the next morning -- is exactly the case where
+the reading is healthy (the window reset in the night) or unknown (no
+snapshot). A stop built on the reading fails open precisely when it is
+needed, and leaves the operator no session and no alarm saying why. So the
+clock alone decides, and the refusal is logged as `schedule stop worker
+<stage> (<family>): clock HH:MM is outside the <start>-<end> dispatch
+window`. The consequence worth stating plainly: **once a schedule is
+declared, the loop starts no new work outside the window**, and burning the
+day is the opt-in `drain.sh start --ignore-reserve` below. A
+stage already in flight when the window closes is never killed to enforce
+this, and its verifier is not held by the resumed daytime reserve either: the
+stage's `reserve_exempt` flag, stamped at worker-dispatch time whenever the
+resolved window was `overnight` or a `--ignore-reserve` drain was active,
+lets that one stage's verifier land regardless of the clock by the time it
+is reaped. A stage whose worker started under the ordinary daytime reserve
+carries no such exemption.
+
+**Burning the daytime session is opt-in and self-expiring, via the existing
+drain rather than a second switch.** `drain.sh start --ignore-reserve`
+suspends the reserve (daytime or scheduled) for the life of that one drain
+and no longer -- it is already the operator's declared, bounded "spend the
+window down on purpose" verb, already self-expiring, already scoped. When a
+schedule is declared, a `--hours` that would still be running past the next
+occurrence of the overnight window's end is refused at `start`, naming the
+window: a drain must not outlive the permission it is spending against.
+
 **What bounds it is a short negative list, not an action enumeration.** The
 recoverable actions do not need enumerating and the unrecoverable ones are
 few. The governing distinction: the controller may change **what is recorded

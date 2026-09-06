@@ -31,9 +31,46 @@ spend_authority:
 
 # Written only when the operator answers the setup question. Zero is an
 # explicit answer meaning off; null means this older job has not been asked.
+#
+# percent/action are the daytime default and, absent the optional overnight
+# block below, the only rule there is -- this is every host's setting until
+# card 124, unchanged. When overnight IS declared, quota_reserve_settings
+# (scripts/quota-window.sh) resolves the reserve for the current moment
+# instead of returning this static pair: overnight.percent applies inside
+# the window, percent/action apply outside it. overnight.percent: 0 is the
+# operator's declared "spend the session down on purpose" answer for that
+# window; it is not the same zero as a top-level percent: 0, which means
+# the reserve is off everywhere, all the time.
+#
+#   window_reserve:
+#     percent: 20
+#     action: hold
+#     overnight:
+#       start: "22:00"
+#       end: "01:00"
+#       percent: 0
+#     timezone: local
+#
+# overnight.start/end are read in the clock named by `timezone`. Only
+# "local" is supported today: the window describes when the operator is
+# asleep, and a person's sleep does not move with UTC. Across a DST change
+# the wall-clock boundaries ("22:00", "01:00") do not shift, but the
+# window's actual duration does -- the two transition nights a year give a
+# nominal 3-hour window either 2 or 4 real hours. Accepted, not fixed: see
+# docs/tick-loop.md.
+#
+# A window whose end is earlier than its start (as above) crosses midnight
+# and is one interval, not two: "now is inside" means now >= start OR
+# now < end, never start <= now < end, which never matches at all for a
+# wrapping window and fails silently rather than loudly.
 window_reserve:
   percent:
   action:
+  # overnight:
+  #   start:
+  #   end:
+  #   percent:
+  # timezone: local
 
 escalation:
   # A verifier_failed stage at or above this many verifier_attempts is a
