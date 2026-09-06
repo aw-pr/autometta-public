@@ -234,6 +234,8 @@ main() {
     -e "s|<<family-specific-notes-or-none>>|Write the verifier artefact JSON to the artefact-path shown above. stdin redirect already applied.|g" \
     "$tmpl")"
 
+  codex_approval_argv
+
   local codex_home_override=""
   if [[ -n "$codex_auth_pairs" ]]; then
     codex_home_override="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}"
@@ -244,12 +246,12 @@ main() {
     fi
     # shellcheck disable=SC2086
     CODEX_HOME="$codex_home_override" op-fetch $codex_auth_pairs --pass CODEX_HOME -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" ${AUTOMETTA_CODEX_APPROVAL_ARGV[@]+"${AUTOMETTA_CODEX_APPROVAL_ARGV[@]}"} "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   else
     # shellcheck disable=SC2086
     op-fetch $codex_auth_pairs -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" ${AUTOMETTA_CODEX_APPROVAL_ARGV[@]+"${AUTOMETTA_CODEX_APPROVAL_ARGV[@]}"} "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   fi
   local p2_pid=$!

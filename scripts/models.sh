@@ -265,6 +265,41 @@ codex_state_argv_for_repo() {
 #
 # Emits nothing under danger-full-access, which already has network, and
 # nothing for a card that does not ask.
+# A headless dispatch has nobody to answer an approval prompt.
+#
+# `codex exec` is the non-interactive entry point, but the approval policy
+# still comes from config, and there is no `--ask-for-approval` flag on exec
+# to override it. A host whose ~/.codex/config.toml carries the interactive
+# default (`approval_policy = "on-request"`) therefore hits a request no one
+# can answer: the run does not fail, it sits there. What reaches the log is
+# `codex_core::tools::router: error=timed out negotiating with the code-mode
+# host`, repeated, which reads like a broken helper process and is in fact a
+# silent permission prompt. Observed 2026-09-06 on codex-cli 0.150.1, where
+# it cost a verifier dispatch that read no files and correctly declined to
+# write a verdict.
+#
+# So every dispatch pins the policy explicitly rather than inheriting the
+# operator's. This is the Codex twin of the `claude -p
+# --dangerously-skip-permissions` requirement in lessons.md gotcha 7.
+#
+# `never` is the whole fix, and the sandbox is deliberately untouched.
+# `--dangerously-bypass-approvals-and-sandbox` would also stop the prompt and
+# must never be used here: the sandbox is the role boundary that makes worker
+# self-verification structurally impossible, and dropping it to silence a
+# prompt would trade the repo's load-bearing property for a config default.
+# Under `never` a command that would need escalation simply fails inside the
+# sandbox, which is the correct outcome for a role that was never meant to
+# have it.
+#
+# AUTOMETTA_CODEX_APPROVAL_POLICY overrides the value for an operator who
+# needs a different one; unset it to nothing to emit no override at all.
+codex_approval_argv() {
+  AUTOMETTA_CODEX_APPROVAL_ARGV=()
+  local policy="${AUTOMETTA_CODEX_APPROVAL_POLICY-never}"
+  [[ -n "$policy" ]] || return 0
+  AUTOMETTA_CODEX_APPROVAL_ARGV=(-c "approval_policy=\"$policy\"")
+}
+
 codex_network_argv_for_card() {
   local requires_network="$1"
   local codex_sandbox="$2"
