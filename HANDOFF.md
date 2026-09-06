@@ -735,3 +735,5 @@ Three commits (`f333ed3`, `3990f5b`, `16c1c6c`) carrying an earlier wrong-shape 
 - 2026-09-01T18:25:25Z: stage 101-the-verifier-passes-its-flags-the-way-the-worker-does: dev moved since dispatch; autometta/101-the-verifier-passes-its-flags-the-way-the-worker-does left standing, pushed to origin/autometta/101-the-verifier-passes-its-flags-the-way-the-worker-does for manual integration
 
 - 2026-09-01T18:46:30Z: stage 103-the-dashboard-does-not-invent-a-zero: dev moved since dispatch; autometta/103-the-dashboard-does-not-invent-a-zero left standing, pushed to origin/autometta/103-the-dashboard-does-not-invent-a-zero for manual integration
+
+- 2026-09-06T10:09:50Z: stage 104-the-envelope-stops-being-called-a-handoff: dev moved since dispatch; autometta/104-the-envelope-stops-being-called-a-handoff left standing, pushed to origin/autometta/104-the-envelope-stops-being-called-a-handoff for manual integration

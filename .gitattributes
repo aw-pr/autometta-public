@@ -1,0 +1,4 @@
+# memory/facts.jsonl is an append-only ledger written by every stage on every
+# landing, so any two landings that overlap in time conflict on it by
+# construction. The union driver keeps both sides; order carries no meaning.
+memory/facts.jsonl merge=union
