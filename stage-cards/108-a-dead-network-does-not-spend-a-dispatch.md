@@ -5,16 +5,16 @@
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Fable 5.1 <claude-fable-5-1@local>
 - **Worker:** Claude Opus 5 <claude-opus-5@local>
-- **Verifier:** Codex GPT-5.6 Sol <codex-gpt-5-6-sol@local>
+- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/108-a-dead-network-does-not-spend-a-dispatch
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Path claims:** scripts/tick.sh, scripts/preflight-network.sh, scripts/network-fault-smoke.sh, docs/tick-loop.md, stage-cards/108-a-dead-network-does-not-spend-a-dispatch.md
-- **Pairing rationale:** cross-family. The worker changes the tick's fault classification, which is
+- **Pairing rationale:** cross-model, single family (re-seated 2026-09-06, see below). The worker changes the tick's fault classification, which is
   the one place a wrong pattern turns a single outage into a failure-cap
-  halt; the Codex seat verifies because it can construct the fault log
+  halt; the verifying seat verifies because it can construct the fault log
   fixtures without having read the worker's regex.
 - **Type:** Alarm and guard. Touches `scripts/tick.sh`, so serial.
 
@@ -151,3 +151,21 @@ must not swallow real worker failures.
 ## Family-specific notes
 
 None
+
+## Re-seat (2026-09-06, Codex subscription exhausted)
+
+Both Codex seats were unavailable from 10:31Z with the subscription window
+closed until 14:49Z, and every card in this batch carried one, so the queue
+could not move. On the operator's instruction the batch was re-seated onto
+Claude alone: high-effort cards run Opus as worker and Sonnet as verifier,
+the rest run Sonnet as worker and Opus as verifier, so worker and verifier
+are never the same model.
+
+What this keeps: the sandbox boundary, which is what makes worker
+self-verification structurally impossible, is a property of the dispatch and
+not of the vendor, so it is untouched. What it costs: judgement diversity.
+A Claude verifier shares training and failure modes with a Claude worker in
+a way a Codex verifier did not, so a wrong assumption the worker makes is
+likelier to survive verification. Two different Claude models recover part
+of that and not all of it. Read this card's acceptance criteria as needing
+more, not less, evidence than usual.

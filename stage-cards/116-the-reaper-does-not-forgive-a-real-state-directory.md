@@ -5,15 +5,15 @@
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Fable 5.1 <claude-fable-5-1@local>
 - **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** Codex GPT-5.6 Sol <codex-gpt-5-6-sol@local>
+- **Verifier:** Claude Opus 5 <claude-opus-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/116-the-reaper-does-not-forgive-a-real-state-directory
 - **Worker effort:** medium
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Path claims:** scripts/reap-worktrees.sh, scripts/state-branch-smoke.sh, stage-cards/116-the-reaper-does-not-forgive-a-real-state-directory.md
-- **Pairing rationale:** cross-family. A small reaper defect with an existing failing assertion;
-  the Codex seat verifies by building the worktree the assertion describes.
+- **Pairing rationale:** cross-model, single family (re-seated 2026-09-06, see below). A small reaper defect with an existing failing assertion;
+  the verifying seat verifies by building the worktree the assertion describes.
 - **Type:** Red-smoke repair. Pipeline-eligible.
 
 ## Surfacing concern
@@ -102,3 +102,21 @@ directory case; read the smoke diff.
 ## Family-specific notes
 
 None
+
+## Re-seat (2026-09-06, Codex subscription exhausted)
+
+Both Codex seats were unavailable from 10:31Z with the subscription window
+closed until 14:49Z, and every card in this batch carried one, so the queue
+could not move. On the operator's instruction the batch was re-seated onto
+Claude alone: high-effort cards run Opus as worker and Sonnet as verifier,
+the rest run Sonnet as worker and Opus as verifier, so worker and verifier
+are never the same model.
+
+What this keeps: the sandbox boundary, which is what makes worker
+self-verification structurally impossible, is a property of the dispatch and
+not of the vendor, so it is untouched. What it costs: judgement diversity.
+A Claude verifier shares training and failure modes with a Claude worker in
+a way a Codex verifier did not, so a wrong assumption the worker makes is
+likelier to survive verification. Two different Claude models recover part
+of that and not all of it. Read this card's acceptance criteria as needing
+more, not less, evidence than usual.

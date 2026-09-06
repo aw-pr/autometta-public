@@ -5,14 +5,14 @@
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Fable 5.1 <claude-fable-5-1@local>
 - **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** Codex GPT-5.6 Sol <codex-gpt-5-6-sol@local>
+- **Verifier:** Claude Opus 5 <claude-opus-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/120-a-worker-does-not-inherit-the-operators-mcp-servers
 - **Worker effort:** medium
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Path claims:** scripts/spawn-worker.sh, scripts/spawn-verifier.sh, scripts/mcp-isolation-smoke.sh, docs/dispatch-contract.md, stage-cards/120-a-worker-does-not-inherit-the-operators-mcp-servers.md
-- **Pairing rationale:** cross-family. The change is to the Claude dispatch line; the Codex seat
+- **Pairing rationale:** cross-model, single family (re-seated 2026-09-06, see below). The change is to the Claude dispatch line; the verifying seat
   verifies by inspecting the process tree of a real dispatch, which needs
   no knowledge of Claude's flag semantics.
 - **Type:** Dispatch hygiene. Pipeline-eligible.
@@ -110,3 +110,21 @@ the transcript for MCP tool names.
 ## Family-specific notes
 
 None
+
+## Re-seat (2026-09-06, Codex subscription exhausted)
+
+Both Codex seats were unavailable from 10:31Z with the subscription window
+closed until 14:49Z, and every card in this batch carried one, so the queue
+could not move. On the operator's instruction the batch was re-seated onto
+Claude alone: high-effort cards run Opus as worker and Sonnet as verifier,
+the rest run Sonnet as worker and Opus as verifier, so worker and verifier
+are never the same model.
+
+What this keeps: the sandbox boundary, which is what makes worker
+self-verification structurally impossible, is a property of the dispatch and
+not of the vendor, so it is untouched. What it costs: judgement diversity.
+A Claude verifier shares training and failure modes with a Claude worker in
+a way a Codex verifier did not, so a wrong assumption the worker makes is
+likelier to survive verification. Two different Claude models recover part
+of that and not all of it. Read this card's acceptance criteria as needing
+more, not less, evidence than usual.
