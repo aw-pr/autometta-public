@@ -96,6 +96,15 @@ next, and getting it wrong costs either a wasted dispatch or a lost night.
 - **Provider refusal.** A refusal never reaches `verifier_failed`. If the
   evidence looks like a refusal rather than a verdict, escalate; do not
   requeue it into the same wall.
+- **Passing envelope, no verifier dispatched.** The worker envelope already
+  reads `pass` (or `partial`) and the run worktree and branch still stand,
+  but `current_stage` or another field went missing by hand and the tick has
+  nothing to dispatch against. `resume-to-verifier <repo> <stage-id>` puts
+  back exactly the state the tick needs and nothing else; it refuses, rather
+  than repairs, anything it cannot prove (envelope absent, worktree gone,
+  another stage current). Use `resume-to-verifier` when the work already
+  passed and only the dispatch state is missing; use `requeue` when the
+  worktree is gone or the work itself needs a fresh attempt.
 
 When you cannot tell, say so and leave the stage alone. Guessing costs a real
 dispatch cycle, and a stage left standing is recoverable in the morning.

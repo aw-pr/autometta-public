@@ -1025,6 +1025,107 @@ pc_requeue() {
   return 1
 }
 
+# --- Verb: resume-to-verifier ------------------------------------------------
+#
+# The 2026-09-03 shape: a passing (or partial) worker envelope that no
+# verifier ever consumed, because current_stage had gone null by hand while
+# stall_marker stayed set. tick.sh dispatches a verifier for whatever stage
+# current_stage names, provided its envelope reads pass/partial and no
+# worker or verifier pid is alive for it -- this verb puts exactly that
+# shape back, and refuses everything it cannot prove. It never repairs a
+# missing worktree; that is requeue's job, not this one's.
+
+pc_resume_to_verifier() {
+  local repo_root="$1" stage_id="$2" accept_partial="${3:-false}"
+  local state_yaml="$repo_root/state/state.yaml"
+  [[ -f "$state_yaml" ]] || { log "resume-to-verifier: ${repo_root} has no state.yaml"; return 1; }
+
+  local stage_json
+  stage_json="$(state_json "$state_yaml" | jq -c --arg id "$stage_id" '[.stages[] | select(.id == $id)][0] // empty' 2>/dev/null || true)"
+  if [[ -z "$stage_json" || "$stage_json" == "null" ]]; then
+    log "resume-to-verifier: ${repo_root} ${stage_id} not found in state.yaml"
+    return 3
+  fi
+
+  local envelope_path env_status
+  envelope_path="$(worker_envelope_path "$repo_root" "$stage_id")"
+  if [[ ! -f "$envelope_path" ]]; then
+    log "resume-to-verifier: ${repo_root} ${stage_id} has no worker envelope at ${envelope_path}"
+    return 3
+  fi
+  env_status="$(jq -r '.status // empty' "$envelope_path" 2>/dev/null || true)"
+  case "$env_status" in
+    pass) ;;
+    partial)
+      if [[ "$accept_partial" != true ]]; then
+        log "resume-to-verifier: ${repo_root} ${stage_id} envelope status=partial; pass --accept-partial to resume it"
+        return 3
+      fi
+      ;;
+    *)
+      log "resume-to-verifier: ${repo_root} ${stage_id} envelope status=${env_status:-<missing>}, not pass or partial"
+      return 3
+      ;;
+  esac
+
+  local work_dir run_branch
+  work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  run_branch="autometta/${stage_id}"
+  if [[ ! -d "$work_dir" ]]; then
+    log "resume-to-verifier: ${repo_root} ${stage_id} has no run worktree at ${work_dir}; a missing worktree is a requeue, not a resume"
+    return 3
+  fi
+  if ! git -C "$repo_root" rev-parse -q --verify "refs/heads/${run_branch}" >/dev/null 2>&1; then
+    log "resume-to-verifier: ${repo_root} ${stage_id} run branch ${run_branch} does not exist; a missing branch is a requeue, not a resume"
+    return 3
+  fi
+
+  local verifier_pid
+  verifier_pid="$(printf '%s' "$stage_json" | jq -r '.verifier_pid // empty')"
+  if [[ -n "$verifier_pid" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
+    log "resume-to-verifier: ${repo_root} ${stage_id} verifier pid ${verifier_pid} is still alive"
+    return 3
+  fi
+
+  local current_stage
+  current_stage="$(state_json "$state_yaml" | jq -r '.current_stage // empty')"
+  if [[ -n "$current_stage" && "$current_stage" != "null" && "$current_stage" != "$stage_id" ]]; then
+    log "resume-to-verifier: ${repo_root} current_stage is already ${current_stage}, not ${stage_id}"
+    return 3
+  fi
+
+  if ! acquire_repo_lock "$repo_root"; then
+    log "resume-to-verifier: ${repo_root} is locked by a live tick; left alone"
+    return 1
+  fi
+
+  local decision_id
+  decision_id="$(pc_journal_decision "$repo_root" resume-to-verifier "$stage_id" \
+    "the envelope already reads ${env_status} and the run worktree stands, so the tick needs only its own fields restored" \
+    "envelope=${envelope_path} status=${env_status} worktree=${work_dir}" \
+    "status=in_progress current_stage=${stage_id} stall_marker=null worker_pid=null verifier fields cleared")"
+
+  if ! state_apply_json "$state_yaml" \
+      '(.stages[] | select(.id == $id)).status = "in_progress"
+       | (.stages[] | select(.id == $id)).stall_marker = null
+       | (.stages[] | select(.id == $id)).worker_pid = null
+       | (.stages[] | select(.id == $id)).verifier_pid = null
+       | (.stages[] | select(.id == $id)).verifier_started_at = null
+       | (.stages[] | select(.id == $id)).verifier_artefact = null
+       | .current_stage = $id' \
+      --arg id "$stage_id"; then
+    pc_journal_outcome "$repo_root" "$decision_id" failed "state_apply_json refused the write"
+    log "resume-to-verifier: ${repo_root} ${stage_id} state write failed"
+    release_repo_lock "$repo_root"
+    return 1
+  fi
+
+  pc_journal_outcome "$repo_root" "$decision_id" acted "resumed to verifier dispatch"
+  log "resume-to-verifier: ${repo_root} ${stage_id} resumed; the next tick dispatches its verifier"
+  release_repo_lock "$repo_root"
+  return 0
+}
+
 # --- Verb: stale-halt --------------------------------------------------------
 #
 # Reuses budget_pause_active (self-clears an elapsed pause) and
@@ -1736,6 +1837,9 @@ every other verb performs exactly what it is asked for.
                                         append and commit a PROPOSED-AMENDMENT;
                                         requeues nothing
   requeue <repo> <stage-id>             run requeue-stage.sh
+  resume-to-verifier <repo> <stage-id> [--accept-partial]
+                                        resume a passing (or, with the flag,
+                                        partial) envelope to its verifier
   stale-halt <repo>                     clear a provably stale pause or halt
   merge-awaiting <repo> [<stage-id>]    merge a conflict-free awaiting
                                         integration
@@ -1786,6 +1890,18 @@ main() {
     rebrief)        [[ $# -ge 3 ]] || { usage >&2; exit 2; }; pc_rebrief "$(cd "$1" && pwd)" "$2" "$3" "${4:-}" ;;
     propose-amendment) [[ $# -eq 3 ]] || { usage >&2; exit 2; }; pc_propose_amendment "$(cd "$1" && pwd)" "$2" "$3" ;;
     requeue)        [[ $# -eq 2 ]] || { usage >&2; exit 2; }; pc_requeue "$(cd "$1" && pwd)" "$2" ;;
+    resume-to-verifier)
+      [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+      local rtv_repo="$1" rtv_stage="$2" rtv_accept_partial=false
+      shift 2
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --accept-partial) rtv_accept_partial=true; shift ;;
+          *) usage >&2; exit 2 ;;
+        esac
+      done
+      pc_resume_to_verifier "$(cd "$rtv_repo" && pwd)" "$rtv_stage" "$rtv_accept_partial"
+      ;;
     stale-halt)     [[ $# -eq 1 ]] || { usage >&2; exit 2; }; pc_stale_halt "$(cd "$1" && pwd)" ;;
     merge-awaiting) [[ $# -ge 1 ]] || { usage >&2; exit 2; }; pc_merge_awaiting "$(cd "$1" && pwd)" "${2:-}" ;;
     smokes)         [[ $# -ge 1 ]] || { usage >&2; exit 2; }; pc_smokes "$(cd "$1" && pwd)" "${2:-}" ;;
