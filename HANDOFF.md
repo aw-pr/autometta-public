@@ -1,16 +1,44 @@
 # Handover
 
-**Status (2026-09-06):** 104/105/106 re-briefed and requeued (104 in flight);
-seventeen new cards 107-123 authored from the wall-clock analysis and queued
-behind them. Queue order is instrumentation, network and stall guards,
-preserve, disjoint-landing auto-integrate (111), resume verb, pair-by-default
-(113, gated on 111), fire profiling, land-and-dispatch (115, gated on 111),
-four red-smoke repairs, MCP isolation, gate candidates (121, gated on 106),
-cwd-independence, credential-symlink check. Spend estimate ~115M tokens for
-the twenty stages (4.5M median per stage plus one p95 outlier). Analysis
-summary: a landed stage is ~20 min of agent time, the median gap between
-stages is 31-78 min, two-in-flight time is 4%, and 21 landings were hand-
-merged after "dev moved". `dev` pushed.
+**Status (2026-09-06):** Four stages landed (104, 105, 106, 107); the batch
+re-seated onto Claude alone after the Codex outage; card 124 (session-limit
+policy) queued first ahead of 108.
+
+## Recent activity (2026-09-06 — the outage, the re-seat, and card 124)
+
+- **Stages 104, 105, 106 and 107 landed.** 104's envelope-vs-handoff rename,
+  105's cost-smoke self-immunity, 106's contract-test-gate fix, and 107's
+  status line for an unloaded loop all merged clean this session.
+- **The Codex subscription closed at 10:31Z with every card in the 107-123
+  batch still carrying a Codex seat.** Cards 107-123 were re-seated onto
+  Claude alone (`24a6e6a`): high-effort cards (108, 111, 113) run Opus
+  worker / Sonnet verifier, the rest run Sonnet worker / Opus verifier, so
+  worker and verifier are never the same model. Fable 5.1 is kept out of
+  both seats because it authored all seventeen cards.
+- **Card 124 authored and queued ahead of 108** as the direct policy
+  response to Claude session windows burning faster than before: a
+  schedule-aware `window_reserve` (20% hold daytime, 0 inside 22:00-01:00),
+  the overnight stop implemented in the tick rather than an installed
+  LaunchAgent, and the daytime burn as an opt-in `drain.sh start
+  --ignore-reserve`. It deliberately breaks the batch's seat rule (Opus
+  verifies a high-effort card) because the failure it must not ship is a
+  guard that fails open silently — `window_reserve` has been at
+  `action: observe` doing exactly that.
+- **A 700,000,000-token / 12-hour drain was sized and scoped to autometta
+  alone** (expires 23:06 BST / 22:06 UTC). Sized from
+  `state/cost-log.jsonl`: `tokens_spent` was already 468.5M against a 600M
+  resting cap because `budget_ensure_window` only stamps the date when a
+  budget is healthy at a window boundary, so the counter carries across
+  windows. Per-stage median 6.1M, mean 11.6M, p95 48.4M over 74 stages.
+- **`memory/facts.jsonl` given a union merge driver** in `.gitattributes`
+  rather than hand-resolving stage 104's conflict — every landing appends a
+  verdict line, so any two landings that overlap in time conflict on it by
+  construction.
+- **113's PROPOSED-AMENDMENT recorded, not applied** — no acceptance
+  criterion was edited.
+- **In flight:** stage 124 is currently dispatched. This session's commit
+  to `dev` will cause its landing to park with "dev moved since dispatch";
+  run merge-awaiting for 124 after this handoff lands.
 
 ## Recent activity (2026-09-02 — the guard that acts instead of narrating)
 
@@ -128,6 +156,21 @@ enter (`907628a`).
 
 ## Open questions and known-bad, for the next agent
 
+- **Should `action: hold` park the loop until the provider window resets**
+  (hours, idling), or halt outright? Card 124 ships `hold`; the operator was
+  asked and has not answered.
+- **Card the missing queue-reorder verb?** `add-stage.sh` appends and there
+  is no reorder verb, so an urgent card requires hand-editing `state.yaml`.
+  Offered, not yet answered.
+- **Four improvements logged in `docs/runs/2026-09-06-day-watch.md` are not
+  yet cards:** widen `usage-limit.sh`'s reset regex to match Codex's "try
+  again at" as well as "resets" (it silently fell back to a flat one-hour
+  pause against a four-hour outage); make `budget.json`'s pause per-family,
+  since a pause one family earns currently blocks the other; allow the queue
+  to reorder to stages whose worker is the live family when one family is
+  paused; render the phat-controller context seed on this host
+  (`--print-seed` currently returns "the job has not been configured", so a
+  scheduled pass would dispatch with no mandate or prohibitions).
 - **Should the 80-column no-truncation guarantee in `tui-smoke` be relaxed**
   so the TUI can give run timing its own labelled row? The operator asked to
   see the time and it is currently appended to the budget row rather than
