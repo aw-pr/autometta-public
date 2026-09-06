@@ -5,7 +5,7 @@
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
 - **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** Claude Opus 5 <claude-opus-5@local>
+- **Verifier:** Codex GPT-5.6 Sol <codex-gpt-5-6-sol@local>
 - **Base branch:** dev
 - **Run branch:** autometta/124-a-daytime-run-leaves-the-operator-a-session
 - **Worker effort:** high
@@ -233,3 +233,13 @@ gains "at the reserve gate" after "fails open at both times", and criterion
 operator instead wants daytime dispatch to remain possible on a healthy
 reading, that is a different card: the stop would need to be scoped to runs
 that began overnight, which is state the tick does not currently keep.
+
+## Verifier seat, attempt 2 (2026-09-06)
+
+Attempt 1 was worked by Claude Sonnet 5 and verified by Claude Opus 5, which
+failed it correctly. Attempt 2 was worked by Claude Opus 5 directly from the
+orchestrator session, so the authored Opus verifying seat would have put the
+same model on both sides of the gate, which this batch's seat rule forbids.
+The seat moves to Codex, restoring the cross-family default now that the
+Codex window has reopened. It is not moved because attempt 1's verifier was
+wrong: it was right, and its criterion-3 finding is what attempt 2 fixes.
