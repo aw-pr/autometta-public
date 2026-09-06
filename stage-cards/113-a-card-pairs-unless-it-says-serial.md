@@ -172,3 +172,75 @@ a way a Codex verifier did not, so a wrong assumption the worker makes is
 likelier to survive verification. Two different Claude models recover part
 of that and not all of it. Read this card's acceptance criteria as needing
 more, not less, evidence than usual.
+
+## PROPOSED-AMENDMENT (2026-09-06, before first dispatch)
+
+Deliverable 2 and the part of acceptance criterion 2 that rests on it. The
+rest of the card stands; deliverables 1, 3, 4 and 5 are not in question, and
+deliverable 5's naming of the accepted risks is the right instinct.
+
+### The problem
+
+Deliverable 2 replaces the repo-wide `pairing_disabled_stage` latch with a
+per-stage `pairing_failures` counter, and refuses pairing "only for a stage
+that has failed while paired twice". Removing the latch is right. The
+replacement has three faults, and the first is the one that matters.
+
+**It counts the wrong event.** A stage that fails while paired usually fails
+for reasons that have nothing to do with pairing: a verifier FAIL on the
+merits, an agent death, a provider refusal. The card increments on bare
+failure, so "this stage failed" and "pairing broke this stage" become the
+same fact. In this repo that is not hypothetical. On the morning this card
+was queued, 104 was on its third attempt, 105 and 106 had each failed once,
+and 107's worker was killed mid-write by a provider quota. Under the rule as
+written, pairing would switch off for precisely the stages that get retried
+most, which is the latch again with a narrower blast radius and a slower
+fuse. Nothing in the deliverable asks the counter to record *why* it
+incremented, so the resulting refusal cannot be diagnosed from state.
+
+**Nothing resets it.** The latch being replaced cleared when the stage's
+re-brief landed. The deliverable is silent on clearing `pairing_failures`,
+so a stage re-briefed into a genuinely different implementation carries its
+pairing ban for the life of the run. That is a regression in recoverability
+against the latch, on the exact axis that caused the 2026-09-01 outage this
+card exists to fix.
+
+**Two is a threshold without an evidence base.** The card's own surfacing
+concern reports four pairings against 24 refusals in this repo's history.
+There is not enough history to say what a pairing-caused failure looks like,
+and a counter that trips at two on an undiscriminated signal trips on noise.
+
+### Proposed replacement for deliverable 2
+
+> 2. `scripts/tick.sh`: a member failure drops the *current* pair to serial
+>    (unchanged) but does not set `pairing_disabled_stage`. In its place a
+>    per-stage `pairing_failures` counter records only failures attributable
+>    to pairing — the tail failing to rebase onto the moved head, or a claim
+>    collision detected at reap. A verifier FAIL on the merits, an agent
+>    death, and a provider refusal each increment nothing, because none of
+>    them is evidence about pairing. Each increment records the attributed
+>    cause alongside the count, so a later refusal can be explained from
+>    state. The counter is cleared when a re-brief lands for that stage, as
+>    the latch it replaces was. Pairing is refused for a stage whose
+>    attributed count reaches two. Remove the latch and its refresh, or
+>    leave them reachable only via a manifest key
+>    `pipeline.latch_on_failure: true`.
+
+### Proposed addition to deliverable 4
+
+> A stage that fails while paired for a reason unrelated to pairing — take a
+> verifier FAIL — does not increment `pairing_failures`, and the next pair
+> including that stage still forms.
+
+### Proposed replacement for acceptance criterion 2
+
+> 2. In a fixture repo, after a paired member fails and is re-queued, the
+>    next eligible pair forms on the following tick without any hand edit;
+>    and a stage carrying one attributed pairing failure still pairs after
+>    its re-brief lands.
+
+### Why this is a proposal and not an edit
+
+Prohibition 1. The operator authorised this amendment in session on
+2026-09-06 after being shown the reasoning; the wording above is the
+controller's, and the decision to adopt it remains the author's.
