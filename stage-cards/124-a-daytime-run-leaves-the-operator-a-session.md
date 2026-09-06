@@ -5,7 +5,7 @@
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Opus 5 <claude-opus-5@local>
 - **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Verifier:** Codex GPT-5.6 Sol <codex-gpt-5-6-sol@local>
 - **Base branch:** dev
 - **Run branch:** autometta/124-a-daytime-run-leaves-the-operator-a-session
 - **Worker effort:** high
@@ -152,12 +152,18 @@ The verifier will check each of these. Failure of any one is a failure of the st
    reserve is 20 with action `hold`; at 23:00 and at 00:30 it is 0; at 01:30
    it is 20 again. The midnight crossing is one interval.
 3. With an injected clock at 01:30 and a schedule declared, a tick performs
-   no new dispatch and logs the reason. With a stage already in flight at
-   01:00, that stage still reaps and lands.
-4. A Claude window read at 85% utilisation against a 20% daytime reserve
-   holds the dispatch and pauses to the window reset; the same reading at
-   23:00 dispatches. A reading of `unknown` fails open at both times, as it
-   does today.
+   no new dispatch, whatever the quota reading says, and logs the reason.
+   With a stage already in flight at 01:00, that stage still reaps and
+   lands.
+4. **At the reserve gate**, which is the whole of what this criterion is
+   about: a Claude window read at 85% utilisation against a 20% daytime
+   reserve holds the dispatch and pauses to the window reset; the same
+   reading at 23:00 dispatches; a reading of `unknown` fails open at both
+   times, as it does today. The reserve is reached only when the clock has
+   already permitted the dispatch, so with a schedule declared a daytime
+   dispatch stops at criterion 3's gate before this one is consulted. That
+   is the intended order and is not a failure of this criterion: assert it
+   against the reserve gate directly.
 5. `drain.sh start --ignore-reserve` suspends the daytime hold for its
    duration and not after it; a `--hours` that would run past the overnight
    window's end is refused at `start`.
@@ -204,9 +210,23 @@ snapshot. That is the failure this card is most likely to ship.
 
 None
 
-## PROPOSED-AMENDMENT (attempt 2, 2026-09-06): acceptance 4 and the stop
+## AMENDMENT (attempt 2, 2026-09-06): acceptance 4 and the stop
 
-Recorded, not applied: no acceptance criterion above has been edited.
+**Accepted by the orchestrator on 2026-09-06 and applied above.** Criteria 3
+and 4 now read as this section proposed, with criterion 4's scoping widened
+from the fail-open sentence to the whole criterion: the verifier's finding
+hit the 85%-utilisation clause too, which through the role gate records no
+pause at all. The reasoning below is the reasoning for the applied wording.
+
+The alternative named at the end of this section -- scoping the stop to runs
+that began overnight, so a healthy daytime reading could still dispatch --
+is not taken here. It needs state the tick does not keep, and it trades a
+stop that binds for one that fails open in the daytime, which is the hole
+that failed attempt 1. The consequence to accept knowingly: **while a
+schedule is declared the daytime reserve is resolved but never consulted**,
+because the clock has already refused. Daytime running is then an explicit
+`drain.sh start --ignore-reserve`, which is deliverable 4's opt-in. A host
+that declares no schedule is unaffected and keeps today's reserve exactly.
 
 Attempt 1 was failed on criterion 3 because it shipped no stop -- the tick
 read no clock, and the only refusal was the pre-existing reserve. Attempt 2
@@ -234,7 +254,7 @@ operator instead wants daytime dispatch to remain possible on a healthy
 reading, that is a different card: the stop would need to be scoped to runs
 that began overnight, which is state the tick does not currently keep.
 
-## Verifier seat, attempt 2 (2026-09-06)
+## Verifier seat, attempts 2 and 3 (2026-09-06)
 
 Attempt 1 was worked by Claude Sonnet 5 and verified by Claude Opus 5, which
 failed it correctly. Attempt 2 was worked by Claude Opus 5 directly from the
@@ -246,8 +266,17 @@ and its criterion-3 finding is what attempt 2 fixes.
 It moved to Codex first, to restore the cross-family default once the Codex
 window reopened. That dispatch could not run: codex's local command runner
 failed to start on every attempt ("timed out negotiating with the code-mode
-host"), and the verifier correctly declined to write a verdict it had read no
-evidence for. The seat is therefore Claude Sonnet 5 -- a different model from
-the working seat, which is the binding rule, but same-family, so the
-judgement diversity a Codex seat would have given is not there. Read this
-stage's verdict knowing that.
+host"). That was diagnosed wrongly as a broken helper. It was a permission
+prompt: `codex exec` has no `--ask-for-approval` flag, so the operator's
+interactive `approval_policy = "on-request"` reached a headless dispatch and
+waited for an answer nobody was there to give. Every codex route now pins
+`approval_policy="never"` itself, asserted by
+`scripts/local-route-smoke.sh`. The seat therefore returns to Codex GPT-5.6
+Sol for attempt 3, restoring the cross-family judgement diversity attempt 2
+did not have.
+
+Attempt 2 was verified by Claude Sonnet 5 -- a different model from the
+working seat, which is the binding rule, but same-family. It passed six of
+seven criteria and failed criterion 4, correctly, on wording this card has
+now amended. Attempt 3 re-verifies the same tree against the amended
+criteria.
