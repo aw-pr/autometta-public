@@ -98,10 +98,7 @@ Do not read anything else unless you need to; keep your context lean.
 ## Contract test
 
 - **Test file:** `scripts/tick-cost-smoke.sh`
-- **Assertions digest:** frame the assertions in a
-  begin-marker/end-marker block naming this card,
-  with a real sha256. Stage 102 failed its gate for lacking exactly this, and
-  a prose digest is what let the gate pass without checking anything.
+- **Assertions digest:** `sha256:957f60be8ea37be5b1f7ad96b588a01cd3dbee1a9d857efb84d52eba3454de23`
 
 ## Out of scope
 

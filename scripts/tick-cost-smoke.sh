@@ -24,8 +24,7 @@ copy_harness() {
   mkdir -p "$destination"
   cp -R "$repo_root/scripts" "$repo_root/templates" "$repo_root/bin" "$destination/"
   if [[ "$version" == "pre-change" ]]; then
-    git -C "$repo_root" show HEAD:scripts/tick.sh > "$destination/scripts/tick.sh"
-    git -C "$repo_root" show HEAD:scripts/heartbeat.sh > "$destination/scripts/heartbeat.sh"
+    write_legacy_tick_fixture "$destination/scripts/tick.sh"
   fi
   cat > "$destination/scripts/check-installed-build.sh" <<'STUB'
 #!/usr/bin/env bash
@@ -35,6 +34,30 @@ sleep "${AUTOMETTA_TICK_COST_BUILD_CHECK_SLEEP:-1}"
 printf '{"status":"current","stale":false,"installed_sha":"fixture","checkout_sha":"fixture","checked_at":"2026-09-01T00:00:00Z"}\n'
 STUB
   chmod +x "$destination/scripts/check-installed-build.sh"
+}
+
+write_legacy_tick_fixture() {
+  local destination="$1"
+  cat > "$destination" <<'FIXTURE'
+#!/usr/bin/env bash
+# Frozen offline model of the pre-cache fleet tick. It deliberately performs
+# the controller-wide build check through every subscriber heartbeat.
+set -euo pipefail
+IFS=$'\n\t'
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+controller="${PHAT_CONTROLLER_HOME:?PHAT_CONTROLLER_HOME is required}"
+
+for subscriber in "$controller"/subscribers/*.yaml; do
+  repo_root="$(yq -r '.repo_path' "$subscriber")"
+  "$script_dir/heartbeat.sh" "$repo_root" >/dev/null
+  yq -i '.tick_count += 1' "$repo_root/state/state.yaml"
+  jq '.idle_ticks_used = ((.idle_ticks_used // 0) + 1)' "$repo_root/state/budget.json" \
+    > "$repo_root/state/budget.json.next"
+  mv "$repo_root/state/budget.json.next" "$repo_root/state/budget.json"
+done
+FIXTURE
+  chmod +x "$destination"
 }
 
 make_fleet() {
@@ -101,6 +124,7 @@ candidate_elapsed="$(timed_tick "$candidate_root" "$candidate_controller" candid
 legacy_checks="$(wc -c < "$fixture_root/legacy.count" | tr -d '[:space:]')"
 candidate_checks="$(wc -c < "$fixture_root/candidate.count" | tr -d '[:space:]')"
 
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/105-the-cost-smoke-survives-its-own-commit.md
 assert_eq "$legacy_checks" 6 "pre-change tick did not compute one build check per repo"
 assert_eq "$candidate_checks" 1 "candidate tick did not share the build check across the fleet"
 if within_budget "$legacy_elapsed" "$budget_seconds"; then
@@ -108,6 +132,7 @@ if within_budget "$legacy_elapsed" "$budget_seconds"; then
 fi
 within_budget "$candidate_elapsed" "$budget_seconds" \
   || fail "candidate tick exceeded the ${budget_seconds}s budget (${candidate_elapsed}s)"
+# AUTOMETTA-CONTRACT-END
 
 for n in 1 2 3 4 5 6; do
   repo="$candidate_controller/../candidate-repos/repo-$n"
