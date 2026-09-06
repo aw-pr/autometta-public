@@ -1,10 +1,16 @@
 # Handover
 
-**Status (2026-09-02):** Outlier detector now kills at 15x baseline (proven
-against four real processes); TUI stage-state and queue-position rework
-landed; the yq/jq dashboard bug is fixed and verified. Cards 105/106 queued;
-104 needs a third re-brief and 106 needs a design decision on gate
-self-verification. `dev` pushed.
+**Status (2026-09-06):** 104/105/106 re-briefed and requeued (104 in flight);
+seventeen new cards 107-123 authored from the wall-clock analysis and queued
+behind them. Queue order is instrumentation, network and stall guards,
+preserve, disjoint-landing auto-integrate (111), resume verb, pair-by-default
+(113, gated on 111), fire profiling, land-and-dispatch (115, gated on 111),
+four red-smoke repairs, MCP isolation, gate candidates (121, gated on 106),
+cwd-independence, credential-symlink check. Spend estimate ~115M tokens for
+the twenty stages (4.5M median per stage plus one p95 outlier). Analysis
+summary: a landed stage is ~20 min of agent time, the median gap between
+stages is 31-78 min, two-in-flight time is 4%, and 21 landings were hand-
+merged after "dev moved". `dev` pushed.
 
 ## Recent activity (2026-09-02 — the guard that acts instead of narrating)
 
