@@ -23,16 +23,22 @@ A tick is a single non-interactive invocation of `autometta tick`, which delegat
 1. Reads the current `state/state.yaml` of the repo it is operating on.
 2. Reads the current `state/budget.json` of the same repo.
 3. Checks the budget. If any of `token_cap_total`, `wall_clock_cap_seconds`, `clock_tick_cap`, or `consecutive_failure_cap` is exhausted, the tick writes a stall marker into `state.yaml` and exits without dispatching.
-4. Selects one queue transition to make. Normally this is serial: advance the
-   `current_stage`, or claim the next `pending` stage when none is in flight.
-   The one bounded exception is a declared pipeline pair: while verifier N is
-   live, the tick may dispatch worker N+1 and record both flights by stage id.
-   It never starts a third stage.
+4. Selects one queue transition per stage to make. Normally this is serial:
+   advance the `current_stage`, or claim the next `pending` stage when none is
+   in flight. When a verifier lands stage N, that stage is terminal and the
+   same fire may claim eligible stage N+1: nothing about N can be re-read by a
+   later fire. The one bounded exception is a declared pipeline pair: while
+   verifier N is live, the tick may dispatch worker N+1 and record both
+   flights by stage id. It never starts a third stage.
 5. Updates `state.yaml` and `budget.json` atomically. "Atomically" means: write to a temp file in the same directory, then `mv` into place. The `mv` is the atomicity primitive on POSIX filesystems given same-directory restraint.
 6. Snapshots the state update onto the `autometta/state` ref, using the per-agent author attribution from the global dev rules. It does this with git plumbing and never checks the branch out: see (j).
 7. Exits. The next tick is the next cron fire.
 
-A tick is one transition, not a loop within the tick. This is the "cron + tick > daemon" belief from `docs/philosophy.md`. The cron schedule defines the loop; the script is a one-shot.
+A tick makes one transition per stage, not two transitions on the same stage
+within a fire. This is the "cron + tick > daemon" belief from
+`docs/philosophy.md`: the cron schedule defines the loop and the script is a
+one-shot, while a terminal landing may release the next stage without a fire
+that can learn anything new about the landed one.
 
 ### Tick cost model
 

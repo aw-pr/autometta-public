@@ -2500,6 +2500,84 @@ consume_orphaned_verifier_artefacts() {
     | [.id, (.verifier_artefact // ""), (.verifier_pid // "")] | @tsv')
 }
 
+# Dispatch at most one eligible pending stage. This is shared by the ordinary
+# empty-queue path and the terminal landing path: one fire may advance two
+# different stages, but never makes two transitions on the same stage.
+PENDING_STAGE_FOUND=false
+dispatch_pending_stage_if_available() {
+  local repo_root="$1" state_yaml="$2" manifest_path="$3"
+  local next_stage
+  PENDING_STAGE_FOUND=false
+  # Selection steps over terminal stages and pending stages whose declared
+  # gate is not met. Neither case is a state transition or a failure.
+  next_stage="$(select_next_dispatchable_stage "$state_yaml")"
+  if [[ -z "$next_stage" ]]; then
+    return 0
+  fi
+
+  PENDING_STAGE_FOUND=true
+  if ! validate_stage_id "$next_stage"; then
+    log "rejecting malformed pending stage id ${next_stage} in ${repo_root}"
+    budget_halt "$repo_root" "invalid-stage-id"
+    return 1
+  fi
+  local card_path now_iso
+  card_path="$(stage_card_for_id "$repo_root" "$next_stage" "$manifest_path")"
+  if [[ -z "$card_path" ]]; then
+    log "stage card missing for ${next_stage} in ${repo_root}"
+  elif ! quota_gate_role_dispatch "$repo_root" "$state_yaml" "$next_stage" worker; then
+    log "not dispatching worker for ${next_stage}: provider-window reserve held"
+  elif ! budget_gate_dispatch "$repo_root" "worker dispatch for ${next_stage}"; then
+    # Refuse before any state is mutated and before a run worktree is cut,
+    # so a gated stage stays cleanly pending for the next window rather than
+    # being left in_progress with nothing running.
+    log "not dispatching worker for ${next_stage}: budget gate refused"
+  else
+    # Captured immediately after the gate passed: records which rule let
+    # this worker start, so its verifier can still land the stage later
+    # even if the clock has since crossed back into a protected window.
+    local next_stage_reserve_exempt=false
+    [[ "$QUOTA_GATE_RESOLVED_WINDOW" == "overnight" || "$QUOTA_GATE_RESOLVED_WINDOW" == "drain-ignore-reserve" ]] \
+      && next_stage_reserve_exempt=true
+    local base_branch work_dir dispatch_base_tip
+    base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
+    if [[ -z "$base_branch" ]]; then
+      log "could not resolve a base branch for ${next_stage} in ${repo_root}, stalling stage"
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "base_branch_unresolved"' \
+        --arg id "$next_stage"
+      budget_record_failure "$repo_root"
+    elif ! work_dir="$(ensure_run_worktree "$repo_root" "$next_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
+      log "could not cut a run worktree for ${next_stage} in ${repo_root} from ${base_branch}, stalling stage"
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "run_worktree_failed"' \
+        --arg id "$next_stage"
+      budget_record_failure "$repo_root"
+    else
+      dispatch_base_tip="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)"
+      if [[ -z "$dispatch_base_tip" ]]; then
+        log "could not record dispatch base tip for ${next_stage} in ${repo_root}, stalling stage"
+        state_apply_json "$state_yaml" \
+          '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "dispatch_base_tip_unresolved"' \
+          --arg id "$next_stage"
+        budget_record_failure "$repo_root"
+        return 0
+      fi
+      now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | (.stages[] | select(.id == $id)).base_branch = $base | (.stages[] | select(.id == $id)).dispatch_base_tip = $dispatch_base_tip | (.stages[] | select(.id == $id)).reserve_exempt = $exempt | .current_stage = $id' \
+        --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch" --arg dispatch_base_tip "$dispatch_base_tip" \
+        --argjson exempt "$next_stage_reserve_exempt"
+      local worker_spawn_rc=0
+      "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
+      if (( worker_spawn_rc != 0 )); then
+        halt_dispatch_configuration_fault "$repo_root" "$next_stage" worker
+        log "stage ${next_stage} halted: worker dispatch command failed before an agent started (dispatch-configuration-fault, exit ${worker_spawn_rc})"
+      fi
+    fi
+  fi
+}
+
 process_repo() {
   local repo_root="$1"
   local manifest_path="${2:-}"
@@ -2940,6 +3018,18 @@ _process_repo_locked() {
         return 0
       fi
       consume_verifier_artefact "$repo_root" "$state_yaml" "$current_stage" "$artefact" "$manifest_path"
+      # A completed stage is terminal for this fire. Its successor has not
+      # yet transitioned, so it may take the ordinary pending dispatch path
+      # now. FAIL and landing faults leave a non-completed status and return
+      # here for human review.
+      if [[ "$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
+        '.stages[] | select(.id == $id) | .status // empty')" == "completed" ]]; then
+        local landing_dispatch_rc=0
+        dispatch_pending_stage_if_available "$repo_root" "$state_yaml" "$manifest_path" || landing_dispatch_rc=$?
+        budget_increment_tick "$repo_root" work
+        commit_state_branch "$repo_root"
+        return "$landing_dispatch_rc"
+      fi
       budget_increment_tick "$repo_root" work
       commit_state_branch "$repo_root"
       return 0
@@ -3349,73 +3439,8 @@ _process_repo_locked() {
       budget_record_failure "$repo_root"
     fi
   else
-    local next_stage
-    # Selection steps over terminal stages and pending stages whose declared
-    # gate is not met. Neither case is a state transition or a failure.
-    next_stage="$(select_next_dispatchable_stage "$state_yaml")"
-    if [[ -n "$next_stage" ]]; then
-      tick_kind="work"
-      if ! validate_stage_id "$next_stage"; then
-        log "rejecting malformed pending stage id ${next_stage} in ${repo_root}"
-        budget_halt "$repo_root" "invalid-stage-id"
-        return 1
-      fi
-      local card_path now_iso
-      card_path="$(stage_card_for_id "$repo_root" "$next_stage" "$manifest_path")"
-      if [[ -z "$card_path" ]]; then
-        log "stage card missing for ${next_stage} in ${repo_root}"
-      elif ! quota_gate_role_dispatch "$repo_root" "$state_yaml" "$next_stage" worker; then
-        log "not dispatching worker for ${next_stage}: provider-window reserve held"
-      elif ! budget_gate_dispatch "$repo_root" "worker dispatch for ${next_stage}"; then
-        # Refuse before any state is mutated and before a run worktree is
-        # cut, so a gated stage stays cleanly pending for the next window
-        # rather than being left in_progress with nothing running.
-        log "not dispatching worker for ${next_stage}: budget gate refused"
-      else
-        # Captured immediately after the gate passed: records which rule let
-        # this worker start, so its verifier can still land the stage later
-        # even if the clock has since crossed back into a protected window.
-        local next_stage_reserve_exempt=false
-        [[ "$QUOTA_GATE_RESOLVED_WINDOW" == "overnight" || "$QUOTA_GATE_RESOLVED_WINDOW" == "drain-ignore-reserve" ]] \
-          && next_stage_reserve_exempt=true
-        local base_branch work_dir dispatch_base_tip
-        base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
-        if [[ -z "$base_branch" ]]; then
-          log "could not resolve a base branch for ${next_stage} in ${repo_root}, stalling stage"
-          state_apply_json "$state_yaml" \
-            '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "base_branch_unresolved"' \
-            --arg id "$next_stage"
-          budget_record_failure "$repo_root"
-        elif ! work_dir="$(ensure_run_worktree "$repo_root" "$next_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
-          log "could not cut a run worktree for ${next_stage} in ${repo_root} from ${base_branch}, stalling stage"
-          state_apply_json "$state_yaml" \
-            '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "run_worktree_failed"' \
-            --arg id "$next_stage"
-          budget_record_failure "$repo_root"
-        else
-          dispatch_base_tip="$(git -C "$work_dir" rev-parse HEAD 2>/dev/null || true)"
-          if [[ -z "$dispatch_base_tip" ]]; then
-            log "could not record dispatch base tip for ${next_stage} in ${repo_root}, stalling stage"
-            state_apply_json "$state_yaml" \
-              '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "dispatch_base_tip_unresolved"' \
-              --arg id "$next_stage"
-            budget_record_failure "$repo_root"
-            return 0
-          fi
-          now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          state_apply_json "$state_yaml" \
-            '(.stages[] | select(.id == $id)).status = "in_progress" | (.stages[] | select(.id == $id)).started_at = $now | (.stages[] | select(.id == $id)).base_branch = $base | (.stages[] | select(.id == $id)).dispatch_base_tip = $dispatch_base_tip | (.stages[] | select(.id == $id)).reserve_exempt = $exempt | .current_stage = $id' \
-            --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch" --arg dispatch_base_tip "$dispatch_base_tip" \
-            --argjson exempt "$next_stage_reserve_exempt"
-          local worker_spawn_rc=0
-          "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
-          if (( worker_spawn_rc != 0 )); then
-            halt_dispatch_configuration_fault "$repo_root" "$next_stage" worker
-            log "stage ${next_stage} halted: worker dispatch command failed before an agent started (dispatch-configuration-fault, exit ${worker_spawn_rc})"
-          fi
-        fi
-      fi
-    fi
+    dispatch_pending_stage_if_available "$repo_root" "$state_yaml" "$manifest_path"
+    [[ "$PENDING_STAGE_FOUND" == "true" ]] && tick_kind="work"
   fi
 
   budget_increment_tick "$repo_root" "$tick_kind"

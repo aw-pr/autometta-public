@@ -87,7 +87,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/landing-dispatch-smoke.sh
-- **Assertions digest:** frame the assertions in a block between the begin
+- **Assertions digest:** `sha256:5d02881896ba14887992a5706738572dfbcdbd44969741a753c66eafa8d81e8f`; frame the assertions in a block between the begin
   marker and the end marker, the begin marker naming this card by its
   `card=stage-cards/115-the-fire-that-lands-a-stage-starts-the-next.md` field, and replace this line's text with the real
   digest printed by `scripts/check-contract-test-gate.sh print scripts/landing-dispatch-smoke.sh`. Do not
