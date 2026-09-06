@@ -11,7 +11,7 @@
 - **Worker effort:** medium
 - **Verifier effort:** high
 - **Verifier panel:** false
-- **Path claims:** scripts/check-contract-test-gate.sh, scripts/gate-smoke.sh, docs/dispatch-contract.md
+- **Path claims:** scripts/check-contract-test-gate.sh, scripts/gate-smoke.sh, docs/dispatch-contract.md, stage-cards/106-the-gate-does-not-pass-what-it-cannot-check.md
 - **Pairing rationale:** cross-family. The Codex seat verifies because the
   observed evidence for this defect came from a Codex SDK verifier run
   (stage 102) and from two Codex verifier runs in emergence-lab that reported
@@ -24,8 +24,8 @@
 The gate answers the same question two ways, and they disagree.
 
 `cmd_print` (`scripts/check-contract-test-gate.sh:82-86`) is handed one file
-and calls `digest_block` on it. With no `AUTOMETTA-CONTRACT-BEGIN` marker
-present it exits 1: `no AUTOMETTA-CONTRACT-BEGIN marker found`. It fails
+and calls `digest_block` on it. With no the begin marker marker
+present it exits 1: `no the begin marker marker found`. It fails
 closed.
 
 `cmd_gate` (`:88-96`) walks the staged files and does:
@@ -111,8 +111,8 @@ Do not read anything else unless you need to; keep your context lean.
 ## Contract test
 
 - **Test file:** `scripts/gate-smoke.sh`
-- **Assertions digest:** frame the assertions in an
-  `AUTOMETTA-CONTRACT-BEGIN`/`AUTOMETTA-CONTRACT-END` block naming this card,
+- **Assertions digest:** frame the assertions in a
+  begin-marker/end-marker block naming this card,
   with a real sha256. This card is about the gate; it would be absurd for it
   to arrive with the same prose digest that is the defect.
 
@@ -144,3 +144,39 @@ confirm they agree. Judge criterion 5 by running the new smoke against the old
 gate yourself and watching it fail -- a smoke that passes against both is not
 a regression test, and that is the most likely way this card gets passed
 wrongly.
+
+## Re-brief 2026-09-06: the smoke must not spell the token it is testing
+
+Attempt 1 passed criteria 1 to 5 and is preserved at
+`a6078050d070e13125b3ff494acef9ca0c009dd6`
+(`wip/106-the-gate-does-not-pass-what-it-cannot-check-attempt-1`). Adopt it.
+It failed criterion 6 and the gate because `scripts/gate-smoke.sh` contains the
+begin token four times: the real block at `:353`, a fixture inside a quoted
+heredoc at `:435-437`, and a printf fixture at `:453-463`. `extract_block`
+(`check-contract-test-gate.sh:34-41`) counts every line holding the token
+regardless of quoting or position, so `print` and `gate` both reject the file
+as holding more than one block. That is the correct reading of the file, not a
+gate defect, so the fix is in the smoke.
+
+The decision, taken above the card after weighing the alternatives: **build
+the fixture tokens from the gate's own constants instead of spelling them.**
+
+- In section 4 of `gate-smoke.sh`, read the markers out of the gate script:
+  `mk_begin="$(sed -n "s/^MARKER_BEGIN='\(.*\)'/\1/p" "$gate_script")"` and
+  likewise `mk_end`. Rewrite the heredoc fixture and the printf fixture to
+  emit `"$mk_begin"` and `"$mk_end"` with `%s`. The literal token then appears
+  exactly once in the file, at the real block.
+- Do not exempt the file by name in `cmd_gate`: this card names it as its
+  contract test, so an exemption would make the gate skip the one file the
+  card requires it to check. Do not anchor `extract_block` to column zero
+  either; that changes the frozen-block definition for every existing test.
+- Record a real digest in this card's Assertions digest line from
+  `check-contract-test-gate.sh print scripts/gate-smoke.sh`. Path claims now
+  include the card. This card's prose has already been reworded so it no longer
+  spells the token; keep it that way.
+- Criterion 6 stands: the gate against the whole tree reports only genuine
+  violations, and the envelope lists them. The gate's own usage comment,
+  `docs/dispatch-contract.md`, the worker and verifier prompt templates and
+  `HANDOFF.md` all carry the token and will trip the whole-file grep at
+  `cmd_gate:132` if staged. That is a real pre-existing defect. Report it in
+  the envelope; do not fix it here, it needs its own card.
