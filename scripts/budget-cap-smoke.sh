@@ -362,7 +362,18 @@ cat > "$returned_dir/state/handoffs/97-returned-worker.json" <<'EOF'
 }
 EOF
 
-_process_repo_locked "$returned_dir" >/dev/null 2>&1
+# The tick refuses to spend a dispatch on a network it cannot resolve
+# (card 108), and this smoke is offline by construction. Answer the gate with
+# a resolver stub rather than stepping around it: the dispatch that section 8
+# asserts on has to pass through the same gate production does.
+resolver_stub="$(mktemp -d)"
+cat > "$resolver_stub/dig" <<'STUB'
+#!/bin/sh
+echo 160.79.104.10
+STUB
+chmod +x "$resolver_stub/dig"
+PATH="$resolver_stub:$PATH" _process_repo_locked "$returned_dir" >/dev/null 2>&1
+rm -rf "$resolver_stub"
 returned_status="$(yq -r '.stages[] | select(.id == "97-returned-worker") | .status' "$returned_dir/state/state.yaml")"
 returned_log="$PHAT_CONTROLLER_HOME/log/tick-$(date +%F).log"
 check "returned PASS worker is not stalled after twice its budget" "$(eq in_progress "$returned_status")"
