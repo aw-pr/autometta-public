@@ -229,6 +229,10 @@ main() {
     cloud_model="$(codex_cloud_model_for_identity "$worker_identity")"
   fi
 
+  # Non-interactive bash otherwise leaves background jobs in the tick's
+  # process group. Job control gives each worker wrapper its own group, led by
+  # the PID recorded below, while disown still protects it when the tick exits.
+  set -m
   case "$family" in
     codex)
       if [[ "$codex_mode" == "local" ]]; then

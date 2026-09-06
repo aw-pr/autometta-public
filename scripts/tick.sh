@@ -30,6 +30,83 @@ log() {
   printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$msg" | tee -a "$controller_log_dir/tick-$(date +%F).log" >&2
 }
 
+# Print the number of recent Claude API errors only when the newest transcript
+# for this worktree contains no tool call in the same window. Missing or
+# unreadable transcripts are neutral: they are not evidence of a stall.
+claude_api_error_stall_count() {
+  local work_dir="$1"
+  local window_min="${2:-10}"
+  local now_epoch="${3:-$(date -u +%s)}"
+  local projects_dir="${AUTOMETTA_CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+  local transcript_dir="$projects_dir/${work_dir//\//-}"
+  local transcript="" newest_mtime=-1 candidate mtime activity errors tools
+
+  [[ "$window_min" =~ ^[0-9]+$ ]] && (( window_min > 0 )) || window_min=10
+  [[ -d "$transcript_dir" ]] || { printf '0\n'; return 0; }
+
+  for candidate in "$transcript_dir"/*.jsonl; do
+    [[ -f "$candidate" ]] || continue
+    mtime="$(stat -f '%m' "$candidate" 2>/dev/null || stat -c '%Y' "$candidate" 2>/dev/null || printf '0')"
+    if (( mtime > newest_mtime )); then
+      newest_mtime="$mtime"
+      transcript="$candidate"
+    fi
+  done
+  [[ -n "$transcript" ]] || { printf '0\n'; return 0; }
+
+  activity="$(jq -nr --argjson cutoff "$((now_epoch - window_min * 60))" '
+    [inputs
+      | select(.timestamp? != null)
+      | select(((.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?) // 0) >= $cutoff)] as $recent
+    | [
+        ($recent | map(select(.type == "system" and .subtype == "api_error")) | length),
+        ($recent | map(select(.type == "assistant" and any(.message.content[]?; .type == "tool_use"))) | length)
+      ]
+    | @tsv
+  ' "$transcript" 2>/dev/null || true)"
+  [[ -n "$activity" ]] || { printf '0\n'; return 0; }
+  IFS=$'\t' read -r errors tools <<<"$activity"
+  if (( errors >= 5 && tools == 0 )); then
+    printf '%s\n' "$errors"
+  else
+    printf '0\n'
+  fi
+}
+
+# Terminate a recorded wrapper and every descendant. Descendants are captured
+# before TERM so reparenting cannot leave the agent itself behind. KILL is the
+# bounded fallback for anything still alive after the grace period.
+process_descendants_depth_first() {
+  local parent="$1" descendant
+  while IFS= read -r descendant; do
+    [[ -n "$descendant" ]] || continue
+    process_descendants_depth_first "$descendant"
+    printf '%s\n' "$descendant"
+  done < <(pgrep -P "$parent" 2>/dev/null || true)
+}
+
+terminate_process_tree() {
+  local root_pid="$1" child
+  local -a descendants targets alive
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 0
+
+  while IFS= read -r child; do
+    [[ -n "$child" ]] && descendants+=("$child")
+  done < <(process_descendants_depth_first "$root_pid")
+  targets=("${descendants[@]+"${descendants[@]}"}" "$root_pid")
+  kill -TERM "${targets[@]}" 2>/dev/null || true
+
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    alive=()
+    for child in "${targets[@]}"; do
+      kill -0 "$child" 2>/dev/null && alive+=("$child")
+    done
+    (( ${#alive[@]} == 0 )) && return 0
+    sleep 0.1
+  done
+  kill -KILL "${alive[@]}" 2>/dev/null || true
+}
+
 quota_log_tick_readings() {
   local family reading status summary
   for family in claude codex; do
@@ -394,6 +471,24 @@ worker_budget_seconds_from_card() {
     return 0
   fi
   log "warning: could not parse worker wall-clock budget from ${card_path}, defaulting to 600 seconds"
+  printf '600\n'
+}
+
+verifier_budget_seconds_from_card() {
+  local card_path="$1"
+  local budget_line value
+  budget_line="$(grep -A5 '^## Budget' "$card_path" | grep -E 'Verifier wall-clock' | head -n1 || true)"
+  if [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(seconds?|secs?|s)([^[:alpha:]]|$) ]]; then
+    value="${BASH_REMATCH[1]}"
+    printf '%s\n' "$value"
+    return 0
+  fi
+  if [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(minutes?|mins?|m)([^[:alpha:]]|$) ]]; then
+    value="${BASH_REMATCH[1]}"
+    printf '%s\n' "$((value * 60))"
+    return 0
+  fi
+  log "warning: could not parse verifier wall-clock budget from ${card_path}, defaulting to 600 seconds"
   printf '600\n'
 }
 
@@ -2735,6 +2830,31 @@ _process_repo_locked() {
       log "stage ${current_stage} has a completed worker envelope; skipping worker-clock stall check"
     fi
 
+    local worker_identity_for_stall worker_family_for_stall worker_work_dir_for_stall
+    local api_error_window_min api_error_count
+    worker_identity_for_stall="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
+      '.stages[] | select(.id == $id) | .worker // empty')"
+    worker_family_for_stall="$(costlog_family_for_identity "$worker_identity_for_stall")"
+    api_error_window_min="${AUTOMETTA_API_ERROR_WINDOW_MIN:-10}"
+    [[ "$api_error_window_min" =~ ^[0-9]+$ ]] && (( api_error_window_min > 0 )) || api_error_window_min=10
+    api_error_count=0
+    if [[ "$worker_returned" != "true" && "$worker_family_for_stall" == "claude" ]]; then
+      worker_work_dir_for_stall="$(worktree_path_for_stage "$repo_root" "$current_stage")"
+      api_error_count="$(claude_api_error_stall_count "$worker_work_dir_for_stall" "$api_error_window_min")"
+    fi
+    if (( api_error_count >= 5 )); then
+      [[ -z "${worker_pid:-}" ]] || terminate_process_tree "$worker_pid"
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
+        --arg id "$current_stage"
+      pipeline_after_member_failure "$state_yaml" "$current_stage"
+      budget_record_failure "$repo_root"
+      log "stage ${current_stage} stalled: ${api_error_count} api errors and no tool call in ${api_error_window_min} min"
+      budget_increment_tick "$repo_root" work
+      commit_state_branch "$repo_root"
+      return 0
+    fi
+
     if [[ -n "$started_at" && "$worker_returned" != "true" ]]; then
       local card_path budget_seconds grace_seconds stall_threshold started_epoch now_epoch elapsed wall_elapsed
       card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
@@ -2754,7 +2874,7 @@ _process_repo_locked() {
         )
         if (( elapsed > stall_threshold )); then
           if [[ -n "${worker_pid:-}" ]]; then
-            kill -TERM "$worker_pid" 2>/dev/null || true
+            terminate_process_tree "$worker_pid"
           fi
           state_apply_json "$state_yaml" \
             '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
@@ -2940,6 +3060,37 @@ _process_repo_locked() {
       fi
 
       if [[ -n "${verifier_pid:-}" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
+        local verifier_started_at verifier_budget_seconds verifier_grace_seconds
+        local verifier_threshold verifier_started_epoch verifier_now_epoch verifier_elapsed verifier_paused_elapsed
+        verifier_started_at="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
+          '.stages[] | select(.id == $id) | .verifier_started_at // empty')"
+        card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
+        if [[ -n "$card_path" && -n "$verifier_started_at" ]] \
+           && verifier_started_epoch="$(stage_started_epoch "$verifier_started_at" 2>/dev/null)"; then
+          verifier_budget_seconds="$(verifier_budget_seconds_from_card "$card_path")"
+          verifier_grace_seconds=$((verifier_budget_seconds / 2))
+          verifier_threshold=$((verifier_budget_seconds + verifier_grace_seconds))
+          verifier_now_epoch="$(date -u +%s)"
+          IFS=$'\t' read -r verifier_elapsed verifier_paused_elapsed < <(
+            stage_stall_elapsed_seconds "$repo_root" "$verifier_started_epoch" "$verifier_now_epoch"
+          )
+          if (( verifier_elapsed > verifier_threshold )); then
+            terminate_process_tree "$verifier_pid"
+            state_apply_json "$state_yaml" \
+              '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
+              --arg id "$current_stage"
+            pipeline_after_member_failure "$state_yaml" "$current_stage"
+            budget_record_failure "$repo_root"
+            if (( verifier_paused_elapsed > 0 )); then
+              log "verifier for stage ${current_stage} stalled after ${verifier_elapsed}s active (${verifier_paused_elapsed}s paused; budget ${verifier_budget_seconds}s + 50% grace), marked stalled"
+            else
+              log "verifier for stage ${current_stage} stalled after ${verifier_elapsed}s (budget ${verifier_budget_seconds}s + 50% grace), marked stalled"
+            fi
+            budget_increment_tick "$repo_root" work
+            commit_state_branch "$repo_root"
+            return 0
+          fi
+        fi
         pipeline_try_dispatch_tail "$repo_root" "$state_yaml" "$current_stage" "$manifest_path" || true
         log "verifier ${verifier_pid} for ${current_stage} still running, skipping verifier dispatch"
         budget_increment_tick "$repo_root" work

@@ -232,7 +232,9 @@ Total work per cron fire is bounded by `min(N_subscribers, max_per_fire)` where 
 
 The tick is the source of stall detection; workers do not self-report stalls.
 
-**Worker stall.** A stage in `in_progress` whose `last_tick_at` (or worker process start time, whichever is more recent) is older than the per-stage worker wall-clock budget plus a grace factor (default 1.5x) is considered stalled. The tick:
+**Worker stall.** A stage in `in_progress` whose `last_tick_at` (or worker process start time, whichever is more recent) is older than the per-stage worker wall-clock budget plus a grace factor (default 1.5x) is considered stalled. A Claude worker is also stalled when its newest worktree transcript contains at least five `system` rows with `subtype: api_error` in the last ten minutes and no assistant `tool_use` row in that window. Set `AUTOMETTA_API_ERROR_WINDOW_MIN` to change the window. A missing transcript is neutral, and Codex workers skip this check.
+
+The tick terminates the recorded worker wrapper and every descendant with TERM, waits for a short grace period, then sends KILL to any process still alive. Claude worker wrappers are started in their own process group as an additional lifecycle boundary. The tick then:
 
 1. Marks the stage as `stalled` in `state.yaml`.
 2. Writes a stall marker into `state/verifiers/<stage-id>.json` with `overall: STALLED`.
@@ -241,7 +243,7 @@ The tick is the source of stall detection; workers do not self-report stalls.
 
 The next tick respects `consecutive_failure_cap` and halts the loop if exceeded; otherwise the operator (human, on next session) decides whether to retry, re-brief, or abandon.
 
-**Verifier stall.** Same logic. A verifier process that has not written its output file within its declared budget plus grace is killed by the tick (the kill mechanism is `kill -TERM` on the PID recorded when the verifier was spawned; recorded in `state.yaml`).
+**Verifier stall.** The same wall-clock rule and process-tree termination apply. A verifier process that has not written its output file within its declared budget plus grace is terminated before the stage is marked stalled. The transcript API-error rule applies only to Claude workers.
 
 **Dispatch configuration fault.** A worker or verifier that exits within two seconds, writes no completion artefact, leaves only a tiny log (at most 512 bytes), and reports a recognised CLI usage, missing-executable, or auth-route error has not attempted its role. The tick marks the stage `stalled`, records `dispatch_configuration_fault:<role>` on the stage, and halts the repo with `dispatch-configuration-fault` so an operator fixes the command or credentials. For a verifier, the attempt reserved before spawn is returned. The halt prevents an uncounted fault from looping forever. A crash or genuine verification failure that does not satisfy the full conjunction retains its attempt and follows the existing retry cap of three.
 
