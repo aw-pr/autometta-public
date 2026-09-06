@@ -210,7 +210,9 @@ Every subscribed repo keeps its own runtime state under \`<repo>/state/\`:
   the start of every pass before anything is decided. Answer every one with
   \`inbox-reply\` or \`inbox-refuse\`; \`state/phat-controller-outbox/\` is
   where the reply goes, readable without attaching to any session.
-- \`state/verifiers/\` and \`state/handoffs/\`: the artefacts.
+- \`state/verifiers/\` and \`state/envelopes/\` (\`state/handoffs/\` for a
+  stale subscriber still vendoring a pre-card-104 worker prompt): the
+  artefacts.
 - \`state/logs/\`: dispatch logs.
 
 All of it is gitignored. A run worktree's \`state/\` is a symlink back at the

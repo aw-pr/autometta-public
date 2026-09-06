@@ -199,7 +199,7 @@ def parse_args() -> argparse.Namespace:
         "--worker-notes",
         default=None,
         help=(
-            "Notes from a handoff envelope whose status was partial, surfaced "
+            "Notes from a dispatch envelope whose status was partial, surfaced "
             "to the verifier as a checklist of the criteria the worker "
             "deferred. Goes in the per-stage variable block, never the "
             "cacheable static block, since it differs on every stage."
@@ -398,7 +398,7 @@ def build_variable_block(
     if worker_notes:
         partial_section = (
             "## Worker self-reported incomplete acceptance\n\n"
-            "The handoff envelope for this stage carried `status: partial`. That is "
+            "The dispatch envelope for this stage carried `status: partial`. That is "
             "the worker's annotation, not a verdict: acceptability is yours to decide. "
             "Treat the criteria it names as your checklist and verify each one "
             "yourself rather than inheriting the worker's judgement about them.\n\n"

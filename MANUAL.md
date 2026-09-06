@@ -83,10 +83,12 @@ Catches silent agent deaths in both manual and loop dispatches.
   block. `scripts/verify-sdk.py`, `scripts/sdk-cache-smoke.sh`,
   `schemas/verifier.json`, `scripts/validate-verifier-artefacts.sh`. Design:
   `docs/sdk-verifier.md`.
-- **Worker handoff envelope.** The worker's structured completion signal,
-  validated against `schemas/handoff-envelope.json` by
-  `scripts/validate-handoff-envelope.sh`, written to `state/handoffs/`. It is
-  the sole completion signal a worker emits. Design: `docs/handoff-envelope.md`.
+- **Worker dispatch envelope.** The worker's structured completion signal,
+  validated against `schemas/envelope.json` by
+  `scripts/validate-envelope.sh`, written to `state/envelopes/` (or, for a
+  subscriber still vendoring a pre-card-104 worker prompt, `state/handoffs/`).
+  It is the sole completion signal a worker emits. Design:
+  `docs/dispatch-envelope.md`.
 - **Dashboard.** A static HTML dashboard regenerated from subscriber state.
   `scripts/dashboard.sh`, `scripts/aggregate-dashboard.sh`. See
   `docs/dashboard.md`.
@@ -214,7 +216,7 @@ Each stage in `state/state.yaml` carries a `status`, one of:
 `pending`, `in_progress`, `completed`, `failed`, `stalled`, `verifier_failed`,
 `superseded`.
 
-On worker exit, the tick reads the handoff envelope and branches:
+On worker exit, the tick reads the dispatch envelope and branches:
 
 - envelope says pass: dispatch the verifier.
 - envelope says fail or partial: mark the stage failed.
@@ -560,7 +562,7 @@ For the dated session log and the current backlog, see `HANDOFF.md` and
 | Operator setup, cron, auth section 7 | `docs/setup.md` |
 | Observability model | `docs/observability.md` |
 | SDK verifier route + prompt caching | `docs/sdk-verifier.md` |
-| Worker handoff envelope | `docs/handoff-envelope.md` |
+| Worker dispatch envelope | `docs/dispatch-envelope.md` |
 | Dashboard | `docs/dashboard.md` |
 | Deployment, manifests, submodule escape hatch | `docs/deployment.md` |
 | Private/public branch model and gate | `docs/PUBLISH-WORKFLOW.md` |

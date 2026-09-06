@@ -84,7 +84,7 @@ next, and getting it wrong costs either a wasted dispatch or a lost night.
   substitution, a contract-test digest moved by tooling rather than by the
   worker's diff. Fix the harness condition if it is inside your reach, and
   say so. Retrying without fixing it produces the same artefact.
-- **Agent death.** The worker exited without writing a handoff envelope, or
+- **Agent death.** The worker exited without writing a dispatch envelope, or
   ran out of provider quota mid-write, so the tick marked the stage `stalled`
   with a `stall_marker` and left the run worktree standing. There is no
   verifier artefact and there is no verdict to read; the evidence is the

@@ -5,8 +5,9 @@ description: >-
   verifier FAIL, a killed/dead agent, a card re-brief, or a stale run
   worktree/branch left standing by a prior attempt. Use whenever a stage
   must run again and the previous attempt left anything behind — a run
-  worktree/branch, envelopes under state/handoffs/ or state/verifiers/, a
-  live agent, or a sticky halt in state/budget.json.
+  worktree/branch, envelopes under state/envelopes/ (or the legacy
+  state/handoffs/) or state/verifiers/, a live agent, or a sticky halt in
+  state/budget.json.
   Symptoms this fixes: "worker envelope status=pass, proceeding to verifier
   dispatch" immediately after a re-queue (verifier sent at unfixed code),
   and `git worktree add` refusing because a run worktree/branch from a
@@ -18,12 +19,14 @@ description: >-
 A tick trusts per-stage state on disk. Re-queuing by hand goes wrong in two
 specific ways:
 
-1. **Stale worker envelope.** `state/handoffs/<stage>.json` from the previous
-   round still says `status=pass`, so the next tick skips dispatching a
-   worker and sends the verifier straight at the old code. The verifier fails
-   again and the stage lands in `verifier_failed` — terminal until a human
-   intervenes. The envelope must be purged along with the verifier artefact,
-   both per-stage logs, and any `state/active-agents/` registration.
+1. **Stale worker envelope.** `state/envelopes/<stage>.json` (or, for a
+   subscriber still vendoring a pre-card-104 worker prompt, the legacy
+   `state/handoffs/<stage>.json`) from the previous round still says
+   `status=pass`, so the next tick skips dispatching a worker and sends the
+   verifier straight at the old code. The verifier fails again and the stage
+   lands in `verifier_failed` — terminal until a human intervenes. The
+   envelope must be purged along with the verifier artefact, both per-stage
+   logs, and any `state/active-agents/` registration.
 2. **A run worktree/branch left standing.** Under worktree-per-run dispatch
    (backported 2026-08-14; see `memory/adopters/emergence-viewer/
    feedback-worktree-dispatch-thinned-preflight.md`), a FAILed or stalled

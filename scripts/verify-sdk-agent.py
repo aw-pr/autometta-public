@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         "--worker-notes",
         default=None,
         help=(
-            "Notes from a handoff envelope whose status was partial, surfaced "
+            "Notes from a dispatch envelope whose status was partial, surfaced "
             "to the verifier as a checklist of the criteria the worker "
             "deferred."
         ),

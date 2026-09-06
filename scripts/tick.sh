@@ -480,6 +480,25 @@ halt_dispatch_configuration_fault() {
   budget_halt "$repo_root" "dispatch-configuration-fault"
 }
 
+# Resolve the worker's dispatch envelope path for a stage: the current
+# writer location (state/envelopes/<id>.json) if a file is there, else the
+# legacy state/handoffs/<id>.json a subscriber still vendoring the
+# pre-card-104 worker-prompt.md would have written, else the current
+# location by default (the case where neither exists yet). The new path
+# always wins when both are present -- see docs/dispatch-contract.md
+# (envelope migration) for why the old one is still read at all.
+worker_envelope_path() {
+  local repo_root="$1"
+  local stage_id="$2"
+  local new_path="$repo_root/state/envelopes/${stage_id}.json"
+  local old_path="$repo_root/state/handoffs/${stage_id}.json"
+  if [[ ! -f "$new_path" && -f "$old_path" ]]; then
+    printf '%s\n' "$old_path"
+  else
+    printf '%s\n' "$new_path"
+  fi
+}
+
 # A completion file can be absent because the agent omitted it, or because a
 # relative state/ path resolved into a private directory inside a damaged run
 # worktree. Only the latter is a dispatch fault. Return 0 when the fault was
@@ -499,7 +518,7 @@ handle_missing_completion_dispatch_fault() {
   if [[ "$role" == "verifier" ]]; then
     log "stage ${stage_id} dispatch fault: verifier artefact is missing while the run worktree state symlink is invalid; reserved attempt returned (dispatch-configuration-fault)"
   else
-    log "stage ${stage_id} dispatch fault: worker handoff envelope is missing while the run worktree state symlink is invalid (dispatch-configuration-fault)"
+    log "stage ${stage_id} dispatch fault: worker dispatch envelope is missing while the run worktree state symlink is invalid (dispatch-configuration-fault)"
   fi
   return 0
 }
@@ -712,7 +731,7 @@ stage_snapshot_tokens() {
 
 # Emit one worker cost-log line (docs/cost-log.md). Reads the worker
 # identity and start time from state.yaml, derives the role's result from the
-# handoff envelope (pass|fail|partial, else stalled), and estimates
+# dispatch envelope (pass|fail|partial, else stalled), and estimates
 # wall-clock as now - started_at at reap time. Non-fatal; the cost-log is
 # observability, never a gate.
 costlog_emit_worker() {
@@ -725,7 +744,7 @@ costlog_emit_worker() {
     '.stages[] | select(.id == $id) | .worker // empty')"
   [[ -n "$worker_identity" ]] || return 0
   worker_log="$repo_root/state/logs/${stage_id}-worker.log"
-  envelope="$repo_root/state/handoffs/${stage_id}.json"
+  envelope="$(worker_envelope_path "$repo_root" "$stage_id")"
   result="stalled"
   if [[ -f "$envelope" ]] && jq empty "$envelope" 2>/dev/null; then
     env_status="$(jq -r '.status // empty' "$envelope")"
@@ -1252,7 +1271,8 @@ state_snapshot_ref="refs/heads/autometta/state"
 #
 # What is captured: state/state.yaml, state/budget.json and, when a verifier
 # FAIL has spooled one, state/facts-pending.jsonl, plus whatever of
-# state/verifiers and state/handoffs the repo does not ignore. What is not:
+# state/verifiers, state/envelopes and state/handoffs the repo does not
+# ignore. What is not:
 # state/logs, state/cost-log.jsonl, state/active-agents, state/recent-agents
 # and state/heartbeat.json, all of which are either large, high-churn or
 # machine-local liveness.
@@ -1285,7 +1305,7 @@ commit_state_branch() {
         captured+=( "$p" )
       fi
     done
-    for p in state/verifiers state/handoffs; do
+    for p in state/verifiers state/envelopes state/handoffs; do
       if [[ -e "$p" ]] && git add -- "$p" >/dev/null 2>&1; then
         captured+=( "$p" )
       fi
@@ -1438,7 +1458,7 @@ ensure_run_worktree() {
   # `git worktree add` materialises those files, which makes state/ a real
   # directory, and so does any later checkout, restore, stash or clean the
   # worker happens to run. The symlink we create is then silently gone and the
-  # worker writes its handoff envelope into the worktree's own state/ instead
+  # worker writes its dispatch envelope into the worktree's own state/ instead
   # of the subscriber's shared one. tick.sh reads the shared one, finds
   # nothing, and scores a finished stage as stalled.
   #
@@ -1504,7 +1524,7 @@ teardown_run_worktree() {
 # The two trailing arguments are optional and default to the verifier-FAIL
 # case, so every existing caller is unchanged. They exist for the other way a
 # run worktree ends up holding stranded work: a stage that went `stalled`
-# because its worker exited without a handoff envelope, where there is no
+# because its worker exited without a dispatch envelope, where there is no
 # verifier artefact to read a reason out of and calling the preserved commit
 # a verifier FAIL would be untrue. scripts/phat-controller.sh passes
 # ("worker_envelope_missing_after_exit", "stalled"). The index-safe git
@@ -2705,7 +2725,8 @@ _process_repo_locked() {
     # A PASS or partial handoff means the worker has returned. Its wall clock
     # is no longer relevant, even where the controller has not yet consumed
     # the envelope because it is waiting to dispatch a verifier.
-    local completed_worker_envelope="$repo_root/state/handoffs/${current_stage}.json"
+    local completed_worker_envelope
+    completed_worker_envelope="$(worker_envelope_path "$repo_root" "$current_stage")"
     local worker_returned=false
     if [[ -f "$completed_worker_envelope" ]] \
        && { [[ -z "${worker_pid:-}" ]] || ! kill -0 "$worker_pid" 2>/dev/null; } \
@@ -2767,7 +2788,8 @@ _process_repo_locked() {
       # not double-count.
       if [[ -n "${worker_pid:-}" ]]; then
         local worker_log_path="$repo_root/state/logs/${current_stage}-worker.log"
-        local expected_worker_envelope="$repo_root/state/handoffs/${current_stage}.json"
+        local expected_worker_envelope
+        expected_worker_envelope="$(worker_envelope_path "$repo_root" "$current_stage")"
 
         if handle_missing_completion_dispatch_fault \
              "$repo_root" "$current_stage" worker "$expected_worker_envelope"; then
@@ -2780,11 +2802,11 @@ _process_repo_locked() {
         # it fresh, rather than counting a failure for work never done. The
         # run worktree is left standing to be reused.
         #
-        # Gated on the absence of a handoff envelope. A worker that finished
+        # Gated on the absence of a dispatch envelope. A worker that finished
         # its stage has written one, and a stage whose subject matter is rate
         # limiting would otherwise match the refusal pattern from its own
         # output, get rewound, and loop forever losing completed work.
-        if [[ ! -f "$repo_root/state/handoffs/${current_stage}.json" ]] \
+        if [[ ! -f "$expected_worker_envelope" ]] \
            && handle_limit_refusal "$repo_root" "$current_stage" worker "$worker_log_path"; then
           state_apply_json "$state_yaml" \
             '(.stages[] | select(.id == $id)).status = "pending"
@@ -2796,9 +2818,9 @@ _process_repo_locked() {
           return 0
         fi
 
-        if [[ ! -f "$repo_root/state/handoffs/${current_stage}.json" ]] \
+        if [[ ! -f "$expected_worker_envelope" ]] \
            && is_instant_dispatch_configuration_fault \
-                "$worker_log_path" "$started_at" "$repo_root/state/handoffs/${current_stage}.json"; then
+                "$worker_log_path" "$started_at" "$expected_worker_envelope"; then
           halt_dispatch_configuration_fault "$repo_root" "$current_stage" worker
           pipeline_after_member_failure "$state_yaml" "$current_stage"
           log "stage ${current_stage} halted: worker exited before starting because its dispatch configuration is invalid (dispatch-configuration-fault)"
@@ -2818,18 +2840,19 @@ _process_repo_locked() {
         stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$worker_log_path" "worker" \
           "$worker_work_dir_acct" "$worker_start_epoch" "$worker_family_acct"
         # Cost-log: the worker has exited and its log is final. Result is
-        # read from the handoff envelope inside the helper.
+        # read from the dispatch envelope inside the helper.
         costlog_emit_worker "$repo_root" "$state_yaml" "$current_stage" "$started_at"
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).worker_pid = null' \
           --arg id "$current_stage"
         worker_pid=""
 
-        # Envelope check (stage 17): the worker has exited. The handoff
-        # envelope at state/handoffs/<stage-id>.json is the sole completion
+        # Envelope check (stage 17): the worker has exited. The dispatch
+        # envelope, at state/envelopes/<stage-id>.json or the legacy
+        # state/handoffs/<stage-id>.json (card 104), is the sole completion
         # signal. Process exit alone is no longer sufficient to advance.
-        local envelope_path="$repo_root/state/handoffs/${current_stage}.json"
-        local invalid_path="$repo_root/state/handoffs/${current_stage}.invalid.json"
+        local envelope_path="$expected_worker_envelope"
+        local invalid_path="${envelope_path%.json}.invalid.json"
         if [[ ! -f "$envelope_path" ]]; then
           # Worker exited but wrote no envelope. Mark stalled.
           state_apply_json "$state_yaml" \
@@ -2839,7 +2862,7 @@ _process_repo_locked() {
             --arg id "$current_stage"
           pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
-          log "stage ${current_stage} stalled: worker exited but wrote no handoff envelope (worker_envelope_missing_after_exit)"
+          log "stage ${current_stage} stalled: worker exited but wrote no dispatch envelope (worker_envelope_missing_after_exit)"
           budget_increment_tick "$repo_root" work
           commit_state_branch "$repo_root"
           return 0
@@ -2871,7 +2894,7 @@ _process_repo_locked() {
             --arg id "$current_stage"
           pipeline_after_member_failure "$state_yaml" "$current_stage"
           budget_record_failure "$repo_root"
-          log "stage ${current_stage} stalled: handoff envelope failed schema validation (worker_envelope_invalid); moved to ${invalid_path}"
+          log "stage ${current_stage} stalled: dispatch envelope failed schema validation (worker_envelope_invalid); moved to ${invalid_path}"
           budget_increment_tick "$repo_root" work
           commit_state_branch "$repo_root"
           return 0
@@ -2899,7 +2922,7 @@ _process_repo_locked() {
         fi
 
         # partial: a worker-side annotation, not a verdict. The contract
-        # (docs/handoff-envelope.md) says partial means "substantially done,
+        # (docs/dispatch-envelope.md) says partial means "substantially done,
         # some criteria deferred" and that acceptability is the verifier's
         # call, not the worker's. Treating it as fail throws away a
         # verify-green build because the worker was honest about what its

@@ -4,10 +4,12 @@
 #
 # The tick trusts per-stage state on disk. Two traps make a hand re-queue
 # go wrong:
-#   1. A stale worker envelope in state/handoffs/<stage>.json still says
-#      status=pass, so the next tick skips the worker and dispatches the
-#      verifier straight at the old code, driving the stage toward the
-#      terminal verifier_failed state.
+#   1. A stale worker envelope in state/envelopes/<stage>.json (or, for a
+#      subscriber still vendoring a pre-card-104 worker prompt,
+#      state/handoffs/<stage>.json) still says status=pass, so the next
+#      tick skips the worker and dispatches the verifier straight at the
+#      old code, driving the stage toward the terminal verifier_failed
+#      state.
 #   2. A run worktree (../<repo>-run-<stage>) and branch (autometta/<stage>)
 #      left standing by a prior FAIL or stall would collide with the fresh
 #      one the next dispatch tries to cut.
@@ -137,7 +139,8 @@ for agent_file in "$repo_root"/state/active-agents/*.json; do
 done
 
 # Trap 1: purge every per-stage artefact the tick could misread as progress.
-rm -f "$repo_root/state/handoffs/$stage_id.json" \
+rm -f "$repo_root/state/envelopes/$stage_id.json" \
+      "$repo_root/state/handoffs/$stage_id.json" \
       "$repo_root/state/verifiers/$stage_id.json" \
       "$repo_root/state/logs/$stage_id-worker.log" \
       "$repo_root/state/logs/$stage_id-verifier.log"

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# One-shot validator for state/handoffs/*.json.
+# One-shot validator for state/envelopes/*.json (or the legacy state/handoffs/*.json path).
 # Exits 0 for valid envelopes, non-zero with a clear message for invalid ones.
-# Usage: scripts/validate-handoff-envelope.sh <path-to-envelope.json>
+# Usage: scripts/validate-envelope.sh <path-to-envelope.json>
 set -euo pipefail
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-schema="$repo_root/schemas/handoff-envelope.json"
+schema="$repo_root/schemas/envelope.json"
 
 usage() {
   printf 'Usage: %s <path-to-envelope.json>\n' "$0" >&2
@@ -18,24 +18,24 @@ usage() {
 envelope="$1"
 
 if [[ ! -f "$envelope" ]]; then
-  printf 'validate-handoff-envelope: file not found: %s\n' "$envelope" >&2
+  printf 'validate-envelope: file not found: %s\n' "$envelope" >&2
   exit 2
 fi
 
 if [[ ! -f "$schema" ]]; then
-  printf 'validate-handoff-envelope: schema not found: %s\n' "$schema" >&2
+  printf 'validate-envelope: schema not found: %s\n' "$schema" >&2
   exit 2
 fi
 
 # Require jq for JSON parsing.
 if ! command -v jq >/dev/null 2>&1; then
-  printf 'validate-handoff-envelope: jq is required but not installed\n' >&2
+  printf 'validate-envelope: jq is required but not installed\n' >&2
   exit 2
 fi
 
 # Parse the envelope.
 if ! jq empty "$envelope" 2>/dev/null; then
-  printf 'validate-handoff-envelope: %s is not valid JSON\n' "$envelope" >&2
+  printf 'validate-envelope: %s is not valid JSON\n' "$envelope" >&2
   exit 1
 fi
 
@@ -68,7 +68,7 @@ if [[ -z "$notes" ]]; then
 fi
 
 if (( ${#errors[@]} > 0 )); then
-  printf 'validate-handoff-envelope: %s\n' "${errors[@]}" >&2
+  printf 'validate-envelope: %s\n' "${errors[@]}" >&2
   exit 1
 fi
 

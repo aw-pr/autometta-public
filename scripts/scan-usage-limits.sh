@@ -50,7 +50,8 @@ while IFS= read -r log_path; do
   case "$log_name" in
     *-worker.log)
       stage_id="${log_name%-worker.log}"
-      completion_signal="$repo_root/state/handoffs/${stage_id}.json"
+      completion_signal="$repo_root/state/envelopes/${stage_id}.json"
+      [[ -f "$completion_signal" ]] || completion_signal="$repo_root/state/handoffs/${stage_id}.json"
       ;;
     *-verifier.log|*-verifier.attempt-*.log)
       stage_id="${log_name%%-verifier*}"

@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--worker-notes",
         default=None,
-        help="Notes from a partial worker handoff envelope, included in the per-stage prompt block.",
+        help="Notes from a partial worker dispatch envelope, included in the per-stage prompt block.",
     )
     parser.add_argument(
         "--model",
