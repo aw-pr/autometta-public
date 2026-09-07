@@ -2,6 +2,19 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# Each entry is a category shown to the operator and a path or filename to
+# reject. Keep this list together so credential-bearing locations remain easy
+# to audit without inspecting any candidate target.
+credential_symlink_patterns=(
+  "Codex configuration|$HOME/.codex"
+  "Codex API configuration|$HOME/.codex-api-only"
+  "Autometta configuration|$HOME/.config/autometta"
+  "1Password configuration|$HOME/.config/op"
+  "auth.json|auth.json"
+  ".credentials.json|.credentials.json"
+  "1Password reference script|op-refs*.sh"
+)
+
 status=0
 
 pass() {
@@ -69,6 +82,41 @@ if [[ -d "$autometta_root/templates" && -d "$autometta_root/scripts" && -x "$aut
 else
   missing "autometta-root" "run checks from a complete Autometta checkout or installed package"
 fi
+
+check_credential_symlinks() {
+  local link resolved entry category pattern
+  local found=0
+
+  while IFS= read -r -d '' link; do
+    resolved="$(readlink -f "$link" 2>/dev/null || true)"
+    [[ -n "$resolved" ]] || continue
+
+    for entry in "${credential_symlink_patterns[@]}"; do
+      category="${entry%%|*}"
+      pattern="${entry#*|}"
+      case "$pattern" in
+        /*)
+          [[ "$resolved" == "$pattern" || "$resolved" == "$pattern/"* ]] || continue
+          ;;
+        *)
+          [[ "${resolved##*/}" == $pattern ]] || continue
+          ;;
+      esac
+
+      printf 'MISSING credential-symlink %s points to %s\n' "${link#"$autometta_root"/}" "$category"
+      found=1
+      break
+    done
+  done < <(find "$autometta_root" -path "$autometta_root/.git" -prune -o -type l -print0)
+
+  if (( found )); then
+    status=1
+  else
+    pass "credential-symlinks" "no credential targets"
+  fi
+}
+
+check_credential_symlinks
 
 if command -v tmux >/dev/null 2>&1; then
   pass "tmux" "optional attach viewer"

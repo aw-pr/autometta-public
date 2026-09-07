@@ -5,6 +5,16 @@ carries a working set of vendor CLIs, Homebrew tools, one 1Password service
 account, and a handful of the operator's own scripts that live outside this
 tree entirely. None of that arrives with a fresh clone.
 
+## Credential symlinks
+
+`check-deps` refuses any symlink in the checkout that resolves into the Codex,
+Autometta, or 1Password configuration directories, or to `auth.json`,
+`.credentials.json`, or an `op-refs` script. It reports the link and the
+credential category only; it never reads the target. Keep local links to
+operator configuration under `~/.config/autometta/symlinked-config`, outside
+the checkout, rather than recreating the former `symlinked-config/` directory
+here.
+
 ## Discovery method
 
 Grep each file under `scripts/` and `bin/autometta` for `command -v`, for
