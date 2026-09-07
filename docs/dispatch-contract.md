@@ -197,6 +197,8 @@ The digest is a fingerprint of the exact assertion lines between the markers. Be
 
 `scripts/check-contract-test-gate.sh` is the mechanical enforcement. It runs in two places:
 
+Its candidate set is the union of test paths named by stage cards and staged `scripts/*-smoke.sh` files; every other staged path is skipped regardless of which marker text it contains.
+
 - **At verification (primary).** The verifier runs `check-contract-test-gate.sh` against the working tree as part of acceptance. For every staged contract test it recomputes the assertion-block digest and compares it to the digest declared in the matching card. A mismatch that was not re-recorded in the card in the same change is a FAIL.
 - **At commit (backstop).** The orchestrator can chain the same script into pre-commit alongside the publish-guard scan. Because the orchestrator is the only party that commits (step 7), a single mechanical check at commit time covers every stage that lands.
 

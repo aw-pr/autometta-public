@@ -353,13 +353,14 @@ drop_subscriber queue-empty
 
 printf '== 4. contract-test freeze gate: three states, not two ==\n' >&2
 
-# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/106-the-gate-does-not-pass-what-it-cannot-check.md
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/121-the-gate-checks-only-what-a-card-can-name.md
 gate_script="$script_dir/check-contract-test-gate.sh"
 mk_begin="$(sed -n "s/^MARKER_BEGIN='\(.*\)'/\1/p" "$gate_script")"
 mk_end="$(sed -n "s/^MARKER_END='\(.*\)'/\1/p" "$gate_script")"
 pre_fix_gate="$tmp_root/pre-fix-check-contract-test-gate.sh"
 if git -C "$repo_root_real" cat-file -e HEAD:scripts/check-contract-test-gate.sh 2>/dev/null; then
-  git -C "$repo_root_real" show HEAD:scripts/check-contract-test-gate.sh > "$pre_fix_gate"
+  gate_introduction="$(git -C "$repo_root_real" log --diff-filter=A --format=%H -- scripts/gate-smoke.sh | head -n1)"
+  git -C "$repo_root_real" show "${gate_introduction}^:scripts/check-contract-test-gate.sh" > "$pre_fix_gate"
 else
   cp "$gate_script" "$pre_fix_gate"
 fi
@@ -461,6 +462,65 @@ else
   drift_result=ok
 fi
 check "a changed frozen block without a moved digest still fails" "$drift_result"
+
+# Token-carrying documentation is outside the candidate set and must be
+# skipped. The old token-driven gate rejects the same staged content.
+docs_repo="$(make_gate_repo docs-token)"
+mkdir -p "$docs_repo/docs"
+printf '# Contract guide\n\nThe marker is `%s`.\n' "$mk_begin" > "$docs_repo/docs/dispatch-contract.md"
+( cd "$docs_repo" && git add docs/dispatch-contract.md )
+docs_out="$tmp_root/gate-docs-token.log"
+if ( cd "$docs_repo" && bash "$gate_script" ) >"$docs_out" 2>&1; then
+  docs_result=ok
+else
+  docs_result="exited non-zero: $(cat "$docs_out")"
+fi
+check "a staged docs file containing the token is skipped" "$docs_result"
+docs_pre_fix_out="$tmp_root/gate-docs-token-pre-fix.log"
+if ( cd "$docs_repo" && bash "$pre_fix_gate" ) >"$docs_pre_fix_out" 2>&1; then
+  docs_pre_fix_result="exited zero: $(cat "$docs_pre_fix_out")"
+else
+  docs_pre_fix_result=ok
+fi
+check "the pre-change gate rejects the same staged docs file" "$docs_pre_fix_result"
+
+template_repo="$(make_gate_repo template-token)"
+mkdir -p "$template_repo/templates"
+printf '# Worker prompt\n\nThe marker is `%s`.\n' "$mk_begin" > "$template_repo/templates/worker-prompt.md"
+( cd "$template_repo" && git add templates/worker-prompt.md )
+template_out="$tmp_root/gate-template-token.log"
+if ( cd "$template_repo" && bash "$gate_script" ) >"$template_out" 2>&1; then
+  template_result=ok
+else
+  template_result="exited non-zero: $(cat "$template_out")"
+fi
+check "a staged template containing the token is skipped" "$template_result"
+template_pre_fix_out="$tmp_root/gate-template-token-pre-fix.log"
+if ( cd "$template_repo" && bash "$pre_fix_gate" ) >"$template_pre_fix_out" 2>&1; then
+  template_pre_fix_result="exited zero: $(cat "$template_pre_fix_out")"
+else
+  template_pre_fix_result=ok
+fi
+check "the pre-change gate rejects the same staged template" "$template_pre_fix_result"
+
+# Smoke scripts are candidates even when no card names their path. A changed
+# block with a stale digest must still fail after narrowing the candidate set.
+smoke_repo="$(make_gate_repo bad-smoke)"
+cat > "$smoke_repo/stage-cards/52-example.md" <<'CARD'
+# Stage card 52
+## Contract test
+- **Assertions digest:** `sha256:deadbeef`
+CARD
+printf '#!/usr/bin/env bash\n# %s card=stage-cards/52-example.md\necho changed\n# %s\n' \
+  "$mk_begin" "$mk_end" > "$smoke_repo/scripts/example-smoke.sh"
+( cd "$smoke_repo" && git add -A )
+smoke_out="$tmp_root/gate-bad-smoke.log"
+if ( cd "$smoke_repo" && bash "$gate_script" ) >"$smoke_out" 2>&1; then
+  smoke_result="exited zero: $(cat "$smoke_out")"
+else
+  smoke_result=ok
+fi
+check "a staged smoke with a changed block and stale card digest still fails" "$smoke_result"
 # AUTOMETTA-CONTRACT-END
 
 if (( fail != 0 )); then

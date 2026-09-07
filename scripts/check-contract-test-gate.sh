@@ -79,7 +79,7 @@ test_file_declarations() {
       [ -f "$card" ] || continue
       staged_content "$card" \
         | awk '
-            /Test file:/ {
+            /^[[:space:]]*-[[:space:]]+\*\*Test file:\*\*/ {
               line = $0
               gsub(/[*`]/, "", line)
               sub(/^.*Test file:[[:space:]]*/, "", line)
@@ -129,6 +129,12 @@ cmd_gate() {
   while IFS= read -r f; do
     [ -n "$f" ] || continue
 
+    naming_card="$(printf '%s\n' "$declarations" | awk -F'\t' -v f="$f" '$1 == f { print $2; exit }')"
+    case "$f" in
+      scripts/*-smoke.sh) ;;
+      *) [ -n "$naming_card" ] || continue ;;
+    esac
+
     if staged_content "$f" | grep -q "$MARKER_BEGIN"; then
       card="$(staged_content "$f" | card_path_from_marker)"
       if [ -z "$card" ]; then
@@ -160,11 +166,12 @@ cmd_gate() {
     # card DOES name as its contract test is supposed to carry a frozen
     # block; its absence is a violation, not a skip -- that gap is the
     # fail-open defect this rewrite closes.
-    naming_card="$(printf '%s\n' "$declarations" | awk -F'\t' -v f="$f" '$1 == f { print $2; exit }')"
     if [ -n "$naming_card" ]; then
       warn "$f: no $MARKER_BEGIN marker found, but $naming_card names it as this stage's contract test"
-      violations=$((violations + 1))
+    else
+      warn "$f: no $MARKER_BEGIN marker found, but scripts/*-smoke.sh files are contract-test candidates"
     fi
+    violations=$((violations + 1))
   done <<EOF
 $staged
 EOF
