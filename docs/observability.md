@@ -70,6 +70,11 @@ the cursor remains confined to live agents.
 It polls the same
 `aggregate-dashboard.sh --repo` seam as the repo ticker every five seconds,
 but does so on a background thread so input remains responsive during a read.
+The footer clock and adjacent pulse advance once per second between those
+polls. They prove that the TUI renderer is alive, not that the tick loop is
+running or that its data is fresh. A still pulse means the TUI process itself
+is wedged; tick health remains visible through the dashboard's state and
+freshness readings.
 Card 74 replaced per-row process forks and repeated file scans in that seam,
 taking the measured per-repo read from 37 seconds to under one second; a
 five-second poll now represents a fresh snapshot rather than a queue of stale
