@@ -60,7 +60,11 @@ All files listed here must be created or modified. Paths are relative to repo ro
 
 The verifier will check each of these. Failure of any one is a failure of the stage.
 
-1. `scripts/state-branch-smoke.sh` passes on the run branch.
+1. `scripts/state-branch-smoke.sh` is no more red on the run branch than on
+   clean `dev`, and its new section-7 assertions pass. The absolute
+   "passes" this criterion used to demand is not reachable: section 8's
+   "a parked branch leaves the base checkout clean" already fails on clean
+   `dev` and is nothing to do with this card.
 2. Sections 1 to 6 and 8 of that smoke are unchanged in outcome.
 3. A hand-built worktree with a real `state/` directory containing a
    modified tracked file is left standing by `autometta reap` (or the
@@ -105,3 +109,39 @@ was sized for, the verifying seat moved to the free local route
 (`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
 afternoon and the card is back on the seats it was authored with. Nothing
 about the work changed across either move.
+
+## Re-brief (2026-09-07)
+
+Attempt 1 passed criteria 2 and 3 and the contract-test gate, and was failed
+on criterion 1 alone. The verifier was right and careful: the smoke exits 1
+from the run worktree on section 8's "a parked branch leaves the base
+checkout clean" at `:486-487`, every new section-7 assertion at `:420-423`
+passes, and baseline HEAD fails the same assertion.
+
+The card was what was wrong. Criterion 1 demanded the whole smoke pass,
+where every other card in this batch asks for "no more red than on clean
+`dev`". Confirmed by hand on clean `dev` and at `51a3a3a`, `46ae5b3` and
+`b7bff27`: it fails at all of them, so it predates this stage and predates
+stage 115's landing, which was my first suspicion and was wrong.
+
+Attempt 2 was not a fresh attempt and produced no new work. It failed
+because the orchestrator copied the main checkout's copy of this card into
+the run worktree, clobbering the digest the worker had recorded here with
+the placeholder text still sitting on `dev`. The card's Contract test
+section above is the worker's, restored from the preserved commit and
+untouched; only criterion 1 and this section have been edited.
+
+Attempt 1's work stands, preserved at
+`wip/116-the-reaper-does-not-forgive-a-real-state-directory-attempt-1`.
+Its envelope carries a root cause worth reading first: the fault was **not**
+the dirt pathspec, which already reads `[[ -L "$work_dir/state" ]]`
+correctly per card 29, but `ensure_run_worktree`'s skip-worktree bit.
+
+### Separate concern, not this card's to fix
+
+Section 8's failure may be sensitive to ambient repository state rather than
+to its own fixtures: probing it across commits in worktrees sharing one
+`.git` gave inconsistent results as live worktrees and branches changed. If
+so it cannot be trusted as a gate from a shared clone by anyone. Worth a
+card; do not chase it from here.
+
