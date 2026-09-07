@@ -386,6 +386,48 @@ check "the same edit makes the per-repo ticker alert on it" \
 check "the shipped definition is unchanged" \
   "$(eq '["failed","verifier_failed","stalled"]' "$("$script_dir/alert-statuses.sh")")"
 
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/117-the-tui-reads-the-alert-set-it-does-not-spell-it.md
+tui_alert_contract() {
+  python3 - "$1/lib/tui/render.py" <<'PY'
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("autometta_tui_render", sys.argv[1])
+renderer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(renderer)
+stages = [
+    {"id": "stalled-stage", "status": "stalled"},
+    {"id": "verifier-failed-stage", "status": "verifier_failed"},
+    {"id": "failed-stage", "status": "failed"},
+]
+state = renderer.TuiState()
+state.update({
+    "current_run": {"id": "run", "started_at": "2026-09-06T12:00:00Z", "stages": stages},
+    "stages": stages,
+    "_now": 1788696030,
+})
+frame = renderer.render(state, 119, 40).text()
+labels = {status: renderer.stage_state({}, {"status": status})[1]
+          for status in renderer.ALERT_STAGE_STATUSES}
+print(json.dumps({
+    "labels": labels,
+    "frame_has_labels": all(label in frame for label in ("STALLED", "V-FAILED", "FAILED")),
+}, sort_keys=True))
+PY
+}
+
+tui_contract="$(tui_alert_contract "$script_dir")"
+patched_tui_contract="$(tui_alert_contract "$patched")"
+check "the TUI keeps the three distinct alert labels" \
+  "$(eq '{"failed":"FAILED","stalled":"STALLED","verifier_failed":"V-FAILED"}' \
+    "$(printf '%s' "$tui_contract" | jq -cS '.labels')")"
+check "the TUI fixture shows all three alert labels" \
+  "$(eq true "$(printf '%s' "$tui_contract" | jq -r '.frame_has_labels')")"
+check "one definition also teaches the TUI a new alert status" \
+  "$(eq SUPERSEDED "$(printf '%s' "$patched_tui_contract" | jq -r '.labels.superseded')")"
+# AUTOMETTA-CONTRACT-END
+
 # ---------------------------------------------------------------------------
 printf '== 7. the operator procedure clears four alerts and leaves the rest standing ==\n' >&2
 

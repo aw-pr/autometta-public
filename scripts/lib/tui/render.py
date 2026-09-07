@@ -1,12 +1,40 @@
 #!/usr/bin/env python3
 """Pure payload-to-canvas rendering for the Autometta TUI."""
 import importlib.util
+import json
 import os
 import re
+import subprocess
 import time
 
 
 _LIB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _load_alert_stage_statuses():
+    script = os.path.join(os.path.dirname(_LIB_DIR), "alert-statuses.sh")
+    result = subprocess.run(
+        [script], check=True, capture_output=True, text=True)
+    statuses = json.loads(result.stdout)
+    if not isinstance(statuses, list) or not all(isinstance(item, str) for item in statuses):
+        raise ValueError("alert-statuses.sh did not return a JSON string array")
+    return frozenset(statuses)
+
+
+ALERT_STAGE_STATUSES = _load_alert_stage_statuses()
+
+
+def _alert_stage_label(status):
+    verifier_prefix = "verifier_"
+    prefix = "V-" if status.startswith(verifier_prefix) else ""
+    stem = status[len(verifier_prefix):] if prefix else status
+    return prefix + stem.replace("_", "-").upper()
+
+
+ALERT_STAGE_LABELS = {
+    status: _alert_stage_label(status)
+    for status in ALERT_STAGE_STATUSES
+}
 
 
 def _load(name, filename):
@@ -451,13 +479,12 @@ def stage_state(payload, stage):
         return "✔", "done", None
     if status == "pending":
         return "○", "queued", None
-    if status in ("stalled", "verifier_failed", "failed"):
+    if status in ALERT_STAGE_STATUSES:
         # One label for three outcomes said only "this needs you", which is the
         # part the ✖ already carries. Which of the three it is decides what to
         # do next: a stall is re-queued, a verifier failure is read and
         # re-briefed, a plain failure produced nothing to read.
-        return "✖", {"stalled": "STALLED", "verifier_failed": "V-FAILED",
-                     "failed": "FAILED"}[status], None
+        return "✖", ALERT_STAGE_LABELS[status], None
     if status == "superseded":
         return "○", "superseded", None
     role = (agent or {}).get("role") or "worker"
@@ -493,7 +520,7 @@ def escalation_rows(payload):
     if payload.get("halted"):
         rows.append(("HALTED", "halted", payload.get("halt_reason") or "budget"))
     for stage in current_run_stages(payload):
-        if stage.get("status") in ("stalled", "verifier_failed", "failed"):
+        if stage.get("status") in ALERT_STAGE_STATUSES:
             rows.append((stage.get("id") or "?", stage.get("status"), failure_reason(stage)))
     return rows
 
