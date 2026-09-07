@@ -5,7 +5,7 @@
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Fable 5.1 <claude-fable-5-1@local>
 - **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Opus 5 <claude-opus-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/122-the-verifier-scripts-do-not-depend-on-where-they-were-started
 - **Worker effort:** low
@@ -116,3 +116,22 @@ was sized for, the verifying seat moved to the free local route
 (`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
 afternoon and the card is back on the seats it was authored with. Nothing
 about the work changed across either move.
+
+## Seat change (2026-09-07): Codex weekly quota exhausted
+
+The verifier seat moved from Codex GPT-5.6 to Claude Opus 5 because the
+Codex weekly window reached 95% at 01:59 BST and resets at 09:43 BST. The
+operator's standing instruction was to swap to Claude rather than stall the
+run when Codex runs out.
+
+**This stage no longer has cross-family verification.** Its worker is Claude
+Sonnet 5 and its verifier is now Claude Opus 5: a different model, which is
+the binding seat rule, but the same family. Cross-family verification is a
+load-bearing belief in this repo, not a preference, and the judgement
+diversity it buys is not present here. Read this stage's verdict knowing
+that, and treat it as a candidate for re-verification on a Codex seat once
+the window resets if anything about it later looks wrong.
+
+Opus rather than Sonnet is deliberate: Sonnet 5 is the working seat, and the
+same model on both sides of the gate is not verification at all.
+
