@@ -68,7 +68,12 @@ All files listed here must be created or modified. Paths are relative to repo ro
 The verifier will check each of these. Failure of any one is a failure of the stage.
 
 1. `cd /tmp && python3 <root>/scripts/retro-grade-batch.py --dry-run` (or its
-   nearest no-op form) exits 0 and creates nothing under `/tmp`.
+   nearest no-op form) exits 0 and creates nothing **relative to the current
+   directory**. Its fixed `DRY_RUN_PAYLOAD` at `/tmp/retro-grade-batch.jsonl`
+   is the dry run's documented output, predates this card (`dev`
+   `scripts/retro-grade-batch.py:22`), and is an absolute path rather than a
+   cwd-dependent one, so it is not what this card is about and must not be
+   removed to satisfy this criterion.
 2. A verifier run from a subscriber worktree writes its registry under that
    subscriber's `state/active-agents/`, not under cwd.
 3. `scripts/cwd-independence-smoke.sh` passes and fails against the

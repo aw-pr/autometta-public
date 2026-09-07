@@ -127,3 +127,31 @@ report the conflict rather than choosing one. That is a contract decision.
 Exercise the refusal path yourself, on your own drifted block. The specific
 failure to look for is the fix that makes the gate loud in a way agents will
 learn to ignore: check that a clean ordinary commit is silent.
+
+## Re-brief (2026-09-07)
+
+Attempt 1 passed five of six criteria and the contract-test gate. The one
+failure is real, precise, and is the most useful finding of the batch so far.
+
+Criterion 3's detection holds only when the drifted contract test is an
+**already-tracked, modified** file. It does not hold for a **newly created**
+one -- which is what a dispatch actually leaves behind.
+`scripts/check-contract-test-gate.sh:137` selects the change set with
+`git diff --name-only --diff-filter=ACM`, which lists tracked working-tree
+modifications only and never lists an untracked path. The verifier proved it
+on this stage's own tree: `git status -s` shows `?? tests/contract-gate-smoke.sh`
+while `git diff --name-only` does not list it at all.
+
+So the gate, in the unstaged mode this card exists to give it, is blind to
+exactly the file a worker most often produces: a brand-new smoke. Fix the
+change-set selection so an untracked candidate is considered -- for example
+`git status --porcelain` or `git ls-files --others --exclude-standard`
+alongside the existing diff -- without pulling in every unrelated untracked
+file in the tree.
+
+Attempt 1's work stands and is preserved at
+`wip/129-a-bare-gate-invocation-inspects-nothing-attempt-1`; build on it.
+Criteria 1, 2, 4, 5 and 6 all passed, so this is a targeted fix, not a
+rewrite. Add a case to the smoke covering the untracked contract test, or
+criterion 3 will keep passing on the wrong shape.
+
