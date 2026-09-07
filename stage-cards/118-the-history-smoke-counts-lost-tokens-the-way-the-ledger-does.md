@@ -5,7 +5,7 @@
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Fable 5.1 <claude-fable-5-1@local>
 - **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Opus 5 <claude-opus-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/118-the-history-smoke-counts-lost-tokens-the-way-the-ledger-does
 - **Worker effort:** medium
@@ -74,13 +74,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/tui-history-smoke.sh
-- **Assertions digest:** frame the assertions in a block between the begin
-  marker and the end marker, the begin marker naming this card by its
-  `card=stage-cards/118-the-history-smoke-counts-lost-tokens-the-way-the-ledger-does.md` field, and replace this line's text with the real
-  digest printed by `scripts/check-contract-test-gate.sh print scripts/tui-history-smoke.sh`. Do not
-  write a `sha256:` comment inside the block, and do not spell the marker
-  tokens anywhere in this card's prose; the card is in your path claims for
-  exactly this edit.
+- **Assertions digest:** `sha256:feaca55eb94473042c1ada1afae5c1085a73c112c802844bd7a705914d5561f8`
 
 ## Out of scope
 
@@ -116,3 +110,37 @@ was sized for, the verifying seat moved to the free local route
 (`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
 afternoon and the card is back on the seats it was authored with. Nothing
 about the work changed across either move.
+
+## Seat change (2026-09-07): Codex weekly quota exhausted
+
+The verifier seat moved from Codex GPT-5.6 to Claude Opus 5 because the
+Codex weekly window reached 95% at 01:59 BST and resets at 09:43 BST. The
+operator's standing instruction was to swap to Claude rather than stall the
+run when Codex runs out.
+
+**This stage no longer has cross-family verification.** Its worker is Claude
+Sonnet 5 and its verifier is now Claude Opus 5: a different model, which is
+the binding seat rule, but the same family. Cross-family verification is a
+load-bearing belief in this repo, not a preference, and the judgement
+diversity it buys is not present here. Read this stage's verdict knowing
+that, and treat it as a candidate for re-verification on a Codex seat once
+the window resets if anything about it later looks wrong.
+
+Opus rather than Sonnet is deliberate: Sonnet 5 is the working seat, and the
+same model on both sides of the gate is not verification at all.
+
+## Digest recorded by the orchestrator (2026-09-07)
+
+The card was dispatched with the template's placeholder instruction where
+its Assertions digest belongs, so the contract-test gate would have
+auto-failed this stage for a card defect rather than anything about the
+work. The digest above is the recomputed value of the frozen block the
+worker wrote in `scripts/tui-history-smoke.sh`.
+
+Read that honestly: the block is **worker-authored**, which
+`docs/dispatch-contract.md:131` forbids -- the orchestrator writes the
+assertions so the oracle cannot be tautological. Recording the digest after
+the fact does not make it an independent oracle; it only stops a card defect
+masquerading as a verdict. Weigh the acceptance criteria and the diff above
+this test. Card 131 fixes the template that causes it.
+

@@ -70,6 +70,26 @@ for index, stage_id in enumerate(ids):
         },
     ))
 
+# A landed stage's own earlier failed attempt is not lost work -- the
+# ledger says it landed, so that spend bought something. This stage keeps
+# "pass" as its last dispatch either way; the interesting bit is the failed
+# worker attempt underneath, which the ledger-aware sum must drop and a
+# naive result-only sum would not.
+landed_after_fail = "05-history-echo"
+landed_index = ids.index(landed_after_fail)
+landed_base = today - datetime.timedelta(days=2 - landed_index // 4) \
+    + datetime.timedelta(hours=landed_index % 4 + 8)
+rows.append({
+    "ts": (landed_base - datetime.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "repo": "fixture-history", "stage_id": landed_after_fail, "role": "worker",
+    "identity": fable, "input_tokens": 20000, "cached_input_tokens": 0,
+    "output_tokens": 1000, "total_tokens": 21000, "usage_status": "recorded",
+    "cost_usd_est": 0.0, "result": "fail",
+})
+
+# The stage the smoke pins as its most recent card is a genuine, unlanded
+# failure: its ledger status below is deliberately not "completed", so its
+# spend stays lost rather than being laundered into LANDED.
 special = ids[-1]
 rows = [row for row in rows if row["stage_id"] != special]
 special_base = today + datetime.timedelta(hours=23)
@@ -96,7 +116,8 @@ with open(os.path.join(state_dir, "cost-log.jsonl"), "w", encoding="utf-8") as h
 with open(os.path.join(state_dir, "state.yaml"), "w", encoding="utf-8") as handle:
     handle.write("stages:\n")
     for stage_id in ids:
-        handle.write(f"  - id: {stage_id}\n    status: completed\n")
+        status = "verifier_failed" if stage_id == special else "completed"
+        handle.write(f"  - id: {stage_id}\n    status: {status}\n")
 
 subscriber = os.path.join(controller, "subscribers", "fixture-history.yaml")
 with open(subscriber, "w", encoding="utf-8") as handle:
@@ -106,8 +127,18 @@ PY
 payload="$(AUTOMETTA_HOME="$controller" "$script_dir/aggregate-dashboard.sh" --repo "$repo")" \
   || fail "history seam did not return a payload"
 
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/118-the-history-smoke-counts-lost-tokens-the-way-the-ledger-does.md
+# The ledger, not the cost log's result column, decides what counts as lost:
+# a stage the fixture's own state.yaml calls completed had its failed
+# attempts land, so they are excluded here exactly as the aggregator's
+# not_landed rule excludes them, computed independently of the aggregator.
+landed_ids="$(yq -o=json '[.stages[] | select(.status == "completed") | .id]' "$repo/state/state.yaml")"
 expected_count="$(jq -s '[.[].stage_id] | unique | length' "$cost_log")"
-expected_lost="$(jq -s '[.[] | select(.result != "pass") | .total_tokens] | add' "$cost_log")"
+expected_lost="$(jq -s --argjson landed "$landed_ids" '
+  [.[] | select(.result != "pass") |
+   select((.stage_id as $s | $landed | index($s)) == null) |
+   .total_tokens] | add // 0
+' "$cost_log")"
 expected_cost="$(jq -s '[.[].cost_usd_est] | add' "$cost_log")"
 jq -e --argjson count "$expected_count" --argjson lost "$expected_lost" --argjson cost "$expected_cost" '
   .history.summary.card_count == $count and
@@ -119,8 +150,10 @@ jq -e --argjson count "$expected_count" --argjson lost "$expected_lost" --argjso
   .history.cards[0].id == "12-history-card-identifier-is-deliberately-whole-at-every-width" and
   .history.cards[0].attempts == 3 and
   .history.cards[0].result == "FAIL" and
-  .history.cards[0].tokens_marked and .history.cards[0].lost_marked and .history.cards[0].cost_marked
+  .history.cards[0].tokens_marked and .history.cards[0].lost_marked and .history.cards[0].cost_marked and
+  (.history.cards[] | select(.id == "05-history-echo") | .result == "PASS" and .lost_tokens == 0)
 ' <<<"$payload" >/dev/null || fail "history seam disagreed with independent fixture arithmetic"
+# AUTOMETTA-CONTRACT-END
 
 capture() {
   local width="$1" height="$2" keys="${3:-}"
@@ -137,14 +170,14 @@ long_id='12-history-card-identifier-is-deliberately-whole-at-every-width'
 for frame in "$frame80" "$frame119" "$frame160"; do
   assert_contains "$frame" '[0]─History: fixture-history' "history title missing"
   assert_contains "$frame" '12 cards' "card count missing"
-  assert_contains "$frame" '85.0K? lost 7d' "marked seven-day lost total missing"
+  assert_contains "$frame" '85k? lost 7d' "marked seven-day lost total missing"
   assert_contains "$frame" '$28.10? cost 7d' "marked seven-day cost total missing"
   assert_contains "$frame" '? codex zero-output read: marked totals are undercounts' "zero-read note missing"
   assert_contains "$frame" "$long_id" "long history identifier was truncated or hidden"
   assert_contains "$frame" 'sol→fable' "worker-to-verifier aliases were truncated or hidden"
   assert_contains "$frame" 'FAIL' "failed history result missing"
   assert_contains "$frame" '3' "three-attempt count missing"
-  assert_contains "$frame" '85.0K?' "marked card total missing"
+  assert_contains "$frame" '85k?' "marked card total missing"
   assert_contains "$frame" '$4.90?' "marked card cost missing"
   assert_contains "$frame" 'spend 14d' "fortnight sparkline missing"
   assert_contains "$frame" 'by model: sol' "largest model share is not first"
@@ -180,7 +213,7 @@ for detail in "$detail119" "$detail160"; do
   assert_contains "$detail" 'worker' "history detail omitted worker dispatch"
   assert_contains "$detail" 'verifier' "history detail omitted verifier dispatch"
   assert_contains "$detail" 'ABORTED' "history detail omitted an intermediate attempt"
-  assert_contains "$detail" '55.0K?' "zero-output dispatch token figure was not marked"
+  assert_contains "$detail" '55k?' "zero-output dispatch token figure was not marked"
   assert_contains "$detail" '$4.00?' "zero-output dispatch cost was not marked"
 done
 
