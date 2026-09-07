@@ -67,6 +67,8 @@ The worker is dispatched headless. It reads the card, reads the named inputs, wr
 
 A worker cannot lift its own sandbox. This is the property the rest of the protocol relies on. A worker that could decide for itself whether acceptance has passed is a worker that can hallucinate green; a worker that cannot is a worker whose claim about its own work has to be checked from outside.
 
+A claude dispatch also does not inherit the operator's MCP servers. Left unconfigured, `claude` loads whatever user-level or project-level servers are configured on the dispatching machine: tool definitions swell every prompt's context, a child process starts per server per dispatch, and the worker gains access no card asked for. Card 120's surfacing incident was a worker whose only child process was an unrelated Obsidian vault MCP server. Every worker and verifier dispatch through `spawn-worker.sh` / `spawn-verifier.sh` therefore passes `--strict-mcp-config --mcp-config <file>`, where `<file>` defaults to an empty server list (`{"mcpServers":{}}`) written to the repo's `state/` scratch area, or to the path a repo names under `dispatch.claude.mcp_config` in `.autometta.local.yaml` when a stage genuinely needs a server. `--strict-mcp-config` makes that file authoritative rather than additive, so the operator's own configuration never merges in underneath it.
+
 ### Step 4: Acceptance command
 
 The verifier runs an acceptance command outside the worker's sandbox. The command is stated or directly implied by the card's acceptance criteria. For a docs-only stage this might be a set of structural checks (file exists, no forbidden string, round-trip fidelity); for a code stage it is the project's test command, the build command, or both.

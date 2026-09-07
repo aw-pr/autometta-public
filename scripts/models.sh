@@ -248,6 +248,40 @@ codex_state_argv_for_repo() {
   AUTOMETTA_CODEX_STATE_ARGV=(--add-dir "$state_dir")
 }
 
+# claude with no MCP configuration of its own loads the operator's user-level
+# servers: tool definitions in every prompt's context, a process per server
+# per dispatch, and access no card asked for. Card 120's surfacing incident
+# was a stage 75 worker whose only child process was an Obsidian vault MCP
+# server. Every claude dispatch therefore pins its own MCP config explicitly
+# rather than inheriting whatever the operator's machine happens to have
+# configured.
+#
+# Resolution order:
+#   1. dispatch.claude.mcp_config in <repo>/.autometta.local.yaml, used as-is.
+#   2. default: an empty server list, written to the repo's state/ scratch
+#      area (state/mcp-config-empty.json) and reused across dispatches.
+#
+# --strict-mcp-config makes --mcp-config authoritative rather than additive,
+# so the operator's project/user-level servers never merge in underneath it.
+claude_mcp_config_argv_for_repo() {
+  local repo_root="$1"
+  local manifest="$repo_root/.autometta.local.yaml"
+  local mcp_config=""
+  AUTOMETTA_CLAUDE_MCP_ARGV=()
+
+  if [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+    mcp_config="$(yq -r '.dispatch.claude.mcp_config // ""' "$manifest" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$mcp_config" ]]; then
+    mcp_config="$repo_root/state/mcp-config-empty.json"
+    mkdir -p "$repo_root/state"
+    printf '{"mcpServers":{}}\n' >"$mcp_config"
+  fi
+
+  AUTOMETTA_CLAUDE_MCP_ARGV=(--strict-mcp-config --mcp-config "$mcp_config")
+}
+
 # Codex's workspace-write sandbox denies network to every model-generated
 # shell command. That is the right default: a worker editing files has no
 # business reaching the internet, and the loopback denial is what stopped a

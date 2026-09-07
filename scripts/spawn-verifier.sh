@@ -557,6 +557,7 @@ main() {
     log_msg "verifier may write the agent home dir: card declares Requires agent home (${stage_id})"
   fi
   codex_state_argv_for_repo "$repo_root"
+  claude_mcp_config_argv_for_repo "$repo_root"
   log_path="$logs_dir/${stage_id}-verifier.log"
   artefact_path="state/verifiers/${stage_id}.json"
   local family_notes established_facts facts_section
@@ -842,7 +843,7 @@ main() {
         # JSON output + claude-token-log.sh restore the "Total tokens:"
         # line the budget parser needs; see spawn-worker.sh claude branch.
         # shellcheck disable=SC2086
-        ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+        ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"} --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       fi
       ;;
     *)
