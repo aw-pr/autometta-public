@@ -68,7 +68,12 @@ All files listed here must be created or modified. Paths are relative to repo ro
 The verifier will check each of these. Failure of any one is a failure of the stage.
 
 1. `cd /tmp && python3 <root>/scripts/retro-grade-batch.py --dry-run` (or its
-   nearest no-op form) exits 0 and creates nothing under `/tmp`.
+   nearest no-op form) exits 0 and creates nothing **relative to the current
+   directory**. Its fixed `DRY_RUN_PAYLOAD` at `/tmp/retro-grade-batch.jsonl`
+   is the dry run's documented output, predates this card (`dev`
+   `scripts/retro-grade-batch.py:22`), and is an absolute path rather than a
+   cwd-dependent one, so it is not what this card is about and must not be
+   removed to satisfy this criterion.
 2. A verifier run from a subscriber worktree writes its registry under that
    subscriber's `state/active-agents/`, not under cwd.
 3. `scripts/cwd-independence-smoke.sh` passes and fails against the
@@ -137,4 +142,27 @@ to Claude Opus 5 recorded in the section above never took effect: the batch
 halted on the token cap before this card was dispatched, so no verdict was
 ever taken on a same-family seat. Read the section above as history, not as
 a caveat on this stage's result.
+
+## Re-brief (2026-09-07)
+
+Attempt 1 passed criteria 2 and 3 and the contract-test gate, and failed on
+criterion 1 alone. The verifier was right and said so plainly: the stage
+"fails solely because criterion 1 literally prohibits the /tmp dry-run
+payload that the script intentionally writes".
+
+The card was wrong. `DRY_RUN_PAYLOAD` is defined on `dev` at
+`scripts/retro-grade-batch.py:22` and predates this stage; writing it is the
+documented purpose of `--dry-run`. It is also an absolute path, so it is not
+a cwd dependence and removing it would have been a regression dressed up as
+compliance. Criterion 1 now tests what this card is actually about.
+
+Attempt 1's work stands; only criterion 1 and this section changed. The
+Assertions digest above is the worker's own and is untouched.
+
+Note also that this stage carries `pairing_failures: 1` with cause
+`claim-collision`, recorded when it was the tail of a pair with 121. That
+collision was caused by the orchestrator committing a seat change to this
+card on `dev` while the worker held the run worktree -- gotcha 2, the
+card-sync race -- and not by anything about this stage or about pairing.
+Discount it accordingly.
 
