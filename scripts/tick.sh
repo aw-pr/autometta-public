@@ -584,6 +584,10 @@ print(int(dt.timestamp()))
 PY
 }
 
+# The log line that classified the most recent dispatch as a configuration
+# fault, so the halt can name the real cause instead of only its category.
+INSTANT_DISPATCH_FAULT_REASON=""
+
 # A dead dispatch with no completion artefact is a configuration fault only
 # when the remaining evidence agrees: it ended almost immediately, produced a
 # tiny log, and that log contains a CLI usage, executable, or auth-route error.
@@ -593,6 +597,7 @@ is_instant_dispatch_configuration_fault() {
   local log_path="$1"
   local started_at="$2"
   local completion_path="$3"
+  INSTANT_DISPATCH_FAULT_REASON=""
 
   [[ ! -e "$completion_path" && -f "$log_path" ]] || return 1
 
@@ -615,9 +620,18 @@ is_instant_dispatch_configuration_fault() {
   elapsed=$((log_epoch - started_epoch))
   (( elapsed >= 0 && elapsed <= 2 )) || return 1
 
-  grep -Eiq \
-    "unknown (option|argument)|unrecognized (option|argument)|unexpected argument|invalid (option|argument)|^usage:|command not found|no such file or directory|not logged in|auth-route resolver failed|op-fetch not on path|requires .*auth_mode" \
-    "$log_path"
+  # `failed to resolve` and `op exit N` are op-fetch's two shapes for a
+  # credential lookup that never reached 1Password. On 2026-09-03 a dead
+  # resolver produced `op-fetch: error: failed to resolve
+  # CLAUDE_CODE_OAUTH_TOKEN (op exit 1)` twice, and because neither shape was
+  # listed here each launch was charged to the failure cap as a worker stall
+  # rather than halting once with the real reason.
+  local matched
+  matched="$(grep -Eim1 \
+    "unknown (option|argument)|unrecognized (option|argument)|unexpected argument|invalid (option|argument)|^usage:|command not found|no such file or directory|not logged in|auth-route resolver failed|op-fetch not on path|requires .*auth_mode|failed to resolve|op exit [0-9]+" \
+    "$log_path")" || return 1
+  INSTANT_DISPATCH_FAULT_REASON="$(printf '%s' "$matched" | tr -d '\r' | cut -c1-200)"
+  return 0
 }
 
 halt_dispatch_configuration_fault() {
@@ -625,6 +639,7 @@ halt_dispatch_configuration_fault() {
   local stage_id="$2"
   local role="$3"
   local return_reserved_attempt="${4:-true}"
+  local detail="${5:-}"
   local state_yaml="$repo_root/state/state.yaml"
 
   if [[ "$role" == "verifier" ]]; then
@@ -650,7 +665,12 @@ halt_dispatch_configuration_fault() {
        | .current_stage = null' \
       --arg id "$stage_id" --arg role "$role"
   fi
-  budget_halt "$repo_root" "dispatch-configuration-fault"
+  # halt_reason carries the offending log line when one is known, so the
+  # operator reads the cause rather than the category; halt_reasons keeps the
+  # bare category so the space-split ledger stays a list of one token.
+  local halt_reason="dispatch-configuration-fault"
+  [[ -z "$detail" ]] || halt_reason="dispatch-configuration-fault: $detail"
+  budget_halt "$repo_root" "$halt_reason" "dispatch-configuration-fault"
 }
 
 # Resolve the worker's dispatch envelope path for a stage: the current
@@ -1111,6 +1131,41 @@ pipeline_tail_gate_met() {
   esac
 }
 
+# The reason the last network preflight refused, for the deferral log line.
+NETWORK_PREFLIGHT_REASON=""
+
+# Is the network worth spending a dispatch on? Every launch below resolves
+# 1Password for its credentials and then talks to a provider API, so a dead
+# resolver turns one outage into a queue of dispatches that die at launch or
+# retry a timeout until the wall clock cuts them (2026-09-03: 50 minutes of
+# one worker, two instant launch failures, a stale quota read).
+#
+# A refusal is a deferral, not a halt and not a failure: nothing about the
+# stage is wrong, so nothing about the stage changes and the next fire tries
+# again. The gate is unconditional -- a fixture that needs to get past it
+# supplies a resolver the preflight can satisfy, because a dispatch gate that
+# steps aside for a test is not a gate.
+network_preflight_ok() {
+  NETWORK_PREFLIGHT_REASON=""
+  local output rc=0
+  # A checker that is not installed is not evidence of a dead network, and
+  # refusing on its absence fails closed on the one condition this guard
+  # cannot actually observe. Any harness that assembles its own script_dir --
+  # scripts/landing-dispatch-smoke.sh does exactly that -- would otherwise
+  # find every dispatch silently deferred. A preflight that runs and reports
+  # a failure still defers, which is what stage 108 asks for.
+  if [[ ! -x "$script_dir/preflight-network.sh" ]]; then
+    return 0
+  fi
+  output="$("$script_dir/preflight-network.sh" 2>&1)" || rc=$?
+  if (( rc == 0 )); then
+    return 0
+  fi
+  NETWORK_PREFLIGHT_REASON="$(printf '%s\n' "$output" | head -n 1)"
+  [[ -n "$NETWORK_PREFLIGHT_REASON" ]] || NETWORK_PREFLIGHT_REASON="preflight exited ${rc}"
+  return 1
+}
+
 spawn_worker_for_stage() {
   local card_path="$1" repo_root="$2" work_dir="$3"
   "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
@@ -1270,6 +1325,10 @@ pipeline_try_dispatch_tail() {
     && tail_reserve_exempt=true
   if ! budget_gate_dispatch "$repo_root" "worker dispatch for ${tail_stage}"; then
     log "pipeline pair ${head_stage} + ${tail_stage} refused: budget gate refused"
+    return 1
+  fi
+  if ! network_preflight_ok; then
+    log "dispatch deferred: network preflight failed (${NETWORK_PREFLIGHT_REASON}); pipeline pair ${head_stage} + ${tail_stage} not formed"
     return 1
   fi
   base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
@@ -2748,6 +2807,12 @@ dispatch_pending_stage_if_available() {
     # so a gated stage stays cleanly pending for the next window rather than
     # being left in_progress with nothing running.
     log "not dispatching worker for ${next_stage}: budget gate refused"
+  elif ! network_preflight_ok; then
+    # Same position in the chain, and for the same reason: nothing is
+    # reserved, nothing is counted, and no worktree is cut. Ported here from
+    # stage 108, which was written against the inline dispatch block this
+    # function replaced.
+    log "dispatch deferred: network preflight failed (${NETWORK_PREFLIGHT_REASON}); worker for ${next_stage} stays pending"
   else
     # Captured immediately after the gate passed: records which rule let
     # this worker start, so its verifier can still land the stage later
@@ -3392,9 +3457,10 @@ _process_repo_locked() {
         if [[ ! -f "$expected_worker_envelope" ]] \
            && is_instant_dispatch_configuration_fault \
                 "$worker_log_path" "$started_at" "$expected_worker_envelope"; then
-          halt_dispatch_configuration_fault "$repo_root" "$current_stage" worker
+          halt_dispatch_configuration_fault "$repo_root" "$current_stage" worker true \
+            "$INSTANT_DISPATCH_FAULT_REASON"
           pipeline_after_member_failure "$state_yaml" "$current_stage"
-          log "stage ${current_stage} halted: worker exited before starting because its dispatch configuration is invalid (dispatch-configuration-fault)"
+          log "stage ${current_stage} halted: worker exited before starting because its dispatch configuration is invalid (dispatch-configuration-fault: ${INSTANT_DISPATCH_FAULT_REASON})"
           commit_state_branch "$repo_root"
           return 0
         fi
@@ -3582,9 +3648,10 @@ _process_repo_locked() {
         if is_instant_dispatch_configuration_fault \
              "$stale_verifier_log_path" "$stale_verifier_started_at" \
              "$repo_root/state/verifiers/${current_stage}.json"; then
-          halt_dispatch_configuration_fault "$repo_root" "$current_stage" verifier
+          halt_dispatch_configuration_fault "$repo_root" "$current_stage" verifier true \
+            "$INSTANT_DISPATCH_FAULT_REASON"
           pipeline_after_member_failure "$state_yaml" "$current_stage"
-          log "stage ${current_stage} halted: verifier exited before verification because its dispatch configuration is invalid; reserved attempt returned (dispatch-configuration-fault)"
+          log "stage ${current_stage} halted: verifier exited before verification because its dispatch configuration is invalid; reserved attempt returned (dispatch-configuration-fault: ${INSTANT_DISPATCH_FAULT_REASON})"
           commit_state_branch "$repo_root"
           return 0
         fi
@@ -3651,6 +3718,13 @@ _process_repo_locked() {
       fi
       if ! budget_gate_dispatch "$repo_root" "verifier dispatch for ${current_stage}"; then
         log "not dispatching verifier for ${current_stage}: budget gate refused"
+        commit_state_branch "$repo_root"
+        return 0
+      fi
+      # Last gate before the attempt is reserved: no attempt, no failure, no
+      # state movement, so the stage is dispatched unchanged next fire.
+      if ! network_preflight_ok; then
+        log "dispatch deferred: network preflight failed (${NETWORK_PREFLIGHT_REASON}); verifier for ${current_stage} stays pending"
         commit_state_branch "$repo_root"
         return 0
       fi
