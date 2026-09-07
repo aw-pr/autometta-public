@@ -53,6 +53,11 @@ autometta status
 - **The HTML dashboard** from `autometta dashboard --open` is the broad fleet and trend view when a browser is more useful than a terminal.
 - **The controller inbox** is the asynchronous instruction path when phat-controller should consider something on its next pass without an attached session; the TUI messages page is its operator-facing writer.
 
+The HTML dashboard renders both times in its header in the browser's local
+timezone, so its generation time and freshness clock can be compared directly.
+The aggregator still writes `generated_at` to `data.json` as a UTC ISO stamp;
+hover over the generation time in the header to see that full UTC value.
+
 The TUI has run, history and messages pages. On the run page the number row
 focuses a panel, matching the `[0]`-`[4]` labels the boxes carry; on the other
 two, where no numbered panels are drawn, it switches page as the footer's tab
