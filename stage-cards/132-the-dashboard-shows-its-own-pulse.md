@@ -108,6 +108,9 @@ The verifier will check each of these. Failure of any one is a failure of the st
 3. The token figure is byte-identical across those two frames: no reading
    changed without a payload.
 4. The pulse continues after `poll_failed`.
+4b. The footer's short/long hint variant is chosen against the room actually
+   left beside the clock, not against the full frame width, so no hint is
+   truncated at any width. Check 76-86 and 127-137 columns specifically.
 5. `scripts/tui-heartbeat-smoke.sh` passes, and fails against the
    pre-change `render.py`.
 6. `scripts/tui-smoke.sh`, `scripts/tui-history-smoke.sh` and
@@ -118,7 +121,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/tui-heartbeat-smoke.sh
-- **Assertions digest:** `sha256:eec2885d45ba0b2254b838995ec8a542135f304b4d366d23f875a22c0836bc6f`
+- **Assertions digest:** `sha256:adc8f60048854e026b999b4b5800d8cad1454b208502c76356f9ddb2a9d1d1f5`
 
 The file and its frozen block are **already written**, by the orchestrator,
 before any implementation exists. Do not author, extend or edit the block:
@@ -165,3 +168,44 @@ is card 103's failure re-introduced by the back door.
 ## Family-specific notes
 
 None
+
+## Re-brief (2026-09-07)
+
+Attempt 1 passed all seven acceptance criteria and the contract-test gate,
+and was failed on a **constraint** -- "do not widen the frame or push an
+existing column off it". The verifier did exactly what the handoff asked,
+read the rendered frame at several widths, and found this:
+
+`footer()` still chooses the long hint variant with
+`if len(text) > canvas.width`, but `put_footer` now truncates to
+`clock_x - 1`, i.e. `width - 11`, before writing the clock over the tail.
+Whenever the long variant fits the frame but not the room left beside the
+clock, the trailing hints are cut and the clock overwrites them. Measured:
+the run page loses `· O default viewer · q quit` at 127-137 columns, and the
+history/messages page loses `esc run page · q quit` at 76-86 columns --
+including at 80, this repo's own narrow assertion width. The code's own
+comment says the narrow fallback must still name a way off the page, and
+that hint is now the thing pushed off.
+
+The fix is one line: compute the fallback decision against `clock_x - 1`
+rather than `canvas.width`. Acceptance 4b is added for it. Everything else
+about attempt 1 stands; build on its preserved work rather than restarting.
+
+### Two orchestrator corrections, not the worker's fault
+
+1. **The frozen block's token assertion was vacuous.** Its fixture carried
+   no `current_run` and no agent row, so no token figure rendered and both
+   regex lists were empty -- criterion 3 was established by the verifier's
+   own rich-payload diff, not by my oracle. The fixture now renders a real
+   figure through `agents[].live_total_tokens` (which is what
+   `render.stage_total` reads) and the assertion fails loudly if no figure
+   appears at all, rather than passing on an empty frame. **The digest above
+   is updated accordingly**; the assertions themselves are unchanged in
+   intent.
+
+2. **Accepted, not fixed:** `update()` anchors drift to `observed_at`, which
+   `app.py` passes as the poll's `started_at`, so the clock overstates wall
+   time by however long the aggregator took before stamping `_now` --
+   sub-second since card 74, and it re-anchors on every payload. That is
+   within tolerance for a liveness indicator and is not worth a correction
+   pass. Do not change it under this card.

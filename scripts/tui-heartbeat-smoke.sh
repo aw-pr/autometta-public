@@ -27,14 +27,24 @@ WIDTH, HEIGHT = 120, 30
 def frame(state):
     return render.render(state, WIDTH, HEIGHT).text()
 
+# The payload must render a token figure, or the "tokens did not move"
+# assertion below is vacuously true against a frame that shows no number.
+# agents[].live_total_tokens is what the run row's token column reads
+# (render.stage_total), and current_run.started_at is required or
+# status_lines raises.
 payload = {
     "_now": 1_800_000_000,
-    "stages": [
-        {"id": "01-example", "status": "in_progress", "tokens": 1234567,
-         "worker": "Claude Sonnet 5 <claude-sonnet-5@local>",
-         "verifier": "Codex GPT-5.6 Sol <codex-gpt-5-6-sol@local>",
-         "started_at": "2026-09-07T12:00:00Z"},
-    ],
+    "agents": [{"stage_id": "01-example", "live_total_tokens": 1234567}],
+    "current_run": {
+        "id": "run-smoke",
+        "started_at": "2026-09-07T12:00:00Z",
+        "stages": [
+            {"id": "01-example", "status": "in_progress",
+             "worker": "Claude Sonnet 5 <claude-sonnet-5@local>",
+             "verifier": "Codex GPT-5.6 Sol <codex-gpt-5-6-sol@local>",
+             "started_at": "2026-09-07T12:00:00Z"},
+        ],
+    },
 }
 
 state = render.TuiState(5.0)
@@ -79,7 +89,11 @@ if not advanced:
 # does not invent a number it was not given, is not suspended by making the
 # display live.
 def token_figures(text):
-    return re.findall(r"\b1[,.]?234[,.]?567\b", text)
+    return re.findall(r"1,234k", text)
+if not token_figures(first):
+    raise SystemExit(
+        "132: no token figure rendered, so the no-invented-data assertion "
+        "would be vacuous; fix the fixture, not the assertion")
 if token_figures(first) != token_figures(second):
     raise SystemExit("132: the token figure changed between polls; the pulse invented data")
 
