@@ -6,7 +6,7 @@ The contract is family-agnostic. The same shape works for a Claude Code worker, 
 
 ## Contract version
 
-**Contract version: 2** (2026-08-24).
+**Contract version: 3** (2026-09-06).
 
 A change to the shape of the contract is a versioned decision, so the shape carries a number and a reason. Anything that alters what the roles owe each other, what a stage card must carry, or the set of states a stage can be in, bumps it. Wording, examples and typo fixes do not.
 
@@ -14,8 +14,12 @@ A change to the shape of the contract is a versioned decision, so the shape carr
 |---|---|---|
 | 1 | up to 2026-08-23 | The seven steps, contract tests, the pass-2 stage lifecycle with `pending, in_progress, completed, failed, stalled, verifier_failed`. Unnumbered at the time; recorded here as the shape everything before card 43 was written against. |
 | 2 | 2026-08-24 | Adds the terminal `superseded` stage status: a card an operator has decided should not run, which is not a failure. See [Stage statuses](#stage-statuses). |
+| 3 | 2026-09-06 | Requires every new card to declare path claims or explicit serial dispatch, and replaces the repository-wide pairing failure latch with per-stage attributed failure history. See [Pipeline pairing](#pipeline-pairing). |
 
 Version 2 is additive. A `state.yaml` written against version 1 validates and ticks identically under version 2; there is no migration step.
+
+Version 3 tightens queue-time validation for new cards. Historic queued cards
+without claims remain serial, and existing state needs no migration.
 
 ## Why a contract, and not a framework
 
@@ -45,6 +49,12 @@ The card path is the prompt. The worker is told one path; it reads that one file
 
 Before dispatch, the orchestrator runs `templates/orchestrator-checklist.md` against the card. Every item is a load-bearing check; skipping any one is the source of most failed stages.
 
+Every queued card must also state its scheduling choice. It either declares
+repo-relative `Path claims` and is eligible for pairing, or carries the exact
+line `- **Dispatch:** serial`. `add-stage.sh` refuses a new card that declares
+neither. Historic queued cards without claims remain serial and are not
+rewritten.
+
 ### Step 2: Worker prompt assembly
 
 The orchestrator assembles a worker prompt from `templates/worker-prompt.md`. The prompt names the stage card path, the worker tier, and any family-specific notes the worker needs (for example, that it should not write outside its sandbox).
@@ -68,6 +78,33 @@ The acceptance command runs in the verifier's environment, not the worker's. A v
 The verifier returns a structured report: which criteria passed, which failed, evidence for each. The report is consumed by the orchestrator; the verifier does not act on its own findings. A failing verifier report is the orchestrator's signal to re-brief, surface to the user, or abandon the stage, depending on the failure budget.
 
 Cross-family verification is the default. Worker in family A, verifier in family B. Two independent training distributions reduce the chance both will hallucinate the same green.
+
+### Pipeline pairing
+
+The autonomous loop may overlap one adjacent tail worker behind a live head
+verifier. Both cards must declare non-empty, disjoint path claims, their worker
+dispatch targets must satisfy the repo's `pipeline.pair_on` rule, and budget
+headroom must cover two p95 dispatches. It never widens the pipeline to three.
+
+Claims under `scripts/lib` keep a head serial. A `scripts/tick.sh` head may pair
+with a disjoint tail, including a docs-only or smoke-only card, but a tail
+claiming `scripts/tick.sh` or `scripts/lib` remains serial. `current_stage`
+stays the ordered landing head. The tail waits for the head, then passes through
+the actual-diff overlap check and rebase path before verification, so strict
+landing order does not change.
+
+A member failure drops only the current pair to serial and never latches
+pairing off for the repository. Only failures caused by pairing are counted:
+a claim collision discovered from the actual diffs, or a tail that cannot
+rebase onto the moved head. Their machine-readable causes are appended beside
+the per-stage `pairing_failures` count. Verifier FAILs on the merits, agent
+deaths and provider refusals do not increment it. One attributed failure is
+allowed, a count of two refuses that stage from another pair, and a landed
+re-brief clears both the count and its causes.
+
+Accepted risks: two dispatches may share a provider window when `pair_on` is
+`off`; budget headroom is checked at dispatch and tokens are accounted at reap,
+so a pair can overshoot the cap by up to two p95s.
 
 ### Step 6: Orchestrator integration
 

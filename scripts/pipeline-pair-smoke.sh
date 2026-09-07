@@ -242,9 +242,9 @@ refusal_smoke() {
     && fail "thin headroom formed a pair"
   assert_log 'is below two p95 dispatches'
 
-  new_fixture serial-only scripts/tick.sh tail.txt
+  new_fixture serial-only head.txt scripts/tick.sh
   pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
-    && fail "serial-only tick claim formed a pair"
+    && fail "serial-only tail tick claim formed a pair"
   assert_log 'tick.sh and scripts/lib claims are serial-only'
 
   new_fixture serial "" ""
@@ -271,8 +271,11 @@ head_fail_fast_forward_smoke() {
   _process_verifier_artefact "$fixture_repo" "$fixture_repo/state/state.yaml" \
     01-head state/verifiers/01-head.json ""
   pipeline_after_head_resolution "$fixture_repo/state/state.yaml" 01-head
-  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.pairing_disabled_reason')" \
-    active-pair-failure "head FAIL did not drop repo to serial"
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.pairing_disabled_stage // empty')" \
+    "" "head FAIL set the repo-wide serial latch"
+  assert_eq "$(state_json "$fixture_repo/state/state.yaml" \
+    | jq -r '.stages[] | select(.id == "01-head") | .pairing_failures // 0')" \
+    0 "head verifier FAIL was incorrectly attributed to pairing"
   stop_pid "$tail_pid"
   write_verdict "$fixture_repo" 02-tail PASS
   _process_verifier_artefact "$fixture_repo" "$fixture_repo/state/state.yaml" \
@@ -283,12 +286,6 @@ head_fail_fast_forward_smoke() {
   assert_eq "$(cat "$fixture_repo/head.txt" | tail -n1)" "base head" \
     "failed head moved the base branch"
   assert_log 'dropped to serial'
-  state_apply_json "$fixture_repo/state/state.yaml" \
-    '(.stages[] | select(.id == "01-head")).status = "completed"'
-  pipeline_pairing_disabled_refresh "$fixture_repo/state/state.yaml" \
-    && fail "completed re-brief did not release serial latch"
-  assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.pairing_disabled_stage // empty')" \
-    "" "serial latch remained after re-brief landing"
 }
 
 conflict_escalation_smoke() {

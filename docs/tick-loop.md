@@ -73,11 +73,12 @@ categories without changing wall time.
 
 ### Pipeline pairs
 
-Serial remains the default. Two adjacent stages become a pipeline pair only
-when both queued stage records have non-empty `path_claims`, the claimed paths
-are disjoint, their worker **dispatch targets** differ, and remaining token
-headroom covers twice the repo's p95 historical dispatch cost from
-`state/cost-log.jsonl`.
+Every new card must declare non-empty `path_claims` or opt out with
+`- **Dispatch:** serial`; `add-stage.sh` refuses an omitted choice. Existing
+queued records without claims remain serial and are not rewritten. Two adjacent
+claimed stages become a pipeline pair only when the claimed paths are disjoint,
+their worker **dispatch targets** differ, and remaining token headroom covers
+twice the repo's p95 historical dispatch cost from `state/cost-log.jsonl`.
 
 The dispatch target is the vendor family by default, so the rule reads exactly
 as it always did: two Codex workers do not pair, a Codex and a Claude worker
@@ -106,6 +107,13 @@ worker family, or thin headroom is logged as an explicit refusal. The ordinary
 provider-window and `budget_gate_dispatch` checks still guard the second worker
 spawn individually.
 
+The serial-only claim rule is asymmetric. A head claiming `scripts/lib` stays
+serial, while a head claiming `scripts/tick.sh` may take a disjoint tail,
+including a docs-only or smoke-only card. A tail claiming either
+`scripts/tick.sh` or `scripts/lib` stays serial. This keeps shared library
+changes out of a pair without blocking a tail that cannot touch the head's
+implementation.
+
 `current_stage` remains the ordered landing head. `pipeline_pair` records the
 head, tail, common pre-head base tip, phase, and whether the tail needs rebasing;
 each stage retains its own worker and verifier PIDs. Heartbeat and worktree
@@ -118,9 +126,18 @@ ordinary fast-forward path. If N passes, the tick compares the actual changed
 file names in N's landed commit with N+1's tracked and untracked work. A
 file-disjoint tail is stashed, reset onto the new base, and restored before its
 verifier runs. Any overlap or restore conflict halts with
-`controller-escalation`; the tick does not resolve a conflict. A FAIL or stall
-in either member latches pairing off for the repo until that stage's re-brief
-lands, while the remaining queue proceeds serially where safe.
+`controller-escalation`; the tick does not resolve a conflict. A failure in
+either member drops the current pair to serial but does not disable pairing for
+the repo. Only a claim collision found from the actual diffs or a tail rebase
+failure increments that stage's `pairing_failures`, and the attributed cause is
+appended to `pairing_failure_causes`. A verifier FAIL on the merits, agent death
+or provider refusal increments nothing. A stage with one attributed failure may
+pair again; a count of two refuses that stage, and a landed re-brief clears its
+count and causes. The remaining queue proceeds serially where safe.
+
+Accepted risks: two dispatches may share a provider window when `pair_on` is
+`off`; budget headroom is checked at dispatch and tokens are accounted at reap,
+so a pair can overshoot the cap by up to two p95s.
 
 ## (b) The state file `state.yaml`
 

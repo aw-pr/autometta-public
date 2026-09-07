@@ -124,6 +124,19 @@
             },
             "description": "Optional repo-relative file or directory claims parsed at queue time. Two adjacent claimed stages may pipeline only when these claims are disjoint."
           },
+          "pairing_failures": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Count of failures attributed to pairing for this stage. A stage is refused from further pairing when the count reaches 2."
+          },
+          "pairing_failure_causes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Machine-readable causes recorded alongside pairing_failures, in attribution order."
+          },
           "started_at": {
             "type": ["string", "null"],
             "format": "date-time",

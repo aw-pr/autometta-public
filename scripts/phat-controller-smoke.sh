@@ -786,6 +786,7 @@ cat > "$qc_card" <<'CARD'
 
 - **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
 - **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Dispatch:** serial
 CARD
 pc_queue_card "$rqc" "$qc_card" >/dev/null 2>&1 || fail "queue-card did not queue an existing card"
 assert_eq 87-queue-fixture "$(yq -r '.stages[0].id' "$rqc/state/state.yaml")" "the card was queued"

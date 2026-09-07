@@ -101,12 +101,24 @@ main() {
     exit 1
   fi
 
-  local stage_id worker_identity verifier_identity gate_type gate_stage_id gate_json path_claims_json path_claims_state_json exists_count run_id
+  local stage_id worker_identity verifier_identity gate_type gate_stage_id gate_json path_claims_json path_claims_state_json dispatch_line exists_count run_id
   stage_id="$(extract_stage_id "$stage_card_path")"
+  exists_count="$(STAGE_ID="$stage_id" yq -r '.stages | map(select(.id == strenv(STAGE_ID))) | length' "$state_path")"
+  if [[ "$exists_count" != "0" ]]; then
+    log_msg "exists: ${stage_id}"
+    exit 0
+  fi
   worker_identity="$(extract_identity "$stage_card_path" "Worker")"
   verifier_identity="$(extract_identity "$stage_card_path" "Verifier")"
   IFS=$'\t' read -r gate_type gate_stage_id < <(extract_gate "$stage_card_path")
   path_claims_json="$(extract_path_claims "$stage_card_path")"
+  if [[ "$(jq 'length' <<<"$path_claims_json")" == "0" ]]; then
+    dispatch_line="$(grep -m1 -E '^- \*\*Dispatch' "$stage_card_path" || true)"
+    if [[ "$dispatch_line" != '- **Dispatch:** serial' ]]; then
+      log_msg 'refusing card without a dispatch declaration: add "- **Path claims:** path/to/file" or "- **Dispatch:** serial"'
+      exit 1
+    fi
+  fi
   path_claims_state_json="$(jq -cn --argjson claims "$path_claims_json" \
     '$claims | if length > 0 then {path_claims:.} else {} end')"
   case "$gate_type" in
@@ -119,12 +131,6 @@ main() {
       ;;
     "") gate_json='{}' ;;
   esac
-
-  exists_count="$(STAGE_ID="$stage_id" yq -r '.stages | map(select(.id == strenv(STAGE_ID))) | length' "$state_path")"
-  if [[ "$exists_count" != "0" ]]; then
-    log_msg "exists: ${stage_id}"
-    exit 0
-  fi
 
   # A run remains current while any of its stages are pending or in progress.
   # Records from before run_id existed are historic and do not get backfilled.

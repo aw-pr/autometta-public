@@ -991,11 +991,25 @@ pipeline_claims_overlap() {
 }
 
 pipeline_claims_require_serial() {
-  local claims_json="$1"
-  jq -e -n --argjson claims "$claims_json" '
+  local claims_json="$1" pair_member="$2"
+  jq -e -n --argjson claims "$claims_json" --arg member "$pair_member" '
     any($claims[];
-      . == "scripts/tick.sh" or . == "scripts/lib" or startswith("scripts/lib/"))
+      . == "scripts/lib" or startswith("scripts/lib/")
+      or ($member == "tail" and . == "scripts/tick.sh"))
   ' >/dev/null
+}
+
+pipeline_record_pairing_failure() {
+  local state_yaml="$1" stage_id="$2" cause="$3" failures
+  state_apply_json "$state_yaml" '
+    (.stages[] | select(.id == $id)).pairing_failures
+      = (((.stages[] | select(.id == $id)).pairing_failures // 0) + 1)
+    | (.stages[] | select(.id == $id)).pairing_failure_causes
+      = (((.stages[] | select(.id == $id)).pairing_failure_causes // []) + [$cause])' \
+    --arg id "$stage_id" --arg cause "$cause"
+  failures="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+    '[.stages[] | select(.id == $id)][0].pairing_failures')"
+  log "pipeline pair member ${stage_id}: ${cause}; pairing_failures=${failures}"
 }
 
 pipeline_p95_tokens() {
@@ -1015,17 +1029,20 @@ pipeline_p95_tokens() {
 }
 
 pipeline_pairing_disabled_refresh() {
-  local state_yaml="$1" disabled_stage status
-  disabled_stage="$(state_json "$state_yaml" | jq -r '.pairing_disabled_stage // empty')"
-  [[ -n "$disabled_stage" ]] || return 1
-  status="$(state_json "$state_yaml" | jq -r --arg id "$disabled_stage" \
-    '[.stages[] | select(.id == $id)][0].status // empty')"
-  if [[ "$status" == "completed" ]]; then
-    state_apply_json "$state_yaml" 'del(.pairing_disabled_stage, .pairing_disabled_reason)'
-    log "pipeline pairing resumed after re-brief ${disabled_stage} landed"
-    return 1
-  fi
-  return 0
+  local state_yaml="$1" cleared
+  cleared="$(state_json "$state_yaml" | jq -r '
+    [.stages[]
+     | select(.status == "completed"
+              and ((.pairing_failures // 0) > 0
+                   or ((.pairing_failure_causes // []) | length) > 0))
+     | .id] | join(", ")')"
+  [[ -n "$cleared" ]] || return 1
+  state_apply_json "$state_yaml" '
+    (.stages[]
+     | select(.status == "completed"))
+     |= del(.pairing_failures, .pairing_failure_causes)'
+  log "pipeline pairing failure history cleared after re-brief landed: ${cleared}"
+  return 1
 }
 
 pipeline_adjacent_pending_stage() {
@@ -1125,7 +1142,8 @@ pipeline_pair_key() {
 
 pipeline_try_dispatch_tail() {
   local repo_root="$1" state_yaml="$2" head_stage="$3" manifest_path="$4"
-  local tail_stage head_claims tail_claims head_worker tail_worker head_family tail_family
+  local tail_stage head_claims tail_claims head_failures tail_failures head_causes tail_causes
+  local head_worker tail_worker head_family tail_family
 
   [[ "$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')" == "" ]] || return 1
   tail_stage="$(pipeline_adjacent_pending_stage "$state_yaml" "$head_stage")"
@@ -1137,7 +1155,23 @@ pipeline_try_dispatch_tail() {
 
   # No claims means serial by default and, deliberately, no pairing log.
   [[ "$(jq 'length' <<<"$head_claims")" != "0" && "$(jq 'length' <<<"$tail_claims")" != "0" ]] || return 1
-  pipeline_pairing_disabled_refresh "$state_yaml" && return 1
+  pipeline_pairing_disabled_refresh "$state_yaml" || true
+  head_failures="$(state_json "$state_yaml" | jq -r --arg id "$head_stage" \
+    '[.stages[] | select(.id == $id)][0].pairing_failures // 0')"
+  tail_failures="$(state_json "$state_yaml" | jq -r --arg id "$tail_stage" \
+    '[.stages[] | select(.id == $id)][0].pairing_failures // 0')"
+  if (( head_failures >= 2 )); then
+    head_causes="$(state_json "$state_yaml" | jq -r --arg id "$head_stage" \
+      '[.stages[] | select(.id == $id)][0].pairing_failure_causes // [] | join(",")')"
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: head ${head_stage} pairing_failures=${head_failures}, causes=${head_causes}"
+    return 1
+  fi
+  if (( tail_failures >= 2 )); then
+    tail_causes="$(state_json "$state_yaml" | jq -r --arg id "$tail_stage" \
+      '[.stages[] | select(.id == $id)][0].pairing_failure_causes // [] | join(",")')"
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: tail ${tail_stage} pairing_failures=${tail_failures}, causes=${tail_causes}"
+    return 1
+  fi
   if ! pipeline_tail_gate_met "$state_yaml" "$tail_stage"; then
     log "pipeline pair ${head_stage} + ${tail_stage} refused: tail dispatch gate is not met"
     return 1
@@ -1146,8 +1180,8 @@ pipeline_try_dispatch_tail() {
     log "pipeline pair ${head_stage} + ${tail_stage} refused: path claims overlap"
     return 1
   fi
-  if pipeline_claims_require_serial "$head_claims" \
-     || pipeline_claims_require_serial "$tail_claims"; then
+  if pipeline_claims_require_serial "$head_claims" head \
+     || pipeline_claims_require_serial "$tail_claims" tail; then
     log "pipeline pair ${head_stage} + ${tail_stage} refused: tick.sh and scripts/lib claims are serial-only"
     return 1
   fi
@@ -1232,8 +1266,6 @@ pipeline_try_dispatch_tail() {
     state_apply_json "$state_yaml" '
       (.stages[] | select(.id == $id)).status = "stalled"
       | (.stages[] | select(.id == $id)).stall_marker = "dispatch_configuration_fault:worker"
-      | .pairing_disabled_stage = $id
-      | .pairing_disabled_reason = "pipeline-tail-dispatch-fault"
       | del(.pipeline_pair)' --arg id "$tail_stage"
     budget_halt "$repo_root" "dispatch-configuration-fault"
     log "pipeline pair ${head_stage} + ${tail_stage} dropped to serial: tail worker dispatch failed"
@@ -1263,20 +1295,19 @@ pipeline_after_head_resolution() {
     state_apply_json "$state_yaml" '
       .pipeline_pair.phase = "head-failed"
       | .pipeline_pair.rebase_required = false
-      | .pairing_disabled_stage = $head
-      | .pairing_disabled_reason = "active-pair-failure"
-      | .current_stage = $tail' --arg head "$head_stage" --arg tail "$tail_stage"
+      | .current_stage = $tail' --arg tail "$tail_stage"
     log "pipeline pair ${head_stage} + ${tail_stage} dropped to serial after ${head_status}; ${tail_stage} will use plain fast-forward"
   fi
 }
 
 pipeline_escalate_tail() {
-  local repo_root="$1" state_yaml="$2" tail_stage="$3" reason="$4"
+  local repo_root="$1" state_yaml="$2" tail_stage="$3" reason="$4" pairing_cause="${5:-}"
+  if [[ -n "$pairing_cause" ]]; then
+    pipeline_record_pairing_failure "$state_yaml" "$tail_stage" "$pairing_cause"
+  fi
   state_apply_json "$state_yaml" '
     (.stages[] | select(.id == $tail)).status = "stalled"
     | (.stages[] | select(.id == $tail)).stall_marker = $reason
-    | .pairing_disabled_stage = $tail
-    | .pairing_disabled_reason = $reason
     | .pipeline_pair.phase = "controller-escalation"
     | .current_stage = null' --arg tail "$tail_stage" --arg reason "$reason"
   budget_halt "$repo_root" "controller-escalation"
@@ -1366,7 +1397,8 @@ pipeline_prepare_tail_rebase() {
                     . ':(exclude)state' 2>/dev/null; } | sort -u)"
   overlap="$(file_path_overlap "$head_paths" "$tail_paths")"
   if [[ -n "$overlap" ]]; then
-    pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" "pipeline-actual-diff-overlap:${overlap}"
+    pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" \
+      "pipeline-actual-diff-overlap:${overlap}" "claim-collision"
     return 1
   fi
 
@@ -1388,7 +1420,8 @@ pipeline_prepare_tail_rebase() {
     if [[ -n "$stash_sha" ]]; then
       git -C "$work_dir" stash apply --index "$stash_sha" >/dev/null 2>&1 || true
     fi
-    pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" "pipeline-rebase-conflict"
+    pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" \
+      "pipeline-rebase-conflict" "tail-rebase-failed"
     return 1
   fi
 
@@ -1409,10 +1442,7 @@ pipeline_after_tail_resolution() {
   tail_status="$(state_json "$state_yaml" | jq -r --arg id "$tail_stage" \
     '[.stages[] | select(.id == $id)][0].status // empty')"
   if [[ "$tail_status" != "completed" ]]; then
-    state_apply_json "$state_yaml" '
-      .pairing_disabled_stage = $tail
-      | .pairing_disabled_reason = "active-pair-failure"' --arg tail "$tail_stage"
-    log "pipeline pair tail ${tail_stage} failed; repo dropped to serial until its re-brief lands"
+    log "pipeline pair tail ${tail_stage} failed; current pair dropped to serial"
   fi
   state_apply_json "$state_yaml" 'del(.pipeline_pair)'
 }
@@ -2526,6 +2556,7 @@ _process_verifier_artefact() {
       '(.stages[] | select(.id == $id)).status = "completed" | (.stages[] | select(.id == $id)).completed_at = $now | .current_stage = null' \
       --arg id "$stage_id" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   fi
+  pipeline_pairing_disabled_refresh "$state_yaml" || true
   budget_reset_failures "$repo_root"
   log "stage ${stage_id} PASS: committed worker output as ${commit_sha:-unknown} with --author=${worker_identity}"
 }

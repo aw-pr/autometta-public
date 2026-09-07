@@ -77,6 +77,7 @@ write_card() {
 
 - **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
 - **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Dispatch:** serial
 
 ## Budget
 
@@ -139,11 +140,13 @@ cat > "$parse_repo/cards/60-gated-stage.md" <<'CARD'
 - **Worker:** Worker <worker@local>
 - **Verifier:** Verifier <verifier@local>
 - **Gate:** stage-completed: 58-the-controller-decides-the-scripts-are-its-verbs
+- **Dispatch:** serial
 CARD
 cat > "$parse_repo/cards/62-ungated-stage.md" <<'CARD'
 # Stage card 62
 - **Worker:** Worker <worker@local>
 - **Verifier:** Verifier <verifier@local>
+- **Dispatch:** serial
 CARD
 "$script_dir/add-stage.sh" "$parse_repo" "$parse_repo/cards/60-gated-stage.md" >/dev/null
 "$script_dir/add-stage.sh" "$parse_repo" "$parse_repo/cards/62-ungated-stage.md" >/dev/null

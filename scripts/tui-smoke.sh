@@ -45,6 +45,7 @@ for stage_id in 80-run-one-first 81-run-one-second 82-run-two-first; do
     '## Metadata' \
     '- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>' \
     '- **Verifier:** Claude Fable 5 <claude-fable-5@local>' \
+    '- **Dispatch:** serial' \
     > "$queue_repo/stage-cards/${stage_id}.md"
 done
 
