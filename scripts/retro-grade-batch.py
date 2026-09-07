@@ -15,10 +15,15 @@ import time
 from typing import Any, Iterable
 
 
-STATE = Path("state/state.yaml")
-VERIFIER_SCHEMA = Path("schemas/verifier.json")
-VERIFIER_TEMPLATE = Path("templates/verifier-prompt.md")
-REPORT_TEMPLATE = Path("memory/retro-grade-template.md")
+# These paths must not depend on the directory this script was started
+# from -- schema and templates live in the autometta root regardless of
+# which repo's state is being graded; state.yaml lives in the repo passed
+# via --repo (default: the autometta root itself).
+AUTOMETTA_ROOT = Path(__file__).resolve().parent.parent
+STATE = AUTOMETTA_ROOT / "state" / "state.yaml"
+VERIFIER_SCHEMA = AUTOMETTA_ROOT / "schemas" / "verifier.json"
+VERIFIER_TEMPLATE = AUTOMETTA_ROOT / "templates" / "verifier-prompt.md"
+REPORT_TEMPLATE = AUTOMETTA_ROOT / "memory" / "retro-grade-template.md"
 DRY_RUN_PAYLOAD = Path("/tmp/retro-grade-batch.jsonl")
 MODEL = "claude-sonnet-5"
 MAX_TOKENS = 4096
@@ -46,6 +51,11 @@ def parse_args() -> argparse.Namespace:
         description="Build, submit, poll, and report an Anthropic batch retro-grade."
     )
     parser.add_argument("--last", type=int, default=DEFAULT_LAST, help="Number of completed stages to grade.")
+    parser.add_argument(
+        "--repo",
+        default=str(AUTOMETTA_ROOT),
+        help=f"Repo whose state/state.yaml to grade (default: the autometta root, {AUTOMETTA_ROOT}).",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Write the JSONL payload and exit.")
     parser.add_argument("--model", default=MODEL, help=f"Anthropic model for batch messages (default: {MODEL}).")
     parser.add_argument(
@@ -137,9 +147,9 @@ def parse_state(path: Path = STATE) -> list[Stage]:
     return parsed_stages
 
 
-def card_for_stage(stage_id: str) -> Path:
+def card_for_stage(stage_id: str, repo: Path = AUTOMETTA_ROOT) -> Path:
     # Legacy fallbacks for subscribers that have not migrated their cards yet.
-    for directory in (Path("stage-cards"), Path("docs/stages"), Path("examples/self-host")):
+    for directory in (repo / "stage-cards", repo / "docs/stages", repo / "examples/self-host"):
         path = directory / f"{stage_id}.md"
         if path.is_file():
             return path
@@ -163,17 +173,17 @@ def original_overall(stage: Stage) -> str:
     raise ValueError(f"{stage.stage_id}: no verifier artefact and status is {stage.status}")
 
 
-def select_stage_runs(limit: int) -> list[StageRun]:
+def select_stage_runs(limit: int, state_path: Path = STATE, repo: Path = AUTOMETTA_ROOT) -> list[StageRun]:
     if limit <= 0:
         raise ValueError("--last must be greater than zero")
-    completed = [stage for stage in parse_state() if stage.status == "completed"]
+    completed = [stage for stage in parse_state(state_path) if stage.status == "completed"]
     selected = completed[-limit:]
     runs: list[StageRun] = []
     for stage in selected:
         runs.append(
             StageRun(
                 stage=stage,
-                card_path=card_for_stage(stage.stage_id),
+                card_path=card_for_stage(stage.stage_id, repo),
                 original_overall=original_overall(stage),
             )
         )
@@ -412,7 +422,9 @@ def write_report(
 def main() -> int:
     args = parse_args()
     try:
-        runs = select_stage_runs(args.last)
+        repo = Path(args.repo)
+        state_path = repo / "state" / "state.yaml"
+        runs = select_stage_runs(args.last, state_path, repo)
         requests = [request_for_stage(run, args.model) for run in runs]
         write_jsonl(DRY_RUN_PAYLOAD, requests)
         if args.dry_run:
