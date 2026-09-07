@@ -125,6 +125,20 @@ consider() {
   local -a dirt_pathspec=( . )
   if [[ -L "$work_dir/state" ]]; then
     dirt_pathspec+=( ':(exclude)state' )
+  else
+    # ensure_run_worktree marks any tracked state/ paths skip-worktree so
+    # nothing recreates them under the symlink it installs (tick.sh, same
+    # rationale). status --porcelain treats a skip-worktree path as assumed
+    # unchanged and never stats it, so a state/ that has since become a real
+    # directory again -- the bit outliving the symlink it was set to guard --
+    # would have its modified tracked content invisible here too. Clear the
+    # bit before checking so a real directory is judged like any other path.
+    local tracked_state
+    tracked_state="$(git -C "$work_dir" ls-files -z -- state 2>/dev/null | tr -d '\0' | tr '\n' ' ')"
+    if [[ -n "${tracked_state// /}" ]]; then
+      git -C "$work_dir" ls-files -z -- state 2>/dev/null \
+        | xargs -0 git -C "$work_dir" update-index --no-skip-worktree 2>/dev/null || true
+    fi
   fi
   local dirt dirt_rc=0
   dirt="$(git -C "$work_dir" status --porcelain -- "${dirt_pathspec[@]}" 2>/dev/null)" || dirt_rc=$?

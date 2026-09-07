@@ -73,13 +73,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/state-branch-smoke.sh
-- **Assertions digest:** frame the assertions in a block between the begin
-  marker and the end marker, the begin marker naming this card by its
-  `card=stage-cards/116-the-reaper-does-not-forgive-a-real-state-directory.md` field, and replace this line's text with the real
-  digest printed by `scripts/check-contract-test-gate.sh print scripts/state-branch-smoke.sh`. Do not
-  write a `sha256:` comment inside the block, and do not spell the marker
-  tokens anywhere in this card's prose; the card is in your path claims for
-  exactly this edit.
+- **Assertions digest:** `sha256:4759153fc9458acc1e5470f1e8c175727476b7cb90a80eff01424143b71f976b`
 
 ## Out of scope
 
@@ -119,33 +113,35 @@ about the work changed across either move.
 ## Re-brief (2026-09-07)
 
 Attempt 1 passed criteria 2 and 3 and the contract-test gate, and was failed
-on criterion 1 alone. The verifier was right on the facts and said so
-carefully: `scripts/state-branch-smoke.sh` exits 1 from the run worktree, the
-failing assertion is section 8's "a parked branch leaves the base checkout
-clean" at `:486-487`, every new section-7 assertion at `:420-423` passes,
-and **baseline HEAD exhibits the same section-8 failure**.
+on criterion 1 alone. The verifier was right and careful: the smoke exits 1
+from the run worktree on section 8's "a parked branch leaves the base
+checkout clean" at `:486-487`, every new section-7 assertion at `:420-423`
+passes, and baseline HEAD fails the same assertion.
 
-The card is what was wrong. Criterion 1 demanded the whole smoke pass, where
-every other card in this batch asks for "no more red than on clean `dev`".
-Confirmed by hand on clean `dev` at 01:31 and again at `51a3a3a`,
-`46ae5b3` and `b7bff27`: the same assertion fails at all of them, so it
-predates this stage and predates stage 115's landing, which was my first
-suspicion and was wrong.
+The card was what was wrong. Criterion 1 demanded the whole smoke pass,
+where every other card in this batch asks for "no more red than on clean
+`dev`". Confirmed by hand on clean `dev` and at `51a3a3a`, `46ae5b3` and
+`b7bff27`: it fails at all of them, so it predates this stage and predates
+stage 115's landing, which was my first suspicion and was wrong.
 
-Criterion 1 is reworded. Attempt 1's work stands and is preserved at
-`wip/116-the-reaper-does-not-forgive-a-real-state-directory-attempt-1`;
-build on it rather than starting again. Its envelope also carries a root
-cause worth reading before you touch anything: the fault was **not** the
-dirt pathspec, which already reads `[[ -L "$work_dir/state" ]]` correctly
-per card 29, but `ensure_run_worktree`'s skip-worktree bit.
+Attempt 2 was not a fresh attempt and produced no new work. It failed
+because the orchestrator copied the main checkout's copy of this card into
+the run worktree, clobbering the digest the worker had recorded here with
+the placeholder text still sitting on `dev`. The card's Contract test
+section above is the worker's, restored from the preserved commit and
+untouched; only criterion 1 and this section have been edited.
+
+Attempt 1's work stands, preserved at
+`wip/116-the-reaper-does-not-forgive-a-real-state-directory-attempt-1`.
+Its envelope carries a root cause worth reading first: the fault was **not**
+the dirt pathspec, which already reads `[[ -L "$work_dir/state" ]]`
+correctly per card 29, but `ensure_run_worktree`'s skip-worktree bit.
 
 ### Separate concern, not this card's to fix
 
 Section 8's failure may be sensitive to ambient repository state rather than
-to any commit. Probing it across four commits in worktrees that share one
-`.git` gave inconsistent results as the number of live worktrees and
-branches changed, which is the signature of a smoke that reads the real
-repository instead of only its fixtures. If so, it cannot be trusted as a
-gate from a shared clone by anyone, and that is worth a card of its own.
-Do not chase it from here.
+to its own fixtures: probing it across commits in worktrees sharing one
+`.git` gave inconsistent results as live worktrees and branches changed. If
+so it cannot be trusted as a gate from a shared clone by anyone. Worth a
+card; do not chase it from here.
 
