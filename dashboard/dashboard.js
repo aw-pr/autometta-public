@@ -703,6 +703,12 @@
 
   // --- entry ---------------------------------------------------------------
 
+  function formatClock(stamp) {
+    if (!stamp) return "unknown";
+    var date = new Date(stamp);
+    return isNaN(date.getTime()) ? String(stamp) : date.toLocaleTimeString();
+  }
+
   function renderAll() {
     var data = state.data;
     var repos = visibleRepos();
@@ -710,8 +716,11 @@
     var stages = visibleStages();
 
     document.getElementById("generated-at").textContent =
-      "generated " + data.generated_at + " - " + repos.length +
+      "generated " + formatClock(data.generated_at) + " - " + repos.length +
       " of " + (data.repos || []).length + " repo(s)";
+    document.getElementById("generated-at").title = data.generated_at
+      ? "UTC: " + data.generated_at
+      : "Generation time unavailable";
 
     // Both controls are rebuilt from state on every pass. Mutating state
     // without redrawing them left the all/none buttons filtering the data
