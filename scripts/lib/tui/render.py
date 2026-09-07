@@ -239,17 +239,19 @@ class TuiState:
         self.card_body_stage = None
         self.card_offset = 0
         self.history = {}
-        self.now = int(time.time())
+        self._now_anchor = int(time.time())
         self.monotonic_now = time.monotonic()
+        self._now_observed_at = self.monotonic_now
         self.data_started_at = None
         self.loading = True
         self.polling = False
 
     def update(self, payload, observed_at=None, data_started_at=None):
         self.payload = payload or {}
-        self.now = int(self.payload.get("_now") or time.time())
         stamp = float(observed_at if observed_at is not None else time.monotonic())
-        self.monotonic_now = time.monotonic()
+        self._now_anchor = int(self.payload.get("_now") or time.time())
+        self._now_observed_at = stamp
+        self.monotonic_now = stamp
         if data_started_at is not None:
             self.data_started_at = float(data_started_at)
         self.loading = False
@@ -295,6 +297,10 @@ class TuiState:
         previous = int(self.monotonic_now)
         self.monotonic_now = float(now)
         return int(self.monotonic_now) != previous
+
+    @property
+    def now(self):
+        return self._now_anchor + int(self.monotonic_now - self._now_observed_at)
 
     def update_status_updates(self, rows):
         self.status_updates = list(rows or [])
@@ -1319,11 +1325,24 @@ def render_messages(canvas, state, width, usable):
 
 
 def footer(canvas, state):
+    clock = "%s %s" % (
+        "*" if int(state.monotonic_now) % 2 else ".",
+        time.strftime("%H:%M:%S", time.localtime(state.now)),
+    )
+    clock_x = max(0, canvas.width - len(clock))
+    hint_width = max(0, clock_x - 1)
+
+    def put_footer(text, attr=None):
+        visible = text[:hint_width]
+        canvas.put(0, canvas.height - 1, visible)
+        if attr is not None:
+            for x in range(len(visible)):
+                canvas.attrs[canvas.height - 1][x] = attr
+        canvas.put(clock_x, canvas.height - 1, clock)
+
     if state.composing:
         text = "message draft  enter send · esc cancel"
-        canvas.put(0, canvas.height - 1, text[:canvas.width])
-        for x in range(min(canvas.width, len(text))):
-            canvas.attrs[canvas.height - 1][x] = ACTIVE
+        put_footer(text, ACTIVE)
         return
     tabs = "[r]un [h]istory [m]essages"
     if state.page == 1:
@@ -1332,7 +1351,7 @@ def footer(canvas, state):
     else:
         hints = "  j/k scroll · enter reply · esc run page · q quit"
     text = tabs + hints
-    if len(text) > canvas.width:
+    if len(text) > hint_width:
         # The narrow fallback still has to name a way off this page, which is
         # the thing a reader is stuck without.
         text = tabs + ("  1-5 focus · [ ] page · q quit" if state.page == 1
@@ -1340,17 +1359,15 @@ def footer(canvas, state):
     # A card-open result replaces the hint line until the next keypress. The
     # hints are always recoverable; a silent failure to open a card is not.
     if getattr(state, "card_notice", ""):
-        notice = state.card_notice[:canvas.width]
-        canvas.put(0, canvas.height - 1, notice)
+        notice = state.card_notice[:hint_width]
         attr = ALERT if notice.startswith("could not") or notice.startswith("card not found") else DIM
-        for x in range(min(canvas.width, len(notice))):
-            canvas.attrs[canvas.height - 1][x] = attr
+        put_footer(notice, attr)
         return
-    canvas.put(0, canvas.height - 1, text[:canvas.width])
+    put_footer(text)
     label = "[%d]" % state.page
     start = text.find(label)
     if start >= 0:
-        for x in range(start, min(canvas.width, start + len(label))):
+        for x in range(start, min(hint_width, start + len(label))):
             canvas.attrs[canvas.height - 1][x] = REVERSE
 
 
