@@ -79,13 +79,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/credential-symlink-smoke.sh
-- **Assertions digest:** frame the assertions in a block between the begin
-  marker and the end marker, the begin marker naming this card by its
-  `card=stage-cards/123-no-symlink-in-the-tree-points-at-a-credential.md` field, and replace this line's text with the real
-  digest printed by `scripts/check-contract-test-gate.sh print scripts/credential-symlink-smoke.sh`. Do not
-  write a `sha256:` comment inside the block, and do not spell the marker
-  tokens anywhere in this card's prose; the card is in your path claims for
-  exactly this edit.
+- **Assertions digest:** `sha256:81cf66a76a403683ee0ff025fc66797ce350d0e8a5ec7f6390cb09f14eeaaa48`
 
 ## Out of scope
 
@@ -120,3 +114,22 @@ was sized for, the verifying seat moved to the free local route
 (`gpt-oss:120b` via `codex exec --oss`). The Codex window reopened the same
 afternoon and the card is back on the seats it was authored with. Nothing
 about the work changed across either move.
+
+## Digest line repaired by the orchestrator (2026-09-07)
+
+The worker recorded the correct digest but appended it inside the template's
+instruction sentence rather than replacing the line, so
+`declared_digest()` found no `Assertions digest` value and the gate failed
+the stage with "card has no 'Assertions digest' line". The hex it computed
+was right and is unchanged above; only the line's shape is repaired, and no
+assertion, deliverable or criterion has been touched.
+
+This is the fifth stage in this batch hit by the same template defect, after
+113, 115, 116 and 118. Card 131 landed the fix while this stage was already
+in flight, so the card it was dispatched with still carried the old wording.
+
+Note also that `scripts/check-contract-test-gate.sh` run bare in this
+worktree exits 0 while the same tree with its files staged exits 1: the
+gate short-circuits on an empty index, which stage 120's verifier also
+flagged. A bare invocation proves nothing.
+
