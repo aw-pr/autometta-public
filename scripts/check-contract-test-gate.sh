@@ -22,6 +22,9 @@ IFS=$'\n\t'
 #   check-contract-test-gate.sh
 #       Gate the staged change set. Exit non-zero on the first violation.
 #       Suitable for a verifier acceptance step or a pre-commit chain.
+#   check-contract-test-gate.sh --worktree
+#       Gate relevant changed files in the working tree. This is for a worker
+#       dispatch before the orchestrator stages its deliverables.
 
 MARKER_BEGIN='AUTOMETTA-CONTRACT-BEGIN'
 MARKER_END='AUTOMETTA-CONTRACT-END'
@@ -67,17 +70,21 @@ staged_content() {
   fi
 }
 
+working_content() {
+  cat -- "$1"
+}
+
 # Every path declared as a "Test file:" line in any stage card on disk,
 # paired with the card that names it, as "<path>\t<card>". Reads
 # to-be-committed content so a card and the test it names can be staged in
 # the same commit. Same glob set list-cards.sh uses, so a card is found
 # under whichever layout (current or legacy) the repo actually has.
 test_file_declarations() {
-  local pattern card
+  local reader="${1:-staged_content}" pattern card
   for pattern in stage-cards/*.md docs/stages/*.md examples/self-host/*.md; do
     for card in $pattern; do
       [ -f "$card" ] || continue
-      staged_content "$card" \
+      "$reader" "$card" \
         | awk '
             /^[[:space:]]*-[[:space:]]+\*\*Test file:\*\*/ {
               line = $0
@@ -119,12 +126,44 @@ cmd_print() {
 }
 
 cmd_gate() {
-  local staged f card recomputed declared violations=0 declarations naming_card
+  local mode="$1" changed untracked f card recomputed declared violations=0 declarations naming_card content
 
-  staged="$(git diff --cached --name-only --diff-filter=ACM)"
-  [ -n "$staged" ] || exit 0
+  case "$mode" in
+    staged)
+      changed="$(git diff --cached --name-only --diff-filter=ACM)"
+      content=staged_content
+      ;;
+    worktree)
+      changed="$(git diff --name-only --diff-filter=ACM)"
+      content=working_content
+      ;;
+    *) die "internal error: unknown gate mode $mode" ;;
+  esac
 
-  declarations="$(test_file_declarations)"
+  declarations="$(test_file_declarations "$content")"
+
+  if [ "$mode" = worktree ]; then
+    untracked="$(git ls-files --others --exclude-standard)"
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      naming_card="$(printf '%s\n' "$declarations" | awk -F'\t' -v f="$f" '$1 == f { print $2; exit }')"
+      case "$f" in
+        scripts/*-smoke.sh) changed="$(printf '%s\n%s\n' "$changed" "$f" | awk 'NF && !seen[$0]++')" ;;
+        *) [ -n "$naming_card" ] && changed="$(printf '%s\n%s\n' "$changed" "$f" | awk 'NF && !seen[$0]++')" ;;
+      esac
+    done <<EOF
+$untracked
+EOF
+  fi
+
+  if [ -z "$changed" ]; then
+    if [ "$mode" = staged ]; then
+      warn "no staged files to inspect; use --worktree for unstaged dispatch changes"
+    else
+      warn "no relevant changed files to inspect in the working tree"
+    fi
+    exit 2
+  fi
 
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -135,15 +174,15 @@ cmd_gate() {
       *) [ -n "$naming_card" ] || continue ;;
     esac
 
-    if staged_content "$f" | grep -q "$MARKER_BEGIN"; then
-      card="$(staged_content "$f" | card_path_from_marker)"
+    if "$content" "$f" | grep -q "$MARKER_BEGIN"; then
+      card="$("$content" "$f" | card_path_from_marker)"
       if [ -z "$card" ]; then
         warn "$f: $MARKER_BEGIN marker has no card=<path>"
         violations=$((violations + 1)); continue
       fi
 
-      recomputed="$(staged_content "$f" | digest_block)" || { violations=$((violations + 1)); continue; }
-      declared="$(staged_content "$card" | declared_digest || true)"
+      recomputed="$("$content" "$f" | digest_block)" || { violations=$((violations + 1)); continue; }
+      declared="$("$content" "$card" | declared_digest || true)"
 
       if [ -z "$declared" ]; then
         warn "$f: card $card has no 'Assertions digest' line"
@@ -151,7 +190,7 @@ cmd_gate() {
       fi
 
       if [ "$recomputed" != "$declared" ]; then
-        if printf '%s\n' "$staged" | grep -qx -- "$card"; then
+        if printf '%s\n' "$changed" | grep -qx -- "$card"; then
           warn "$f: assertions changed but card $card still declares $declared (recomputed $recomputed); update the card's 'Assertions digest' line in this commit"
         else
           warn "$f: frozen assertions changed but their card $card is not in this commit (declared $declared, recomputed $recomputed)"
@@ -173,7 +212,7 @@ cmd_gate() {
     fi
     violations=$((violations + 1))
   done <<EOF
-$staged
+$changed
 EOF
 
   [ "$violations" -eq 0 ] || die "$violations contract-test freeze violation(s); see messages above"
@@ -182,8 +221,9 @@ EOF
 main() {
   case "${1:-}" in
     print)        shift; cmd_print "$@" ;;
-    ""|--staged)  cmd_gate ;;
-    *)            die "unknown argument: $1 (use 'print <file>' or no args)" ;;
+    ""|--staged)  cmd_gate staged ;;
+    --worktree)    cmd_gate worktree ;;
+    *)             die "unknown argument: $1 (use 'print <file>', --staged, or --worktree)" ;;
   esac
 }
 
