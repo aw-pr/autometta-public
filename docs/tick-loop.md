@@ -71,6 +71,71 @@ changed build before changing the LaunchAgent cadence. Record wall, user and
 system time together, because a later regression may move cost between those
 categories without changing wall time.
 
+### The effective period, and why the plist interval is not the whole story
+
+launchd does not overlap fires of the same LaunchAgent job: if a fire is still
+running when the next one is scheduled, launchd waits for the first to exit.
+The loop's effective period is therefore `max(plist_interval, fire_duration)`,
+not the plist interval alone. Card 100 cut an idle six-repo bench fire from
+90s to 18s and the plist interval was set to 30s on the strength of that
+figure, but a live four-subscriber fire with one stage in flight measured a
+46s median on 2026-09-02 and 2026-09-06 -- the plist interval was never the
+binding constraint once real dispatch work entered the mix. A stage needs
+three to five fires to land, so the loop's own latency is `fire_duration ×
+(3..5)`, not `plist_interval × (3..5)`. Cutting fire duration is the only
+lever that moves this number; cutting the plist interval below the fire
+duration does nothing.
+
+### Profiling a fire (card 114)
+
+`AUTOMETTA_TICK_PROFILE=1 scripts/tick.sh` emits one log line per repo per
+phase (`profile repo=<r> phase=<p> ms=<n>`) plus a fire summary line
+(`profile fire total_ms=<n>`), all through the ordinary `log()` path so they
+land in the controller log alongside everything else. Unset, the flag costs
+one `[[ ]]` test per phase boundary and nothing else. The phases share a
+single running mark rather than an independent start/end pair each (see the
+comment on `profile_lap` in `scripts/tick.sh`), so consecutive phases tile
+the fire's wall clock with no unmeasured gap between them and their `ms`
+values sum to within a few percent of the fire's own real time.
+
+`scripts/tick-profile.sh` runs one fire with the flag on and prints a cost
+table sorted by phase cost, ending with a `TOTAL` row and the fire summary
+line. It reads the same `AUTOMETTA_ROOT` / `PHAT_CONTROLLER_HOME` overrides
+`tick.sh` itself does, so it can be pointed at a throwaway fixture fleet
+instead of the operator's live one.
+
+A four-repo offline fixture run (`scripts/tick-profile-smoke.sh`'s fleet)
+measured, per repo, before the fix in this card:
+
+| phase | ms (typical) |
+| --- | --- |
+| `dispatch` (queue read, decision, `commit_state_branch`) | ~320-360 |
+| `heartbeat` | ~85-130 |
+| `retention` | ~110-135 |
+| `subscriber-read` | ~20-30 |
+| `lock` | ~5-15 |
+| `tmux-viewer` | ~15-20 |
+| `vendor-stale` | ~4-10 |
+
+`dispatch` was, and remains, the largest phase per repo. Inside it, every
+tick -- including an idle one that changed nothing but its own bookkeeping --
+paid a full `commit_state_branch` write: state.yaml's `tick_count` and
+`last_tick_at`, and budget.json's `idle_ticks_used`, are odometers bumped on
+every fire, so the pre-existing tree-comparison short-circuit in
+`commit_state_branch` never matched and every idle tick committed onto
+`autometta/state` (roughly nine git subprocesses plus an `agent-whoami`
+shell-out). The fix stages a second, throwaway comparison tree with just
+those three fields stripped from both the current capture and the parent
+commit; when that comparison also finds nothing changed, the commit is
+skipped. Everything else captured -- the rest of state.yaml and budget.json,
+`state/verifiers`, `state/envelopes`, `state/handoffs`,
+`state/facts-pending.jsonl` -- still participates in the comparison
+unstripped, and a real change to any of it still produces a real commit with
+full, unstripped content; only the decision to commit is affected, never
+what a commit holds. `tick_count` itself, and what the tick decides to
+dispatch, are unchanged: a second consecutive idle fire still increments
+`tick_count` and still writes no new commit to the state snapshot branch.
+
 ### Pipeline pairs
 
 Every new card must declare non-empty `path_claims` or opt out with

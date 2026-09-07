@@ -30,6 +30,41 @@ log() {
   printf '%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$msg" | tee -a "$controller_log_dir/tick-$(date +%F).log" >&2
 }
 
+# Fire profiling (card 114). Off by default -- every call site pays only a
+# single `[[ ]]` test when AUTOMETTA_TICK_PROFILE is unset, per the
+# deliverable's zero-cost-when-off requirement.
+#
+# profile_lap keeps one running mark rather than a start/end pair per phase.
+# Each lap logs the elapsed time since the *previous* lap (or since
+# profile_reset) and moves the mark to now, so consecutive phases share their
+# boundary timestamp instead of each phase taking its own independent
+# start-of-phase reading. That halves the external `date` forks (N+1 for N
+# phases, not 2N) and, because every phase's window starts exactly where the
+# previous one's ended, the reported windows tile the fire's wall clock with
+# no measurement gap between them -- an early version that timed each phase
+# independently left the bookkeeping between phases (variable assignment,
+# loop-back, subshell spawns for reading each subscriber field) uncounted,
+# and summed to as little as 85% of the real fire.
+tick_profile_enabled() { [[ "${AUTOMETTA_TICK_PROFILE:-}" == "1" ]]; }
+
+profile_mark_ns=""
+
+profile_reset() {
+  tick_profile_enabled || return 0
+  profile_mark_ns="$(date +%s%N)"
+}
+
+profile_lap() {
+  tick_profile_enabled || return 0
+  local repo="$1" phase="$2"
+  local now_ns
+  now_ns="$(date +%s%N)"
+  if [[ -n "$profile_mark_ns" ]]; then
+    log "profile repo=${repo} phase=${phase} ms=$(( (now_ns - profile_mark_ns) / 1000000 ))"
+  fi
+  profile_mark_ns="$now_ns"
+}
+
 # Print the number of recent Claude API errors only when the newest transcript
 # for this worktree contains no tool call in the same window. Missing or
 # unreadable transcripts are neutral: they are not evidence of a stall.
@@ -1518,6 +1553,32 @@ state_snapshot_ref="refs/heads/autometta/state"
 #
 # Durable means recoverable from the local object store. The loop never
 # pushes this ref, and nothing else should either.
+# Normalise the two odometer fields out of a state.yaml/budget.json pair so
+# their tree hash reflects only what the tick actually decided. state.yaml's
+# tick_count and last_tick_at, and budget.json's idle_ticks_used (an
+# "odometer, not a cap" per budget.sh), all bump on every fire including
+# idle ones. Args: a directory holding state/state.yaml and/or
+# state/budget.json (may be a scratch dir populated from a git blob, not
+# repo_root itself). Writes two blob shas into the index at $GIT_INDEX_FILE
+# under the real state/ paths, replacing whatever is already staged there.
+state_branch_stage_normalized() {
+  local source_dir="$1"
+  if [[ -f "$source_dir/state/state.yaml" ]]; then
+    local state_blob
+    if state_blob="$(yq -P 'del(.tick_count, .last_tick_at)' "$source_dir/state/state.yaml" \
+         | git hash-object -w --stdin 2>/dev/null)" && [[ -n "$state_blob" ]]; then
+      git update-index --add --cacheinfo 100644,"$state_blob",state/state.yaml >/dev/null 2>&1
+    fi
+  fi
+  if [[ -f "$source_dir/state/budget.json" ]]; then
+    local budget_blob
+    if budget_blob="$(jq 'del(.idle_ticks_used)' "$source_dir/state/budget.json" \
+         | git hash-object -w --stdin 2>/dev/null)" && [[ -n "$budget_blob" ]]; then
+      git update-index --add --cacheinfo 100644,"$budget_blob",state/budget.json >/dev/null 2>&1
+    fi
+  fi
+}
+
 commit_state_branch() {
   local repo_root="$1"
   local index_file
@@ -1541,9 +1602,47 @@ commit_state_branch() {
     local tree parent
     tree="$(git write-tree)"
     parent="$(git rev-parse -q --verify "${state_snapshot_ref}^{commit}" 2>/dev/null || true)"
-    if [[ -n "$parent" ]] \
-       && [[ "$(git rev-parse -q --verify "${parent}^{tree}" 2>/dev/null || true)" == "$tree" ]]; then
-      exit 0
+    if [[ -n "$parent" ]]; then
+      local parent_tree
+      parent_tree="$(git rev-parse -q --verify "${parent}^{tree}" 2>/dev/null || true)"
+      if [[ "$parent_tree" == "$tree" ]]; then
+        exit 0
+      fi
+      # Bookkeeping-only short-circuit (card 114). The raw-tree compare
+      # above never matches while tick_count/last_tick_at/idle_ticks_used
+      # bump every fire, so every idle tick paid a real commit. Build two
+      # throwaway comparison trees -- this fire's captured content and the
+      # parent commit's, each with only those fields stripped -- and skip
+      # the commit when THAT comparison also finds nothing changed. Every
+      # other captured path (verifiers/envelopes/handoffs/facts-pending,
+      # and the rest of state.yaml/budget.json) still participates in the
+      # comparison unchanged, so a real content change still commits; only
+      # the decision to commit is affected, never what a real commit holds.
+      local norm_index_file
+      norm_index_file="$(mktemp)"
+      rm -f "$norm_index_file"
+      local norm_current_tree norm_parent_tree
+      norm_current_tree="$(
+        cp "$index_file" "$norm_index_file"
+        GIT_INDEX_FILE="$norm_index_file" state_branch_stage_normalized "."
+        GIT_INDEX_FILE="$norm_index_file" git write-tree
+      )"
+      norm_parent_tree="$(
+        : > "$norm_index_file"
+        GIT_INDEX_FILE="$norm_index_file" git read-tree "${parent}^{tree}" 2>/dev/null
+        local parent_scratch
+        parent_scratch="$(mktemp -d)"
+        mkdir -p "$parent_scratch/state"
+        git show "${parent}:state/state.yaml" > "$parent_scratch/state/state.yaml" 2>/dev/null || true
+        git show "${parent}:state/budget.json" > "$parent_scratch/state/budget.json" 2>/dev/null || true
+        GIT_INDEX_FILE="$norm_index_file" state_branch_stage_normalized "$parent_scratch"
+        rm -rf "$parent_scratch"
+        GIT_INDEX_FILE="$norm_index_file" git write-tree
+      )"
+      rm -f "$norm_index_file"
+      if [[ -n "$norm_current_tree" && "$norm_current_tree" == "$norm_parent_tree" ]]; then
+        exit 0
+      fi
     fi
     # IFS is newline/tab in this script, so join the list in a subshell
     # rather than letting ${captured[*]} fold it onto separate lines.
@@ -2698,20 +2797,35 @@ dispatch_pending_stage_if_available() {
 process_repo() {
   local repo_root="$1"
   local manifest_path="${2:-}"
+  local profile_repo
+  profile_repo="$(basename "$repo_root")"
+
   if ! acquire_repo_lock "$repo_root"; then
     log "tick already in progress for ${repo_root}, skipping"
     return 0
   fi
+  profile_lap "$profile_repo" "lock"
+
   run_heartbeat "$repo_root"
+  profile_lap "$profile_repo" "heartbeat"
+
   warn_if_vendor_stale "$repo_root" || true
+  profile_lap "$profile_repo" "vendor-stale"
+
   local rc=0
   _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
+  profile_lap "$profile_repo" "dispatch"
+
   # Runs after the tick's own dispatch decision, not before: a stage that
   # goes pending -> in_progress in this same tick must already be reflected
   # in state.yaml for the "only when actually doing work" check below to see
   # it, rather than lagging a full tick behind.
   ensure_tmux_viewer "$repo_root"
+  profile_lap "$profile_repo" "tmux-viewer"
+
   sweep_repo_retention "$repo_root"
+  profile_lap "$profile_repo" "retention"
+
   release_repo_lock "$repo_root"
   return $rc
 }
@@ -3608,6 +3722,12 @@ main() {
 
   mkdir -p "$controller_log_dir"
 
+  local fire_start_ns=""
+  if tick_profile_enabled; then
+    profile_reset
+    fire_start_ns="$profile_mark_ns"
+  fi
+
   # Host-level dependency pre-flight. Cheap (a handful of command -v calls).
   # Run on every tick fire so a missing dependency surfaces in the cron log
   # immediately rather than as a partial halt across subscribers.
@@ -3615,14 +3735,26 @@ main() {
     log "dependency pre-flight failed; run scripts/check-deps.sh for details"
     exit 1
   fi
+  profile_lap "global" "check-deps"
 
   # One read per tick fire, shared by every subscriber and every display.
   # Failure becomes explicit unknown data and never blocks the queue.
   quota_refresh_tick || true
   quota_log_tick_readings
+  profile_lap "global" "quota"
 
   sweep_controller_log_retention
   reap_idle_dash_sessions
+  profile_lap "global" "controller-sweep"
+
+  # Read into a variable rather than `done < <(sort_subscribers)`: a process
+  # substitution forks and runs concurrently with the loop's first blocking
+  # read, which would otherwise land its cost (a glob, one
+  # read_subscriber_field per file, sort, cut) in the fire's wall clock but
+  # outside the lap it should count against.
+  local subscriber_list
+  subscriber_list="$(sort_subscribers)"
+  profile_lap "global" "subscriber-sort"
 
   local subscriber_file
   while IFS= read -r subscriber_file; do
@@ -3631,6 +3763,7 @@ main() {
     enabled="$(read_subscriber_field "$subscriber_file" "enabled")"
     repo_path="$(read_subscriber_field "$subscriber_file" "repo_path")"
     manifest_path="$(read_subscriber_field "$subscriber_file" "manifest_path")"
+    profile_lap "$(basename "${repo_path:-$subscriber_file}")" "subscriber-read"
     if [[ "$enabled" != "true" ]]; then
       continue
     fi
@@ -3639,7 +3772,13 @@ main() {
       continue
     fi
     process_repo "$repo_path" "$manifest_path"
-  done < <(sort_subscribers)
+  done <<< "$subscriber_list"
+
+  if tick_profile_enabled; then
+    local fire_end_ns
+    fire_end_ns="$(date +%s%N)"
+    log "profile fire total_ms=$(( (fire_end_ns - fire_start_ns) / 1000000 ))"
+  fi
 }
 
 # Only auto-run when executed directly; sourcing (e.g. for tests) loads the
