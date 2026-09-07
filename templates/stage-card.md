@@ -74,7 +74,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 <!--
-Optional but recommended for any stage with executable acceptance. The assertions are frozen here at authoring time: the orchestrator writes them from the card's intent before the worker runs, the worker makes them pass without editing the block between the AUTOMETTA-CONTRACT-BEGIN/END markers, and the verifier rejects any assertion change whose new digest is not recorded below. The BEGIN marker in the test file names this card (card=<path-to-this-card>). Leave the whole section as "None" for prose-only or throwaway stages. Generate or regenerate the digest with `scripts/check-contract-test-gate.sh print <test-file>` and update the line below in the same commit as any deliberate assertion change. See docs/dispatch-contract.md (Contract tests). -->
+Optional but recommended for any stage with executable acceptance. Before dispatch, the orchestrator writes the assertions from the card's intent, freezes them between the AUTOMETTA-CONTRACT-BEGIN/END markers, and records their digest on the card before it is queued. The BEGIN marker in the test file names this card (card=<path-to-this-card>). The worker makes the assertions pass and must not edit the frozen block. The verifier rejects any assertion change whose digest differs from the value recorded below. Leave the whole section as "None" for prose-only or throwaway stages. See docs/dispatch-contract.md (Contract tests). -->
 
 - **Test file:** <<contract-test-path-or-None>>
 - **Assertions digest:** <<sha256-of-frozen-block-or-None>>

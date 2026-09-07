@@ -74,6 +74,26 @@ extract_stage_id() {
   printf '%s\n' "$base"
 }
 
+validate_contract_test() {
+  local card_path="$1"
+  local test_file assertions_digest
+
+  test_file="$(extract_identity "$card_path" "Test file")"
+  test_file="${test_file#\`}"
+  test_file="${test_file%\`}"
+  if [[ -z "$test_file" || "$test_file" == "None" ]]; then
+    return 0
+  fi
+
+  assertions_digest="$(extract_identity "$card_path" "Assertions digest")"
+  assertions_digest="${assertions_digest#\`}"
+  assertions_digest="${assertions_digest%\`}"
+  if [[ ! "$assertions_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    log_msg "refusing card ${card_path}: contract test ${test_file} has no valid Assertions digest; run scripts/check-contract-test-gate.sh print ${test_file}"
+    exit 1
+  fi
+}
+
 main() {
   if [[ $# -ne 2 ]]; then
     log_msg "usage: $0 <repo-root> <stage-card-path>"
@@ -103,6 +123,7 @@ main() {
 
   local stage_id worker_identity verifier_identity gate_type gate_stage_id gate_json path_claims_json path_claims_state_json dispatch_line exists_count run_id
   stage_id="$(extract_stage_id "$stage_card_path")"
+  validate_contract_test "$stage_card_path"
   exists_count="$(STAGE_ID="$stage_id" yq -r '.stages | map(select(.id == strenv(STAGE_ID))) | length' "$state_path")"
   if [[ "$exists_count" != "0" ]]; then
     log_msg "exists: ${stage_id}"
