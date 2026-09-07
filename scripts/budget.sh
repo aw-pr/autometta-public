@@ -79,6 +79,39 @@ budget_drain_file() {
   printf '%s/drain.json' "$(budget_controller_home)"
 }
 
+# Serialise mutations of the one host-level drain document. A directory lock
+# works on the stock macOS toolchain and keeps start/end from racing the
+# read-triggered expiry retirement below.
+budget_drain_lock_acquire() {
+  local lock_path owner attempts=0 max_attempts
+  lock_path="$(budget_drain_file).lock"
+  max_attempts="${AUTOMETTA_DRAIN_LOCK_ATTEMPTS:-200}"
+  while ! mkdir "$lock_path" 2>/dev/null; do
+    owner="$(sed -n '1p' "$lock_path/pid" 2>/dev/null || true)"
+    if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+      rm -f "$lock_path/pid"
+      rmdir "$lock_path" 2>/dev/null || true
+      continue
+    fi
+    attempts=$(( attempts + 1 ))
+    if (( attempts >= max_attempts )); then
+      printf 'budget drain: timed out waiting for %s\n' "$lock_path" >&2
+      return 1
+    fi
+    sleep 0.05
+  done
+  printf '%s\n' "$$" > "$lock_path/pid"
+}
+
+budget_drain_lock_release() {
+  local lock_path owner
+  lock_path="$(budget_drain_file).lock"
+  owner="$(sed -n '1p' "$lock_path/pid" 2>/dev/null || true)"
+  [[ "$owner" == "$$" ]] || return 0
+  rm -f "$lock_path/pid"
+  rmdir "$lock_path" 2>/dev/null || true
+}
+
 _budget_is_positive_int() {
   [[ "${1:-}" =~ ^[0-9]+$ && "${1:-0}" -gt 0 ]]
 }
@@ -126,11 +159,12 @@ budget_host_token_cap() {
 # file keeps binding after its own clock.
 budget_drain_active() {
   local repo_root="${1:-}"
-  local drain_path
+  local drain_path drain_json
   drain_path="$(budget_drain_file)"
   [[ -f "$drain_path" ]] || return 1
   local expires
-  expires="$(jq -r '.expires_at // empty' "$drain_path" 2>/dev/null || true)"
+  drain_json="$(cat "$drain_path" 2>/dev/null || true)"
+  expires="$(printf '%s' "$drain_json" | jq -r '.expires_at // empty' 2>/dev/null || true)"
   if ! [[ "$expires" =~ ^[0-9]+$ ]]; then
     printf 'budget_drain_active: %s has no usable expires_at, ignoring it\n' "$drain_path" >&2
     return 1
@@ -138,22 +172,38 @@ budget_drain_active() {
   local now
   now="$(date -u +%s)"
   if (( now >= expires )); then
-    mv "$drain_path" "${drain_path%.json}.expired.json" 2>/dev/null || rm -f "$drain_path"
-    printf 'budget_drain_active: drain expired at %s, cap back to the resting value\n' \
-      "$(date -r "$expires" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$expires")" >&2
-    return 1
+    budget_drain_lock_acquire || return 1
+    if [[ ! -f "$drain_path" ]]; then
+      budget_drain_lock_release
+      return 1
+    fi
+    drain_json="$(cat "$drain_path" 2>/dev/null || true)"
+    expires="$(printf '%s' "$drain_json" | jq -r '.expires_at // empty' 2>/dev/null || true)"
+    now="$(date -u +%s)"
+    if [[ "$expires" =~ ^[0-9]+$ ]] && (( now >= expires )); then
+      mv "$drain_path" "${drain_path%.json}.expired.json" 2>/dev/null || rm -f "$drain_path"
+      budget_drain_lock_release
+      printf 'budget_drain_active: drain expired at %s, cap back to the resting value\n' \
+        "$(date -r "$expires" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$expires")" >&2
+      return 1
+    fi
+    budget_drain_lock_release
+    if ! [[ "$expires" =~ ^[0-9]+$ ]]; then
+      printf 'budget_drain_active: %s has no usable expires_at, ignoring it\n' "$drain_path" >&2
+      return 1
+    fi
   fi
   # An empty or absent repos[] means every subscriber; a populated one is an
   # allow-list of absolute repo paths.
   local scoped
-  scoped="$(jq -r --arg repo "$repo_root" '
+  scoped="$(printf '%s' "$drain_json" | jq -r --arg repo "$repo_root" '
     if ((.repos // []) | length) == 0 then "all"
     elif ((.repos // []) | index($repo)) != null then "listed"
     else "excluded" end
-  ' "$drain_path" 2>/dev/null || printf 'excluded')"
+  ' 2>/dev/null || printf 'excluded')"
   [[ "$scoped" == "excluded" ]] && return 1
   local cap
-  cap="$(jq -r '.token_cap_total // empty' "$drain_path" 2>/dev/null || true)"
+  cap="$(printf '%s' "$drain_json" | jq -r '.token_cap_total // empty' 2>/dev/null || true)"
   if ! _budget_is_positive_int "$cap"; then
     printf 'budget_drain_active: %s has no usable token_cap_total, ignoring it\n' "$drain_path" >&2
     return 1

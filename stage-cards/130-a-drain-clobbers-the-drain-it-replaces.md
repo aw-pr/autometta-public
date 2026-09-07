@@ -45,6 +45,18 @@ Two properties are missing and they are separable. The file cannot express two
 concurrent drains at all. And nothing tells the second caller that a first
 exists.
 
+## Merge decision
+
+Compatible scope union is the default because adding a subscriber to the same
+host decision does not revoke or weaken the drain already in force. Compatible
+means the cap and `ignore_reserve` value are identical, and the incoming expiry
+is no earlier than the active expiry. The union retains the active expiry, so a
+join cannot extend one repo's authority or shorten its window. An empty scope
+still means all subscribers and therefore remains empty after a union. A cap or
+reserve mismatch, or an earlier incoming expiry, refuses with the active cap,
+expiry, and scope and leaves the file unchanged. `--replace` is the explicit
+choice when the operator intends to revoke the existing decision.
+
 ## Inputs (read these in your own context)
 
 - `scripts/drain.sh` — `cmd_start`, `cmd_status`, `cmd_end`
@@ -101,9 +113,7 @@ Do not read anything else unless you need to; keep your context lean.
 ## Contract test
 
 - **Test file:** `tests/drain-scope-smoke.sh`
-- **Assertions digest:** to be declared by this card on landing. The file is
-  new; compute the digest of its frozen block and write it into this card's
-  Metadata in the same commit.
+- **Assertions digest:** `sha256:9171f15bec7841e4d326b90d0a8d741b53eb058c1d926a9ce064891ae5877666`
 
 ## Out of scope
 
