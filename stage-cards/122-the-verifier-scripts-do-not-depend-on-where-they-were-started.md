@@ -5,7 +5,7 @@
 - **Authored:** 2026-09-06
 - **Orchestrator:** Claude Fable 5.1 <claude-fable-5-1@local>
 - **Worker:** Claude Sonnet 5 <claude-sonnet-5@local>
-- **Verifier:** Claude Opus 5 <claude-opus-5@local>
+- **Verifier:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
 - **Base branch:** dev
 - **Run branch:** autometta/122-the-verifier-scripts-do-not-depend-on-where-they-were-started
 - **Worker effort:** low
@@ -134,4 +134,13 @@ the window resets if anything about it later looks wrong.
 
 Opus rather than Sonnet is deliberate: Sonnet 5 is the working seat, and the
 same model on both sides of the gate is not verification at all.
+
+## Seat restored (2026-09-07 17:06)
+
+The Codex window is back, so the verifying seat returns to Codex GPT-5.6
+Terra and this stage regains cross-family verification. The overnight swap
+to Claude Opus 5 recorded in the section above never took effect: the batch
+halted on the token cap before this card was dispatched, so no verdict was
+ever taken on a same-family seat. Read the section above as history, not as
+a caveat on this stage's result.
 
