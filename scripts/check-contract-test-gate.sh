@@ -20,11 +20,10 @@ IFS=$'\n\t'
 #       Print sha256:<hex> of the test's frozen block, to paste into the
 #       card's "Assertions digest" line.
 #   check-contract-test-gate.sh
-#       Gate the staged change set. Exit non-zero on the first violation.
-#       Suitable for a verifier acceptance step or a pre-commit chain.
+#       Compare the staged index with HEAD and gate that change set.
+#       Exit non-zero on the first violation.
 #   check-contract-test-gate.sh --worktree
-#       Gate relevant changed files in the working tree. This is for a worker
-#       dispatch before the orchestrator stages its deliverables.
+#       Compare the working tree and index with HEAD, plus untracked candidates.
 
 MARKER_BEGIN='AUTOMETTA-CONTRACT-BEGIN'
 MARKER_END='AUTOMETTA-CONTRACT-END'
@@ -134,7 +133,7 @@ cmd_gate() {
       content=staged_content
       ;;
     worktree)
-      changed="$(git diff --name-only --diff-filter=ACM)"
+      changed="$(git diff HEAD --name-only --diff-filter=ACM)"
       content=working_content
       ;;
     *) die "internal error: unknown gate mode $mode" ;;
@@ -182,6 +181,10 @@ EOF
       fi
 
       recomputed="$("$content" "$f" | digest_block)" || { violations=$((violations + 1)); continue; }
+      if ! "$content" "$card" >/dev/null 2>&1; then
+        warn "$f: card $card does not exist"
+        violations=$((violations + 1)); continue
+      fi
       declared="$("$content" "$card" | declared_digest || true)"
 
       if [ -z "$declared" ]; then
