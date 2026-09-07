@@ -163,6 +163,62 @@
     return out;
   }
 
+  // --- run scope (per-stage chart) -----------------------------------------
+  //
+  // The per-stage chart used to plot every stage that had spent anything,
+  // ordered by spend. That answers "which stage cost most", which is a
+  // question about history. The question an operator asks while a run is
+  // going is "how is this run burning, card by card", so the chart is
+  // ordered by the queue instead and scoped to a number of recent runs.
+  // Queued cards stay in at zero: a run's shape includes what it has not
+  // started yet.
+
+  function runsScope() {
+    if (state.runsScope != null) return state.runsScope;
+    var stored = parseInt(storeGet("autometta.runsScope"), 10);
+    state.runsScope = isFinite(stored) && stored >= 1 ? stored : 1;
+    return state.runsScope;
+  }
+
+  // Runs newest first. A stage with no run_id predates run tracking; those
+  // are grouped under one bucket so they can still be reached by widening
+  // the slider rather than vanishing.
+  function orderedRuns(rows) {
+    var byRun = Object.create(null);
+    rows.forEach(function (row) {
+      var key = row.stage.run_id || "(no run)";
+      var when = Date.parse(stageWhen(row.stage) || "") || 0;
+      if (!byRun[key]) byRun[key] = { id: key, latest: when, rows: [] };
+      if (when > byRun[key].latest) byRun[key].latest = when;
+      byRun[key].rows.push(row);
+    });
+    return Object.keys(byRun).map(function (k) { return byRun[k]; })
+      .sort(function (a, b) { return b.latest - a.latest; });
+  }
+
+  function renderRunsFilter(rows) {
+    var wrap = document.getElementById("runs-filter");
+    if (!wrap) return;
+    var runs = orderedRuns(rows);
+    var max = Math.max(1, runs.length);
+    var value = Math.min(runsScope(), max);
+    var noun = value === 1 ? "run" : "runs";
+    wrap.innerHTML =
+      '<span class="filter-label">stages over</span>' +
+      '<input type="range" id="runs-scope" min="1" max="' + max + '" value="' + value + '">' +
+      '<span class="filter-label" id="runs-scope-label">' + value + " " + noun +
+      (value === 1 ? " (this run)" : "") + "</span>";
+    var input = document.getElementById("runs-scope");
+    if (!input) return;
+    input.addEventListener("input", function () {
+      var n = parseInt(input.value, 10);
+      if (!isFinite(n) || n < 1) return;
+      state.runsScope = n;
+      storeSet("autometta.runsScope", String(n));
+      renderAll();
+    });
+  }
+
   function renderRangeFilter() {
     var wrap = document.getElementById("range-filter");
     if (!wrap) return;
@@ -616,12 +672,18 @@
   }
 
   function drawStagesChart(stages) {
-    // Biggest first, and nothing that spent nothing. Plotting every stage in
-    // run order gave a chart whose x-axis was mostly zero-height bars and
-    // unreadable labels; the question this chart answers is which stages cost
-    // the most, so it is ordered by that.
-    var plotted = stages.filter(function (row) { return row.spend.total > 0; })
-      .sort(function (a, b) { return b.spend.total - a.spend.total; });
+    // Ordered by the queue, newest card first, and scoped to the most recent
+    // runs the slider asks for. Nothing is filtered out for having spent
+    // nothing: a queued card is a real part of the run's shape and sits at
+    // zero until its worker starts, then climbs on each poll as it burns.
+    var runs = orderedRuns(stages);
+    var wanted = Math.min(runsScope(), Math.max(1, runs.length));
+    var plotted = [];
+    runs.slice(0, wanted).forEach(function (run) {
+      // rows arrive in queue order; newest card first means reversing it.
+      plotted = plotted.concat(run.rows.slice().reverse());
+    });
+
     var options = chartCommon();
     options.onClick = function (event, elements) {
       if (!elements || !elements.length) return;
@@ -629,15 +691,29 @@
       if (row) openStageCard(row.repo, row.stage.id);
     };
     options.plugins = options.plugins || {};
-    options.plugins.tooltip = { callbacks: { afterLabel: function () { return "click to read the card"; } } };
+    options.plugins.tooltip = { callbacks: {
+      afterLabel: function (item) {
+        var row = plotted[item.dataIndex];
+        var phase = row && row.stage ? (row.stage.status || "") : "";
+        return (phase ? phase + " - " : "") + "click to read the card";
+      }
+    } };
     draw("chart-stages", {
       type: "bar",
       data: {
         labels: plotted.map(function (row) { return row.repo + " / " + row.stage.id; }),
         datasets: [{
-          label: "stage tokens (" + rangeLabel() + ")",
+          label: "stage tokens (" + wanted + (wanted === 1 ? " run" : " runs") + ")",
           data: plotted.map(function (row) { return row.spend.total; }),
-          backgroundColor: "#2ea043"
+          // A running card is the one the operator is watching, so it is the
+          // one that must be findable at a glance among a hundred green bars.
+          backgroundColor: plotted.map(function (row) {
+            var s = row.stage.status;
+            if (s === "in_progress") return "#d29922";
+            if (s === "pending") return "#484f58";
+            if (s === "failed" || s === "stalled" || s === "verifier_failed") return "#f85149";
+            return "#2ea043";
+          })
         }]
       },
       options: options
@@ -727,6 +803,7 @@
     // while every checkbox stayed as the reader had last clicked it.
     renderRepoFilter();
     renderRangeFilter();
+    renderRunsFilter(stages);
 
     renderReposGrid(repos);
     renderAgents(repos);
