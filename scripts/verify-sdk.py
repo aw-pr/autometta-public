@@ -21,6 +21,9 @@ from typing import Any
 # customisable, so it has to be found next to this script or the SDK route
 # dies on `verifier schema not found` in every repo but autometta itself.
 AUTOMETTA_ROOT = Path(__file__).resolve().parent.parent
+# The registry belongs to the repo being verified, i.e. cwd, captured once at
+# import time so a later os.chdir elsewhere in this process can't move it.
+REPO_ROOT = Path.cwd()
 REQUIREMENTS = str(AUTOMETTA_ROOT / "scripts" / "requirements-sdk.txt")
 SCHEMA = AUTOMETTA_ROOT / "schemas" / "verifier.json"
 TEMPLATE = Path("templates/verifier-prompt.md")
@@ -54,8 +57,9 @@ def usage_field(usage: Any, name: str) -> int | None:
 
 def update_live_usage(input_tokens: int, output_tokens: int) -> None:
     """Best-effort atomically refresh this verifier's registry usage fields."""
-    path = Path("state/active-agents") / f"{os.getpid()}.json"
+    path = REPO_ROOT / "state" / "active-agents" / f"{os.getpid()}.json"
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         registry = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(registry, dict):
             raise ValueError("registry entry is not a JSON object")
