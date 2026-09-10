@@ -55,14 +55,14 @@ Tiers are defined by *capability and cost*, not by a specific model name.
 
 ### Model identities per tier (Anthropic <-> OpenAI <-> Google)
 
-Concrete model names attached to the tiers above for paired or comparative work. **Match tiers across families.** Pairing T1-Anthropic against T2-OpenAI confounds the signal you are trying to read - see the [[reference_model_family_equivalents]] memory entry for the underlying rule.
+Concrete model names attached to the tiers above for paired or comparative work. **Match tiers across families.** Pairing T1-Anthropic against T2-OpenAI confounds the signal you are trying to read. Resolve a tier to a concrete model with `agent-whoami --model <id>` or `scripts/models.sh` in the Autometta checkout; the table below names tiers, and the registry names releases.
 
 | Tier | Anthropic | OpenAI | Google |
 |------|-----------|--------|--------|
-| **T0 - Frontier-above-Opus (dispatched, opt-in)** | Claude Fable 5 (`claude-fable-5`) | — | — |
-| **T0/T1 - Frontier** | Claude Opus 4.8 (`claude-opus-4-8`) | GPT-5.6 Sol (`gpt-5.6-sol`) | Gemini Pro (current) |
-| **T2/T3 - Workhorse** | Claude Sonnet 4.6 (`claude-sonnet-4-6`) | GPT-5.6 Terra (`gpt-5.6-terra`) | Gemini Pro / Flash |
-| **T4 - Light** | Claude Haiku 4.5 (`claude-haiku-4-5`) | GPT-5.6 Luna (`gpt-5.6-luna`) | Gemini Flash |
+| **T0 - Frontier-above-Opus (dispatched, opt-in)** | Claude Fable (current) | none | none |
+| **T0/T1 - Frontier** | Claude Opus (current) | GPT Sol (current) | Gemini Pro (current) |
+| **T2/T3 - Workhorse** | Claude Sonnet (current) | GPT Terra (current) | Gemini Pro / Flash |
+| **T4 - Light** | Claude Haiku (current) | GPT Luna (current) | Gemini Flash |
 
 When dispatching paired multi-family work (comparative reviews, A/B benchmarks, independence-checking lanes), the tier governs which row of the table you pull from on each side. Solo execution can pick a tier-appropriate model from any single family - only paired or comparative work has to lock the row.
 
@@ -71,7 +71,7 @@ When dispatching paired multi-family work (comparative reviews, A/B benchmarks, 
 - **Failure cost** high (broken contract, corrupt data, manual rollback)? -> T1.
 - **Specification completeness** - fully specified by tests/types/docs? -> T2/T3. Ambiguous? -> T1.
 - **Synthesis vs retrieval** - original reasoning vs reading and reporting? Retrieval is always T4.
-- **Reversibility** - easily reverted -> T2/T3; hard to undo (schema migration, published artifact) -> T1.
+- **Reversibility** - easily reverted -> T2/T3; hard to undo (schema migration, published artefact) -> T1.
 
 ---
 
@@ -130,7 +130,7 @@ A sub-agent that hangs silently is the worst failure mode: the orchestrator wait
 1. First timeout -> kill, diagnose, re-brief the same tier once with the timeout cause fixed (tighter scope, different sandbox flag, smaller prompt).
 2. Second timeout -> surface to the user. Do not silently re-spawn a third attempt.
 
-**Future cron-supervised enforcement:** when an orchestration run is launched under a cron tick (a routine that fires the orchestrator on a schedule), the tick itself supervises a hard per-routine wall-clock max above the per-sub-agent budgets here. The per-sub-agent timeouts in this section are the *first* line of defence; the cron tick is the second. Routine authors should pick a wall-clock max = sum(sub-agent budgets) + 20% integration overhead.
+**Cron-supervised enforcement:** when an orchestration run is launched under the tick loop (`docs/tick-loop.md`), the tick and the heartbeat watchdog supervise a hard per-dispatch wall-clock budget above the per-sub-agent budgets here, and an outlier dispatch is killed. The per-sub-agent timeouts in this section are the *first* line of defence; the tick is the second. Routine authors should pick a wall-clock max = sum(sub-agent budgets) + 20% integration overhead.
 
 ---
 
@@ -176,6 +176,6 @@ If a harness lacks parallel-spawn, fall back to sequential phased execution with
 2. All acceptance criteria from every sub-task brief satisfied - verified by the orchestrator, not reported by the sub-agent.
 3. No public interface changed without explicit user approval.
 4. The orchestrator has read and understood the final diff in full.
-5. A commit message has been *proposed* to the user (not committed without explicit instruction - see `[[project-solo-workflow]]`). When multiple agents contributed, attribute primary author via `--author=` and any helpers via `Co-Authored-By:` trailers per `[[commit-discipline]]`.
+5. A commit message has been *proposed* to the user (not committed without explicit instruction). When multiple agents contributed, attribute primary author via `--author=` and any helpers via `Co-Authored-By:` trailers.
 
 See `REFERENCE.md` (in this skill directory) for a worked example and failure-mode heuristics.

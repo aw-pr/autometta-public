@@ -48,8 +48,8 @@ The dispatch-contract files travel together: the worker prompt, the verifier pro
 - `templates/verifier-prompt.md`
 - `templates/orchestrator-checklist.md`
 - `templates/stage-card.md`
-- `scripts/check-contract-test-gate.sh` — enforces the frozen contract-test assertions that the verifier prompt and the stage-card template refer to. Vendor it whenever you vendor the templates, or those references dangle (the verifier is told to run a script that is not there).
-- `scripts/autometta-vendor-check.sh` — reports when any vendored file has drifted from upstream.
+- `scripts/check-contract-test-gate.sh`: enforces the frozen contract-test assertions that the verifier prompt and the stage-card template refer to. Vendor it whenever you vendor the templates, or those references dangle (the verifier is told to run a script that is not there).
+- `scripts/autometta-vendor-check.sh`: reports when any vendored file has drifted from upstream.
 
 Do not copy those files by hand, and do not write the stamp by hand. One command vendors the set and writes the provenance stamp:
 
@@ -83,7 +83,7 @@ Full surface, including the stamp format and what each refusal looks like, is in
 After any `git pull` of the Autometta source, or as a pre-flight before an orchestrator session, confirm the vendored copies are still current:
 
 ```sh
-AUTOMETTA_ROOT=~/repos/autometta scripts/autometta-vendor-check.sh
+AUTOMETTA_ROOT=<autometta checkout> scripts/autometta-vendor-check.sh
 ```
 
 It takes the file set from upstream's single definition, content-hashes each file against the canonical checkout, and exits non-zero if any have drifted or gone missing, naming them. A file differing only in filled placeholders reads as `FILLED`, not drift. To clear real drift, run `autometta refresh-repo .`, which also rewrites the stamp to the new source SHA. (If you adopted by git submodule instead of copy, `git submodule status` already reports the pinned SHA and `git submodule update --remote` updates it; the stamp, this check and the refresh commands are for copy adoption.)
@@ -96,7 +96,7 @@ The dispatch contract itself plus the lessons doc are useful in-repo as orchestr
 
 ```sh
 mkdir -p docs
-cp ~/repos/autometta/docs/{dispatch-contract,lessons,verification}.md docs/
+cp <autometta checkout>/docs/{dispatch-contract,lessons,verification}.md docs/
 ```
 
 If the target repo already has a `docs/` directory with conflicting filenames, place these under `docs/autometta/` instead.
@@ -115,12 +115,12 @@ Existing subscribers can migrate when convenient: run `git mv docs/stages stage-
 
 A human orchestrator (Claude Code session opened in the target repo) reads the orchestrator-checklist and:
 
-1. **Pre-flight: cut a run worktree.** Dispatch never happens in the shared checkout. Declare `Base branch` and `Run branch` (`autometta/<stage-id>`) on the card, then `git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>` (removing any worktree/branch left by a prior attempt first). The worker and verifier work only there, so the operator's working tree — dirty or clean — is never a dispatch precondition. See `templates/orchestrator-checklist.md` ("Worktree dispatch pre-flight").
+1. **Pre-flight: cut a run worktree.** Dispatch never happens in the shared checkout. Declare `Base branch` and `Run branch` (`autometta/<stage-id>`) on the card, then `git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>` (removing any worktree/branch left by a prior attempt first). The worker and verifier work only there, so the operator's working tree, dirty or clean, is never a dispatch precondition. See `templates/orchestrator-checklist.md` ("Worktree dispatch pre-flight").
 2. Picks a worker tier and family. For shell-script or template work, cross-family is the default (Codex worker if orchestrator is Claude). For prose-heavy content, same-family is fine but cross-family verification still applies.
 3. Renders the worker prompt by filling placeholders in `templates/worker-prompt.md`.
 4. Dispatches the worker. With Autometta's `spawn-worker.sh` available (pass 2 vendored), this is one command. Without it, the orchestrator constructs the dispatch directly:
    - Codex: `codex exec --sandbox workspace-write "<prompt>" </dev/null > /tmp/<stage-id>-worker.log 2>&1 &`
-   - Claude: `claude -p "<prompt>" </dev/null > /tmp/<stage-id>-worker.log 2>&1 &`
+   - Claude: `claude -p --dangerously-skip-permissions "<prompt>" </dev/null > /tmp/<stage-id>-worker.log 2>&1 &`
 5. Waits for the worker to exit (monitor the log; track PID).
 6. Runs the pre-verifier gate: `bash -n` on any modified shell scripts, em-dash and AI-tell scan, idempotency-pattern grep where relevant.
 7. Dispatches the verifier with `templates/verifier-prompt.md`. Cross-family by default (banked in `memory/project-cross-family-verification-validated.md`).
@@ -149,7 +149,7 @@ Pass 2 adds the autonomous tick loop. Install the `autometta` CLI from the canon
 
 Headline checklist (refer to `docs/setup.md` in Autometta for details):
 
-1. Confirm dependencies: `bash` 3.2+, `jq`, `git`, `codex`, `claude`, `python3`, `yq`, and `agent-whoami`. `autometta check-deps` does this in one shot.
+1. Confirm dependencies: `bash` 3.2+, `jq`, `git`, `codex`, `claude`, `python3`, `yq`, `agent-whoami`, `op-fetch` and `op` (1Password CLI); `tmux` is optional, for the attach viewer. `autometta check-deps` does this in one shot.
 2. Run `scripts/install-homebrew-local.sh` from the Autometta checkout.
 3. Run `autometta init <target-repo-root>` to create host state if needed and register the repo.
 4. Confirm the target repo has a gitignored `.autometta.local.yaml` manifest.
@@ -227,7 +227,7 @@ Full resolution order and the incident behind it: `docs/dispatch-contract.md`, s
 
 ## Chain to publish-guard
 
-If the target repo will eventually be open-sourced, chain `repo-publish-guard-init` (for a brand new repo) or `repo-publish-guard-retrofit` (for an in-progress one) after pass 1 vendoring is complete. Autometta itself is set up this way; see `runs/build-log/pass-29-publish-workflow.md` in the agentic-rag-kimble project for the cross-reference pattern.
+If the target repo will eventually be open-sourced, chain `repo-publish-guard-init` (for a brand new repo) or `repo-publish-guard-retrofit` (for an in-progress one) after pass 1 vendoring is complete. Autometta itself is set up this way; the cross-reference pattern came from the agentic-rag-kimble project (an external prior project, not shipped with Autometta).
 
 ## Common gotchas
 
@@ -241,14 +241,14 @@ If the target repo will eventually be open-sourced, chain `repo-publish-guard-in
 The committer is always the human user. The *author* identifies the agent that primary-authored the diff:
 
 ```sh
-git commit --author="Claude Opus 4.8 <claude-opus-4-8@local>" -m "<message>"
-git commit --author="$(agent-whoami)" -m "<message>"
+git commit --author="$(agent-whoami --model '<model-id-from-the-preamble>')" -m "<message>"   # Claude Code
+git commit --author="$(agent-whoami)" -m "<message>"                                     # Codex / GPT
 ```
 
 For multi-agent contributions, append a trailer:
 
 ```
-Co-Authored-By: Claude Sonnet 4.6 <claude-sonnet-4-6@local>
+Co-Authored-By: <assisting agent identity, as printed by agent-whoami>
 ```
 
 The canonical agent table lives in `~/.claude/rules/mcp-hub-dev-rules.md`. Adopter repos should reference this rule file rather than duplicate the table.

@@ -23,6 +23,8 @@ state/**
 !state/handoffs/
 !state/handoffs/.gitkeep
 !state/handoffs/README.md
+!state/envelopes/
+!state/envelopes/README.md
 
 /VERSION
 

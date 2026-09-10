@@ -11,12 +11,14 @@ Stage card template, part of the dispatch-contract pattern library. Reusable in 
 - **Verifier:** <<verifier-identity>>
 - **Base branch:** <<base-branch>>
 - **Run branch:** <<autometta/stage-id>>
+- **Fixes:** <<stage-id this card repairs; optional, omit otherwise>>
+- **Supersedes:** <<stage-id this card replaces; optional, omit otherwise>>
 
 <!--
 Dispatch happens in an ephemeral worktree cut from the base branch (`git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>`), never in the shared checkout; on PASS the orchestrator fast-forward-merges the run branch back into the base branch (or pushes it, if base moved, and notes that in HANDOFF). Pin both fields to branch names, never commit SHAs. -->
 
-- **Worker effort:** <<low|medium|high|xhigh|max — optional, omit to leave the CLI on its default>>
-- **Verifier effort:** <<low|medium|high|xhigh|max — optional. Honoured by the Claude and Codex CLI routes, the Claude SDK route, and every verifier panel member. Omit to leave each route on its default.>>
+- **Worker effort:** <<low|medium|high|xhigh|max. Optional, omit to leave the CLI on its default>>
+- **Verifier effort:** <<low|medium|high|xhigh|max. Optional. Honoured by the Claude and Codex CLI routes, the Claude SDK route, and every verifier panel member. Omit to leave each route on its default.>>
 - **Requires GUI:** <<true if any role must drive a browser, screenshot, or otherwise reach the window server; omit otherwise. Codex roles are sandboxed and every browser aborts at NSApplication init without this, headless included. It grants that agent full machine access, so declare it only when the acceptance criteria genuinely need it.>>
 - **Requires network:** <<true if any role must reach the network from a shell command it runs, for example a stage whose deliverable is itself an agent session; omit otherwise. Codex roles run under workspace-write, which denies the socket: an agent session started without this dies on "Unable to connect to API (FailedToOpenSocket)" before its first tool call. Unlike Requires GUI this keeps the filesystem sandbox and opens only the socket, so prefer it whenever the network is all that is missing.>>
 - **Requires agent home:** <<true if a role spawns an agent session that needs to write under the Claude home directory, for example the per-session directory Claude Code creates at startup; omit otherwise. Reads of $HOME are already permitted, so this grants write access only, to that one directory, and the sandbox mode is unchanged. Without it an SDK session dies on "EPERM ... mkdir '~/.claude/session-env/<session-id>'".>>
@@ -88,7 +90,7 @@ Optional but recommended for any stage with executable acceptance. Before dispat
 - **Worker wall-clock:** <<worker-wall-clock-budget>>
 - **Verifier wall-clock:** <<verifier-wall-clock-budget>>
 
-## Verifier handoff
+## Dispatch envelope
 
 <<instructions-for-what-the-worker-returns-on-completion>>
 
