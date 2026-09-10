@@ -1,9 +1,18 @@
 # Handover
 
-**Status (2026-09-07 20:30):** Batch 108-134 is **complete**. 109 stages
-completed, nothing pending, nothing in flight, nothing awaiting merge. The
-fleet is refreshed to `fb08d95` and emergence-lab's working tree is clean.
-`dev` is pushed.
+**Status (2026-09-10):** docs audit and v1.0.0 publish. Every doc, template and
+skill was checked against the scripts and corrected (about 90 stale claims,
+113 em dashes, 50 home-dir paths); the README was restructured with a skimmable
+overview; `publish` fast-forwarded to `dev` for PR #4 on the public mirror and
+`v1.0.0` tagged. HANDOFF.md now crosses the publish boundary by decision
+(privatefile guard lifted 2026-09-10): keep it free of paths and secrets. The
+queue is empty and the machine is free.
+
+## Previous status (2026-09-07 20:30)
+
+Batch 108-134 is **complete**. 109 stages completed, nothing pending, nothing
+in flight, nothing awaiting merge. The fleet is refreshed to `fb08d95` and
+emergence-lab's working tree is clean. `dev` is pushed.
 
 ## State of play
 
