@@ -14,7 +14,7 @@ State and memory that agents need across sessions live **in the repo**, not in a
 
 ## What this repo is
 
-Autometta is a **pattern library**, not a runtime. Pre-alpha. The repo contains prose (`README.md`, `docs/`), markdown templates, the `agent-orchestrator` and `autometta-setup` skills, a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build, no test suite, and no package manifest - do not invent one.
+Autometta is a **pattern library**, not a runtime. Pre-alpha. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-requeue`, `autometta-run-design`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
 
 The repo extracts patterns from two prior projects (`fractals-from-the-90s` dispatch contract; `agentic-rag-kimble` pass 28-29 autonomous loop) and packages them for solo single-machine multi-agent CLI work. See `README.md` for the pitch and `docs/philosophy.md` for the long-form scope.
 
@@ -46,14 +46,14 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 
 1. `codex exec` reads stdin after the prompt arg - always redirect `</dev/null` from any wrapping harness.
 2. Card-sync race across git worktrees - verifier and worker must see the same card content; serialise writes.
-3. Log paths must be predictable (e.g. `/tmp/codex-<stage>.log`), not harness-generated task IDs.
+3. Log paths must be predictable (the loop writes `state/logs/<stage-id>-worker.log` and `<stage-id>-verifier.log`), not harness-generated task IDs.
 4. Sandbox shadows: a worker that *appears* to pass acceptance inside its sandbox may be lying about side-effects it couldn't perform.
 5. Prior-gate regressions: re-running acceptance after a later change can surface a regression in an earlier stage.
 6. `claude -p` does not stream its log - the file stays at 0 bytes until the run completes and is then written in a single burst. Log-mtime staleness is *not* a stuck signal for the claude family; only over-budget is. The heartbeat encodes this asymmetry (see `scripts/heartbeat.sh`).
 7. `claude -p` needs `--dangerously-skip-permissions` to act autonomously; `--permission-mode bypassPermissions` combined with `-p` exits silently with an empty log.
 8. Codex CLI prefers `$CODEX_HOME/auth.json` over the `OPENAI_API_KEY` env var. If `~/.codex/auth.json` has `auth_mode: "chatgpt"` (the default after `codex login`), an `op-fetch OPENAI_API_KEY=... -- codex exec` dispatch still bills the subscription. Fix: a sibling `CODEX_HOME` (default `~/.codex-api-only`) with `auth_mode: "apikey"`; spawn scripts export and `--pass CODEX_HOME` through op-fetch in api mode and fail closed if the sibling is missing.
 9. Claude worker subshell (`( ... ) &`) receives SIGHUP when the LaunchAgent tick exits, silently killing the worker at ~21s with a 0-byte log. Codex is unaffected (no wrapping subshell). Fix is two complementary parts: `disown "$pid"` immediately after capturing `$!` in `spawn-worker.sh`, `spawn-verifier.sh`, and `spawn-verifier-panel.sh` (shell job-control SIGHUP), AND `AbandonProcessGroup` in `templates/launchagent.plist.tpl` (launchd reaping the tick's process group on exit). Keep both. Verified 2026-05-29 with a real LaunchAgent dispatch: a claude worker survived the tick exit and ran to completion. See `docs/lessons.md` gotcha 9.
-10. A tick can destroy the gitignored `state/state.yaml`: `commit_state_branch`'s `git add state/state.yaml` is a silent no-op (gitignored), so the state branch never backs it up, and a degenerate read/write in `state_apply_json` can overwrite the only on-disk copy with an empty `stages: []` stub. Fix: `state_apply_json` read/write guards + a rolling `state/state.yaml.bak`, plus a top-of-tick integrity guard that restores `.bak` or halts `state-corrupt`. See `docs/lessons.md` gotcha 10.
+10. A tick can destroy the gitignored `state/state.yaml`: `commit_state_branch`'s `git add state/state.yaml` was a silent no-op (gitignored), so the state branch never backed it up, and a degenerate read/write in `state_apply_json` can overwrite the only on-disk copy with an empty `stages: []` stub. Fix: `state_apply_json` read/write guards + a rolling `state/state.yaml.bak`, plus a top-of-tick integrity guard that restores `.bak` or halts `state-corrupt`. `commit_state_branch` now snapshots the state files through a throwaway index (`write-tree` / `commit-tree` under its own `GIT_INDEX_FILE`), so the gitignore no longer hides them from the state branch. See `docs/lessons.md` gotcha 10.
 11. `op read` can block forever on a macOS TCC prompt no one is there to answer, hanging an overnight dispatch with an empty log. `op-fetch` wraps every read in a watchdog (`OP_FETCH_TIMEOUT`, default 60s). The TCC grant does not survive a `brew upgrade 1password-cli`. See `docs/lessons.md` gotcha 11.
 12. `IFS=$'\n\t'` has no space in it, so an unquoted expansion of a space-joined flag string is a silent no-op split: `--effort high` reached the CLI as one option name containing a space and every Claude verifier with a declared effort died instantly (`error: unknown option '--effort high'`), burning all three `verifier_attempt_cap` retries. Multi-token argument lists travel in a bash array (`AUTOMETTA_EFFORT_ARGV`), expanded quoted, never through word splitting; `# shellcheck disable=SC2086` documents such an intent while hiding its failure. Codex was unaffected: clap attaches a short option's value, and codex trims the leading space, so its effort was honoured throughout. See `docs/lessons.md` gotcha 12.
 13. `codex exec --oss` refuses any Ollama model without thinking support (`"<model>" does not support thinking`), which as of codex-cli 0.149.1 leaves only the gpt-oss family usable on the free local route. `llama3.3:70b`, `llama4:scout`, `qwen3-coder:30b` and `devstral` are all refused, and the last four ran fine in the 2026-08-24 bake-off, so this is a CLI regression under a documented result rather than a standing limit. `codex_local_preflight` checked only that the model was *pulled*, so the failure landed after the stage was `in_progress`; it now reads the `Capabilities` block from `ollama show` and fails closed before the spawn, failing open only when that block cannot be read. See `docs/lessons.md` gotcha 19.
@@ -70,14 +70,18 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 ## Skills hosted by this repo
 
 - `skills/agent-orchestrator/` - canonical home. Loaded into `~/.claude/skills/agent-orchestrator` via the `mcp-hub` symlink chain. Edits here are the source of truth for every consumer.
+- `skills/autometta-setup/` - adopt the dispatch contract and the tick loop in another repo.
+- `skills/autometta-run-design/` - design a run before anything is queued: cards, pairings, gates, spend.
+- `skills/autometta-requeue/` - re-queue a stage safely after a FAIL, a dead agent or a stale run worktree.
+- `skills/phat-controller/` - the scheduled queue minder's brief.
 
-## Auth routes — subscription vs API key (agents: read this before any dispatch)
+## Auth routes: subscription vs API key (agents: read this before any dispatch)
 
 Aligned to the `auth-route-security` skill. Every dispatch goes through `op-fetch`, which exec's the child via `env -i` + allowlist + only the named refs.
 
 - **Mode lives in** `.autometta.local.yaml` (gitignored) in the **subscribed repo**, under `auth.<family>.mode`. Resolver fallback (no manifest present) is `subscription` for both. The shipped template recommends `codex: api` + `claude: subscription`; flip per repo as needed.
 - **Refs live in** `op-refs.sh` (committed, placeholders, in the autometta repo) + `~/.config/autometta/op-refs.local.sh` (gitignored, real op:// refs, mode 0600). Variables: `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, optional `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`. The XDG location is visible to both the dev checkout and the brew-installed CLI; `<repo>/op-refs.local.sh` works for dev only.
-- **Sibling CODEX_HOME** at `${AUTOMETTA_CODEX_HOME:-~/.codex-api-only}` is required for codex api mode (codex prefers `~/.codex/auth.json` over `OPENAI_API_KEY` — see lessons.md gotcha #8). One-time setup: `mkdir -p ~/.codex-api-only && chmod 700 ~/.codex-api-only && op-fetch --print "$OP_REF_OPENAI_API_KEY" | CODEX_HOME=~/.codex-api-only codex login --with-api-key`. Spawn scripts export and pass it through op-fetch via `--pass CODEX_HOME` whenever codex is in api mode. `autometta auth check codex` verifies both the ref and the sibling.
+- **Sibling CODEX_HOME** at `${AUTOMETTA_CODEX_HOME:-~/.codex-api-only}` is required for codex api mode (codex prefers `~/.codex/auth.json` over `OPENAI_API_KEY`, see lessons.md gotcha #8). One-time setup: `mkdir -p ~/.codex-api-only && chmod 700 ~/.codex-api-only && op-fetch --print "$OP_REF_OPENAI_API_KEY" | CODEX_HOME=~/.codex-api-only codex login --with-api-key`. Spawn scripts export and pass it through op-fetch via `--pass CODEX_HOME` whenever codex is in api mode. `autometta auth check codex` verifies both the ref and the sibling.
 - **Service-account token** for `op-fetch` is read from `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`); no biometric prompt.
 - **Dispatch-time override**: `AUTOMETTA_CODEX_MODE=api` / `AUTOMETTA_CLAUDE_MODE=api` (or the reverse). Beats the manifest.
 - **Verify before dispatching**: `autometta auth status` (per-family table + op-fetch presence) and `autometta auth check <family>` (PASS / FAIL / subscription, with redacted credential, no token spend).
@@ -96,7 +100,7 @@ cd /path/to/autometta
 git pull --ff-only
 scripts/install-homebrew-local.sh
 autometta --version             # should match git HEAD short SHA
-autometta attach <repo>         # refreshes the two-window tmux viewer
+autometta attach <repo>         # refreshes the tmux viewer (windows listed in docs/observability.md)
 ```
 
 The brew tap is rendered at install time; `brew update` alone is not enough. Re-run `scripts/install-homebrew-local.sh` after every `git pull` of this repo.
@@ -125,7 +129,7 @@ disown
 # Register so the heartbeat / ticker can see it
 scripts/register-agent.sh "$repo" "$pid" worker codex "$identity" "$card" "$log" "$budget_secs"
 
-# Block until done or stuck — the harness notifies on return
+# Block until done or stuck; the harness notifies on return
 scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 ```
 
@@ -133,16 +137,16 @@ scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 
 `op-fetch` resolves any named refs via the 1Password service-account token at `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`) and exec's the child with a sanitised env. No biometric prompt, works under cron / LaunchAgent. See `docs/setup.md` section 7 and `docs/observability.md` for the full surface.
 
-When using the claude family as a verifier, `spawn-verifier.sh` may take the SDK route instead of `claude -p` if the repo's manifest sets `verifier.claude.transport: sdk` (requires `auth.claude.mode: api`; env override: `AUTOMETTA_CLAUDE_TRANSPORT`). See `docs/sdk-verifier.md`.
+When using the claude family as a verifier, `spawn-verifier.sh` resolves a transport (`resolve_verifier_transport`): an `AUTOMETTA_CLAUDE_TRANSPORT` override wins, then the manifest's `verifier.claude.transport`, and with neither set the SDK route is the default whenever its preconditions hold (`verifier_sdk_precondition`: script, python packages and a usable credential), falling back to `claude -p` otherwise. Every resolution then passes the route guard (`claude_route_refusal` in `scripts/models.sh`): the `api-sdk` surface calls the raw Messages API, so on a subscription OAuth token it is downgraded to the cli unless `agent-sdk` is named. Probe with `scripts/spawn-verifier.sh --print-transport claude`. See `docs/sdk-verifier.md`.
 
-On verifier PASS, a manual orchestrator commit carries the same role attribution the autonomous loop emits (`scripts/tick.sh`): author is the worker, the orchestrator and verifier are role-named `Co-Authored-By` lines, and the `Autometta-*` trailers hold the clean canonical identity for analysis. The orchestrator identity is the card's `Orchestrator` metadata line. The `${id/ </ (role) <}` substitution inserts the role into the display name (the email still keys co-authorship).
+On verifier PASS, a manual orchestrator commit carries the same role attribution the autonomous loop emits (`scripts/tick.sh`): author is the worker, the orchestrator and verifier are plain `Co-Authored-By` lines carrying the canonical identity unchanged, and the `Autometta-*` trailers name which role each identity played. The orchestrator identity is the card's `Orchestrator` metadata line. Do not put the role into the display name; `docs/dispatch-contract.md` forbids it, and the role belongs to the `Autometta-*` trailer.
 
 ```sh
 git -C "$repo" commit \
   --author="$worker_identity" \
   -m "$stage_id: $headline" \
-  -m "Co-Authored-By: ${orchestrator_identity/ </ (orchestrator) <}
-Co-Authored-By: ${verifier_identity/ </ (verifier) <}
+  -m "Co-Authored-By: $orchestrator_identity
+Co-Authored-By: $verifier_identity
 Autometta-Orchestrator: $orchestrator_identity
 Autometta-Worker: $worker_identity
 Autometta-Verifier: $verifier_identity"
