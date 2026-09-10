@@ -44,6 +44,7 @@ tier_for_identity() {
   # resolved from the model id emitted on verify-sdk's `advisor:` line.
   case "$identity" in
     *Fable*|*fable*)   printf 'T0\n' ;;
+    *GPT-6\ Astra*|*gpt-6-astra*) printf 'T0\n' ;;
     *Opus*|*opus*)     printf 'T1\n' ;;
     *GPT-5.6\ Sol*|*gpt-5.6-sol*) printf 'T1\n' ;;
     *Gemini\ Pro*)     printf 'T1\n' ;;

@@ -12,10 +12,19 @@ AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5-20251001"
 # resolves here, so a stage uses it only when its card names a *Fable* role.
 AUTOMETTA_MODEL_FABLE="claude-fable-5-1"
 # The fallback codex cloud model: what a codex identity dispatches to when it
-# names no model of its own. Cards that name Sol, Terra or Luna resolve through
-# codex_cloud_model_for_identity below and reach those weights directly, so the
-# identity now drives the model as well as the git attribution and the cost
-# tier. An identity that names none of them still lands here.
+# names no model of its own. Cards that name Astra, Sol, Terra or Luna resolve
+# through codex_cloud_model_for_identity below and reach those weights directly,
+# so the identity now drives the model as well as the git attribution and the
+# cost tier. An identity that names none of them still lands here.
+#
+# Astra (gpt-6-astra, 2026-09-03) is the frontier coding option and OpenAI's
+# own pick for software engineering, at T0 rates -- the same $10/$50 as Fable.
+# It is opt-in per card rather than the default on purpose: this fallback is
+# what every card written before Astra existed dispatches to, and silently
+# moving all of them onto a 3x tier is a bill, not an upgrade. A card that
+# wants the best model for its task names it; one that does not need it keeps
+# Sol, Terra, Luna or a local model, which is the point of the per-card
+# mechanism.
 AUTOMETTA_MODEL_CODEX="gpt-5.6-sol"
 # The codex `local` auth route (auth.codex.mode: local) runs this Ollama model
 # id via `codex exec --oss --local-provider=ollama -m <id>` instead of the API
@@ -82,6 +91,7 @@ codex_local_model_for_identity() {
 # this dispatching exactly as it did.
 codex_cloud_model_for_identity() {
   case "$1" in
+    *GPT-6\ Astra*|*gpt-6-astra*)     printf 'gpt-6-astra' ;;
     *GPT-5.6\ Sol*|*gpt-5.6-sol*)     printf 'gpt-5.6-sol' ;;
     *GPT-5.6\ Terra*|*gpt-5.6-terra*) printf 'gpt-5.6-terra' ;;
     *GPT-5.6\ Luna*|*gpt-5.6-luna*)   printf 'gpt-5.6-luna' ;;
