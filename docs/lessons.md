@@ -1,20 +1,6 @@
 # Lessons
 
-This document records the failure patterns that shaped pass 1 of Autometta. It extends the protocol in [dispatch-contract step model](dispatch-contract.md#the-seven-steps) with incident context, failure modes, and mitigations.
-
-## Headless gotcha 14: a zero-byte process log is not zero usage
-
-### One-sentence summary
-A live Claude process writes no final log until exit, so log scraping reports a false zero throughout the run even while its harness transcript records usage.
-
-### Incident origin
-On 2026-08-23 the repo ticker showed `tokens:0` for a 1,815-second Claude worker whose live transcript totalled 30,074,356 tokens. The run worktree, not the subscribed repo root, keyed the Claude transcript; Codex stored its working directory inside `session_meta` instead.
-
-### Failure mode if ignored
-An idle process and a high-spend overnight worker look identical. Parsing the whole transcript on every five-second refresh fixes the number but makes frame cost grow with files that reach tens of megabytes.
-
-### Mitigation
-Record `working_dir` in `state/active-agents/<pid>.json`. Resolve Claude by its path slug and start time, and Codex by `session_meta.cwd` and start time. Sum Claude's four usage keys incrementally while persisting a byte offset and total in the active registry; use the latest Codex cumulative `total_token_usage` rather than summing it. Read at most 16 MiB per refresh, retry misses until the transcript appears, and distinguish `waiting` from `unavailable`.
+This document records the failure patterns that shaped Autometta, from pass 1 onwards. It extends the protocol in [dispatch-contract step model](dispatch-contract.md#the-seven-steps) with incident context, failure modes, and mitigations.
 
 ## Headless gotcha 1: stdin hang
 
@@ -142,6 +128,31 @@ Result files become ambiguous, then the orchestrator cannot tell which artefact 
 ### Mitigation
 Keep output ownership explicit through [Step 5: Verifier handoff](dispatch-contract.md#step-5-verifier-handoff) and [Step 6: Orchestrator integration](dispatch-contract.md#step-6-orchestrator-integration), with stable naming agreed in the stage card.
 
+## Headless gotcha 6: `claude -p` writes its log in one burst at exit
+
+### One-sentence summary
+`claude -p` does not stream its log: the file stays at 0 bytes until the run completes and is then written in a single burst, so log-mtime staleness is not a stuck signal for the claude family (only over-budget is), and log scraping reports a false zero for usage throughout the run even while the harness transcript records it.
+
+### Incident origin
+On 2026-08-23 the repo ticker showed `tokens:0` for a 1,815-second Claude worker whose live transcript totalled 30,074,356 tokens. The run worktree, not the subscribed repo root, keyed the Claude transcript; Codex stored its working directory inside `session_meta` instead.
+
+### Failure mode if ignored
+An idle process and a high-spend overnight worker look identical. Parsing the whole transcript on every five-second refresh fixes the number but makes frame cost grow with files that reach tens of megabytes.
+
+### Mitigation
+`scripts/heartbeat.sh` applies the `silent` flag only to families that stream their log; for claude, `over-budget` is the one stuck signal. For usage, record `working_dir` in `state/active-agents/<pid>.json`. Resolve Claude by its path slug and start time, and Codex by `session_meta.cwd` and start time. Sum Claude's four usage keys incrementally while persisting a byte offset and total in the active registry; use the latest Codex cumulative `total_token_usage` rather than summing it. Read at most 16 MiB per refresh, retry misses until the transcript appears, and distinguish `waiting` from `unavailable`.
+
+## Headless gotcha 7: `claude -p` needs `--dangerously-skip-permissions`
+
+### One-sentence summary
+`claude -p` acts autonomously only with `--dangerously-skip-permissions`; `--permission-mode bypassPermissions` combined with `-p` exits silently with an empty log.
+
+### Failure mode if ignored
+A worker that looks dispatched but exits at once with a 0-byte log, indistinguishable at first glance from the SIGHUP death in gotcha 9 or the one-burst log in gotcha 6.
+
+### Mitigation
+The spawn scripts pass `--dangerously-skip-permissions` on every headless claude dispatch. Check the flag before suspecting the harness.
+
 ## Headless gotcha 8: codex prefers $CODEX_HOME/auth.json over OPENAI_API_KEY
 
 ### One-sentence summary
@@ -162,7 +173,7 @@ op-fetch --print "$OP_REF_OPENAI_API_KEY" | \
   CODEX_HOME=~/.codex-api-only codex login --with-api-key
 ```
 
-In autometta, `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` resolve the sibling via `$AUTOMETTA_CODEX_HOME` (default `~/.codex-api-only`) and pass it through op-fetch with `--pass CODEX_HOME` whenever codex is in api mode. They fail closed if the sibling is missing or its `auth_mode` is not `apikey`. `autometta auth check codex` verifies both the ref resolution and the sibling state — run it before any dispatch.
+In autometta, `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` resolve the sibling via `$AUTOMETTA_CODEX_HOME` (default `~/.codex-api-only`) and pass it through op-fetch with `--pass CODEX_HOME` whenever codex is in api mode. They fail closed if the sibling is missing or its `auth_mode` is not `apikey`. `autometta auth check codex` verifies both the ref resolution and the sibling state; run it before any dispatch.
 
 Claude has no equivalent: `claude -p` honours `ANTHROPIC_API_KEY` directly, so no sibling is needed for `claude` family api mode.
 
@@ -198,10 +209,10 @@ Confirmed on 2026-05-29 with a real LaunchAgent dispatch (not a manual tick): a 
 ## Headless gotcha 10: a tick can destroy the gitignored state.yaml, and the state branch cannot back it up
 
 ### One-sentence summary
-`state/state.yaml` is gitignored, so `commit_state_branch`'s `git add state/state.yaml` is a silent no-op — the state branch never persists it — and a tick that derives a degenerate document from a transient read error can overwrite the only on-disk copy with an empty `stages: []` skeleton, with no recovery point.
+`state/state.yaml` is gitignored, so `commit_state_branch`'s `git add state/state.yaml` is a silent no-op (the state branch never persists it) and a tick that derives a degenerate document from a transient read error can overwrite the only on-disk copy with an empty `stages: []` skeleton, with no recovery point.
 
 ### Incident origin
-Source project: autometta self-host on 2026-05-29. A live `launchctl kickstart` tick (fired to verify the LaunchAgent loop) left `state/state.yaml` reduced to a two-line `stages: []` stub; the populated file (`current_stage: 22`, full stage list) was gone. The tick log showed a `json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)` — `state_apply_json` had a tmp file that was empty at validation time — followed by `refusing state branch checkout` because the working tree was dirty (a `models.sh` `644 -> 755` mode flip from re-running `install-homebrew-local.sh`). Recovery was only possible from an APFS Time Machine local snapshot, because `state.yaml` is gitignored and the `phat-controller/state` branch had never actually tracked it.
+Source project: autometta self-host on 2026-05-29. A live `launchctl kickstart` tick (fired to verify the LaunchAgent loop) left `state/state.yaml` reduced to a two-line `stages: []` stub; the populated file (`current_stage: 22`, full stage list) was gone. The tick log showed a `json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)`, `state_apply_json` had a tmp file that was empty at validation time, followed by `refusing state branch checkout` because the working tree was dirty (a `models.sh` `644 -> 755` mode flip from re-running `install-homebrew-local.sh`). Recovery was only possible from an APFS Time Machine local snapshot, because `state.yaml` is gitignored and the `phat-controller/state` branch had never actually tracked it.
 
 ### Failure mode if ignored
 The loop's entire stage-progress record vanishes on a single bad tick. Because the next pending stage is selected as the first `status: pending` entry, a re-init to `stages: []` (or a stale recovery) makes the loop either go idle or re-run already-committed stages. There is no remote copy: the gitignored file lives only on the operator's disk.
@@ -209,7 +220,7 @@ The loop's entire stage-progress record vanishes on a single bad tick. Because t
 ### Mitigation
 Three layers, all in `scripts/tick.sh`:
 1. `state_apply_json` reads the current state with a guard (refuse to derive from an unreadable/empty document), validates the *result* is a non-empty JSON object still carrying a `.stages` array before writing, and never `mv`s a degenerate document over good state.
-2. `state_apply_json` writes a rolling `state/state.yaml.bak` before every replacement — the only recovery point for a gitignored file.
+2. `state_apply_json` writes a rolling `state/state.yaml.bak` before every replacement, the only recovery point for a gitignored file.
 3. A top-of-tick integrity guard (`_process_repo_locked`) refuses to dispatch against a corrupt/empty `state.yaml`: it auto-restores from `state.yaml.bak` when that is valid, otherwise halts with reason `state-corrupt` rather than proceeding or silently re-initialising.
 
 Open follow-up: `commit_state_branch` still cannot persist `state.yaml` while `state/` is gitignored; the durable backup is the local `.bak`. A real off-disk copy would need either a force-added state file on the state branch or an explicit export step.
@@ -217,7 +228,7 @@ Open follow-up: `commit_state_branch` still cannot persist `state.yaml` while `s
 ## Headless gotcha 11: `op read` blocks forever on a TCC prompt no one can approve
 
 ### One-sentence summary
-On macOS Sequoia, `op` can trip the "access data from other apps" TCC prompt even in service-account mode, and from a launchd/cron context on a locked machine that prompt is unanswerable — `op read` blocks indefinitely and the dispatched worker hangs with an empty log.
+On macOS Sequoia, `op` can trip the "access data from other apps" TCC prompt even in service-account mode, and from a launchd/cron context on a locked machine that prompt is unanswerable: `op read` blocks indefinitely and the dispatched worker hangs with an empty log.
 
 ### Incident origin
 2026-07-24, emergence-viewer-deep-zoom stage 30: the loop's claude worker sat 9 hours at `op-fetch → op read` with the lid shut; the tick only caught it via the wall-clock stall detector (8114 s). The pending TCC dialog surfaced at next login.
@@ -228,7 +239,7 @@ Every overnight claude-family dispatch gambles on 1Password's TCC state; a singl
 ### Mitigation
 `op-fetch` now wraps every `op read` in a watchdog (`OP_FETCH_TIMEOUT`, default 60 s) and exits 124 with a "TCC prompt or locked 1Password?" diagnostic, so the spawn chain fails in seconds and the tick reaps a dead worker instead of a zombie. Approve the TCC prompt once per context at the machine (or grant `op` Full Disk Access) to prevent the prompt recurring; the service-account token in `~/.config/op/service-account.env` already avoids desktop-app unlock dependencies. Verified end-to-end from launchd: `op-fetch → claude -p` round-trip in 10 s.
 
-**The approval does not survive a cask upgrade.** TCC keys the grant to the binary's full path, and `brew upgrade 1password-cli` installs into a new versioned Caskroom path (`.../1password-cli/<version>/op`) — macOS treats it as a brand-new app and re-prompts. Worse, the prompt's default-highlighted button is **Don't Allow**, so a reflexive click records a denial (observed 2026-07-24: the 2.34.0→2.35.0 upgrade re-prompted, the deny landed at 06:12, and the next launchd dispatch failed at the watchdog). After any 1password-cli upgrade, trigger one headless `op-fetch --print` from a launchd context and click **Allow** on the resulting prompt; confirm with `sqlite3 ~/Library/Application\ Support/com.apple.TCC/TCC.db "SELECT client, auth_value FROM access WHERE service='kTCCServiceSystemPolicyAppData' AND client LIKE '%1password%'"` — the current version's row must not be 0.
+**The approval does not survive a cask upgrade.** TCC keys the grant to the binary's full path, and `brew upgrade 1password-cli` installs into a new versioned Caskroom path (`.../1password-cli/<version>/op`), so macOS treats it as a brand-new app and re-prompts. Worse, the prompt's default-highlighted button is **Don't Allow**, so a reflexive click records a denial (observed 2026-07-24: the 2.34.0→2.35.0 upgrade re-prompted, the deny landed at 06:12, and the next launchd dispatch failed at the watchdog). After any 1password-cli upgrade, trigger one headless `op-fetch --print` from a launchd context and click **Allow** on the resulting prompt; confirm with `sqlite3 ~/Library/Application\ Support/com.apple.TCC/TCC.db "SELECT client, auth_value FROM access WHERE service='kTCCServiceSystemPolicyAppData' AND client LIKE '%1password%'"`; the current version's row must not be 0.
 
 ## Headless gotcha 12: `IFS` without a space turns an intended word split into a silent no-op
 
@@ -236,7 +247,7 @@ Every overnight claude-family dispatch gambles on 1Password's TCC state; a singl
 Every spawn script sets `IFS=$'\n\t'`, so an unquoted expansion of a space-joined flag string never splits: `--effort high` reaches the CLI as one argument whose option name contains a space, and the `# shellcheck disable=SC2086` above it documents the intent while hiding the failure.
 
 ### Incident origin
-2026-08-14, `emergence-lab` stage 34: a Claude verifier declared `Verifier effort: high` on its card and its entire log was one line, `error: unknown option '--effort high'`. Note the quoting in that message — the CLI is reporting a single unknown option, not an unknown `--effort`. The flag is supported and correctly spelled on claude 2.1.232; only its delivery was wrong. `models.sh` emitted `--effort high` as one string and both spawn scripts expanded it unquoted, trusting a word split that `IFS` had already ruled out.
+2026-08-14, `emergence-lab` stage 34: a Claude verifier declared `Verifier effort: high` on its card and its entire log was one line, `error: unknown option '--effort high'`. Note the quoting in that message: the CLI is reporting a single unknown option, not an unknown `--effort`. The flag is supported and correctly spelled on claude 2.1.232; only its delivery was wrong. `models.sh` emitted `--effort high` as one string and both spawn scripts expanded it unquoted, trusting a word split that `IFS` had already ruled out.
 
 ### Failure mode if ignored
 The dispatch dies in well under a second with a 38-byte log, and each attempt still burns one of the three `verifier_attempt_cap` retries. A stage with a Claude verifier and any effort declared exhausts its attempts and is marked `stalled` without a verifier ever running.
@@ -244,7 +255,7 @@ The dispatch dies in well under a second with a 38-byte log, and each attempt st
 The codex side of the same defect was silent, and worth recording because the obvious conclusion is wrong. `-c model_reasoning_effort=high` also arrived as one argument, but clap accepts an attached value on a short option, so codex saw `-c` with the value `" model_reasoning_effort=high"`, and its override parser tolerates the leading space. Confirmed on codex-cli 0.147.0: `codex debug -c " model_provider=doesnotexist" prompt-input` fails with `Model provider 'doesnotexist' not found`, exactly as the two-argument form does. Codex has been honouring the declared effort throughout. A long option has no such forgiveness, which is why only the claude family crashed.
 
 ### Mitigation
-`effort_flags_for_family` in `scripts/models.sh` now prints one argv element per line, and `effort_argv_for_family` reads those into the global array `AUTOMETTA_EFFORT_ARGV`. Both spawn scripts expand it as `${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"}` — quoted, so it survives any `IFS`, with the `+alternate` guard because bash 3.2 (the system bash on macOS) treats `"${arr[@]}"` on an empty array as unbound under `set -u`. `IFS=$'\n\t'` stays; it is there deliberately.
+`effort_flags_for_family` in `scripts/models.sh` now prints one argv element per line, and `effort_argv_for_family` reads those into the global array `AUTOMETTA_EFFORT_ARGV`. Both spawn scripts expand it as `${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"}`, quoted, so it survives any `IFS`, with the `+alternate` guard because bash 3.2 (the system bash on macOS) treats `"${arr[@]}"` on an empty array as unbound under `set -u`. `IFS=$'\n\t'` stays; it is there deliberately.
 
 The general rule: an array is the only safe way to carry a multi-token argument list through a shell. Reaching for word splitting means depending on a variable set 180 lines away in another file, and `shellcheck disable=SC2086` silences the one tool that would have asked about it. `scripts/effort-flags-smoke.sh` asserts on the constructed argv, captured from a stub `op-fetch` on `PATH`, so the regression is caught with no auth, no network and no spend.
 
@@ -272,7 +283,7 @@ The dangerous shape is not the money, it is that **every visible signal says suc
 ### Mitigation
 `budget_gate_dispatch` in `scripts/budget.sh` is the cap check that guards a *spawn* rather than a tick, and `tick.sh` calls it immediately before both the worker and the verifier dispatch, after any reap in that tick has been charged. It halts the repo before refusing and fails closed on any unexpected return code. Replaying the real 2026-08-15 sequence through it halts after 2 of 31 dispatches at 5,676,364 tokens rather than 149,752,682.
 
-That number is the honest bound and worth stating plainly: 5,676,364 is still 5.7x the cap, because the dispatch that crossed it was a 5,599,240-token verifier and the cap is enforced after the fact, per dispatched process. One dispatch of overshoot is the floor for an after-the-fact cap. Pre-dispatch estimation remains future scope (`docs/phat-controller.md`, "Deferred"); until it exists, a cap smaller than a typical dispatch is decorative, and the number to set is one an overshoot of a single worker or verifier can still be afforded.
+That number is the honest bound and worth stating plainly: 5,676,364 is still 5.7x the cap, because the dispatch that crossed it was a 5,599,240-token verifier and the cap is enforced after the fact, per dispatched process. One dispatch of overshoot is the floor for an after-the-fact cap. Pre-dispatch estimation remains future scope (`docs/tick-loop.md`, "Future scope", the token-estimation item); until it exists, a cap smaller than a typical dispatch is decorative, and the number to set is one an overshoot of a single worker or verifier can still be afforded.
 
 For the evidence: `lifetime_tokens_spent` is monotonic and nothing resets it, and `budget_record_breach` writes an append-only `breaches[]` entry, holding counters, caps and reasons as they stood, both when a cap halts the loop and immediately before `budget_ensure_window` zeroes anything. The reset keeps its legitimate purpose, so a new day still resumes a repo that halted for a real reason; it simply no longer destroys the record on its way through. `halt_reasons` carries every cap that was over, so a tick breach is never masked by a token breach again. `requeue-stage.sh` now clears a failure-cap halt (that is what re-queueing means) and refuses, non-zero and loudly, to clear one whose spend cap is still blown.
 
@@ -297,14 +308,14 @@ A run worktree's `state/` is a symlink out of the tree, codex's `workspace-write
 Two things made it expensive rather than merely annoying. The verifier's own prose *named the cause exactly*, in a log nobody reads while a stage looks like it is simply failing. And the retry was the worst possible response: the refusal is deterministic, so every retry re-ran a full verifier dispatch, paid for it, and failed identically.
 
 ### Failure mode if ignored
-This is the inverse of gotcha 13 and the more insidious of the two. There the visible signals said success and the hidden file said failure; here the visible signal says failure and the work is fine. An operator reading `stalled` and `consecutive_failures: 3` concludes the model could not do the task, re-briefs the card, and pays again for work that was already correct — while the actual defect is one flag in the dispatch line. Any completion signal carried by a *side effect* rather than a return value inherits the permissions of the thing producing it, and a permission failure is then indistinguishable from a work failure.
+This is the inverse of gotcha 13 and the more insidious of the two. There the visible signals said success and the hidden file said failure; here the visible signal says failure and the work is fine. An operator reading `stalled` and `consecutive_failures: 3` concludes the model could not do the task, re-briefs the card, and pays again for work that was already correct, while the actual defect is one flag in the dispatch line. Any completion signal carried by a *side effect* rather than a return value inherits the permissions of the thing producing it, and a permission failure is then indistinguishable from a work failure.
 
 ### Mitigation
 `codex_state_argv_for_repo` in `scripts/models.sh` emits `--add-dir <resolved state dir>`, and both spawn scripts pass it on every codex dispatch. It widens the sandbox to the symlink's target and nothing else. The path is deliberately the resolved physical one (`pwd -P`), since that is what codex checks against. A repo with no `state/` yields an empty argv rather than failing, so a caller that has not adopted worktree-per-run dispatch is unaffected. Claude roles are unsandboxed and need nothing.
 
 Verified A/B against the real CLI with the same prompt and sandbox, the flag the only difference: without it, `Write failed: unable to create state/.probe`; with it, the write lands in the shared dir. `scripts/state-writable-smoke.sh` asserts the argv construction, the symlink resolution that is the whole point, and the graceful degradation when `state/` is absent, against a stub `op-fetch` so it needs no auth, network or spend. It fails closed on a pre-fix tree.
 
-The general rule: when a loop treats "artefact absent" as "agent failed", make sure the agent could physically have written it. A sandbox boundary that cuts through a completion signal converts every permission error into a false verdict about the work — and the retry that follows is guaranteed to cost the same and fail the same way.
+The general rule: when a loop treats "artefact absent" as "agent failed", make sure the agent could physically have written it. A sandbox boundary that cuts through a completion signal converts every permission error into a false verdict about the work, and the retry that follows is guaranteed to cost the same and fail the same way.
 
 ## Headless gotcha 15: the tick counter measured the clock, and the dashboard measured the wrong file
 
@@ -403,12 +414,12 @@ A healthy self-resuming pause can sleep through the next working window. The sta
 ## Headless gotcha 18: the agent wrote the file, but the tick looked through a different state path
 
 ### One-sentence summary
-An agent's log says it wrote its handoff envelope or verifier artefact, but the tick cannot find it: inspect the run worktree's `state` symlink before blaming the agent or spending a retry.
+An agent's log says it wrote its dispatch envelope or verifier artefact, but the tick cannot find it: inspect the run worktree's `state` symlink before blaming the agent or spending a retry.
 
 ### Incident origin
 On 2026-08-25 the verifier for stage 51 returned a genuine PASS on all six criteria and wrote a valid artefact under its working directory. The tick read the matching path under the subscriber root, found nothing, recorded the verifier as aborted, and dispatched it again. Two of the three verifier attempts were spent on a verdict that already existed.
 
-The apparent contradiction came from two views of one tree. Prompts give agents relative paths such as `state/handoffs/<stage-id>.json` and `state/verifiers/<stage-id>.json`, resolved from the run worktree. Readers anchor the same paths to the subscriber root. `ensure_run_worktree` normally replaces the worktree's tracked `state/` directory with a symlink to the subscriber's shared state, making both views agree. An operator script had replaced that symlink with a real directory, so the verifier's successful write landed in private worktree state while the tick kept reading shared state.
+The apparent contradiction came from two views of one tree. Prompts give agents relative paths such as `state/envelopes/<stage-id>.json` (`state/handoffs/<stage-id>.json` at the time of this incident, before card 104 renamed the artefact) and `state/verifiers/<stage-id>.json`, resolved from the run worktree. Readers anchor the same paths to the subscriber root. `ensure_run_worktree` normally replaces the worktree's tracked `state/` directory with a symlink to the subscriber's shared state, making both views agree. An operator script had replaced that symlink with a real directory, so the verifier's successful write landed in private worktree state while the tick kept reading shared state.
 
 This is the completion-path version of the card-sync race in gotcha 2. The writer and reader both behaved correctly against different physical files, and the missing-file branch erased that distinction by reporting an agent failure.
 
@@ -490,3 +501,72 @@ The general rule: a preflight must check the property the dispatch actually
 depends on, not the nearest cheap proxy for it. "Is it downloaded" is a proxy
 for "can it run", and the gap between them is exactly where a wasted attempt
 lives.
+
+## Headless gotcha 20: the card path displaced the worker's repository root
+
+### One-sentence summary
+A local Codex worker received the run worktree through `-C`, but the prompt
+named only a stage card in the subscriber checkout, so the model explicitly
+ran every shell tool from that checkout and the sandbox correctly refused its
+deliverable writes outside the worktree.
+
+### Incident origin
+The 2026-08-28 `gpt-oss:20b` worker for `autometta-testing` announced the
+linked run worktree as `workdir` and `workspace-write` as its sandbox. Its tool
+trace then placed the card read and every later shell command in the subscriber
+checkout. Writes to `test.txt`, `tests/test_stats.txt` and the existing
+`calc/core.py` all failed with `Operation not permitted`, while the same shell
+wrote `/tmp/test.txt` successfully. The sandbox therefore enforced the roots
+it reported; the worker was targeting a different checkout.
+
+Changing the launching process cwd was falsified independently. With the
+process started from the subscriber checkout, a real Codex probe using the
+same `-C` reported the linked worktree from `pwd`, both directly and through
+`op-fetch`. Codex takes its default tool directory from `-C`; the failed
+worker's model overrode that default after treating the card's parent as the
+project root.
+
+The earlier gotcha 14, "the sandbox refused the one write the loop was waiting
+for", transfers one important rule: the sandbox judges the physical target of
+each write. Its specific cause does not transfer. That incident concerned the
+`state/` symlink leaving the worktree, whereas this worker failed on ordinary
+deliverables because its shell calls named the subscriber checkout directly.
+
+### Failure mode if ignored
+The banner looks correct and the worker can read every subscriber-side input,
+so the route appears healthy until its first edit. Repeated write mechanisms
+all fail because they retain the same explicit tool directory. The worker then
+spends its budget diagnosing a read-only repository, produces no deliverables
+or dispatch envelope, and the loop attributes a dispatch-boundary error to the
+model.
+
+### Mitigation
+`spawn-worker.sh` now puts the run worktree path in the prompt's per-dispatch
+notes and states that every repository-relative command must use it. It also
+states that reading a card from another checkout does not change the project
+root. `-C` remains the Codex default and the sandbox remains
+`workspace-write`; the change closes the separate model-selected tool-directory
+path without widening permissions.
+
+`scripts/local-worktree-write-smoke.sh` creates a real linked worktree while
+leaving its stage card only in the subscriber checkout, then launches the real
+`codex exec --oss` route through `spawn-worker.sh`. The subscriber fixture sits
+outside the worktree, `/tmp`, `$TMPDIR` and the separately granted state path,
+so a pre-fix wrong-checkout write is refused by the sandbox rather than
+succeeding silently. The fixed prompt selects the linked worktree and the same
+write succeeds there.
+
+That arm is not fully mechanical, and the smoke should not be read as proving
+the fix necessary. The pre-fix prompt only asks the model to use the checkout
+holding the card; a 20B model that instead takes the `-C` default writes into
+the worktree and passes on unfixed code. Measured across fourteen pre-fix
+trials on 2026-08-30, eleven failed as intended and three passed anyway. The
+smoke is a sound regression test of the fixed route and a weak proof of
+necessity; making the pre-fix arm turn on a sandbox property rather than an
+instruction would close the gap. The smoke uses no Codex stub, provider credential or
+internet access.
+
+The general rule: a CLI working-directory flag is only a default when the
+agent can choose a directory per tool call. Tell the agent which checkout owns
+repository-relative work, especially when its card is deliberately stored
+elsewhere.

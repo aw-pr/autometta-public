@@ -123,7 +123,7 @@ choices and exceptions rather than extending this runbook.
 5. After a verifier FAIL, preserve the failed worktree for inspection, revise
    the card if needed, then re-queue through the canonical
    `autometta-requeue` path. That path owns cleanup of the run worktree,
-   branch and handoff artefacts.
+   branch and envelope artefacts.
 
    ```sh
    scripts/requeue-stage.sh <repo-path> <stage-id>
@@ -146,4 +146,22 @@ choices and exceptions rather than extending this runbook.
    autometta add-stage <repo-path> <stage-card-path>
    autometta status
    autometta drain status
+   ```
+
+8. Leave the daytime session protected by default. If the controller
+   mandate's `window_reserve.overnight` is declared, the fleet starts no new
+   worker outside that window at all, whatever the quota reading says, and
+   spends freely inside it, stopping again the moment it ends. A stage
+   already in flight is never killed for this; it finishes and lands -- see
+   [the tick loop](tick-loop.md) for the full resolution rule. **Accepted
+   risk:** this depends on the host clock and the `timezone: local` reading
+   being correct; a wrong clock silently changes when the loop runs, and the
+   only signal is the tick log's resolved-window line. To spend the daytime
+   session down on purpose instead, open a bounded, self-expiring drain
+   rather than editing the mandate; a `--hours` that would outlive the
+   overnight window is refused up front, naming the window.
+
+   ```sh
+   scripts/drain.sh start --cap <n> --hours <h> --ignore-reserve
+   scripts/drain.sh status
    ```

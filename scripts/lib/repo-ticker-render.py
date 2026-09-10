@@ -381,7 +381,7 @@ def render_spend(payload, width):
     if (spend.get("openai_zero_output_caveat")):
         lines.append("  " + YELLOW(fit(
             "note: codex/GPT output_tokens reads 0 on some dispatches -- those "
-            "cost figures undercount until card 59 lands", max(1, width - 2))))
+            "cost figures undercount", max(1, width - 2))))
     return [fit(l, width) for l in lines]
 
 

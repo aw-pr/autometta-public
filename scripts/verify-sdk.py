@@ -4,29 +4,120 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import glob
 import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 from typing import Any
 
 
-REQUIREMENTS = "scripts/requirements-sdk.txt"
-SCHEMA = Path("schemas/verifier.json")
+# The verifier runs with cwd set to the subscriber's run worktree, not to the
+# autometta root (spawn-verifier.sh: `cd "$work_dir" && python3 "$sdk_script"`).
+# The template is deliberately cwd-relative -- a subscriber vendors its own
+# copy and may fill its placeholders. The schema is not vendored and not
+# customisable, so it has to be found next to this script or the SDK route
+# dies on `verifier schema not found` in every repo but autometta itself.
+AUTOMETTA_ROOT = Path(__file__).resolve().parent.parent
+# The registry belongs to the repo being verified, i.e. cwd, captured once at
+# import time so a later os.chdir elsewhere in this process can't move it.
+REPO_ROOT = Path.cwd()
+REQUIREMENTS = str(AUTOMETTA_ROOT / "scripts" / "requirements-sdk.txt")
+SCHEMA = AUTOMETTA_ROOT / "schemas" / "verifier.json"
 TEMPLATE = Path("templates/verifier-prompt.md")
-VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
-MODEL = "claude-sonnet-4-6"
+# This entrypoint is the api-sdk surface: it imports `anthropic` and calls the
+# raw Messages API. It is not claude-agent-sdk, whatever the file name
+# suggests, and artefacts carried the Agent SDK's name until 2026-09-01.
+# Superseded artefacts keep the label they were written with.
+VERIFIER_IDENTITY = "Claude API SDK verifier <claude-api-sdk@local>"
+MODEL = "claude-sonnet-5"
 MAX_TOKENS = 4096
+# Keep a broad fallback from consuming an unbounded portion of the verifier
+# context. This applies to source bytes before line numbering expands them.
+MAX_ARTEFACT_BYTES = 512 * 1024
+_BINARY_MAGIC_PREFIXES = (
+    b"\x89PNG\r\n\x1a\n",
+    b"\xff\xd8\xff",
+    b"GIF87a",
+    b"GIF89a",
+    b"%PDF-",
+    b"PK\x03\x04",
+)
+
+
+def usage_field(usage: Any, name: str) -> int | None:
+    """Return an optional usage field across SDK object and mapping shapes."""
+    if usage is None:
+        return None
+    value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+    return None if value is None else int(value)
+
+
+def update_live_usage(input_tokens: int, output_tokens: int) -> None:
+    """Best-effort atomically refresh this verifier's registry usage fields."""
+    path = REPO_ROOT / "state" / "active-agents" / f"{os.getpid()}.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        registry = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(registry, dict):
+            raise ValueError("registry entry is not a JSON object")
+        registry.update({
+            "live_input_tokens": max(0, int(input_tokens)),
+            "live_output_tokens": max(0, int(output_tokens)),
+            "live_updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        })
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, text=True
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(registry, handle, indent=2)
+                handle.write("\n")
+            os.replace(temporary, path)
+        except Exception:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"verify-sdk: could not update live usage registry: {exc}", file=sys.stderr)
+
+
+def live_anthropic_usage(usage: Any, prior_input: int) -> tuple[int, int]:
+    """Normalise an Anthropic usage signal, retaining input absent from deltas."""
+    input_fields = (
+        usage_field(usage, "input_tokens"),
+        usage_field(usage, "cache_creation_input_tokens"),
+        usage_field(usage, "cache_read_input_tokens"),
+    )
+    input_tokens = sum(value for value in input_fields if value is not None)
+    if all(value is None for value in input_fields):
+        input_tokens = prior_input
+    output_tokens = usage_field(usage, "output_tokens") or 0
+    return input_tokens, output_tokens
 
 
 def identity_for_model(model: str) -> str:
+    # This string is written into the verifier artefact, so it is git-style
+    # attribution: it has to name the weights that did the judging. Superseded
+    # ids stay in the table because an artefact from an older run must still
+    # resolve to the identity it actually carried; only the current tier is
+    # added on a model bump. An id that reaches none of these falls through to
+    # the generic label, which is what claude-sonnet-5 and claude-opus-5 did
+    # between the 2026-07-26 model bump and this fix -- a real verifier's work
+    # filed under a name no shortlog can group.
+    if "fable-5" in model:
+        return f"Claude Fable 5 (SDK) <{model}@local>"
+    if "opus-5" in model:
+        return f"Claude Opus 5 (SDK) <{model}@local>"
     if "opus-4-8" in model:
         return f"Claude Opus 4.8 (SDK) <{model}@local>"
     if "opus-4-7" in model:
         return f"Claude Opus 4.7 (SDK) <{model}@local>"
     if "opus-4" in model:
         return f"Claude Opus 4 (SDK) <{model}@local>"
+    if "sonnet-5" in model:
+        return f"Claude Sonnet 5 (SDK) <{model}@local>"
     if "sonnet-4-6" in model:
         return f"Claude Sonnet 4.6 (SDK) <{model}@local>"
     if "sonnet-4" in model:
@@ -112,7 +203,7 @@ def parse_args() -> argparse.Namespace:
         "--worker-notes",
         default=None,
         help=(
-            "Notes from a handoff envelope whose status was partial, surfaced "
+            "Notes from a dispatch envelope whose status was partial, surfaced "
             "to the verifier as a checklist of the criteria the worker "
             "deferred. Goes in the per-stage variable block, never the "
             "cacheable static block, since it differs on every stage."
@@ -159,6 +250,41 @@ def load_jsonschema() -> Any:
     return Draft202012Validator
 
 
+# The two credentials a verifier route can carry. api mode injects
+# ANTHROPIC_API_KEY; subscription mode injects the OAuth token `claude
+# setup-token` mints, which the Agent SDK's Claude Code entitlement is gated
+# behind. spawn-verifier.sh names exactly one of them per route, so only one is
+# ever present in this process's env.
+OAUTH_BETA_HEADER = "oauth-2025-04-20"
+
+
+def resolve_auth() -> tuple[str, str] | None:
+    """Return ``(kind, credential)`` for the client, or ``None`` if neither is set.
+
+    ``kind`` is ``"api_key"`` for ANTHROPIC_API_KEY or ``"auth_token"`` for
+    CLAUDE_CODE_OAUTH_TOKEN. The api key wins when both are somehow present so
+    that a repo on the metered route keeps the credential it asked for.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        return "api_key", api_key
+    oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if oauth_token:
+        return "auth_token", oauth_token
+    return None
+
+
+def build_client(Anthropic: Any, auth_kind: str, credential: str) -> Any:
+    """Construct the Anthropic client for whichever credential the route carried."""
+    if auth_kind == "auth_token":
+        return Anthropic(
+            api_key=None,
+            auth_token=credential,
+            default_headers={"anthropic-beta": OAUTH_BETA_HEADER},
+        )
+    return Anthropic(api_key=credential)
+
+
 def load_anthropic() -> Any:
     try:
         from anthropic import Anthropic
@@ -183,11 +309,41 @@ def numbered(path: Path, text: str) -> str:
 
 def find_artefacts(pattern: str) -> list[Path]:
     matches: list[Path] = []
+    excluded: set[Path] = set()
     for part in (item.strip() for item in pattern.split(",")):
         if not part:
             continue
-        matches.extend(Path(item) for item in glob.glob(part, recursive=True))
-    return sorted({path for path in matches if path.is_file()})
+        paths = {Path(item) for item in glob.glob(part.lstrip("!"), recursive=True)}
+        if part.startswith("!"):
+            excluded.update(paths)
+        else:
+            matches.extend(paths)
+    return sorted({path for path in matches if path.is_file() and path not in excluded})
+
+
+def collect_artefact_sections(artefacts: list[Path]) -> str:
+    """Return bounded, numbered text artefacts and notes for skipped files."""
+    sections: list[str] = []
+    collected_bytes = 0
+    for path in artefacts:
+        raw = path.read_bytes()
+        if b"\0" in raw or raw.startswith(_BINARY_MAGIC_PREFIXES):
+            sections.append(f"### {path}\n(skipped binary artefact)\n")
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            sections.append(f"### {path}\n(skipped artefact: not valid UTF-8)\n")
+            continue
+        if collected_bytes + len(raw) > MAX_ARTEFACT_BYTES:
+            sections.append(
+                f"(artefact collection stopped at {MAX_ARTEFACT_BYTES} bytes; "
+                "remaining matched files omitted)\n"
+            )
+            break
+        collected_bytes += len(raw)
+        sections.append(numbered(path, text))
+    return "\n".join(sections)
 
 
 def verifier_schema() -> dict[str, Any]:
@@ -235,7 +391,7 @@ def build_variable_block(
     worker_notes: str | None = None,
 ) -> str:
     """Return the per-stage, non-cached portion of the prompt."""
-    artefact_sections = "\n".join(numbered(path, read_text(path)) for path in artefacts)
+    artefact_sections = collect_artefact_sections(artefacts)
     if not artefact_sections:
         artefact_sections = "(no artefacts matched the supplied glob)\n"
 
@@ -246,7 +402,7 @@ def build_variable_block(
     if worker_notes:
         partial_section = (
             "## Worker self-reported incomplete acceptance\n\n"
-            "The handoff envelope for this stage carried `status: partial`. That is "
+            "The dispatch envelope for this stage carried `status: partial`. That is "
             "the worker's annotation, not a verdict: acceptability is yours to decide. "
             "Treat the criteria it names as your checklist and verify each one "
             "yourself rather than inheriting the worker's judgement about them.\n\n"
@@ -299,7 +455,8 @@ def _extract_json(text: str) -> Any:
 def run_sdk(
     static_block: str,
     variable_block: str,
-    api_key: str,
+    auth_kind: str,
+    credential: str,
     Anthropic: Any,
     validator: Any,
     model: str = MODEL,
@@ -313,7 +470,7 @@ def run_sdk(
     advisor is consulted only at the decision point to finalise the envelope.
     The advisor consults over the same cached prefix, so its input is cached.
     """
-    client = Anthropic(api_key=api_key)
+    client = build_client(Anthropic, auth_kind, credential)
     create_kwargs: dict[str, Any] = {
         "model": model,
         "max_tokens": MAX_TOKENS,
@@ -342,12 +499,26 @@ def run_sdk(
         }
     if effort:
         create_kwargs["output_config"] = {"effort": effort}
-    response = client.messages.create(**create_kwargs)
+    live_input = 0
+    live_output = 0
+    with client.messages.stream(**create_kwargs) as stream:
+        for event in stream:
+            event_usage = getattr(event, "usage", None)
+            if event_usage is None:
+                message = getattr(event, "message", None)
+                event_usage = getattr(message, "usage", None)
+            if event_usage is None:
+                continue
+            live_input, live_output = live_anthropic_usage(event_usage, live_input)
+            update_live_usage(live_input, live_output)
+        response = stream.get_final_message()
     usage = response.usage
     write = getattr(usage, "cache_creation_input_tokens", 0) or 0
     read = getattr(usage, "cache_read_input_tokens", 0) or 0
     inp = getattr(usage, "input_tokens", 0) or 0
     out = getattr(usage, "output_tokens", 0) or 0
+    live_input, live_output = live_anthropic_usage(usage, live_input)
+    update_live_usage(live_input, live_output)
     print(f"cache: write={write} read={read} input={inp} output={out}", file=sys.stderr)
     print(f"Total tokens: {inp + out}", file=sys.stderr)
     if advisor:
@@ -373,8 +544,8 @@ def main() -> int:
 
     # Enforce the #66714 precondition first, before any import or API call: the
     # advisor must not be weaker than the request model. This path is reached
-    # only under the sdk transport, which spawn-verifier.sh already gates to
-    # auth.claude.mode: api (ANTHROPIC_API_KEY required below).
+    # only under the sdk transport, which spawn-verifier.sh gates to a route
+    # carrying one of the two credentials resolved below.
     if args.advisor:
         try:
             assert_advisor_ordering(args.model, args.advisor)
@@ -388,12 +559,14 @@ def main() -> int:
         print(f"verify-sdk: {exc}", file=sys.stderr)
         return 2
 
-    try:
-        anthropic_api_key = os.environ["ANTHROPIC_API_KEY"]
-    except KeyError:
-        return fail_env("missing ANTHROPIC_API_KEY; inject it with op-fetch before running")
-    if not anthropic_api_key:
-        return fail_env("missing ANTHROPIC_API_KEY; inject it with op-fetch before running")
+    auth = resolve_auth()
+    if auth is None:
+        return fail_env(
+            "missing ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN; inject one with "
+            "op-fetch before running (api mode uses the key, subscription mode uses "
+            "the token minted by `claude setup-token`)"
+        )
+    auth_kind, auth_credential = auth
 
     card = Path(args.card)
     out = Path(args.out)
@@ -424,7 +597,8 @@ def main() -> int:
         envelope = run_sdk(
             static_block,
             variable_block,
-            anthropic_api_key,
+            auth_kind,
+            auth_credential,
             Anthropic,
             validator,
             model=model,

@@ -13,6 +13,10 @@ path. The repo and fleet tickers, and the full-screen `autometta tui`, read the
 same payload from `scripts/aggregate-dashboard.sh`; `--repo <path>` narrows it
 to the subscriber those terminal surfaces display.
 
+A reporting surface says when it cannot answer: an unavailable query is shown
+as unavailable, never as a confident zero. A repo with no cost log is different
+and correctly reports zero spend.
+
 ## Subcommand
 
 ```
@@ -38,7 +42,19 @@ viewer.
 
 Per stage, Failures and Provider windows page at ten rows, with a per-table size
 control; the default comes from `AUTOMETTA_DASHBOARD_PAGE_SIZE` at generation
-time. Per stage is grouped by repo and ordered by queue time, newest first.
+time. Per stage is grouped by repo and ordered by queue position rather than
+by timestamp, since a stage waiting to run has none: still-queued cards first
+(the last-queued card leads), then everything with a clock on it newest first,
+which puts the in-flight stage directly under the queue, then the undated
+remainder (terminal stages that never ran) at the bottom.
+
+The stage chart follows the same order, newest card first, and a runs slider
+beside the range control scopes it to the most recent N runs (remembered per
+viewer). Nothing is dropped for having spent nothing: a queued card sits at
+zero until its worker starts and climbs on each poll. Bars are coloured by
+status, amber for `in_progress`, grey for `pending`, red for `failed`,
+`stalled` and `verifier_failed`, green for the rest, so the running card is
+findable among a run's worth of green.
 
 Clicking a Per stage row, or a bar in the stage chart, expands the stage card
 that drove it. Card text travels in the payload because a `file://` page cannot
@@ -113,6 +129,23 @@ Every commit-on-PASS records worker and verifier token counts onto the matching
 stage entry in `state.yaml`. The next aggregator run surfaces those snapshots
 in `data.json`; the tick itself does not walk the fleet.
 
+### Live figures
+
+SDK verifiers write cumulative `live_input_tokens`, `live_output_tokens` and
+`live_updated_at` into their own `state/active-agents/<pid>.json` registry
+entry as usage arrives. The aggregator copies those fields to an in-flight
+agent's `live_usage` object in `data.json`; it omits that object when the
+registry has no SDK figure. The dashboard labels a present value `LIVE` and
+shows `n/a` for a CLI dispatch, rather than treating absence as zero.
+
+Latency is bounded by the SDK usage message, the registry's atomic rename, the
+next seam regeneration, and the page poll. `--watch` and `--serve` regenerate
+the dashboard every five seconds by default; the fleet snapshot job defaults
+to 120 seconds; the TUI reads the per-repo seam every five seconds. A missing
+or stale registry timestamp only weakens the display. Settled accounting stays
+in `state/cost-log.jsonl`, so live figures are never added to billing totals or
+counted again when the dispatch lands.
+
 `autometta attach /path/to/autometta` starts one background refresh job in the
 tmux session. Override its 120-second interval with
 `AUTOMETTA_FLEET_REFRESH_INTERVAL`. The fleet pane prints the exact
@@ -151,11 +184,13 @@ from `aggregate-dashboard.sh --repo` when scoped) and calls the renderer once
 per frame; neither reads a subscriber's `state.yaml`, `budget.json` or
 `cost-log.jsonl` directly.
 
-The per-repo viewer session's window 0 renders this same page scoped to one
-repo (TOTALS and ESCALATIONS for that repo, no REPOS table -- the other rows
-are the fleet view's business, not that page's subject). The fleet-wide page
-stays reachable as its own tmux window (`fleet`), never the landing view: an
-operator attached to one repo's session rarely wants every subscriber.
+The autometta repo's own viewer session (`autometta-autometta`) renders this
+same page scoped to one repo in its `repo` window (TOTALS and ESCALATIONS for
+that repo, no REPOS table -- the other rows are the fleet view's business, not
+that page's subject). Window 0 in every session, that one included, is the
+TUI. The fleet-wide page stays reachable as its own tmux window (`fleet`),
+never the landing view: an operator attached to one repo's session rarely
+wants every subscriber.
 
 ## Traffic-light rules
 
@@ -170,7 +205,8 @@ Worst condition wins. `FLEET_FRESH_FAILURE_HOURS` defaults to 24.
   (`completed_at`, else `started_at`, else the verifier artefact mtime) is
   younger than `FLEET_FRESH_FAILURE_HOURS` (default 24)
 - repo's `state.yaml` unreadable or unparseable (render the row as
-  `state unreadable`, never drop it - today this case kills the aggregator)
+  `state unreadable`, never drop it; `append_state_error` in the aggregator
+  renders the row)
 
 **AMBER** (degraded or noteworthy, no action forced):
 
@@ -217,12 +253,16 @@ fleet. The freshness marker therefore names the transport it is on, and
 2. **Per stage.** Table of every stage across every repo with status,
    worker / verifier identity, per-stage worker / verifier / total
    token counts, and completion timestamp. Mirrored as a bar chart of
-   per-stage totals.
+   per-stage totals. The status chip shows the stage's `phase`: an
+   in-progress stage reads `working` while its worker pid is live and
+   `verifying` while its verifier pid is, derived by the seam from
+   `state.yaml`; every other status renders as itself. `status` stays
+   the loop's raw contract; `phase` is display only.
 3. **Per model.** Token spend grouped by canonical agent identity
-   (e.g. `Claude Opus 4.8 <claude-opus-4-8@local>`,
+   (e.g. `Claude Opus 5 <claude-opus-5@local>`,
    `GPT-5.6 Sol <gpt-5-6-sol@local>`,
-   `Claude Sonnet 4.6 <claude-sonnet-4-6@local>`) per
-   `~/.claude/rules/mcp-hub-dev-rules.md`. Orchestrator identity is
+   `Claude Sonnet 5 <claude-sonnet-5@local>`), the identity strings
+   `scripts/models.sh` dispatches. Orchestrator identity is
    read from each stage card's metadata; worker / verifier identity is
    read from `state.yaml`.
 4. **Per day.** UTC daily token rollup, drawn as a line chart of
@@ -267,7 +307,12 @@ fleet. The freshness marker therefore names the transport it is on, and
           "elapsed_seconds": 120,
           "elapsed": 120,
           "budget_seconds": 5400,
-          "flags": []
+          "flags": [],
+          "live_usage": {
+            "input_tokens": 1200,
+            "output_tokens": 300,
+            "updated_at": "..."
+          }
         }
       ],
       "queue": [
@@ -293,9 +338,10 @@ fleet. The freshness marker therefore names the transport it is on, and
         {
           "id": "01-...",
           "status": "completed",
+          "phase": "completed",
           "worker": "GPT-5.6 Sol <gpt-5-6-sol@local>",
-          "verifier": "Claude Sonnet 4.6 <claude-sonnet-4-6@local>",
-          "orchestrator": "Claude Opus 4.8 <claude-opus-4-8@local>",
+          "verifier": "Claude Sonnet 5 <claude-sonnet-5@local>",
+          "orchestrator": "Claude Opus 5 <claude-opus-5@local>",
           "started_at": "...",
           "completed_at": "...",
           "tokens": 142672,
@@ -334,7 +380,8 @@ The per-stage `tokens` / `worker_tokens` / `verifier_tokens` fields are
 `null` and continue to render.
 
 `agents` is the live registration joined to the matching heartbeat row by
-PID. `queue` preserves `state.yaml` order and includes pending stages only.
+PID; `live_usage` is present only when the registry carries an SDK figure
+(see Live figures above). `queue` preserves `state.yaml` order and includes pending stages only.
 Per-repo `spend` and top-level `spend.by_repo_role` cover the current UTC day,
 which is why `spend.tokens_total` reconciles with `fleet_totals.today_tokens`.
 `spend.failures` uses a seven-day window and treats every result other than

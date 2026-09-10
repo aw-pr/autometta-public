@@ -208,6 +208,8 @@ which is severity first, then dependency.
 
 ## Pass 5 - the fact ledger (graph engineering), designed 2026-08-31
 
+**Status, 2026-09-10:** every card in this table landed by 2026-09-01 (the queue cells below are as written on 2026-08-31). Batches 92-107 and 108-134 followed; `HANDOFF.md` and the dashboard carry the record. v1.0.0 was tagged from the tree that includes them.
+
 `docs/graph-engineering.md` is the brief: the commit DAG records what changed,
 nothing records what is true. The ledger cards are a strict data chain
 (83 needs 82's schema landed, 84 needs 83's ledger, 84 touches `tick.sh`),
@@ -226,11 +228,12 @@ Queue order: 82, 86, 83, 84, 85.
 | 84 | Tick appends facts at landing, never blocking one | queued 2026-08-31 - gated on 83 | [`84-a-landing-leaves-a-fact-behind.md`](./84-a-landing-leaves-a-fact-behind.md) |
 | 85 | Bounded fact slice in the verifier prompt | queued 2026-08-31 - gated on 84 | [`85-the-verifier-reads-the-ledger-first.md`](./85-the-verifier-reads-the-ledger-first.md) |
 | 88 | Machine-dependency inventory (UAT ask) | queued 2026-08-31 - pipeline tail for 85 | [`88-the-machine-dependencies-are-declared.md`](./88-the-machine-dependencies-are-declared.md) |
-| 87 | herdr evidence spike (authored by the herdr session) | queued 2026-08-31 - pipeline tail for 88 | [`87-the-multiplexer-knows-what-its-panes-are-doing.md`](./87-the-multiplexer-knows-what-its-panes-are-doing.md) |
+| 87 | herdr evidence spike (authored by the herdr session) | landed 2026-08-31, then retired 2026-08-31 - operator decided against herdr; the SDK transport covers it, card and spike doc removed | - |
 | 89 | SDK verifier on the subscription OAuth token | queued 2026-08-31 - gated on 85 | [`89-the-sdk-verifier-runs-on-the-subscription.md`](./89-the-sdk-verifier-runs-on-the-subscription.md) |
 | 28 | OpenAI SDK verifier route + transport matrix (refreshed) | queued 2026-08-31 - gated on 89 | [`28-per-role-family-sdk-transport.md`](./28-per-role-family-sdk-transport.md) |
 | 90 | SDK is the default verifier transport | queued 2026-08-31 - gated on 28 | [`90-the-verifier-reaches-for-the-sdk-first.md`](./90-the-verifier-reaches-for-the-sdk-first.md) |
 | 91 | Live token burn in the TUI and dashboard | queued 2026-08-31 - gated on 90 | [`91-the-burn-is-visible-while-it-burns.md`](./91-the-burn-is-visible-while-it-burns.md) |
+| 92 | Agents panel click-through to the controller inbox (UAT ask) | designed, not queued - gate on 91, next batch | [`92-the-agents-panel-answers-back.md`](./92-the-agents-panel-answers-back.md) |
 
 ### Operator notes (pass 5)
 

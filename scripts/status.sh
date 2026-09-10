@@ -9,6 +9,72 @@ controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
 controller_log_dir="$controller_home/log"
 status_width="${AUTOMETTA_TICKER_COLUMNS:-${COLUMNS:-$(tput cols 2>/dev/null || printf 120)}}"
+loop_label="com.autometta.tick.fleet"
+loop_plist="$HOME/Library/LaunchAgents/${loop_label}.plist"
+
+format_age() {
+  local seconds="$1"
+  if (( seconds < 60 )); then
+    printf '%ss ago' "$seconds"
+  elif (( seconds < 3600 )); then
+    printf '%sm ago' "$((seconds / 60))"
+  elif (( seconds < 86400 )); then
+    printf '%sh ago' "$((seconds / 3600))"
+  else
+    printf '%sd ago' "$((seconds / 86400))"
+  fi
+}
+
+file_mtime() {
+  stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null
+}
+
+latest_controller_log() {
+  local candidate latest=""
+  for candidate in "$controller_log_dir"/tick-*.log; do
+    [[ -e "$candidate" ]] || continue
+    if [[ -z "$latest" || "$candidate" -nt "$latest" ]]; then
+      latest="$candidate"
+    fi
+  done
+  printf '%s' "$latest"
+}
+
+loop_interval() {
+  [[ -f "$loop_plist" ]] || return 1
+  /usr/libexec/PlistBuddy -c 'Print :StartInterval' "$loop_plist" 2>/dev/null
+}
+
+print_loop_status() {
+  local latest_log interval mtime now age
+  if ! command -v launchctl >/dev/null 2>&1; then
+    printf 'loop: unknown (launchctl unavailable)\n'
+    return 0
+  fi
+  if ! launchctl list 2>/dev/null | grep -Fq "$loop_label"; then
+    printf 'loop: NOT LOADED -- run: autometta install-launchagent\n'
+    return 0
+  fi
+
+  latest_log="$(latest_controller_log)"
+  if [[ -z "$latest_log" ]]; then
+    printf 'loop: loaded (%s, last fire unknown)\n' "$loop_label"
+    return 0
+  fi
+  mtime="$(file_mtime "$latest_log")" || {
+    printf 'loop: loaded (%s, last fire unknown)\n' "$loop_label"
+    return 0
+  }
+  now="$(date +%s)"
+  age=$((now - mtime))
+  (( age < 0 )) && age=0
+  interval="$(loop_interval 2>/dev/null || true)"
+  if [[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 && "$age" -gt $((interval * 3)) ]]; then
+    printf 'loop: loaded (%s, WARNING last fire %s; interval %ss)\n' "$loop_label" "$(format_age "$age")" "$interval"
+  else
+    printf 'loop: loaded (%s, last fire %s)\n' "$loop_label" "$(format_age "$age")"
+  fi
+}
 
 print_compact_repo() {
   local repo="$1" enabled="$2" stage="$3" status="$4" budget="$5" process="$6"
@@ -193,14 +259,11 @@ main() {
     exit 1
   fi
 
+  print_loop_status
   printf 'autometta home: %s\n' "$controller_home"
   if [[ -d "$controller_log_dir" ]]; then
-    local latest_log candidate
-    latest_log=""
-    for candidate in "$controller_log_dir"/tick-*.log; do
-      [[ -e "$candidate" ]] || continue
-      latest_log="$candidate"
-    done
+    local latest_log
+    latest_log="$(latest_controller_log)"
     printf 'latest controller log: %s\n' "${latest_log:-"-"}"
   fi
   if [[ -n "$filter_repo" ]]; then

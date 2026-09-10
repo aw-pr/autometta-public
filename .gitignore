@@ -23,12 +23,19 @@ state/**
 !state/handoffs/
 !state/handoffs/.gitkeep
 !state/handoffs/README.md
+!state/envelopes/
+!state/envelopes/README.md
 
 /VERSION
 
 # Dashboard: Chart.js is downloaded at install time, not committed.
 dashboard/vendor/
-HANDOFF.md
+# HANDOFF.md is tracked, not ignored. It is the SESSION handoff -- prose for
+# the next chat -- and tracking is what makes it follow a clone or worktree.
+# Privacy is enforced at the publish boundary instead: publishguard.privatefile
+# names it, so the pre-push guard blocks it fail-closed from the public head.
+# Not to be confused with state/handoffs/<stage>.json, which is the worker's
+# completion signal to tick.sh -- a different mechanism sharing a word.
 .codegraph/
 .publish-guard-strict.local
 .claude/settings.local.json

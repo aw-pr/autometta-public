@@ -50,7 +50,9 @@ Cleanup and migration cards that need a quiet tree gate on `queue-empty`.
 
 Declared here, per adjacent pair of stages, and only ever these classes:
 
-- **`serial`** (the default): worker N+1 dispatches after stage N lands.
+- **`serial`** (declared with `- **Dispatch:** serial`; there is no
+  default, `add-stage.sh` refuses a card that carries neither this line nor
+  `Path claims`): worker N+1 dispatches after stage N lands.
   Correct whenever the pair shares files, either stage touches `tick.sh` or
   `scripts/lib/`, or either card's scope is open-ended.
 - **`pipeline`**: worker N+1 may dispatch while verifier N is still
@@ -72,15 +74,16 @@ Landing policy for a `pipeline` pair, written into both cards:
   are file-disjoint** (a mechanical rebase, no judgement). Any conflict
   aborts to a controller escalation; headless conflict resolution stays on
   the forbidden list.
-- Any FAIL in an overlapped pair drops the rest of the run to `serial`
-  until the re-brief lands.
+- A FAIL in an overlapped pair drops only that pair to `serial`: the tail
+  lands by plain fast-forward, and the next eligible pair may overlap again
+  (card 113).
 
 **Mechanical status.** The bounded pipeline mechanism exists. Queue insertion
 parses each card's `Path claims:` line, and the tick may overlap worker N+1
 with verifier N only after checking claims, alternating families and two-p95
 budget headroom. Landing remains ordered and actual-diff checked; a failure
-drops the repo to serial until the affected re-brief lands. Cards without
-claims remain on the unchanged serial path. Cross-repo parallelism remains
+drops only the affected pair to serial. A card without claims must declare
+`Dispatch: serial` itself; queue insertion refuses one that declares neither. Cross-repo parallelism remains
 independent: two subscribers with fed queues can run concurrently under one
 drain.
 

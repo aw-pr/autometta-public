@@ -87,13 +87,22 @@
   // drew empty charts. Fall back to the cost log, which carries the same
   // figures per stage and per role.
   function stageSpend(repo, stage) {
+    var spend = repo.spend || {};
+    // A spend query that could not run reports null figures and a state_error,
+    // and the cost-log fallback below is empty because there was nothing to
+    // fall back through. Coercing those nulls with `|| 0` would restate the
+    // failure as a confident zero -- the one thing docs/dashboard.md forbids.
+    // Absent is the other case and stays truthful: a repo with no cost log
+    // really has spent nothing, carries no state_error, and still counts zero.
+    if (spend.state_error) {
+      return { worker: null, verifier: null, total: null, logged: false, unavailable: true };
+    }
     var worker = Number(stage.worker_tokens || 0);
     var verifier = Number(stage.verifier_tokens || 0);
     var total = Number(stage.tokens || 0);
     if (total || worker || verifier) {
       return { worker: worker, verifier: verifier, total: total || worker + verifier, logged: false };
     }
-    var spend = repo.spend || {};
     var logged = 0;
     (spend.by_stage || []).forEach(function (row) {
       if (row.stage_id === stage.id) logged += Number(row.tokens || 0);
@@ -152,6 +161,62 @@
       });
     });
     return out;
+  }
+
+  // --- run scope (per-stage chart) -----------------------------------------
+  //
+  // The per-stage chart used to plot every stage that had spent anything,
+  // ordered by spend. That answers "which stage cost most", which is a
+  // question about history. The question an operator asks while a run is
+  // going is "how is this run burning, card by card", so the chart is
+  // ordered by the queue instead and scoped to a number of recent runs.
+  // Queued cards stay in at zero: a run's shape includes what it has not
+  // started yet.
+
+  function runsScope() {
+    if (state.runsScope != null) return state.runsScope;
+    var stored = parseInt(storeGet("autometta.runsScope"), 10);
+    state.runsScope = isFinite(stored) && stored >= 1 ? stored : 1;
+    return state.runsScope;
+  }
+
+  // Runs newest first. A stage with no run_id predates run tracking; those
+  // are grouped under one bucket so they can still be reached by widening
+  // the slider rather than vanishing.
+  function orderedRuns(rows) {
+    var byRun = Object.create(null);
+    rows.forEach(function (row) {
+      var key = row.stage.run_id || "(no run)";
+      var when = Date.parse(stageWhen(row.stage) || "") || 0;
+      if (!byRun[key]) byRun[key] = { id: key, latest: when, rows: [] };
+      if (when > byRun[key].latest) byRun[key].latest = when;
+      byRun[key].rows.push(row);
+    });
+    return Object.keys(byRun).map(function (k) { return byRun[k]; })
+      .sort(function (a, b) { return b.latest - a.latest; });
+  }
+
+  function renderRunsFilter(rows) {
+    var wrap = document.getElementById("runs-filter");
+    if (!wrap) return;
+    var runs = orderedRuns(rows);
+    var max = Math.max(1, runs.length);
+    var value = Math.min(runsScope(), max);
+    var noun = value === 1 ? "run" : "runs";
+    wrap.innerHTML =
+      '<span class="filter-label">stages over</span>' +
+      '<input type="range" id="runs-scope" min="1" max="' + max + '" value="' + value + '">' +
+      '<span class="filter-label" id="runs-scope-label">' + value + " " + noun +
+      (value === 1 ? " (this run)" : "") + "</span>";
+    var input = document.getElementById("runs-scope");
+    if (!input) return;
+    input.addEventListener("input", function () {
+      var n = parseInt(input.value, 10);
+      if (!isFinite(n) || n < 1) return;
+      state.runsScope = n;
+      storeSet("autometta.runsScope", String(n));
+      renderAll();
+    });
   }
 
   function renderRangeFilter() {
@@ -404,14 +469,20 @@
       (r.agents || []).forEach(function (a) {
         var elapsed = fmtInt(a.elapsed_seconds || 0) + "s";
         if (a.budget_seconds) elapsed += " / " + fmtInt(a.budget_seconds) + "s";
-        rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-", elapsed]);
+        var usage = a.live_usage;
+        var burn = "n/a";
+        if (usage) {
+          burn = "LIVE " + fmtInt(Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0));
+          if (!usage.updated_at) burn += " (stale)";
+        }
+        rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-", burn, elapsed]);
       });
       (r.queue || []).forEach(function (q) {
-        rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "-"]);
+        rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "-", "-"]);
       });
     });
     renderSimpleTable("agents-table-wrap",
-      ["Repo", "Kind", "Stage", "Role", "Agent / worker", "Verifier", "Elapsed / budget"], rows);
+      ["Repo", "Kind", "Stage", "Role", "Agent / worker", "Verifier", "Live burn", "Elapsed / budget"], rows);
   }
 
   function renderFailures(spend, names) {
@@ -488,14 +559,27 @@
       // noise; the filter narrows which repos appear, the grouping keeps each
       // one's run legible once several are showing.
       var group = r.stages.map(function (s) { return { repo: r.name, stage: s }; });
-      // Newest queue time at the top, with stages not yet dispatched above the
-      // dated ones: page one is then the live end of the run, not its oldest card.
+      // Queue position, last first. The queue array is the order the tick will
+      // actually dispatch in, so it is the only thing that knows a stage's
+      // place in the run; a timestamp cannot, because a stage waiting to run
+      // has none. Reading "no timestamp" as "queued" put every never-dispatched
+      // terminal stage -- a failed card from May with both dates null -- at the
+      // top of the table, where the next stage to run belongs.
+      var queuePos = Object.create(null);
+      (r.queue || []).forEach(function (q, i) { queuePos[q.stage_id] = i + 1; });
+      // Three bands, in this order: still queued (descending position, so the
+      // last-queued card leads), then everything with a clock on it (newest
+      // first, which lands the in-flight stage directly under the queue on its
+      // own merit rather than by pinning it), then the undated remainder --
+      // terminal stages that never ran, which belong at the bottom.
+      function band(s) { return queuePos[s.id] ? 0 : (s.started_at || s.completed_at) ? 1 : 2; }
       group.sort(function (a, b) {
+        var ab = band(a.stage), bb = band(b.stage);
+        if (ab !== bb) return ab - bb;
+        if (ab === 0) return queuePos[b.stage.id] - queuePos[a.stage.id];
+        if (ab === 2) return 0;
         var at = a.stage.started_at || a.stage.completed_at;
         var bt = b.stage.started_at || b.stage.completed_at;
-        if (!at && !bt) return 0;
-        if (!at) return -1;
-        if (!bt) return 1;
         return at < bt ? 1 : at > bt ? -1 : 0;
       });
       group.forEach(function (row, i) { row.groupStart = i === 0; rows.push(row); });
@@ -511,6 +595,10 @@
       // A figure recovered from the cost log is marked, because it is a
       // different measurement from one the stage recorded on completion.
       var mark = spend.logged ? "*" : "";
+      // fmtInt already renders null as "-"; the title says why it is a dash
+      // rather than leaving the reader to guess at a missing number.
+      var spendTitle = spend.unavailable
+        ? ' title="' + esc(byName[row.repo].spend.state_error) + '"' : "";
       var cardPath = s.card || ("stage-cards/" + s.id + ".md");
       // The same answer the TUI's detail pane gives: the card is the prompt the
       // worker was handed, so "why did it do that" is usually read from it
@@ -522,12 +610,12 @@
                key: stageKey(row.repo, s.id), cells: [
         row.repo,
         { html: '<span class="caret">\u25b8</span> ' + esc(s.id) },
-        { html: '<span class="status ' + esc(s.status) + '">' + esc(s.status) + "</span>" },
+        { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
         shortIdentity(s.worker),
         shortIdentity(s.verifier),
-        { html: fmtInt(spend.worker) + mark, cls: "num" },
-        { html: fmtInt(spend.verifier) + mark, cls: "num" },
-        { html: fmtInt(spend.total) + mark, cls: "num" },
+        { html: '<span' + spendTitle + ">" + fmtInt(spend.worker) + mark + "</span>", cls: "num" },
+        { html: '<span' + spendTitle + ">" + fmtInt(spend.verifier) + mark + "</span>", cls: "num" },
+        { html: '<span' + spendTitle + ">" + fmtInt(spend.total) + mark + "</span>", cls: "num" },
         s.started_at || "",
         s.completed_at || ""
       ] };
@@ -584,12 +672,18 @@
   }
 
   function drawStagesChart(stages) {
-    // Biggest first, and nothing that spent nothing. Plotting every stage in
-    // run order gave a chart whose x-axis was mostly zero-height bars and
-    // unreadable labels; the question this chart answers is which stages cost
-    // the most, so it is ordered by that.
-    var plotted = stages.filter(function (row) { return row.spend.total > 0; })
-      .sort(function (a, b) { return b.spend.total - a.spend.total; });
+    // Ordered by the queue, newest card first, and scoped to the most recent
+    // runs the slider asks for. Nothing is filtered out for having spent
+    // nothing: a queued card is a real part of the run's shape and sits at
+    // zero until its worker starts, then climbs on each poll as it burns.
+    var runs = orderedRuns(stages);
+    var wanted = Math.min(runsScope(), Math.max(1, runs.length));
+    var plotted = [];
+    runs.slice(0, wanted).forEach(function (run) {
+      // rows arrive in queue order; newest card first means reversing it.
+      plotted = plotted.concat(run.rows.slice().reverse());
+    });
+
     var options = chartCommon();
     options.onClick = function (event, elements) {
       if (!elements || !elements.length) return;
@@ -597,15 +691,29 @@
       if (row) openStageCard(row.repo, row.stage.id);
     };
     options.plugins = options.plugins || {};
-    options.plugins.tooltip = { callbacks: { afterLabel: function () { return "click to read the card"; } } };
+    options.plugins.tooltip = { callbacks: {
+      afterLabel: function (item) {
+        var row = plotted[item.dataIndex];
+        var phase = row && row.stage ? (row.stage.status || "") : "";
+        return (phase ? phase + " - " : "") + "click to read the card";
+      }
+    } };
     draw("chart-stages", {
       type: "bar",
       data: {
         labels: plotted.map(function (row) { return row.repo + " / " + row.stage.id; }),
         datasets: [{
-          label: "stage tokens (" + rangeLabel() + ")",
+          label: "stage tokens (" + wanted + (wanted === 1 ? " run" : " runs") + ")",
           data: plotted.map(function (row) { return row.spend.total; }),
-          backgroundColor: "#2ea043"
+          // A running card is the one the operator is watching, so it is the
+          // one that must be findable at a glance among a hundred green bars.
+          backgroundColor: plotted.map(function (row) {
+            var s = row.stage.status;
+            if (s === "in_progress") return "#d29922";
+            if (s === "pending") return "#484f58";
+            if (s === "failed" || s === "stalled" || s === "verifier_failed") return "#f85149";
+            return "#2ea043";
+          })
         }]
       },
       options: options
@@ -671,6 +779,12 @@
 
   // --- entry ---------------------------------------------------------------
 
+  function formatClock(stamp) {
+    if (!stamp) return "unknown";
+    var date = new Date(stamp);
+    return isNaN(date.getTime()) ? String(stamp) : date.toLocaleTimeString();
+  }
+
   function renderAll() {
     var data = state.data;
     var repos = visibleRepos();
@@ -678,14 +792,18 @@
     var stages = visibleStages();
 
     document.getElementById("generated-at").textContent =
-      "generated " + data.generated_at + " - " + repos.length +
+      "generated " + formatClock(data.generated_at) + " - " + repos.length +
       " of " + (data.repos || []).length + " repo(s)";
+    document.getElementById("generated-at").title = data.generated_at
+      ? "UTC: " + data.generated_at
+      : "Generation time unavailable";
 
     // Both controls are rebuilt from state on every pass. Mutating state
     // without redrawing them left the all/none buttons filtering the data
     // while every checkbox stayed as the reader had last clicked it.
     renderRepoFilter();
     renderRangeFilter();
+    renderRunsFilter(stages);
 
     renderReposGrid(repos);
     renderAgents(repos);
@@ -756,13 +874,21 @@
     });
   }
 
-  function loadData() {
+  function loadData(allowEmbedded) {
     if (isFile) {
       // No fetch on a file:// origin, and no http fallback to try.
       return loadViaScript();
     }
     return loadViaFetch().catch(function (err) {
-      if (window.AUTOMETTA_DATA) return window.AUTOMETTA_DATA;
+      // The snapshot index.html embedded at page load is a first-paint
+      // courtesy, not a standing fallback. Returning it on every failed poll
+      // resolved the promise, so the poll took its success path, reset the
+      // failure counter, found generated_at unchanged and reported
+      // "live - unchanged" -- forever, against a server that had died. A dead
+      // server read exactly like an idle run, which is the one thing this
+      // status line exists to tell apart. Observed 2026-09-01: a page sat on
+      // an 08:39Z snapshot until 11:10 still calling itself live.
+      if (allowEmbedded && window.AUTOMETTA_DATA) return window.AUTOMETTA_DATA;
       throw err;
     });
   }
@@ -796,7 +922,7 @@
   }
 
   function poll() {
-    loadData()
+    loadData(false)
       .then(function (data) {
         state.pollFailures = 0;
         var fresh = applyData(data);
@@ -812,7 +938,13 @@
         // through replacing; the mv is atomic but the read can still lose the
         // race on some filesystems. Only say something once it persists.
         if (state.pollFailures >= 3) {
-          setLiveStatus("stale - " + err.message, "warn");
+          // Name the age, not just the error. "Cannot reach the server" says
+          // the poll failed; the age says how far what is on screen has
+          // drifted from the run, which is the number a reader acts on.
+          var shown = state.lastGeneratedAt
+            ? " - showing data generated " + state.lastGeneratedAt
+            : "";
+          setLiveStatus("NOT LIVE" + transportNote() + " - " + err.message + shown, "warn");
         }
       });
   }
@@ -821,7 +953,7 @@
   // uses what is in hand rather than re-reading it.
   var first = isFile && window.AUTOMETTA_DATA
     ? Promise.resolve(window.AUTOMETTA_DATA)
-    : loadData();
+    : loadData(true);
 
   first
     .then(function (data) {

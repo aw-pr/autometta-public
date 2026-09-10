@@ -451,10 +451,12 @@ print("ok" if all(len(l) <= 119 for l in lines) else "overflow")')"
 selfhost_dir="$fixture/autometta"
 mkdir -p "$selfhost_dir"
 dry_run_plan="$(PHAT_CONTROLLER_HOME="$controller" "$script_dir/attach.sh" --dry-run "$selfhost_dir")"
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/119-the-fleet-ticker-smoke-asks-for-the-plan-attach-prints.md
 check "the fleet-wide page is still reachable (a distinct tmux window in the dry-run plan)" \
-  "$([[ "$dry_run_plan" == *'third window: fleet'* ]] && printf ok || printf 'not reachable')"
+  "$(printf '%s\n' "$dry_run_plan" | awk '/window: fleet/ && !/^default window:/ { found=1 } END { print found ? "ok" : "not reachable" }')"
 check "window 0 of that plan is the repo-scoped page, not the fleet-wide one" \
-  "$([[ "$dry_run_plan" == *'default window: repo'* ]] && printf ok || printf 'wrong landing window')"
+  "$(printf '%s\n' "$dry_run_plan" | awk '/^default window: tui/ { found=1 } END { print found ? "ok" : "wrong landing window" }')"
+# AUTOMETTA-CONTRACT-END
 
 printf '\n== column edges align: every column starts at the same offset from header to every body row ==\n' >&2
 for width_var in fleet80:80 fleet119:119 fleet160:160; do

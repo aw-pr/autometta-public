@@ -1,6 +1,6 @@
 ---
 name: decision-agent-observability-registry
-description: Per-agent liveness registry at state/active-agents/, a heartbeat watchdog, and a tmux agent ticker — observability for the dispatch contract that does not depend on the autonomous loop driving the dispatch.
+description: Per-agent liveness registry at state/active-agents/, a heartbeat watchdog, and a tmux agent ticker - observability for the dispatch contract that does not depend on the autonomous loop driving the dispatch.
 metadata:
   type: project
 ---
@@ -19,7 +19,7 @@ Card 13 added three things on top of the dispatch contract:
 
 **Why:**
 
-- The card 12 verifier dispatch died silently — `--permission-mode` flag
+- The card 12 verifier dispatch died silently - `--permission-mode` flag
   conflict with `-p` produced an empty log and an exited process. The
   orchestrator only noticed when the operator asked. The watchdog and the
   ticker exist so the next silent death surfaces within one tick.
@@ -31,7 +31,7 @@ Card 13 added three things on top of the dispatch contract:
   central watchdog reads files. This keeps the filesystem-as-message-bus
   invariant from `docs/philosophy.md` intact.
 - The heartbeat surfaces; it does not kill. The operator decides. Killing
-  on stall would conflict with the "budget file, not retries" invariant —
+  on stall would conflict with the "budget file, not retries" invariant  - 
   a stall is a budget signal, not a control signal.
 
 **How to apply:**

@@ -102,6 +102,8 @@ table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .status.verifier_failed { background: rgba(248,81,73,.15); color: var(--fail); }
 .status.stalled         { background: rgba(210,153,34,.15); color: var(--stall); }
 .status.in_progress     { background: rgba(88,166,255,.15); color: var(--accent); }
+.status.working         { background: rgba(88,166,255,.15); color: var(--accent); }
+.status.verifying       { background: rgba(163,113,247,.15); color: #a371f7; }
 .status.pending         { background: rgba(110,118,129,.15); color: var(--pending); }
 
 .chart-wrap {

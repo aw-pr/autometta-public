@@ -38,7 +38,7 @@ Banked at `memory/adopters/<repo>/` with analysis-friendly `metadata.run` frontm
 - [SDK verifier integration decisions](decision-sdk-verifier-integration.md): Why manifest flag over per-card, why cli default, why not mutate autometta's own manifest for 15c.
 - [SDK verifier prompt caching](decision-sdk-verifier-prompt-cache.md): Why ephemeral TTL, why anthropic library switch, what busts the cache, static/variable split.
 - [Handoff envelope contract](decision-handoff-envelope.md): Why JSON file is the sole worker completion signal, why mandatory for new stages, why legacy stages are grandfathered.
-- [Verifier panel design](decision-verifier-panel.md): N=3 majority vote, opt-in, fixed composition for v1 — stage 18 decisions.
-- [Sweep stage design](decision-sweep-stage.md): Opt-in parallel worker exploration; synthesis as worker; worktrees; output is docs/decisions/ — stage 20 design.
-- [Remote monitoring contract](decision-remote-monitoring.md): Hosted routines file PRs only; no dispatch authority; three surfaces — stage 21.
+- [Verifier panel design](decision-verifier-panel.md): N=3 majority vote, opt-in, fixed composition for v1 - stage 18 decisions.
+- [Sweep stage design](decision-sweep-stage.md): Opt-in parallel worker exploration; synthesis as worker; worktrees; output is docs/decisions/ - stage 20 design.
+- [Remote monitoring contract](decision-remote-monitoring.md): Hosted routines file PRs only; no dispatch authority; three surfaces - stage 21.
 - [Codex SDK runs on the subscription](project-codex-sdk-subscription-auth.md) - openai-codex reuses chatgpt auth.json; openai/openai-agents are key-only

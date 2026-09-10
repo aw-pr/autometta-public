@@ -185,6 +185,7 @@ capture_dispatch() {
       export AUTOMETTA_CLAUDE_MODE=subscription
     fi
     export AUTOMETTA_CLAUDE_TRANSPORT="$transport"
+    export AUTOMETTA_CODEX_TRANSPORT=cli
     "$autometta_root/scripts/$spawn" "$card" "$repo" >/dev/null 2>>"$tmp/spawn.log"
   )
   local waited=0

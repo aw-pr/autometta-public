@@ -14,7 +14,7 @@ HANDOFF.md, a stray `.DS_Store`) can no longer false-positive a stage or
 block dispatch. See `memory/adopters/emergence-viewer/feedback-worktree-dispatch-thinned-preflight.md`
 for the pilot this backports.
 
-- [ ] The stage card declares `Base branch` and `Run branch` (`autometta/<stage-id>`) in its Metadata section. Pin both to branch names, never a commit SHA (no `expected_head`) — the run branch is cut from the base branch fresh at dispatch time, so a SHA pin is stale the moment the base moves.
+- [ ] The stage card declares `Base branch` and `Run branch` (`autometta/<stage-id>`) in its Metadata section. Pin both to branch names, never a commit SHA (no `expected_head`): the run branch is cut from the base branch fresh at dispatch time, so a SHA pin is stale the moment the base moves.
 - [ ] Remove any worktree or branch left standing by a prior attempt at this stage before cutting a new one:
 
   ```sh
@@ -28,12 +28,12 @@ for the pilot this backports.
   git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>
   ```
 
-- [ ] Dispatch the worker and verifier into that worktree. All work — reads, writes, the dirty tree the verifier evaluates — happens there. The main checkout is never modified by dispatch and its working-tree state is irrelevant to this stage.
+- [ ] Dispatch the worker and verifier into that worktree. All work, reads, writes and the dirty tree the verifier evaluates, happens there. The main checkout is never modified by dispatch and its working-tree state is irrelevant to this stage.
 - [ ] **Budget window auto-reset.** At the start of a run window, if `state/budget.json` is `halted` or any counter sits at its cap, reset the counters to zero (caps unchanged) and log the reset, rather than treating a stale halt from a prior window as terminal for this one. See `docs/plans/2026-08-01-control-plane-review.md` and the pilot note for the incident this fixes (a three-week-old tick-cap halt blocking every later window).
-- [ ] **Codex seat probe.** Before a Codex dispatch, run one trivial `codex exec` ping. On failure, skip the Codex seat for this stage and substitute another worker/verifier family — never attempt an interactive login unattended.
+- [ ] **Codex seat probe.** Before a Codex dispatch, run one trivial `codex exec` ping. On failure, skip the Codex seat for this stage and substitute another worker/verifier family. Never attempt an interactive login unattended.
 - [ ] **On PASS:** fast-forward-merge the run branch into the base branch if the base hasn't moved since the worktree was cut. If the base has moved, push the run branch instead and note the unmerged branch in HANDOFF for manual integration.
 - [ ] **On FAIL:** leave the run branch and worktree standing for operator inspection. Do not delete either; re-running the stage removes and recuts them (first checklist item above).
-- [ ] If a gitignored file is still tracked in the shared checkout (the classic `.DS_Store` case), either revert it or untrack it permanently with `git rm --cached <file>` and commit — this is now a hygiene item, not a dispatch blocker.
+- [ ] If a gitignored file is still tracked in the shared checkout (the classic `.DS_Store` case), either revert it or untrack it permanently with `git rm --cached <file>` and commit. This is now a hygiene item, not a dispatch blocker.
 
 ## 1. Stage card completeness
 
@@ -81,7 +81,7 @@ for the pilot this backports.
 - [ ] **Log path:** the worker's log path is predictable and stated in the card or the worker prompt. Do not rely on harness-generated task IDs that change between runs.
 - [ ] **Sandbox boundary:** verify that the verifier's environment is genuinely outside the worker's sandbox. A verifier that runs inside the same sandbox cannot observe side-effects the worker was prevented from making.
 - [ ] **Prior-gate regression:** if acceptance criteria overlap with those of an earlier stage, running the verifier for this stage may surface a regression in that earlier stage. Note any such overlap and decide in advance whether a regression here is a blocker.
-- [ ] **No artefacts outside the repo:** every file a headless run must read exists inside the repo (or the run home) before dispatch. Copy external inputs in at scheduling time, while an interactive session still holds the macOS privacy (TCC) grants — a launchd-spawned agent reading Desktop/Documents/Downloads or CloudStorage paths raises a consent dialog nobody can click and blocks silently until the next interactive wake. If copying in is genuinely inappropriate, flag the external dependency on the card/brief at creation and pre-test read access from a non-interactive context.
+- [ ] **No artefacts outside the repo:** every file a headless run must read exists inside the repo (or the run home) before dispatch. Copy external inputs in at scheduling time, while an interactive session still holds the macOS privacy (TCC) grants. A launchd-spawned agent reading Desktop/Documents/Downloads or CloudStorage paths raises a consent dialog nobody can click and blocks silently until the next interactive wake. If copying in is genuinely inappropriate, flag the external dependency on the card/brief at creation and pre-test read access from a non-interactive context.
 - [ ] **Headless orchestrators block on child dispatches:** a `claude -p` orchestrator exits the moment its final turn ends, and its exit kills any background children it spawned. Inside a headless orchestrator, worker and verifier dispatches must run as foreground (blocking) commands; "dispatch in background, reap next turn" is only valid in interactive sessions that outlive the child.
 
 ## 7. Integration plan
@@ -101,10 +101,14 @@ The worker does not commit. The orchestrator commits the worker's working-tree c
   git commit \
     --author="<worker-identity>" \
     -m "<stage-id>: <one-line summary>" \
-    -m "Co-Authored-By: <verifier-identity>"
+    -m "Co-Authored-By: <orchestrator-identity>
+  Co-Authored-By: <verifier-identity>
+  Autometta-Orchestrator: <orchestrator-identity>
+  Autometta-Worker: <worker-identity>
+  Autometta-Verifier: <verifier-identity>"
   ```
 
-  The `<worker-identity>` and `<verifier-identity>` strings come from the stage's `worker` and `verifier` fields in `state/state.yaml`. The summary line comes from the verifier artefact's `headline` field if present, otherwise from the stage card's `# Stage card ... :` title line.
+  This is the shape `scripts/tick.sh` emits on the autonomous path; the manual recipe in `docs/dispatch-contract.md` step 7 is the reference. All trailer lines go in one `-m` so git parses them as a single block. The `<worker-identity>` and `<verifier-identity>` strings come from the stage's `worker` and `verifier` fields in `state/state.yaml`; `<orchestrator-identity>` is the card's `Orchestrator` metadata line. The summary line comes from the verifier artefact's `headline` field if present, otherwise from the stage card's `# Stage card ... :` title line.
 
 - [ ] On `overall: FAIL` (or missing / malformed), do NOT commit. Set `stage.status = "verifier_failed"`, clear `current_stage`, and leave the dirty working tree intact for operator inspection.
 - [ ] Backward-compat fallback: if the working tree is clean on a PASS artefact (a worker on an older prompt self-committed), log "no diff to commit, presumably worker self-committed (deprecated path)" and mark the stage `completed` without erroring.

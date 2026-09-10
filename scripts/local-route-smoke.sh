@@ -374,6 +374,39 @@ check "api-mode worker still passes the sibling CODEX_HOME" \
   "$(printf '%s\n' "$argv" | grep -qxF -- "CODEX_HOME=$codex_home_dir" && printf 'ok\n' || printf 'no\n')"
 
 # ---------------------------------------------------------------------------
+printf '\n== headless approvals: every codex route pins approval_policy ==\n' >&2
+
+# `codex exec` has no --ask-for-approval flag, so an operator config carrying
+# the interactive default ("on-request") reaches a headless dispatch and waits
+# for an answer nobody is there to give. It surfaces as a repeated
+# `code-mode host` negotiation timeout, which reads like a broken helper and
+# is a permission prompt. Every route must therefore pin the policy itself.
+# The `-c` and its value are checked as separate argv elements: joined into
+# one token they would reach codex as a single option name containing a
+# space, which is lessons.md gotcha 12 all over again.
+approval_pinned() {
+  printf '%s\n' "$1" | grep -A1 -x -F -e '-c' | grep -q -x -F -e 'approval_policy="never"' \
+    && printf 'ok\n' || printf 'no\n'
+}
+
+check "subscription-mode worker pins approval_policy=never" \
+  "$(approval_pinned "$(dispatch_route spawn-worker.sh "$repo/cards/54-subscription.md" 56-approval-sub subscription)")"
+check "api-mode worker pins approval_policy=never" \
+  "$(approval_pinned "$(dispatch_route spawn-worker.sh "$repo/cards/55-api.md" 57-approval-api api "$codex_home_dir")")"
+# The verifier is pinned to the CLI transport for this check. Left to
+# resolve on its own a codex verifier takes the SDK route (default-sdk),
+# which never invokes `codex exec` and so has no approval policy to pin.
+# That default is a separate question from this fix and is not decided here.
+check "subscription-mode verifier pins approval_policy=never" \
+  "$(AUTOMETTA_CODEX_TRANSPORT=cli approval_pinned "$(AUTOMETTA_CODEX_TRANSPORT=cli dispatch_route spawn-verifier.sh "$repo/cards/54-subscription.md" 58-approval-verifier subscription)")"
+check "local-route worker pins approval_policy=never" \
+  "$(approval_pinned "$(dispatch_local spawn-worker.sh "$repo/cards/50-local-worker.md" 59-approval-local "$ok_ollama_dir")")"
+
+check "no route drops the sandbox to silence the prompt" \
+  "$(printf '%s\n' "$(dispatch_route spawn-worker.sh "$repo/cards/54-subscription.md" 60-approval-sandbox subscription)" \
+     | grep -qxF -- '--dangerously-bypass-approvals-and-sandbox' && printf 'no\n' || printf 'ok\n')"
+
+# ---------------------------------------------------------------------------
 printf '\n== attribution (amended criterion 4): agent-whoami and the step-7 trailer ==\n' >&2
 
 # agent-whoami is an mcp-hub tool installed to ~/.local/bin, not part of this

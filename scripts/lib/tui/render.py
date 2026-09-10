@@ -1,12 +1,40 @@
 #!/usr/bin/env python3
 """Pure payload-to-canvas rendering for the Autometta TUI."""
 import importlib.util
+import json
 import os
 import re
+import subprocess
 import time
 
 
 _LIB_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _load_alert_stage_statuses():
+    script = os.path.join(os.path.dirname(_LIB_DIR), "alert-statuses.sh")
+    result = subprocess.run(
+        [script], check=True, capture_output=True, text=True)
+    statuses = json.loads(result.stdout)
+    if not isinstance(statuses, list) or not all(isinstance(item, str) for item in statuses):
+        raise ValueError("alert-statuses.sh did not return a JSON string array")
+    return frozenset(statuses)
+
+
+ALERT_STAGE_STATUSES = _load_alert_stage_statuses()
+
+
+def _alert_stage_label(status):
+    verifier_prefix = "verifier_"
+    prefix = "V-" if status.startswith(verifier_prefix) else ""
+    stem = status[len(verifier_prefix):] if prefix else status
+    return prefix + stem.replace("_", "-").upper()
+
+
+ALERT_STAGE_LABELS = {
+    status: _alert_stage_label(status)
+    for status in ALERT_STAGE_STATUSES
+}
 
 
 def _load(name, filename):
@@ -18,7 +46,29 @@ def _load(name, filename):
 
 _repo = _load("autometta_repo_ticker", "repo-ticker-render.py")
 _fleet = _load("autometta_fleet_ticker", "fleet-ticker-render.py")
+# Loaded by path like its siblings above, not by `import`: render.py is
+# exec'd straight from its file by the smoke and by any tool that wants the
+# pure renderer, and a bare import needs this directory on sys.path, which
+# such a caller has no reason to have arranged.
+status_updates = _load("autometta_tui_status_updates",
+                       os.path.join("tui", "status_updates.py"))
+
 short_tokens = _repo.short_tokens
+
+
+def tick_tokens(n):
+    """Token counts in thousands, comma-grouped: 1,143k.
+
+    short_tokens' 1.1M is the right unit for a total nobody watches change,
+    but it is the wrong one for the run and status panels: a worker adding
+    twenty thousand tokens between polls does not move the first decimal
+    place, so the figure looks frozen and the loop looks dead. Thousands are
+    fine-grained enough that every poll visibly moves the number.
+    """
+    n = int(n or 0)
+    if n < 1000:
+        return str(n)
+    return "{:,}k".format(n // 1000)
 short_secs = _repo.short_secs
 parse_iso = _repo.parse_iso
 build_warning = _repo.build_warning
@@ -35,7 +85,11 @@ DIM = 5
 ANSI = {
     NORMAL: "\x1b[0m",
     BOLD: "\x1b[1m",
-    REVERSE: "\x1b[7m",
+    # Selection and focus highlight. A hard reverse-video block read as a
+    # glare against the dark theme (UAT 2026-08-31); a pastel blue keeps the
+    # row legible while clearly selected. 256-colour SGR: light steel blue
+    # ground, near-black ink.
+    REVERSE: "\x1b[48;5;153m\x1b[38;5;235m",
     ACTIVE: "\x1b[1;36m",
     ALERT: "\x1b[1;31m",
     DIM: "\x1b[2m",
@@ -153,8 +207,15 @@ def current_run_stages(payload):
 
 
 def ordered_run_stages(payload):
-    order = {"completed": 0, "in_progress": 1, "pending": 2}
-    return sorted(current_run_stages(payload), key=lambda stage: order.get(stage.get("status"), 3))
+    stages = current_run_stages(payload)
+    # Pending stages have not run yet: keep their queue order after the live
+    # edge, then show finished scheduled work newest first.
+    active = [stage for stage in reversed(stages)
+              if stage.get("status") not in ("completed", "pending", "superseded")]
+    queued = [stage for stage in stages if stage.get("status") == "pending"]
+    finished = [stage for stage in reversed(stages)
+                if stage.get("status") in ("completed", "superseded")]
+    return active + queued + finished
 
 
 class TuiState:
@@ -163,11 +224,12 @@ class TuiState:
         self.payload = {}
         self.focus = 2
         self.page = 1
-        self.selection = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+        self.selection = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
         self.pinned_stage = None
         self.history_selection = 0
         self.pinned_history_card = None
         self.controller = {"journal": [], "conversation": []}
+        self.status_updates = []
         self.journal_offset = 0
         self.composing = False
         self.compose_buffer = ""
@@ -177,17 +239,19 @@ class TuiState:
         self.card_body_stage = None
         self.card_offset = 0
         self.history = {}
-        self.now = int(time.time())
+        self._now_anchor = int(time.time())
         self.monotonic_now = time.monotonic()
+        self._now_observed_at = self.monotonic_now
         self.data_started_at = None
         self.loading = True
         self.polling = False
 
     def update(self, payload, observed_at=None, data_started_at=None):
         self.payload = payload or {}
-        self.now = int(self.payload.get("_now") or time.time())
         stamp = float(observed_at if observed_at is not None else time.monotonic())
-        self.monotonic_now = time.monotonic()
+        self._now_anchor = int(self.payload.get("_now") or time.time())
+        self._now_observed_at = stamp
+        self.monotonic_now = stamp
         if data_started_at is not None:
             self.data_started_at = float(data_started_at)
         self.loading = False
@@ -234,6 +298,13 @@ class TuiState:
         self.monotonic_now = float(now)
         return int(self.monotonic_now) != previous
 
+    @property
+    def now(self):
+        return self._now_anchor + int(self.monotonic_now - self._now_observed_at)
+
+    def update_status_updates(self, rows):
+        self.status_updates = list(rows or [])
+
     def update_controller(self, controller):
         self.controller = controller or {"journal": [], "conversation": []}
         maximum = max(0, len(self.controller.get("journal") or []) - 1)
@@ -246,6 +317,22 @@ class TuiState:
 
     def compose_failed(self, notice):
         self.compose_notice = "not queued: " + notice
+
+    def _follow_selection(self, rows):
+        """Point the detail pane at whatever the cursor is now on.
+
+        Only the run list (focus 2) drives the card detail pane; the agents and
+        escalations panels have their own selections that no pane reads, so
+        moving in them must not repoint the card.
+        """
+        if self.focus != 2 or not rows:
+            return
+        selected = rows[self.selection[2]].get("id")
+        if selected and selected != self.pinned_stage:
+            self.pinned_stage = selected
+            # A new card starts at its own first line, not at the offset the
+            # reader had scrolled the previous one to.
+            self.card_offset = 0
 
     def rows_for_focus(self):
         if self.focus == 2:
@@ -296,7 +383,7 @@ class TuiState:
             self.compose_buffer = ""
             self.compose_notice = ""
             return None
-        if key in ("0", "1", "2", "3", "4"):
+        if key in ("0", "1", "2", "3", "4", "5"):
             # The number row means two things, and which one depends on what is
             # on screen. The run page draws panels labelled [0]-[4], so there a
             # number focuses a panel. The other pages draw no numbered panels,
@@ -314,8 +401,18 @@ class TuiState:
             # A way out that does not require knowing which key paged you in.
             self.page = 1
             return
+        # Letter shortcuts that mean the same page everywhere. On the run
+        # page the number row focuses panels, so "[2]history" in the tab
+        # strip reads as "press 2" and then 2 focuses the This-run box
+        # instead (UAT 2026-08-31). h and r are unambiguous on every page.
+        if key in ("h", "H"):
+            self.page = 2
+            return
+        if key in ("r", "R"):
+            self.page = 1
+            return
         if key in ("TAB", "\t"):
-            self.focus = self.focus % 4 + 1
+            self.focus = self.focus % 5 + 1
             return
         if key in ("PAGE_NEXT", "]"):
             self.page = self.page % 3 + 1
@@ -327,8 +424,10 @@ class TuiState:
             rows = history_cards(self.payload)
             if key in ("j", "DOWN") and rows:
                 self.history_selection = min(len(rows) - 1, self.history_selection + 1)
+                self.pinned_history_card = rows[self.history_selection].get("id")
             elif key in ("k", "UP") and rows:
                 self.history_selection = max(0, self.history_selection - 1)
+                self.pinned_history_card = rows[self.history_selection].get("id")
             elif key in ("ENTER", "\n", "\r") and rows:
                 self.pinned_history_card = rows[self.history_selection].get("id")
             return
@@ -343,8 +442,14 @@ class TuiState:
                 self.compose_buffer = ""
                 self.compose_notice = ""
             return None
-        # The detail pane carries the card body, which is longer than the pane
-        # and so is the one panel that scrolls rather than selects.
+        # The detail pane follows the cursor. It used to update only on enter,
+        # so arrowing down the run list left the pane describing the card you
+        # had moved away from: every intermediate row was rendered against the
+        # wrong detail, and the reader had to press a key to find out what they
+        # were already looking at.
+        #
+        # Enter still works and still does the one thing j/k cannot, which is
+        # re-assert the pin after the poll above has re-derived it.
         if self.focus == 0:
             if key in ("j", "DOWN"):
                 self.card_offset = min(max(0, len(self.card_body) - 1), self.card_offset + 1)
@@ -354,8 +459,10 @@ class TuiState:
         rows = self.rows_for_focus()
         if key in ("j", "DOWN") and rows:
             self.selection[self.focus] = min(len(rows) - 1, self.selection[self.focus] + 1)
+            self._follow_selection(rows)
         elif key in ("k", "UP") and rows:
             self.selection[self.focus] = max(0, self.selection[self.focus] - 1)
+            self._follow_selection(rows)
         elif key in ("ENTER", "\n", "\r") and self.focus == 2 and rows:
             self.pinned_stage = rows[self.selection[2]].get("id")
             self.card_offset = 0
@@ -378,8 +485,12 @@ def stage_state(payload, stage):
         return "✔", "done", None
     if status == "pending":
         return "○", "queued", None
-    if status in ("stalled", "verifier_failed", "failed"):
-        return "✖", "ESCALTD", None
+    if status in ALERT_STAGE_STATUSES:
+        # One label for three outcomes said only "this needs you", which is the
+        # part the ✖ already carries. Which of the three it is decides what to
+        # do next: a stall is re-queued, a verifier failure is read and
+        # re-briefed, a plain failure produced nothing to read.
+        return "✖", ALERT_STAGE_LABELS[status], None
     if status == "superseded":
         return "○", "superseded", None
     role = (agent or {}).get("role") or "worker"
@@ -415,7 +526,7 @@ def escalation_rows(payload):
     if payload.get("halted"):
         rows.append(("HALTED", "halted", payload.get("halt_reason") or "budget"))
     for stage in current_run_stages(payload):
-        if stage.get("status") in ("stalled", "verifier_failed", "failed"):
+        if stage.get("status") in ALERT_STAGE_STATUSES:
             rows.append((stage.get("id") or "?", stage.get("status"), failure_reason(stage)))
     return rows
 
@@ -428,8 +539,31 @@ def history_cards(payload):
     return (payload.get("history") or {}).get("cards") or []
 
 
+def spend_error(payload):
+    spend = payload.get("spend") or {}
+    history = payload.get("history") or {}
+    return spend.get("state_error") or history.get("state_error")
+
+
+def spend_error_message(payload):
+    error = spend_error(payload)
+    if not error:
+        return None
+    if str(error).startswith("spend unavailable"):
+        return error
+    return "spend unavailable: %s" % error
+
+
 def marked_tokens(value, marked=False):
-    return short_tokens(value or 0) + ("?" if marked else "")
+    """History figures in thousands, matching the panels and the detail pane.
+
+    short_tokens' 1.1M loses the resolution a reader needs to compare two
+    stages: 1.1M against 1.4M hides three hundred thousand tokens, and beside
+    a detail pane reading `in 159.5K cached 2.9M out 20.8K` the same line
+    changed unit twice mid-sentence. One unit across the surface, and the
+    reader can subtract in their head.
+    """
+    return tick_tokens(value or 0) + ("?" if marked else "")
 
 
 def marked_cost(value, marked=False):
@@ -457,6 +591,9 @@ def sparkline(values):
 
 
 def history_table_lines(state, inner_width, inner_height=None):
+    message = spend_error_message(state.payload)
+    if message:
+        return [content_line(message, [(0, len(message), ALERT)])]
     rows = history_cards(state.payload)
     summary = (state.payload.get("history") or {}).get("summary") or {}
     summary_text = "%d cards · %s lost 7d · %s cost 7d" % (
@@ -538,6 +675,9 @@ def history_table_lines(state, inner_width, inner_height=None):
 
 
 def history_detail_lines(state, inner_width):
+    message = spend_error_message(state.payload)
+    if message:
+        return [content_line(message, [(0, len(message), ALERT)])]
     card = next((row for row in history_cards(state.payload)
                  if row.get("id") == state.pinned_history_card), None)
     if not card:
@@ -612,6 +752,43 @@ def draw_box(canvas, rect, title, lines, focused=False):
         canvas.line(x + 2, y + 1 + offset, text[:max(0, width - 4)], spans)
 
 
+SPINNER = "|/-\\"
+
+
+def live_spend_suffix(payload, state):
+    """The in-flight tail of the run spend line: which role is running, for how
+    long, and what its transcript has cost so far. Empty when nothing is live.
+
+    It shares the spend line rather than taking one of its own because the
+    status panel is height-constrained and an extra row costs the run panel a
+    stage."""
+    parts = []
+    for agent in payload.get("agents") or []:
+        started = agent.get("started_at")
+        epoch = parse_iso(started) if isinstance(started, str) else None
+        if epoch is not None:
+            ran = short_secs(max(0, state.now - epoch))
+        elif isinstance(agent.get("elapsed_seconds"), (int, float)):
+            ran = short_secs(max(0, int(agent["elapsed_seconds"])))
+        else:
+            ran = "?"
+        live = agent.get("live_total_tokens")
+        role = agent.get("role") or "agent"
+        if live is None:
+            # No transcript total read yet. Say so rather than printing a zero,
+            # which would read as a role that is burning nothing.
+            parts.append("%s %s live ?" % (role, ran))
+        else:
+            parts.append("%s %s +%s live" % (role, ran, tick_tokens(int(live))))
+    if not parts:
+        return ""
+    # The turning bar is the liveness cue. observe_time already re-renders on
+    # every whole second, so it moves once a second whether or not the figures
+    # do: a number that has not changed in ten minutes and a loop that has died
+    # look identical without it.
+    return "  %s %s" % (SPINNER[int(state.monotonic_now) % len(SPINNER)], "  ".join(parts))
+
+
 def status_lines(state):
     payload = state.payload
     agents = payload.get("agents") or []
@@ -637,22 +814,64 @@ def status_lines(state):
     elif payload.get("state_error"):
         message = "state error: %s" % payload["state_error"]
         lines.append(content_line(message, [(0, len("state error:"), ALERT)]))
-    if state.data_started_at is not None:
-        age = max(0, state.monotonic_now - state.data_started_at)
-        if age >= state.interval:
-            message = "data %s old" % short_secs(age)
-            lines.append(content_line(message, [(0, len(message), DIM)]))
     if run:
+        # Two quantities that do not divide into one another used to share a
+        # line: the run's own spend, then the repo's lifetime percentage of the
+        # cap. Read left to right that invited "6.9M of 600.0M is 53%", which is
+        # wrong by a factor of forty, and a figure that will not reconcile reads
+        # as a budget rather than a measurement. They get a line each.
+        error = spend_error(payload)
+        if error:
+            settled = "run spend unavailable"
+        else:
+            settled = "run spend %s  $%.2f actual" % (
+                tick_tokens(run.get("tokens_total", 0)), run.get("cost_usd_est", 0) or 0)
+        # An in-flight role is counted nowhere in that figure: the cost log gets
+        # its row when the role exits, so on the CLI route the settled number
+        # holds still for the length of a worker and reads as a static budget.
+        # The transcript total the heartbeat already reads is the same
+        # measurement arriving sooner, so it rides alongside rather than being
+        # folded in: a role half-landed in the cost log and half in a live
+        # transcript would otherwise be counted twice.
+        suffix = live_spend_suffix(payload, state)
+        spans = [] if error else [(len(settled) - 6, 6, DIM)]
+        if suffix:
+            spans.append((len(settled) + 2, 1, ACTIVE))
         lines.extend([
             content_line("run start %s  elapsed %s" % (run_start[-9:], elapsed)),
-            content_line("run tokens %s  $%.2f  repo cap %s (%d%%)" % (
-                short_tokens(run.get("tokens_total", 0)), run.get("cost_usd_est", 0) or 0,
-                short_tokens(cap), pct)),
+            content_line(settled + suffix, spans),
+            content_line("repo %s of %s cap (%d%%)" % (
+                tick_tokens(spent), tick_tokens(cap), pct)),
         ])
     else:
-        lines.append(content_line("repo cap %s (%d%% lifetime used)" % (short_tokens(cap), pct)))
+        lines.append(content_line("repo cap %s (%d%% lifetime used)" % (tick_tokens(cap), pct)))
     if state.focus == 1:
         lines[0][1].insert(0, (0, len(lines[0][0]), REVERSE))
+    return lines
+
+
+def status_update_lines(state, inner_width):
+    """Panel 5: what the loop last said about this repo, newest at the bottom,
+    with the refresh line beneath it.
+
+    The refresh line used to live in the status panel, where it appeared and
+    vanished with every poll and moved four lines under the reader's eye. It
+    is the subject of this panel rather than an interruption in another one,
+    so it can change as often as it likes."""
+    lines = []
+    rows = state.status_updates or []
+    if not rows:
+        lines.append(content_line("no tick log entries for this repo yet",
+                                  [(0, 37, DIM)]))
+    else:
+        for clock, text in rows:
+            prefix = ("%s  " % clock) if clock else ""
+            body = (prefix + text)[:max(1, inner_width)]
+            spans = [(0, len(prefix), DIM)] if prefix else []
+            lines.append(content_line(body, spans))
+    refresh = status_updates.age_line(
+        state.data_started_at, state.monotonic_now, state.polling)
+    lines.append(content_line(refresh, [(0, len(refresh), DIM)]))
     return lines
 
 
@@ -670,7 +889,7 @@ def run_lines(state, inner_width):
         verifier = identity_alias(stage.get("verifier"))
         pair = "%s→%s" % (worker, verifier)
         rows.append(({"glyph": glyph, "id": stage.get("id") or "?", "role": status,
-                      "pair": pair, "tokens": short_tokens(stage_total(payload, stage.get("id")))},
+                      "pair": pair, "tokens": tick_tokens(stage_total(payload, stage.get("id")))},
                      worker, verifier, active_role))
 
     gap = 2
@@ -718,7 +937,9 @@ def run_lines(state, inner_width):
 
 def agent_lines(state):
     lines = []
-    for index, agent in enumerate(state.payload.get("agents") or []):
+    agents = state.payload.get("agents") or []
+    queue = state.payload.get("queue") or []
+    for index, agent in enumerate(agents):
         alias = identity_alias(agent.get("identity"))
         elapsed = short_secs(agent.get("elapsed_seconds") or 0)
         budget = short_secs(agent.get("budget_seconds") or 0)
@@ -728,11 +949,50 @@ def agent_lines(state):
         scope = agent.get("stage_id") or "?"
         if role == "controller" and scope in ("-", "?", ""):
             scope = "queue"
-        text = "● %s %s  %s  %s / %s" % (scope, role, alias, elapsed, budget)
+        live_usage = agent.get("live_usage")
+        if isinstance(live_usage, dict):
+            live_tokens = (int(live_usage.get("input_tokens") or 0)
+                           + int(live_usage.get("output_tokens") or 0))
+            burn = "LIVE %s%s" % (
+                tick_tokens(live_tokens),
+                " stale" if not live_usage.get("updated_at") else "",
+            )
+        else:
+            burn = "n/a"
+        text = "● %s %s  %s  %s  %s / %s" % (scope, role, alias, burn, elapsed, budget)
         spans = [(0, 1, ACTIVE)]
+        burn_start = text.find(burn)
+        if burn_start >= 0 and burn != "n/a":
+            spans.append((burn_start, burn_start + len(burn), ACTIVE))
         if state.focus == 3 and state.selection[3] == index:
             spans.insert(0, (0, len(text), REVERSE))
         lines.append(content_line(text, spans))
+    for stage in queue:
+        text = "○ %s queued  %s / %s" % (
+            stage.get("stage_id") or "?",
+            identity_alias(stage.get("worker")),
+            identity_alias(stage.get("verifier")),
+        )
+        lines.append(content_line(text, [(0, len(text), DIM)]))
+    # A stage can be mid-flight with no process alive: one half has finished
+    # and the loop has not dispatched the other yet, or the repo is paused
+    # waiting out a provider window. "no live agents" was truthful but read
+    # as broken while a card was visibly in progress (UAT 2026-08-31).
+    if not agents:
+        for stage in current_run_stages(state.payload):
+            if stage.get("status") != "in_progress":
+                continue
+            paused_until = state.payload.get("paused_until")
+            if paused_until:
+                when = time.strftime("%H:%M", time.localtime(int(paused_until)))
+                reason = state.payload.get("paused_reason") or ""
+                cause = "rate limit" if ("429" in reason or "RateLimit" in reason) else "provider pause"
+                text = "◌ %s waiting  next dispatch %s (%s)" % (
+                    stage.get("id") or "?", when, cause)
+            else:
+                text = "◌ %s between dispatches  next tick resumes it" % (
+                    stage.get("id") or "?")
+            lines.append(content_line(text, [(0, len(text), DIM)]))
     return lines or [content_line("no live agents", [(0, 14, DIM)])]
 
 
@@ -807,6 +1067,58 @@ def wrap_content_lines(lines, inner_width):
     return wrapped
 
 
+def stage_timing_line(stage, now, agent=None):
+    """When the run started, and when it stopped if it has.
+
+    The pane showed elapsed-against-budget, which answers "how long has this
+    been going" but not "when did it go" -- the question asked when reading a
+    stage that finished hours ago, or matching a run against a log line.
+    """
+    # A live dispatch dates from when *it* started, not from when the stage
+    # first did. A re-queued stage keeps its original started_at, so pairing
+    # that with this attempt's budget put "12h26m ago" beside "12m34s used" on
+    # one line and left the reader to work out they were different clocks.
+    source = agent if (agent or {}).get("started_at") else stage
+    started = parse_iso(source.get("started_at")) if isinstance(source.get("started_at"), str) else None
+    ended = parse_iso(stage.get("completed_at")) if isinstance(stage.get("completed_at"), str) else None
+    if started is None and ended is None:
+        return "not started"
+    if started is None:
+        return "ended %s (%s ago)" % (time.strftime("%d %b %H:%M", time.localtime(ended)),
+                                      short_secs(max(0, now - ended)))
+    text = time.strftime("%d %b %H:%M", time.localtime(started))
+    if ended is not None:
+        text += " → %s  (ran %s)" % (time.strftime("%H:%M", time.localtime(ended)),
+                                     short_secs(max(0, ended - started)))
+    else:
+        text += "  (%s ago)" % short_secs(max(0, now - started))
+    return text
+
+
+def stage_queue_line(payload, stage):
+    """Where this stage sits in the queue the tick will actually dispatch from.
+
+    Position comes from the queue array rather than from the stage's own id or
+    its place in the table: the id is an authoring order and the table is
+    sorted for reading, while the queue is the order work will really be taken
+    in. A stage that is not in it is not waiting, and says what it is instead.
+    """
+    queue = [q.get("stage_id") for q in (payload.get("queue") or []) if isinstance(q, dict)]
+    stage_id = stage.get("id")
+    depth = len(queue)
+    if stage_id in queue:
+        position = queue.index(stage_id) + 1
+        nxt = " — next up" if position == 1 else ""
+        return "%d of %d waiting%s" % (position, depth, nxt)
+    status = (stage.get("status") or "").replace("_", " ")
+    if stage.get("status") == "in_progress":
+        # Depth is worth saying only while something is running: it answers
+        # "what happens when this finishes". On a stage that finished hours ago
+        # it is a fact about the queue, not about the stage being read.
+        return "running now (%d waiting behind)" % depth if depth else "running now (nothing waiting)"
+    return "not queued — %s" % (status or "unknown")
+
+
 def detail_lines(state, inner_width, inner_height=None):
     stages = ordered_run_stages(state.payload)
     stage = next((item for item in stages if item.get("id") == state.pinned_stage), None)
@@ -817,9 +1129,29 @@ def detail_lines(state, inner_width, inner_height=None):
     usage = usage_for_stage(state.payload, stage.get("id"))
     attempts = stage.get("verifier_attempts") or 0
     cap = state.payload.get("verifier_attempt_cap") or 3
-    elapsed = agent.get("elapsed_seconds") or 0
+    # elapsed_seconds is written by the heartbeat, which the tick runs about
+    # once a minute; the TUI polls every five seconds. Deriving it from
+    # started_at against the poll clock makes the number move at the rate the
+    # reader is watching it, which is the whole point of showing it: a figure
+    # that only changes once a minute cannot tell you a worker is still alive.
+    started_epoch = parse_iso(agent.get("started_at")) if isinstance(agent.get("started_at"), str) else None
+    if started_epoch is not None:
+        elapsed = max(0, state.now - started_epoch)
+    else:
+        elapsed = agent.get("elapsed_seconds") or 0
     budget = agent.get("budget_seconds") or 0
     budget_pct = int(elapsed * 100 / budget) if budget else 0
+    run_line = stage_timing_line(stage, state.now, agent)
+    live_usage = agent.get("live_usage")
+    if isinstance(live_usage, dict):
+        live_input = int(live_usage.get("input_tokens") or 0)
+        live_output = int(live_usage.get("output_tokens") or 0)
+        live_text = "LIVE in %s out %s%s" % (
+            tick_tokens(live_input), tick_tokens(live_output),
+            " stale" if not live_usage.get("updated_at") else "",
+        )
+    else:
+        live_text = "n/a"
     spark, rate = sparkline_and_rate(state, stage.get("id"))
     lines = [
         content_line("%s %s  %s" % (glyph, stage.get("id"), status), [(0, 1, ACTIVE if glyph == "▶" else NORMAL)]),
@@ -833,16 +1165,31 @@ def detail_lines(state, inner_width, inner_height=None):
         else:
             lines.extend((content_line(label), content_line("  " + identity)))
     lines.extend([
-        content_line("attempt   %s of %s" % (attempts, cap)),
-        content_line("budget    %s / %s (%d%% used)" % (short_secs(elapsed), short_secs(budget), budget_pct)),
+        # attempt and queue share a row so the pane costs the stage card below
+        # it nothing. At 80 columns tui-smoke asserts that card is never
+        # truncated, and every row taken here is a row taken from it.
+        content_line("attempt   %s of %s · %s" % (attempts, cap,
+                                                  stage_queue_line(state.payload, stage))),
+        # The budget line keeps its exact shape -- tui-smoke pins it literally --
+        # and the run clock rides on the end of it rather than taking a row of
+        # its own, because at 80 columns every row here is one the stage card
+        # below loses.
+        content_line("budget    %s / %s (%d%% used) · %s" % (
+            short_secs(elapsed), short_secs(budget), budget_pct, run_line)),
         content_line("card      %s" % (stage.get("card") or "stage-cards/%s.md" % stage.get("id"))),
         content_line(""),
         content_line("─ acceptance " + "─" * max(0, inner_width - 13)),
         content_line(stage.get("acceptance") or "see stage card"),
         content_line(""),
         content_line("tokens  in %s  cached %s  out %s  $%.2f" % (
-            short_tokens(usage.get("input_tokens", 0)), short_tokens(usage.get("cached_input_tokens", 0)),
-            short_tokens(usage.get("output_tokens", 0)), usage.get("cost_usd_est", 0) or 0)),
+            tick_tokens(usage.get("input_tokens", 0)), tick_tokens(usage.get("cached_input_tokens", 0)),
+            tick_tokens(usage.get("output_tokens", 0)), usage.get("cost_usd_est", 0) or 0)),
+        content_line("live      %s" % live_text,
+                     [(10, 10 + len(live_text), ACTIVE)] if live_text != "n/a" else [(10, 13, DIM)]),
+        # The burn rate stays on short_tokens. It is a per-minute figure in the
+        # low thousands, so it never reaches the millions this change is about,
+        # and 14.4K/min carries a decimal that 14k/min would floor away --
+        # on the one number here whose movement is the point.
         content_line("%s  burn last 8 polls (%s/min)" % (spark, short_tokens(rate))),
     ])
     lines = wrap_content_lines(lines, inner_width)
@@ -978,38 +1325,49 @@ def render_messages(canvas, state, width, usable):
 
 
 def footer(canvas, state):
+    clock = "%s %s" % (
+        "*" if int(state.monotonic_now) % 2 else ".",
+        time.strftime("%H:%M:%S", time.localtime(state.now)),
+    )
+    clock_x = max(0, canvas.width - len(clock))
+    hint_width = max(0, clock_x - 1)
+
+    def put_footer(text, attr=None):
+        visible = text[:hint_width]
+        canvas.put(0, canvas.height - 1, visible)
+        if attr is not None:
+            for x in range(len(visible)):
+                canvas.attrs[canvas.height - 1][x] = attr
+        canvas.put(clock_x, canvas.height - 1, clock)
+
     if state.composing:
         text = "message draft  enter send · esc cancel"
-        canvas.put(0, canvas.height - 1, text[:canvas.width])
-        for x in range(min(canvas.width, len(text))):
-            canvas.attrs[canvas.height - 1][x] = ACTIVE
+        put_footer(text, ACTIVE)
         return
-    tabs = "[1]run [2]history [3]messages"
+    tabs = "[r]un [h]istory [m]essages"
     if state.page == 1:
-        hints = ("  1-4 focus · 0 card · j/k select · enter detail · [ ] page"
-                 " · o page card · O default viewer · m message · q quit")
+        hints = ("  1-5 focus · 0 card · j/k select · enter detail · [ ] page"
+                 " · o page card · O default viewer · q quit")
     else:
-        hints = "  1-3 page · j/k scroll · enter reply · esc run page · q quit"
+        hints = "  j/k scroll · enter reply · esc run page · q quit"
     text = tabs + hints
-    if len(text) > canvas.width:
+    if len(text) > hint_width:
         # The narrow fallback still has to name a way off this page, which is
         # the thing a reader is stuck without.
-        text = tabs + ("  1-4 focus · [ ] page · q quit" if state.page == 1
-                       else "  1-3 page · esc run page · q quit")
+        text = tabs + ("  1-5 focus · [ ] page · q quit" if state.page == 1
+                       else "  esc run page · q quit")
     # A card-open result replaces the hint line until the next keypress. The
     # hints are always recoverable; a silent failure to open a card is not.
     if getattr(state, "card_notice", ""):
-        notice = state.card_notice[:canvas.width]
-        canvas.put(0, canvas.height - 1, notice)
+        notice = state.card_notice[:hint_width]
         attr = ALERT if notice.startswith("could not") or notice.startswith("card not found") else DIM
-        for x in range(min(canvas.width, len(notice))):
-            canvas.attrs[canvas.height - 1][x] = attr
+        put_footer(notice, attr)
         return
-    canvas.put(0, canvas.height - 1, text[:canvas.width])
+    put_footer(text)
     label = "[%d]" % state.page
     start = text.find(label)
     if start >= 0:
-        for x in range(start, min(canvas.width, start + len(label))):
+        for x in range(start, min(hint_width, start + len(label))):
             canvas.attrs[canvas.height - 1][x] = REVERSE
 
 
@@ -1034,6 +1392,11 @@ def render(state, width, height):
     done = len([s for s in stages if s.get("status") == "completed"])
     run_title = "[2]─This run  %d of %d" % (done, len(stages))
     live_count = len(state.payload.get("agents") or [])
+    queued_count = len(state.payload.get("queue") or [])
+    if "queue" in state.payload:
+        agents_title = "[3]─Agents  %d live, %d queued" % (live_count, queued_count)
+    else:
+        agents_title = "[3]─Agents  %d live" % live_count
     esc_count = len(escalation_rows(state.payload))
     msg_count = inbox_message_count(state)
     # Two lines per escalation, so a fixed four-line box showed one row and hid
@@ -1045,27 +1408,35 @@ def render(state, width, height):
         left_width = min(left_width, width - 45)
         right_x = left_width + 1
         right_width = width - right_x
-        panel_total = usable - 3
-        heights = fit_heights([7, 16, 6, inbox_desired], [5, 5, 4, 3], panel_total, [1, 2, 0, 3])
-        status_h, run_h, agents_h, inbox_h = heights
+        panel_total = usable - 4
+        # Panel 5 shrinks first and to the smallest floor: it is the one panel
+        # whose content is a tail, so losing rows costs the reader the oldest
+        # lines rather than a whole subject.
+        heights = fit_heights([8, 16, 6, inbox_desired, 8], [5, 5, 4, 3, 3],
+                              panel_total, [4, 1, 2, 0, 3])
+        status_h, run_h, agents_h, inbox_h, updates_h = heights
         y1 = 0
         y2 = y1 + status_h + 1
         y3 = y2 + run_h + 1
         y4 = y3 + agents_h + 1
+        y5 = y4 + inbox_h + 1
         draw_box(canvas, (0, y1, left_width, status_h), "[1]─Status", status_lines(state), state.focus == 1)
         draw_box(canvas, (0, y2, left_width, run_h), run_title,
                  run_lines(state, left_width - 4), state.focus == 2)
-        draw_box(canvas, (0, y3, left_width, agents_h), "[3]─Agents  %d live" % live_count,
+        draw_box(canvas, (0, y3, left_width, agents_h), agents_title,
                  agent_lines(state), state.focus == 3)
         draw_box(canvas, (0, y4, left_width, inbox_h), "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
+        draw_box(canvas, (0, y5, left_width, updates_h), "[5]─Status updates",
+                 status_update_lines(state, left_width - 4), state.focus == 5)
         draw_box(canvas, (right_x, 0, right_width, usable), "[0]─Card detail",
                  detail_lines(state, right_width - 4, max(0, usable - 2)),
                  state.focus == 0)
     else:
-        available = usable - 4
-        heights = fit_heights([7, 18, 6, inbox_desired, 18], [4, 5, 3, 3, 6], available, [1, 4, 2, 0, 3])
-        status_h, run_h, agents_h, inbox_h, detail_h = heights
+        available = usable - 5
+        heights = fit_heights([8, 18, 6, inbox_desired, 6, 18], [4, 5, 3, 3, 3, 6],
+                              available, [4, 1, 5, 2, 0, 3])
+        status_h, run_h, agents_h, inbox_h, updates_h, detail_h = heights
         rects = []
         cursor = 0
         for panel_height in heights:
@@ -1073,10 +1444,12 @@ def render(state, width, height):
             cursor += panel_height + 1
         draw_box(canvas, rects[0], "[1]─Status", status_lines(state), state.focus == 1)
         draw_box(canvas, rects[1], run_title, run_lines(state, width - 4), state.focus == 2)
-        draw_box(canvas, rects[2], "[3]─Agents  %d live" % live_count, agent_lines(state), state.focus == 3)
+        draw_box(canvas, rects[2], agents_title, agent_lines(state), state.focus == 3)
         draw_box(canvas, rects[3], "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
-        draw_box(canvas, rects[4], "[0]─Card detail",
+        draw_box(canvas, rects[4], "[5]─Status updates",
+                 status_update_lines(state, width - 4), state.focus == 5)
+        draw_box(canvas, rects[5], "[0]─Card detail",
                  detail_lines(state, width - 4, max(0, detail_h - 2)), state.focus == 0)
     footer(canvas, state)
     return canvas

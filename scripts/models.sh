@@ -7,10 +7,10 @@
 
 AUTOMETTA_MODEL_OPUS="claude-opus-5"
 AUTOMETTA_MODEL_SONNET="claude-sonnet-5"
-AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5"
+AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5-20251001"
 # Frontier tier a step above Opus. Opt-in per card only: no existing identity
 # resolves here, so a stage uses it only when its card names a *Fable* role.
-AUTOMETTA_MODEL_FABLE="claude-fable-5"
+AUTOMETTA_MODEL_FABLE="claude-fable-5-1"
 # The fallback codex cloud model: what a codex identity dispatches to when it
 # names no model of its own. Cards that name Sol, Terra or Luna resolve through
 # codex_cloud_model_for_identity below and reach those weights directly, so the
@@ -248,6 +248,140 @@ codex_state_argv_for_repo() {
   AUTOMETTA_CODEX_STATE_ARGV=(--add-dir "$state_dir")
 }
 
+# claude with no MCP configuration of its own loads the operator's user-level
+# servers: tool definitions in every prompt's context, a process per server
+# per dispatch, and access no card asked for. Card 120's surfacing incident
+# was a stage 75 worker whose only child process was an Obsidian vault MCP
+# server. Every claude dispatch therefore pins its own MCP config explicitly
+# rather than inheriting whatever the operator's machine happens to have
+# configured.
+#
+# Resolution order:
+#   1. dispatch.claude.mcp_config in <repo>/.autometta.local.yaml, used as-is.
+#   2. default: an empty server list, written to the repo's state/ scratch
+#      area (state/mcp-config-empty.json) and reused across dispatches.
+#
+# --strict-mcp-config makes --mcp-config authoritative rather than additive,
+# so the operator's project/user-level servers never merge in underneath it.
+claude_mcp_config_argv_for_repo() {
+  local repo_root="$1"
+  local manifest="$repo_root/.autometta.local.yaml"
+  local mcp_config=""
+  AUTOMETTA_CLAUDE_MCP_ARGV=()
+
+  if [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
+    mcp_config="$(yq -r '.dispatch.claude.mcp_config // ""' "$manifest" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$mcp_config" ]]; then
+    mcp_config="$repo_root/state/mcp-config-empty.json"
+    mkdir -p "$repo_root/state"
+    printf '{"mcpServers":{}}\n' >"$mcp_config"
+  fi
+
+  AUTOMETTA_CLAUDE_MCP_ARGV=(--strict-mcp-config --mcp-config "$mcp_config")
+}
+
+# Codex's workspace-write sandbox denies network to every model-generated
+# shell command. That is the right default: a worker editing files has no
+# business reaching the internet, and the loopback denial is what stopped a
+# sandboxed role dialling ollama. But a stage whose deliverable is itself an
+# agent session cannot run at all under it -- card 23's SDK experiment died on
+# "API Error: Unable to connect to API (FailedToOpenSocket)" before its Bash
+# tool ever executed, on both of its synthetic stages.
+#
+# A card declares `- **Requires network:** true` to lift it. This is
+# deliberately not the same grant as Requires GUI: that one drops to
+# danger-full-access and hands the agent the whole machine, where this keeps
+# workspace-write's filesystem confinement and opens only the socket. Measured
+# on 2026-09-01 with codex-cli 0.150.1: a sandboxed `curl https://example.com`
+# returns exit 6 "Could not resolve host" without it and HTTP 200 with it.
+#
+# Emits nothing under danger-full-access, which already has network, and
+# nothing for a card that does not ask.
+# A headless dispatch has nobody to answer an approval prompt.
+#
+# `codex exec` is the non-interactive entry point, but the approval policy
+# still comes from config, and there is no `--ask-for-approval` flag on exec
+# to override it. A host whose ~/.codex/config.toml carries the interactive
+# default (`approval_policy = "on-request"`) therefore hits a request no one
+# can answer: the run does not fail, it sits there. What reaches the log is
+# `codex_core::tools::router: error=timed out negotiating with the code-mode
+# host`, repeated, which reads like a broken helper process and is in fact a
+# silent permission prompt. Observed 2026-09-06 on codex-cli 0.150.1, where
+# it cost a verifier dispatch that read no files and correctly declined to
+# write a verdict.
+#
+# So every dispatch pins the policy explicitly rather than inheriting the
+# operator's. This is the Codex twin of the `claude -p
+# --dangerously-skip-permissions` requirement in lessons.md gotcha 7.
+#
+# `never` is the whole fix, and the sandbox is deliberately untouched.
+# `--dangerously-bypass-approvals-and-sandbox` would also stop the prompt and
+# must never be used here: the sandbox is the role boundary that makes worker
+# self-verification structurally impossible, and dropping it to silence a
+# prompt would trade the repo's load-bearing property for a config default.
+# Under `never` a command that would need escalation simply fails inside the
+# sandbox, which is the correct outcome for a role that was never meant to
+# have it.
+#
+# AUTOMETTA_CODEX_APPROVAL_POLICY overrides the value for an operator who
+# needs a different one; unset it to nothing to emit no override at all.
+codex_approval_argv() {
+  AUTOMETTA_CODEX_APPROVAL_ARGV=()
+  local policy="${AUTOMETTA_CODEX_APPROVAL_POLICY-never}"
+  [[ -n "$policy" ]] || return 0
+  AUTOMETTA_CODEX_APPROVAL_ARGV=(-c "approval_policy=\"$policy\"")
+}
+
+codex_network_argv_for_card() {
+  local requires_network="$1"
+  local codex_sandbox="$2"
+  AUTOMETTA_CODEX_NETWORK_ARGV=()
+  [[ "$codex_sandbox" == "workspace-write" ]] || return 0
+  case "$requires_network" in
+    true|True|TRUE|yes|1)
+      AUTOMETTA_CODEX_NETWORK_ARGV=(-c sandbox_workspace_write.network_access=true)
+      ;;
+  esac
+}
+
+# workspace-write confines writes to the workspace, so an agent session
+# spawned inside a dispatched role cannot create the per-session directory
+# Claude Code wants under $HOME. Card 98's SDK worker died on
+# `EPERM ... mkdir '~/.claude/session-env/<session-id>'`, and card 23's before
+# it.
+#
+# A card declares `- **Requires agent home:** true` to add that one directory
+# to the sandbox's writable set, through the same --add-dir mechanism the
+# shared state dir already uses.
+#
+# Measured on 2026-09-01, codex-cli 0.150.1, both runs under workspace-write:
+#
+#           without --add-dir            with --add-dir
+#   read    READABLE                     READABLE
+#   mkdir   Operation not permitted      MKDIR_OK
+#
+# Reads of $HOME are already permitted, so this grants no new sight of
+# ~/.claude/.credentials.json: a sandboxed role could always read it. What it
+# adds is write access, and only to that directory.
+#
+# Emits nothing under danger-full-access, which can already write anywhere, and
+# nothing for a card that does not ask.
+codex_agent_home_argv_for_card() {
+  local requires_agent_home="$1"
+  local codex_sandbox="$2"
+  AUTOMETTA_CODEX_AGENT_HOME_ARGV=()
+  [[ "$codex_sandbox" == "workspace-write" ]] || return 0
+  case "$requires_agent_home" in
+    true|True|TRUE|yes|1)
+      local agent_home="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+      [[ -d "$agent_home" ]] || return 0
+      AUTOMETTA_CODEX_AGENT_HOME_ARGV=(--add-dir "$agent_home")
+      ;;
+  esac
+}
+
 resolve_codex_sandbox_for_card() {
   local repo_root="$1"
   local requires_gui="$2"
@@ -340,4 +474,100 @@ codex_local_preflight() {
     fi
   fi
   return 0
+}
+
+# The Claude verifier's three surfaces, and the credential each one accepts.
+#
+# "SDK" named two different products for a day and cost a fleet-wide outage.
+# They are both valid; what is not valid is crossing a surface with the other's
+# credential:
+#
+#   surface     package             ANTHROPIC_API_KEY   CLAUDE_CODE_OAUTH_TOKEN
+#   cli         the `claude` binary        yes                    yes
+#   api-sdk     anthropic                  yes                    NO
+#   agent-sdk   claude-agent-sdk           yes                    yes
+#
+# api-sdk calls the raw Messages API, which does not accept a Claude Code
+# subscription token: measured 2026-09-01, a max_tokens=4 request returned 429
+# rate_limit_error on the OAuth token and 200 on the API key, same model and
+# minute. agent-sdk is Claude Code as a library, so it takes the subscription
+# token the way the CLI does, and scripts/verify-sdk-agent.py is the
+# entrypoint that targets it, so declaring it dispatches that script rather
+# than being refused.
+#
+# `sdk` is the legacy spelling of `api-sdk`. It is what every existing manifest
+# says and it keeps working; new config should name the surface it means.
+claude_surface_for_transport() {
+  case "$1" in
+    sdk|api-sdk) printf 'api-sdk\n' ;;
+    agent-sdk)   printf 'agent-sdk\n' ;;
+    cli)         printf 'cli\n' ;;
+    *)           printf 'unknown\n' ;;
+  esac
+}
+
+# claude_entrypoint_for_surface <surface>
+# The script that implements one claude verifier surface, kept next to the
+# surface-to-credential matrix above so there is one source of truth for both
+# what a surface is and what runs it. spawn-verifier.sh dispatches through
+# this rather than hard-coding a script name per transport branch. Prints
+# nothing for `cli` (the `claude` binary itself, not a script this repo
+# ships) or an unrecognised surface.
+claude_entrypoint_for_surface() {
+  case "$1" in
+    api-sdk)   printf 'verify-sdk.py\n' ;;
+    agent-sdk) printf 'verify-sdk-agent.py\n' ;;
+    *)         printf '\n' ;;
+  esac
+}
+
+# claude_route_refusal <surface> <auth_pairs>
+# Print why this surface cannot run on this credential, or nothing when it can.
+# Exit 0 when the pairing is refused, 1 when it is fine, so the caller reads it
+# as "if a refusal was printed".
+claude_route_refusal() {
+  local surface="$1" auth_pairs="${2:-}"
+  local has_key=false has_oauth=false
+  [[ "$auth_pairs" == *ANTHROPIC_API_KEY* ]] && has_key=true
+  [[ "$auth_pairs" == *CLAUDE_CODE_OAUTH_TOKEN* ]] && has_oauth=true
+
+  case "$surface" in
+    api-sdk)
+      if [[ "$has_key" == false && "$has_oauth" == true ]]; then
+        printf 'the api-sdk calls the raw Messages API, which does not accept a subscription OAuth token; set auth.claude.mode=api or use the cli\n'
+        return 0
+      fi
+      ;;
+    unknown)
+      printf 'unrecognised transport; expected cli, api-sdk (legacy: sdk) or agent-sdk\n'
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# claude_route_guard <family> <transport> <provenance> <auth_pairs>
+# Print the resolution, downgraded to the cli when the surface cannot run on
+# the credential this route carries. A surface and its credential are one
+# route: models.sh holds the matrix, this is the only place a resolution is
+# allowed to cross it, and it refuses rather than dispatching into a failure
+# an operator then has to diagnose from a provider error code.
+#
+# Applied to every provenance on purpose. An explicit `transport: sdk` in a
+# manifest is a statement of preference, not a licence to mix -- the manifest
+# that had it plus auth.claude.mode: subscription is exactly what dispatched
+# into an instant 429 on every subscriber for a day.
+claude_route_guard() {
+  local family="$1" transport="$2" provenance="$3" auth_pairs="${4:-}"
+  if [[ "$family" != claude ]]; then
+    printf '%s %s\n' "$transport" "$provenance"
+    return 0
+  fi
+  local surface refusal
+  surface="$(claude_surface_for_transport "$transport")"
+  if refusal="$(claude_route_refusal "$surface" "$auth_pairs")"; then
+    printf 'cli route-guard %s\n' "$refusal"
+    return 0
+  fi
+  printf '%s %s\n' "$transport" "$provenance"
 }

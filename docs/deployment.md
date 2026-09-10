@@ -40,7 +40,7 @@ autometta init /path/to/repo
 ```
 
 The installed `autometta` command wraps the shell scripts from the packaged
-checkout:
+checkout. The core subcommands are:
 
 - `autometta init-host`
 - `autometta init <repo>`
@@ -48,6 +48,10 @@ checkout:
 - `autometta status`
 - `autometta attach <repo>`
 - `autometta tick`
+
+among others (`phat-controller`, `dashboard`, `tui`, `auth`, `drain`,
+`failures`, the LaunchAgent installers); `autometta --help` lists the full set
+and `MANUAL.md` section 2 describes each one.
 
 The installer renders a local Homebrew formula outside this repo. The committed
 formula template contains placeholders only; machine paths are written into the
@@ -80,7 +84,12 @@ The manifest is local-machine configuration. It can contain absolute paths and
 therefore should not be committed. Portable repos that need committed provenance
 should use a submodule instead.
 
-## Portable alternative: pinned submodule
+## Portable alternative: pinned submodule (untested)
+
+Nothing in `scripts/` or `bin/autometta` resolves an Autometta root from a
+submodule path; the manifest's `autometta_root` is the only resolution the
+scripts know. Treat this section as a design option that has not been
+exercised, not a supported route.
 
 Use a Git submodule when an adopter repo must be cloneable and reproducible
 without pre-existing machine setup:

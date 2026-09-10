@@ -51,10 +51,16 @@ messages") before the lecture landed.
 | Parallel execution | Pipeline pairs with declared disjoint path claims, per-agent worktrees, liveness registry, heartbeat | done, deliberately small-scale |
 | Grounded evaluation | Cross-family verifier outside the worker sandbox; rubric schema, verifier panel, retro-grade | ahead of the playbook: the boundary is structural, not advisory |
 | Provenance | `Autometta-Orchestrator/Worker/Verifier` trailers on every landed commit, queryable via `git log --format='%(trailers:...)'` | done; a typed edge set living in the commit DAG |
-| Commit DAG ("what changed") | State branch, run branches, handoff envelopes keyed to stages | done |
+| Commit DAG ("what changed") | State branch, run branches, dispatch envelopes keyed to stages | done |
 | Knowledge graph ("what is true") | `memory/` prose files with untyped `[[wikilinks]]` | the gap |
 
 ## The gap: the knowledge layer
+
+> **Dated note (2026-09-09).** This section describes the pre-ledger state.
+> Cards 82-85 shipped the fact ledger (`memory/facts.jsonl`, described in
+> [fact-ledger.md](fact-ledger.md)), which closes the structured-fact and
+> bounded-query points below. The assessment is kept as written because the
+> reasoning is what motivated the ledger.
 
 `memory/` is the right idea (in-repo, cross-family, authoritative, indexed,
 with a staleness discipline) but the wrong shape for graph engineering:
@@ -66,8 +72,8 @@ with a staleness discipline) but the wrong shape for graph engineering:
   and it records spend only.
 - **No bounded query.** Recall is "read `INDEX.md` and grep", which stops
   scaling exactly where Karpathy hit the wall. Autometta's equivalent is a
-  long run history in `state/handoffs/` that nothing aggregates into
-  knowledge.
+  long run history in `state/envelopes/` (or the legacy `state/handoffs/`
+  for a stale subscriber) that nothing aggregates into knowledge.
 - **Evaluators do not read it.** Verifiers check acceptance commands, not
   accumulated facts, so a lesson learned in stage 12 does not structurally
   constrain stage 40.

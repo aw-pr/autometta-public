@@ -8,7 +8,7 @@
       "id": 1,
       "name": "File exists",
       "verdict": "PASS",
-      "evidence": "File /Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/health-check.sh exists and is non-empty."
+      "evidence": "File <root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/health-check.sh exists and is non-empty."
     },
     {
       "id": 2,
@@ -20,7 +20,7 @@
       "id": 3,
       "name": "bash -n scripts/health-check.sh",
       "verdict": "PASS",
-      "evidence": "'bash -n /Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/health-check.sh' returned 0."
+      "evidence": "'bash -n <root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/health-check.sh' returned 0."
     },
     {
       "id": 4,
@@ -38,7 +38,7 @@
       "id": 6,
       "name": "No files outside the deliverables set are modified",
       "verdict": "PASS",
-      "evidence": "Stage card /Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/examples/self-host/06-real-dispatch-test.md and `examples/self-host/PLAN.md` updates are exempted; no other files outside deliverables set were modified."
+      "evidence": "Stage card <root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/examples/self-host/06-real-dispatch-test.md and `examples/self-host/PLAN.md` updates are exempted; no other files outside deliverables set were modified."
     },
     {
       "id": 7,

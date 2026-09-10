@@ -8,13 +8,13 @@
       "id": 1,
       "name": "npm run verify passes",
       "verdict": "PASS",
-      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/package.json line:10"
+      "evidence": "file:<root>/emergence-lab/package.json line:10"
     },
     {
       "id": 2,
       "name": "kernel.test.cjs passes",
       "verdict": "PASS",
-      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/src/sims/markus-lyapunov/kernel.test.cjs line:1"
+      "evidence": "file:<root>/emergence-lab/src/sims/markus-lyapunov/kernel.test.cjs line:1"
     },
     {
       "id": 3,
@@ -38,7 +38,7 @@
       "id": 6,
       "name": "No files outside the deliverable list are modified, except this stage card",
       "verdict": "PASS",
-      "evidence": "file:/Users/AnthonyWest/repos/emergence-lab/git status output"
+      "evidence": "file:<root>/emergence-lab/git status output"
     }
   ],
   "additional_findings": "",

@@ -12,6 +12,10 @@ Required commands:
 - `claude`
 - `python3`
 - `yq` (required: `scripts/tick.sh` uses it for atomic YAML writes)
+- `agent-whoami` (from `mcp-hub/scripts`; `tick.sh` attributes state-branch commits with it)
+- `op-fetch` and `op` (the 1Password CLI; every dispatch is wrapped by `op-fetch`, see section 7)
+
+Optional: `tmux`, for the `autometta attach` viewer. `autometta check-deps` fails closed on any required command and warns on the optional one.
 
 macOS install hints with Homebrew:
 
@@ -108,9 +112,11 @@ escalates rather than rebasing on any file overlap or conflict.
 ## 4. Scheduling
 
 macOS uses one LaunchAgent per subscribed repo. `autometta subscribe <repo>`
-installs it automatically after writing the subscriber yaml. The committed
-template lives in the subscriber repo at `.autometta/launchagent.plist.tpl`; edit
-that template if you need a different interval or log layout, then re-run:
+installs it automatically after writing the subscriber yaml. On the first run
+`install-launchagent` copies the canonical `templates/launchagent.plist.tpl`
+into the subscriber repo at `.autometta/launchagent.plist.tpl` (gitignored, so
+it is a per-machine copy, not committed); edit that copy if you need a
+different interval or log layout, then re-run:
 
 ```sh
 autometta install-launchagent <path-to-repo>
@@ -130,7 +136,7 @@ Non-macOS hosts keep the cron heartbeat model. Sample cron entry to run every 5
 minutes:
 
 ```sh
-*/5 * * * * autometta tick >> "$HOME/.autometta/log/cron.log" 2>&1
+*/5 * * * * autometta tick >> "$HOME/.phat-controller/log/cron.log" 2>&1
 ```
 
 Migration from the old global cron sample:
@@ -140,7 +146,9 @@ crontab -l | grep autometta
 ```
 
 `autometta install-launchagent <repo>` removes the exact autometta-managed cron
-sample above when it finds it, so a macOS repo is not double-scheduled. If you
+sample above when it finds it (it matches only the `.phat-controller/log/cron.log`
+spelling, which the compatibility symlink from section 2 keeps writable), so a
+macOS repo is not double-scheduled. If you
 created a hand-written cron line with different paths or logging, remove that
 manual entry yourself after confirming the LaunchAgent is listed:
 
@@ -161,7 +169,7 @@ Check repo state files:
 
 ```sh
 ls -la state
-ls -la state/verifiers state/logs
+ls -la state/verifiers state/logs state/envelopes
 cat state/state.yaml
 cat state/budget.json
 ```
@@ -204,11 +212,11 @@ Autometta ships the canonical `repo-publish-workflow` guard at `scripts/git-hook
 bash scripts/install-guards.sh
 ```
 
-That installs `.git/hooks/pre-commit` and `.git/hooks/pre-push` and seeds a gitignored `.publish-guard.local` from `.publish-guard.local.example`. Set the per-repo gate config once (see `docs/PUBLISH-WORKFLOW.md` for the full list of `publishguard.*` keys), then re-run `install-guards.sh` and it writes the `git publish` alias.
+That installs the four hooks from `scripts/git-hooks/` (`pre-commit`, `commit-msg`, `pre-merge-commit`, `pre-push`) into `.git/hooks/` and seeds a gitignored `.publish-guard.local` from `.publish-guard.local.example`. Set the per-repo gate config once (see `docs/PUBLISH-WORKFLOW.md` for the full list of `publishguard.*` keys), then re-run `install-guards.sh` and it writes the `git publish` alias.
 
 Edit `.publish-guard.local` with the machine-specific values (home path, username, email). The pre-commit hook is toothless until that file carries real patterns, so a fresh clone is safe by default but unguarded against operator-specific leaks; never push from an unarmed clone.
 
-The hooks block (a) any commit that contains a personal-pattern string from `.publish-guard.local`, (b) any push of a non-default branch to the public remote (matched by `publishguard.publicmatch`), and (c) any push of the default branch to the public remote unless the `PUBLISH_GUARD_OK=1` sentinel is set, which only the `git publish` alias does. Override any of these with `--no-verify` if you intend the action.
+The hooks block (a) any commit that contains a personal-pattern string from `.publish-guard.local`, (b) any push to the public remote (matched by `publishguard.publicmatch`) of a branch other than the PR source (`publishguard.prsource`, default `publish`), (c) under the default `publishguard.boundary=pr`, any push of the default branch to the public remote at all, since it advances only by a merge on the forge, and (d) any push whose tree contains a `publishguard.privatefile` path. The `git publish` alias (`PUBLISH_GUARD_OK=1` sentinel, ff-only push of `publish:main`) is the publish path only for repos that opt into `publishguard.boundary=direct`; for this repo the path is the "Normal publish" recipe in `docs/PUBLISH-WORKFLOW.md`. Override any of these with `--no-verify` only if you intend the action.
 
 For a deeper introduction or to retrofit a repo that pre-dates this pattern, use the `repo-publish-workflow` skill directly.
 
@@ -225,14 +233,14 @@ Every dispatched agent (worker or verifier) runs on its OAuth subscription sessi
    cp templates/op-refs.local.sh.tpl ~/.config/autometta/op-refs.local.sh
    chmod 600 ~/.config/autometta/op-refs.local.sh
    ```
-3. **For Codex API mode** — set up a sibling `CODEX_HOME` once. Codex prefers its `auth.json` over the `OPENAI_API_KEY` env var, so an api-mode dispatch needs an isolated codex dir whose `auth.json` says `auth_mode: "apikey"`:
+3. **For Codex API mode**: set up a sibling `CODEX_HOME` once. Codex prefers its `auth.json` over the `OPENAI_API_KEY` env var, so an api-mode dispatch needs an isolated codex dir whose `auth.json` says `auth_mode: "apikey"`:
    ```sh
    mkdir -p ~/.codex-api-only && chmod 700 ~/.codex-api-only
    # Pipe the real key from 1Password into codex's login flow:
    op-fetch --print "$OP_REF_OPENAI_API_KEY" | \
      CODEX_HOME=~/.codex-api-only codex login --with-api-key
    ```
-   Override the path globally with `AUTOMETTA_CODEX_HOME=/some/other/dir`. Verify with `cat ~/.codex-api-only/auth.json | python3 -m json.tool | head -3` — `auth_mode` must be `"apikey"`. Your main `~/.codex/auth.json` stays untouched.
+   Override the path globally with `AUTOMETTA_CODEX_HOME=/some/other/dir`. Verify with `cat ~/.codex-api-only/auth.json | python3 -m json.tool | head -3`; `auth_mode` must be `"apikey"`. Your main `~/.codex/auth.json` stays untouched.
 4. In the **subscribed repo** (the one whose dispatches you are routing), copy `.autometta.local.yaml.example` to `.autometta.local.yaml` and set the `auth.<family>.mode` per family.
 
 ### Local weights (codex family only, `auth.codex.mode: local`)
@@ -337,9 +345,9 @@ A genuine third CLI family (Gemini CLI's free tier) was investigated and stays o
 ### Two committed files, one user-config file
 
 ```
-op-refs.sh                                  # COMMITTED — placeholder refs, sources the override
-templates/op-refs.local.sh.tpl                    # COMMITTED — template
-~/.config/autometta/op-refs.local.sh        # GITIGNORED — your actual op:// references
+op-refs.sh                                  # COMMITTED: placeholder refs, sources the override
+templates/op-refs.local.sh.tpl              # COMMITTED: template
+~/.config/autometta/op-refs.local.sh        # GITIGNORED: your actual op:// references
 ```
 
 `op-refs.sh` declares `OP_REF_OPENAI_API_KEY`, `OP_REF_ANTHROPIC_API_KEY`, `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`, plus the two cloud free-tier refs `OP_REF_GROQ_API_KEY` and `OP_REF_OPENROUTER_API_KEY` (see "Cloud free tier" above), all with `op://YOUR_VAULT/...` placeholders, then searches for an override in this order: `$AUTOMETTA_LOCAL_REFS`, `~/.config/autometta/op-refs.local.sh` (XDG, recommended), then `<repo-root>/op-refs.local.sh` (dev checkout only). The XDG location is the one location both the brew-installed CLI and the dev checkout can both see.
@@ -396,6 +404,17 @@ CODEX_HOME="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}" \
 # Claude has no equivalent: claude -p honours ANTHROPIC_API_KEY directly.
 op-fetch $auth_pairs -- claude -p "$prompt" </dev/null >log 2>&1 &
 ```
+
+### Verifier transport
+
+The billing route says whose credential a verifier spends; the transport says which harness spends it. `scripts/spawn-verifier.sh` resolves it per family in `resolve_verifier_transport`: the `AUTOMETTA_CLAUDE_TRANSPORT` / `AUTOMETTA_CODEX_TRANSPORT` env override first, then `verifier.<family>.transport` in `.autometta.local.yaml` (`cli`, `sdk` or `agent-sdk`), and with neither set the SDK route by default when its preconditions hold (the SDK script present, the python packages from `scripts/requirements-sdk.txt` importable, a usable credential for the resolved auth mode), otherwise `cli`. Every resolution then passes the route guard in `scripts/models.sh`, which downgrades a surface the credential cannot serve to `cli` rather than dispatching into a provider error. Probe without spending a token:
+
+```sh
+pip install -r scripts/requirements-sdk.txt          # once, for the SDK routes
+scripts/spawn-verifier.sh --print-transport claude .  # e.g. "sdk (default-sdk)" or "cli (fallback-cli: ...)"
+```
+
+Design and the prompt-caching rationale: `docs/sdk-verifier.md`.
 
 ## 8. Uninstall
 

@@ -30,11 +30,11 @@
       "properties": {
         "head": {
           "type": "string",
-          "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$"
+          "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$"
         },
         "tail": {
           "type": "string",
-          "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$"
+          "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$"
         },
         "base_tip": {
           "type": "string",
@@ -52,7 +52,7 @@
     },
     "pairing_disabled_stage": {
       "type": "string",
-      "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+      "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$",
       "description": "Stage whose active-pair failure latched this repo to serial dispatch. Cleared when that stage's re-brief lands."
     },
     "pairing_disabled_reason": {
@@ -69,7 +69,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+            "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$",
             "description": "Stage id; convention is NN[a-z*]-kebab-slug matching the card filename in stage-cards/. Optional lowercase letters between the NN prefix and the first dash allow sub-stages like 05a, 05b, 05c."
           },
           "run_id": {
@@ -102,7 +102,7 @@
               },
               "stage_id": {
                 "type": "string",
-                "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+                "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$",
                 "description": "Full prerequisite stage id. Present only when type is stage_completed."
               }
             },
@@ -123,6 +123,19 @@
               "pattern": "^[A-Za-z0-9._/-]+$"
             },
             "description": "Optional repo-relative file or directory claims parsed at queue time. Two adjacent claimed stages may pipeline only when these claims are disjoint."
+          },
+          "pairing_failures": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Count of failures attributed to pairing for this stage. A stage is refused from further pairing when the count reaches 2."
+          },
+          "pairing_failure_causes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Machine-readable causes recorded alongside pairing_failures, in attribution order."
           },
           "started_at": {
             "type": ["string", "null"],
@@ -146,7 +159,7 @@
           },
           "wip_branch": {
             "type": ["string", "null"],
-            "pattern": "^wip/[0-9]{2}[a-z]*-[a-z0-9-]+-attempt-[1-9][0-9]*$",
+            "pattern": "^wip/[0-9]{2,}[a-z]*-[a-z0-9-]+-attempt-[1-9][0-9]*$",
             "description": "Append-only local branch pinning wip_commit for the latest verifier-FAILed attempt. Requeue and retention never delete wip refs."
           },
           "worker_pid": {
@@ -173,7 +186,7 @@
           },
           "worker_envelope": {
             "type": ["string", "null"],
-            "description": "Set to 'partial' when the worker's handoff envelope reported status=partial. The stage still proceeds to verifier dispatch — partial is the worker's annotation, not a verdict — and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
+            "description": "Set to 'partial' when the worker's dispatch envelope reported status=partial. The stage still proceeds to verifier dispatch — partial is the worker's annotation, not a verdict — and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
           },
           "repair_attempts": {
             "type": "integer",
@@ -181,9 +194,29 @@
             "default": 0,
             "description": "Count of times `tick.sh --repair` has requeued this stage from stalled/failed back to pending. Capped at AUTOMETTA_REPAIR_ATTEMPT_CAP (default 2): a stage that stalls twice after repair stays down for the operator. Absent or missing is treated as 0."
           },
-          "worker_envelope": {
+          "worker_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Token count snapshotted from the worker's log/transcript by stage_snapshot_tokens() in tick.sh. Absent until the worker's role has produced a parseable count."
+          },
+          "verifier_tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Token count snapshotted from the verifier's log/transcript by stage_snapshot_tokens() in tick.sh. Absent until the verifier's role has produced a parseable count."
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "worker_tokens + verifier_tokens (absent halves treated as 0), recomputed by stage_snapshot_tokens() in tick.sh on every snapshot of either role."
+          },
+          "verifier_started_at": {
             "type": ["string", "null"],
-            "description": "Set to 'partial' when the worker's handoff envelope reported status=partial. The stage still proceeds to verifier dispatch \u2014 partial is the worker's annotation, not a verdict \u2014 and this field is the audit trail saying the verifier was given the deferred criteria as its checklist. Null or absent for a status=pass envelope."
+            "format": "date-time",
+            "description": "ISO 8601 timestamp of verifier dispatch, stamped by tick.sh immediately before spawn_verifier_for_stage. Null before the verifier is dispatched."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Free-text annotation added by the orchestrator when hand-adjudicating a stage (for example a verifier false-negative overridden to PASS). Not written by tick.sh; present only where a human recorded a decision."
           },
           "integration": {
             "type": ["object", "null"],
@@ -213,16 +246,43 @@
                 "type": ["boolean", "null"],
                 "description": "Whether the run branch reached origin on the awaiting path. Null on the merged path, where nothing is pushed."
               },
+              "rebased": {
+                "type": ["boolean", "null"],
+                "description": "True when tick.sh mechanically rebased a file-disjoint verified run branch before fast-forwarding it. Null for an ordinary fast-forward or a parked branch."
+              },
+              "rebased_tip": {
+                "type": ["string", "null"],
+                "pattern": "^[0-9a-f]{7,40}$",
+                "description": "Tip of the mechanically rebased run branch. integration.head retains the pre-rebase verified tip."
+              },
               "recorded_at": {
                 "type": ["string", "null"],
                 "format": "date-time",
                 "description": "ISO 8601 timestamp the record was written."
+              },
+              "integrated_at": {
+                "type": ["string", "null"],
+                "format": "date-time",
+                "description": "ISO 8601 timestamp the orchestrator hand-integrated the run branch (for example after a manual rebase). Not written by tick.sh; present only where a human recorded the intervention."
+              },
+              "note": {
+                "type": "string",
+                "description": "Free-text annotation the orchestrator adds when manually intervening on integration, e.g. recording a pre-rebase backup ref. Not written by tick.sh."
               }
             }
           },
           "base_branch": {
             "type": ["string", "null"],
             "description": "Base branch this stage's run worktree (autometta/<id>) was cut from, resolved at dispatch time by resolve_base_branch in tick.sh: the subscriber/manifest 'base_branch' field if set, else the repo's current branch at dispatch. Null for a stage dispatched before worktree-per-run landed (deprecated repo_root-commit path). Persisted rather than re-resolved so a PASS can detect whether base moved since dispatch."
+          },
+          "dispatch_base_tip": {
+            "type": ["string", "null"],
+            "pattern": "^[0-9a-f]{7,40}$",
+            "description": "Exact base branch tip from which the run worktree was cut. tick.sh uses it to compare base movement with the verified run diff before a mechanical landing rebase."
+          },
+          "reserve_exempt": {
+            "type": "boolean",
+            "description": "Whether the worker began under an overnight or drain override, allowing its verifier to land after the ordinary provider-window reserve becomes active."
           },
           "pair_rebased_onto": {
             "type": ["string", "null"],

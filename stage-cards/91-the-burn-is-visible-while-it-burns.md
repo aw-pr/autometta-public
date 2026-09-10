@@ -12,7 +12,7 @@
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Gate:** stage-completed: 90-the-verifier-reaches-for-the-sdk-first
-- **Path claims:** scripts/verify-sdk.py, scripts/verify-sdk-openai.py, scripts/aggregate-dashboard.sh, scripts/tui.sh, dashboard/dashboard.js, docs/dashboard.md
+- **Path claims:** scripts/verify-sdk.py, scripts/verify-sdk-openai.py, scripts/aggregate-dashboard.sh, scripts/tui.sh, scripts/lib/tui/render.py, scripts/lib/tui/app.py, dashboard/dashboard.js, docs/dashboard.md
 - **Pairing rationale:** premium pairing for display work per the standing
   feedback memory: cheap tiers game display smokes, so the strongest Claude
   tier verifies what the operator will actually look at, while the codex
@@ -58,9 +58,11 @@ Do not read anything else unless you need to; keep your context lean.
    reports that as a finding, not a failure.
 2. `scripts/aggregate-dashboard.sh`: in-flight dispatches gain `live_usage`
    in `data.json`, sourced from the registry; absent fields simply omit it.
-3. `scripts/tui.sh` run page and `dashboard/dashboard.js`: render the live
-   figure with a marker distinguishing it from settled spend; absence
-   renders as a dash or "n/a", never 0.
+3. The TUI run page (`scripts/lib/tui/render.py`, wiring in
+   `scripts/lib/tui/app.py` or `scripts/tui.sh` as needed) and
+   `dashboard/dashboard.js`: render the live figure with a marker
+   distinguishing it from settled spend; absence renders as a dash or
+   "n/a", never 0.
 4. `docs/dashboard.md`: a short "live figures" subsection stating the data
    path, the poll cadences that bound the latency (SDK message -> registry
    -> seam regeneration -> page poll), and that settled truth remains
@@ -90,7 +92,7 @@ Do not read anything else unless you need to; keep your context lean.
 5. One real SDK verifier dispatch on this repo shows a live figure in the
    TUI while the verifier is still running, and the figure disappears into
    the settled cost-log row when the stage lands.
-6. `git diff --stat` on the run branch touches only the six claimed paths.
+6. `git diff --stat` on the run branch touches only claimed paths.
 
 ## Contract test
 
@@ -120,3 +122,29 @@ criterion 5.
 The real-dispatch evidence in criterion 5 needs a claude-family SDK
 verifier run, which after card 90 is the default for this repo's
 subscription auth; no API key is required.
+
+## Re-brief (attempt 2, 2026-08-31)
+
+Attempt 1 stalled on two defects, neither the worker's:
+
+1. **The card claimed the wrong TUI file.** The renderer is
+   `scripts/lib/tui/render.py` (wiring in `scripts/lib/tui/app.py`), not
+   `scripts/tui.sh`, so the worker correctly refused to touch it and
+   reported `partial`. The claims and deliverable 3 above are corrected.
+2. **The SDK verifier crashed before evaluating anything.** The card's
+   multi-directory deliverables made `derive_artefact_glob` fall back to
+   `**`, and `verify-sdk.py` read the repo's tracked
+   `docs/images/dashboard.png` as UTF-8 and died on byte 0x89, three
+   times, burning the attempt cap. This stage's verifier is pinned to the
+   CLI transport in the repo manifest until card 95 lands the binary-safe
+   reader; because of that pin, criterion 5's evidence may come from a
+   controlled invocation of `scripts/verify-sdk.py` with a stubbed
+   transport driving a real registry entry, proving the live-figure
+   plumbing rather than the network call.
+
+Attempt 1's sound half is preserved and already in your base: commit
+4865310 (dashboard half, seam `live_usage`, registry writes in both SDK
+entrypoints, docs). Do not redo it. Remaining work is deliverable 3's TUI
+half against `scripts/lib/tui/render.py` and `scripts/lib/tui/app.py`,
+plus the acceptance evidence. `git diff` against the base covers only the
+remaining work; criterion 6 reads accordingly.

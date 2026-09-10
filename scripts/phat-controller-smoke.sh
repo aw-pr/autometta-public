@@ -646,6 +646,103 @@ assert_eq "$dev_before" "$(git -C "$r2c" rev-parse dev)" "dev untouched by a con
 assert_contains "$(journal_of "$r2c")" "prohibition 5" "the refusal names the prohibition it rests on"
 printf 'PASS conflicted awaiting integration surfaced, never resolved\n'
 
+printf '== stale awaiting records close or surface without blocking the ledger ==\n'
+r2stale_merged="$(make_repo r2stale_merged)"
+stage2stale=86-stale-merged
+stage2live=87-live-after-stale
+(
+  cd "$r2stale_merged"
+  git checkout -qb "autometta/${stage2stale}"
+  printf 'already merged worker output\n' > stale-result.txt
+  git add stale-result.txt
+  git commit -qm "stale worker diff"
+  stale_merged_head="$(git rev-parse HEAD)"
+  git checkout -q dev
+  git merge --ff-only -q "autometta/${stage2stale}"
+  git branch -D "autometta/${stage2stale}" >/dev/null
+  git checkout -qb "autometta/${stage2live}"
+  printf 'live worker output\n' > live-result.txt
+  git add live-result.txt
+  git commit -qm "live worker diff"
+  git checkout -q dev
+)
+stale_merged_head="$(git -C "$r2stale_merged" rev-parse dev)"
+live_merged_head="$(git -C "$r2stale_merged" rev-parse "autometta/${stage2live}")"
+cat > "$r2stale_merged/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+stages:
+  - id: $stage2stale
+    status: completed
+    integration:
+      state: awaiting
+      base_branch: dev
+      run_branch: autometta/${stage2stale}
+      head: "${stale_merged_head}"
+      pushed: false
+  - id: $stage2live
+    status: completed
+    integration:
+      state: awaiting
+      base_branch: dev
+      run_branch: autometta/${stage2live}
+      head: "${live_merged_head}"
+      pushed: false
+YAML
+pc_merge_awaiting "$r2stale_merged" >/dev/null 2>&1 || fail "a stale merged record blocked the later live integration"
+assert_eq merged "$(yq -r ".stages[] | select(.id == \"$stage2stale\") | .integration.state" "$r2stale_merged/state/state.yaml")" "a contained stale record is closed"
+assert_eq merged "$(yq -r ".stages[] | select(.id == \"$stage2live\") | .integration.state" "$r2stale_merged/state/state.yaml")" "the later live record is merged"
+git -C "$r2stale_merged" merge-base --is-ancestor "$live_merged_head" dev || fail "the later live head was not merged"
+printf 'PASS a contained stale record closes and a later live record merges in one pass\n'
+
+r2stale_uncontained="$(make_repo r2stale_uncontained)"
+stage2uncontained=88-stale-uncontained
+stage2live_after_uncontained=89-live-after-uncontained
+(
+  cd "$r2stale_uncontained"
+  git checkout -qb "autometta/${stage2uncontained}"
+  printf 'unmerged worker output\n' > uncontained-result.txt
+  git add uncontained-result.txt
+  git commit -qm "uncontained worker diff"
+  stale_uncontained_head="$(git rev-parse HEAD)"
+  git tag fixture-stale-uncontained "$stale_uncontained_head"
+  git checkout -q dev
+  git branch -D "autometta/${stage2uncontained}" >/dev/null
+  git checkout -qb "autometta/${stage2live_after_uncontained}"
+  printf 'later live worker output\n' > later-live-result.txt
+  git add later-live-result.txt
+  git commit -qm "later live worker diff"
+  git checkout -q dev
+)
+stale_uncontained_head="$(git -C "$r2stale_uncontained" rev-parse fixture-stale-uncontained)"
+live_after_uncontained_head="$(git -C "$r2stale_uncontained" rev-parse "autometta/${stage2live_after_uncontained}")"
+cat > "$r2stale_uncontained/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+stages:
+  - id: $stage2uncontained
+    status: completed
+    integration:
+      state: awaiting
+      base_branch: dev
+      run_branch: autometta/${stage2uncontained}
+      head: "${stale_uncontained_head}"
+      pushed: false
+  - id: $stage2live_after_uncontained
+    status: completed
+    integration:
+      state: awaiting
+      base_branch: dev
+      run_branch: autometta/${stage2live_after_uncontained}
+      head: "${live_after_uncontained_head}"
+      pushed: false
+YAML
+uncontained_out="$(pc_merge_awaiting "$r2stale_uncontained" 2>&1)" || fail "an uncontained stale record blocked the later live integration"
+assert_contains "$uncontained_out" "no longer resolves; surfaced, not touched" "an uncontained stale record is surfaced"
+assert_eq awaiting "$(yq -r ".stages[] | select(.id == \"$stage2uncontained\") | .integration.state" "$r2stale_uncontained/state/state.yaml")" "an uncontained stale record remains awaiting"
+assert_eq merged "$(yq -r ".stages[] | select(.id == \"$stage2live_after_uncontained\") | .integration.state" "$r2stale_uncontained/state/state.yaml")" "the live record after an uncontained stale record is merged"
+printf 'PASS an uncontained stale record surfaces and a later live record still merges\n'
+
 printf '== card 54 mechanism kept: the same verb twice with no progress escalates, blocking ==\n'
 esc_rc=0
 pc_merge_awaiting "$r2c" >/dev/null 2>&1 || true
@@ -689,6 +786,7 @@ cat > "$qc_card" <<'CARD'
 
 - **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
 - **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Dispatch:** serial
 CARD
 pc_queue_card "$rqc" "$qc_card" >/dev/null 2>&1 || fail "queue-card did not queue an existing card"
 assert_eq 87-queue-fixture "$(yq -r '.stages[0].id' "$rqc/state/state.yaml")" "the card was queued"
@@ -1076,6 +1174,249 @@ assert_contains "$guard_commit_err" "pass-new.log" "the refusal names the file i
 ( cd "$rret" && git reset -q )
 printf 'PASS the publish guard refuses a transcript on the tree: state/** keeps it off the tree at all, and the pre-commit *.log never-commit rule refuses a forced add on top of it\n'
 
+
+printf '== card 112: a passing envelope can be resumed to its verifier ==\n'
+
+# Recreates the 2026-09-03 shape from docs/runs/2026-09-03-evening-watch.md:
+# a previous session restored the worktree state link and set the stage
+# in_progress by hand, but left stall_marker set and current_stage null, so
+# the tick never looks at the stage even though its worker envelope already
+# reads pass.
+rtv_new_fixture() {
+  local name="$1" stage_id="$2"
+  local repo="$fixture/$name"
+  mkdir -p "$repo/state/verifiers" "$repo/state/envelopes" "$repo/state/handoffs" \
+    "$repo/state/logs" "$repo/stage-cards"
+  (
+    cd "$repo"
+    git init -q -b dev
+    git config user.name Smoke
+    git config user.email smoke@local
+    git config commit.gpgsign false
+    printf 'state/**\n' > .gitignore
+    printf 'seed\n' > README.md
+    git add .gitignore README.md
+    git commit -qm seed
+  )
+  cat > "$AUTOMETTA_HOME/subscribers/${name}.yaml" <<YAML
+enabled: true
+repo_path: "${repo}"
+weight: 10
+YAML
+  write_budget "$repo"
+  cat > "$repo/stage-cards/${stage_id}.md" <<CARD
+# Stage card ${stage_id}: resume-to-verifier fixture
+
+## Metadata
+
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
+
+## Objective
+
+Resume-to-verifier fixture stage.
+
+## Budget
+
+- **Worker wall-clock:** 45 minutes
+CARD
+  ( cd "$repo" && git add stage-cards && git commit -qm "add card ${stage_id}" )
+  local work_dir="$(worktree_path_for_stage "$repo" "$stage_id")"
+  ( cd "$repo" && git worktree add "$work_dir" -b "autometta/${stage_id}" dev >/dev/null 2>&1 )
+  rm -rf "${work_dir:?}/state"
+  ln -s "../$(basename "$repo")/state" "$work_dir/state"
+  cat > "$repo/state/envelopes/${stage_id}.json" <<JSON
+{
+  "stage_id": "${stage_id}",
+  "status": "pass",
+  "deliverables": ["README.md"],
+  "notes": "Fixture worker completed the stage.",
+  "worker_identity": "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>"
+}
+JSON
+  printf '%s\n' "$repo"
+}
+
+rtv_snapshot() { state_json "$1/state/state.yaml" > "$2"; }
+
+# Set of top-level current_stage and per-stage keys that differ between two
+# snapshots, sorted, comma-joined.
+rtv_changed_keys() {
+  local before="$1" after="$2" id="$3"
+  jq -nr --slurpfile before "$before" --slurpfile after "$after" --arg id "$id" '
+    (if ($before[0].current_stage // null) != ($after[0].current_stage // null)
+     then ["current_stage"] else [] end) as $top
+    | (($before[0].stages[] | select(.id == $id)) // {}) as $bs
+    | (($after[0].stages[] | select(.id == $id)) // {}) as $as
+    | ([ (($bs | keys) + ($as | keys)) | unique[]
+         | select(($bs[.] // null) != ($as[.] // null)) ]) as $stage
+    | ($top + $stage) | unique | sort | join(",")'
+}
+
+stage_rtv=70-a-passing-envelope-is-never-consumed
+rtv_repo="$(rtv_new_fixture rtv "$stage_rtv")"
+cat > "$rtv_repo/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+stages:
+  - id: $stage_rtv
+    status: in_progress
+    stall_marker: worker_envelope_missing_after_exit
+    worker_pid: null
+    verifier_pid: null
+    worker: "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>"
+    verifier: "Claude Sonnet 5 <claude-sonnet-5@local>"
+YAML
+
+rtv_before="$fixture/rtv-before.json"
+rtv_snapshot "$rtv_repo" "$rtv_before"
+"$script_dir/phat-controller.sh" resume-to-verifier "$rtv_repo" "$stage_rtv" >/dev/null
+rtv_after="$fixture/rtv-after.json"
+rtv_snapshot "$rtv_repo" "$rtv_after"
+
+assert_eq in_progress "$(state_status "$rtv_repo" "$stage_rtv")" "the stage is in_progress after resume"
+assert_eq "$stage_rtv" "$(yq -r '.current_stage' "$rtv_repo/state/state.yaml")" "current_stage points at the resumed stage"
+assert_eq null "$(yq -r ".stages[] | select(.id == \"$stage_rtv\") | .stall_marker" "$rtv_repo/state/state.yaml")" "stall_marker is cleared"
+assert_eq "current_stage,stall_marker" "$(rtv_changed_keys "$rtv_before" "$rtv_after" "$stage_rtv")" \
+  "only current_stage and stall_marker actually changed (status was already in_progress by hand, worker_pid and the verifier fields were already null)"
+printf 'PASS the 2026-09-03 shape resumes; only current_stage, stall_marker and status changed\n'
+
+# A following tick dispatches a verifier for the resumed stage, with the
+# spawn itself stubbed -- same pattern as budget-cap-smoke.sh criterion 8.
+ensure_yq_or_halt() { return 0; }
+quota_write_repo_state() { :; }
+budget_ensure_window() { :; }
+budget_pause_active() { return 1; }
+budget_check_caps() { return 0; }
+budget_increment_tick() { :; }
+commit_state_branch() { :; }
+guard_run_worktree_state_before_dispatch() { return 0; }
+quota_gate_role_dispatch() { return 0; }
+budget_gate_dispatch() { return 0; }
+spawn_verifier_for_stage() { touch "$2/state/verifier-dispatched"; }
+
+_process_repo_locked "$rtv_repo" >/dev/null 2>&1
+rtv_tick_log="$pc_log_dir/phat-controller-$(date +%F).log"
+assert_eq ok "$( [[ -f "$rtv_repo/state/verifier-dispatched" ]] && printf 'ok\n' || printf 'no\n' )" \
+  "the next tick dispatched a verifier for the resumed stage"
+assert_contains "$(cat "$rtv_tick_log")" "stage ${stage_rtv} has a completed worker envelope; skipping worker-clock stall check" \
+  "the tick log records the verifier dispatch for the resumed stage"
+printf 'PASS a following tick dispatches a verifier for the resumed stage\n'
+
+# Refusal: no envelope at all.
+stage_no_env=71-no-envelope-refused
+no_env_repo="$(rtv_new_fixture no-env "$stage_no_env")"
+rm -f "$no_env_repo/state/envelopes/${stage_no_env}.json"
+cat > "$no_env_repo/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+stages:
+  - id: $stage_no_env
+    status: stalled
+    stall_marker: worker_envelope_missing_after_exit
+YAML
+no_env_before="$(cat "$no_env_repo/state/state.yaml")"
+no_env_rc=0
+"$script_dir/phat-controller.sh" resume-to-verifier "$no_env_repo" "$stage_no_env" >/dev/null 2>&1 || no_env_rc=$?
+[[ "$no_env_rc" -eq 3 ]] || fail "a stage with no envelope should refuse with exit 3, got ${no_env_rc}"
+assert_eq "$no_env_before" "$(cat "$no_env_repo/state/state.yaml")" "state.yaml is byte-identical after the refusal"
+printf 'PASS a stage with no worker envelope is refused\n'
+
+# Refusal: the worktree is gone.
+stage_no_wt=72-no-worktree-refused
+no_wt_repo="$(rtv_new_fixture no-wt "$stage_no_wt")"
+git -C "$no_wt_repo" worktree remove --force "$(worktree_path_for_stage "$no_wt_repo" "$stage_no_wt")" >/dev/null 2>&1
+git -C "$no_wt_repo" branch -D "autometta/${stage_no_wt}" >/dev/null 2>&1
+cat > "$no_wt_repo/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+stages:
+  - id: $stage_no_wt
+    status: stalled
+    stall_marker: worker_envelope_missing_after_exit
+YAML
+no_wt_before="$(cat "$no_wt_repo/state/state.yaml")"
+no_wt_rc=0
+"$script_dir/phat-controller.sh" resume-to-verifier "$no_wt_repo" "$stage_no_wt" >/dev/null 2>&1 || no_wt_rc=$?
+[[ "$no_wt_rc" -eq 3 ]] || fail "a stage with no run worktree should refuse with exit 3, got ${no_wt_rc}"
+assert_eq "$no_wt_before" "$(cat "$no_wt_repo/state/state.yaml")" "state.yaml is byte-identical after the refusal"
+printf 'PASS a stage whose run worktree is gone is refused (requeue, not resume)\n'
+
+# Refusal: another stage already holds current_stage.
+stage_other=73-other-current-stage
+other_repo="$(rtv_new_fixture other-cs "$stage_other")"
+cat > "$other_repo/state/state.yaml" <<YAML
+version: 1
+current_stage: some-other-stage
+stages:
+  - id: $stage_other
+    status: stalled
+    stall_marker: worker_envelope_missing_after_exit
+  - id: some-other-stage
+    status: in_progress
+YAML
+other_before="$(cat "$other_repo/state/state.yaml")"
+other_rc=0
+"$script_dir/phat-controller.sh" resume-to-verifier "$other_repo" "$stage_other" >/dev/null 2>&1 || other_rc=$?
+[[ "$other_rc" -eq 3 ]] || fail "a repo with another current_stage should refuse with exit 3, got ${other_rc}"
+assert_eq "$other_before" "$(cat "$other_repo/state/state.yaml")" "state.yaml is byte-identical after the refusal"
+printf 'PASS a repo with another current_stage is refused\n'
+
+# Refusal named in the verifier handoff but not the deliverables list: an
+# envelope that reads fail.
+stage_failed_env=74-failed-envelope-refused
+failed_env_repo="$(rtv_new_fixture failed-env "$stage_failed_env")"
+cat > "$failed_env_repo/state/envelopes/${stage_failed_env}.json" <<JSON
+{
+  "stage_id": "${stage_failed_env}",
+  "status": "fail",
+  "deliverables": [],
+  "notes": "Fixture worker gave up.",
+  "worker_identity": "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>"
+}
+JSON
+cat > "$failed_env_repo/state/state.yaml" <<YAML
+version: 1
+current_stage: null
+stages:
+  - id: $stage_failed_env
+    status: stalled
+    stall_marker: worker_envelope_missing_after_exit
+YAML
+failed_env_before="$(cat "$failed_env_repo/state/state.yaml")"
+failed_env_rc=0
+"$script_dir/phat-controller.sh" resume-to-verifier "$failed_env_repo" "$stage_failed_env" >/dev/null 2>&1 || failed_env_rc=$?
+[[ "$failed_env_rc" -eq 3 ]] || fail "a stage whose envelope reads fail should refuse with exit 3, got ${failed_env_rc}"
+assert_eq "$failed_env_before" "$(cat "$failed_env_repo/state/state.yaml")" "state.yaml is byte-identical after the refusal"
+printf 'PASS a stage whose envelope reads fail is refused\n'
+
+# resume-to-verifier is unknown to the pre-change controller: the verb table
+# above did not have this case before card 112, so a pre-change checkout
+# fails this fixture with "usage" on stderr and exit 2, proving criterion 3's
+# other half without checking out history.
+pre_change_rc=0
+"$script_dir/phat-controller.sh" not-a-real-verb "$rtv_repo" "$stage_rtv" >/dev/null 2>rtv_unknown.err || pre_change_rc=$?
+[[ "$pre_change_rc" -eq 2 ]] || fail "an unknown verb should exit 2"
+rm -f rtv_unknown.err
+printf 'PASS an unknown verb (standing in for the pre-card-112 controller) refuses with usage\n'
+
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/112-a-passing-envelope-can-be-resumed-to-its-verifier.md
+rtv_before="$fixture/rtv-before.json"
+rtv_after="$fixture/rtv-after.json"
+[[ -f "$rtv_before" && -f "$rtv_after" ]] || fail "card 112 contract: resume fixture snapshots missing"
+assert_eq "current_stage,stall_marker" "$(rtv_changed_keys "$rtv_before" "$rtv_after" "$stage_rtv")" \
+  "card 112 contract: resuming the 2026-09-03 shape changes only current_stage and stall_marker"
+[[ -f "$rtv_repo/state/verifier-dispatched" ]] || fail "card 112 contract: the following tick did not dispatch a verifier"
+assert_contains "$(cat "$rtv_tick_log")" "stage ${stage_rtv} has a completed worker envelope; skipping worker-clock stall check" \
+  "card 112 contract: the tick log records the verifier dispatch"
+[[ "$no_env_rc" -eq 3 ]] || fail "card 112 contract: a stage with no envelope must refuse"
+[[ "$no_wt_rc" -eq 3 ]] || fail "card 112 contract: a stage whose worktree is gone must refuse"
+[[ "$other_rc" -eq 3 ]] || fail "card 112 contract: a repo with another current_stage must refuse"
+[[ "$failed_env_rc" -eq 3 ]] || fail "card 112 contract: a stage whose envelope reads fail must refuse"
+[[ "$pre_change_rc" -eq 2 ]] || fail "card 112 contract: resume-to-verifier must be unknown to the pre-change controller"
+# AUTOMETTA-CONTRACT-END
+
+printf 'PASS card 112: a passing envelope is resumed to its verifier, and every other shape refused\n'
 
 for f in "$script_dir/phat-controller.sh" "$script_dir/render-controller-seed.sh" \
          "$script_dir/install-launchagent-phat-controller.sh" \

@@ -11,13 +11,17 @@ Stage card template, part of the dispatch-contract pattern library. Reusable in 
 - **Verifier:** <<verifier-identity>>
 - **Base branch:** <<base-branch>>
 - **Run branch:** <<autometta/stage-id>>
+- **Fixes:** <<stage-id this card repairs; optional, omit otherwise>>
+- **Supersedes:** <<stage-id this card replaces; optional, omit otherwise>>
 
 <!--
 Dispatch happens in an ephemeral worktree cut from the base branch (`git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>`), never in the shared checkout; on PASS the orchestrator fast-forward-merges the run branch back into the base branch (or pushes it, if base moved, and notes that in HANDOFF). Pin both fields to branch names, never commit SHAs. -->
 
-- **Worker effort:** <<low|medium|high|xhigh|max — optional, omit to leave the CLI on its default>>
-- **Verifier effort:** <<low|medium|high|xhigh|max — optional. Honoured by the Claude and Codex CLI routes, the Claude SDK route, and every verifier panel member. Omit to leave each route on its default.>>
+- **Worker effort:** <<low|medium|high|xhigh|max. Optional, omit to leave the CLI on its default>>
+- **Verifier effort:** <<low|medium|high|xhigh|max. Optional. Honoured by the Claude and Codex CLI routes, the Claude SDK route, and every verifier panel member. Omit to leave each route on its default.>>
 - **Requires GUI:** <<true if any role must drive a browser, screenshot, or otherwise reach the window server; omit otherwise. Codex roles are sandboxed and every browser aborts at NSApplication init without this, headless included. It grants that agent full machine access, so declare it only when the acceptance criteria genuinely need it.>>
+- **Requires network:** <<true if any role must reach the network from a shell command it runs, for example a stage whose deliverable is itself an agent session; omit otherwise. Codex roles run under workspace-write, which denies the socket: an agent session started without this dies on "Unable to connect to API (FailedToOpenSocket)" before its first tool call. Unlike Requires GUI this keeps the filesystem sandbox and opens only the socket, so prefer it whenever the network is all that is missing.>>
+- **Requires agent home:** <<true if a role spawns an agent session that needs to write under the Claude home directory, for example the per-session directory Claude Code creates at startup; omit otherwise. Reads of $HOME are already permitted, so this grants write access only, to that one directory, and the sandbox mode is unchanged. Without it an SDK session dies on "EPERM ... mkdir '~/.claude/session-env/<session-id>'".>>
 - **Verifier panel:** false
 <!--
 Optional dispatch gate. Omit the Gate line for an ungated stage. These are the
@@ -30,11 +34,13 @@ The first waits for the named stage to read completed. The second waits until
 no other stage is pending or in_progress. An unmet gate does not prevent the
 card being queued and does not change its pending status.
 
-Optional pipeline metadata. Omit the Path claims line for serial dispatch.
-Use comma-separated repo-relative file or directory paths; add-stage refuses
+Required dispatch metadata. Every card must choose exactly how it dispatches:
+declare Path claims for pairing eligibility, or declare serial dispatch. Use
+comma-separated repo-relative file or directory paths; add-stage refuses
 absolute paths, dot segments and empty entries at queue time:
 
 - **Path claims:** scripts/report.sh, docs/report.md
+- **Dispatch:** serial
 -->
 - **Pairing rationale:** <<why-this-worker-verifier-pair>>
 
@@ -70,7 +76,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 <!--
-Optional but recommended for any stage with executable acceptance. The assertions are frozen here at authoring time: the orchestrator writes them from the card's intent before the worker runs, the worker makes them pass without editing the block between the AUTOMETTA-CONTRACT-BEGIN/END markers, and the verifier rejects any assertion change whose new digest is not recorded below. The BEGIN marker in the test file names this card (card=<path-to-this-card>). Leave the whole section as "None" for prose-only or throwaway stages. Generate or regenerate the digest with `scripts/check-contract-test-gate.sh print <test-file>` and update the line below in the same commit as any deliberate assertion change. See docs/dispatch-contract.md (Contract tests). -->
+Optional but recommended for any stage with executable acceptance. Before dispatch, the orchestrator writes the assertions from the card's intent, freezes them between the AUTOMETTA-CONTRACT-BEGIN/END markers, and records their digest on the card before it is queued. The BEGIN marker in the test file names this card (card=<path-to-this-card>). The worker makes the assertions pass and must not edit the frozen block. The verifier rejects any assertion change whose digest differs from the value recorded below. Leave the whole section as "None" for prose-only or throwaway stages. See docs/dispatch-contract.md (Contract tests). -->
 
 - **Test file:** <<contract-test-path-or-None>>
 - **Assertions digest:** <<sha256-of-frozen-block-or-None>>
@@ -84,7 +90,7 @@ Optional but recommended for any stage with executable acceptance. The assertion
 - **Worker wall-clock:** <<worker-wall-clock-budget>>
 - **Verifier wall-clock:** <<verifier-wall-clock-budget>>
 
-## Verifier handoff
+## Dispatch envelope
 
 <<instructions-for-what-the-worker-returns-on-completion>>
 

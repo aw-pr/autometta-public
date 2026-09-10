@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# op-refs.local.sh — GITIGNORED override for the real 1Password references.
+# op-refs.local.sh: GITIGNORED override for the real 1Password references.
 #
 # ============================================================================
 # This file does NOT live in the repo. The real file lives at:
@@ -15,7 +15,7 @@
 #
 # Why not in-repo? The brew-installed CLI runs from a Cellar snapshot
 # (/opt/homebrew/Cellar/autometta/<sha>/libexec/), which is a copy of the
-# repo at install time — it cannot see <your-dev-repo>/op-refs.local.sh.
+# repo at install time, so it cannot see <your-dev-repo>/op-refs.local.sh.
 # XDG (~/.config/autometta/) is the one location both the dev checkout and
 # the brew-installed CLI can read. It also avoids duplicating refs across
 # every subscribed repo on the same machine.
@@ -26,8 +26,8 @@
 #
 # Resolution order (first existing file wins):
 #   1. $AUTOMETTA_LOCAL_REFS  (explicit env var override, rarely needed)
-#   2. ~/.config/autometta/op-refs.local.sh  (XDG, recommended — use this)
-#   3. <repo-root>/op-refs.local.sh  (next to op-refs.sh; dev checkout only —
+#   2. ~/.config/autometta/op-refs.local.sh  (XDG, recommended: use this)
+#   3. <repo-root>/op-refs.local.sh  (next to op-refs.sh; dev checkout only,
 #      not visible to the brew-installed CLI; useful for one-off testing)
 #
 # Find a reference in 1Password desktop: right-click an item -> Copy Secret

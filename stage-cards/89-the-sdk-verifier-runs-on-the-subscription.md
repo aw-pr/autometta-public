@@ -120,3 +120,24 @@ criteria 2 and 4, and the exact failure message for criterion 3.
 The SDK route is claude-family only. The verifier must not mint or possess
 the OAuth token; it checks the route logs and the fail-closed paths from
 outside the sandbox.
+
+## Re-brief (2026-08-31, after attempt 1 verifier FAIL)
+
+Attempt 1 (`wip/89-the-sdk-verifier-runs-on-the-subscription-attempt-1`,
+commit 3785a6ce4049ef1ccf5d22642dd1942fdaebeac6) passed all six acceptance
+criteria but violated the byte-for-byte constraint: it hoisted an
+`auth-route.sh claude --print-mode --role verifier` call above the
+transport branch, so the unchanged CLI dispatch path gained a new
+pre-branch call that can abort it (verifier finding,
+`state/verifiers/89-the-sdk-verifier-runs-on-the-subscription.json`,
+additional_findings).
+
+The resolution, decided by the operator: **mode resolution lives inside
+the SDK transport branch only.** Between entering the function and taking
+the `cli` branch, execution must traverse no new statement: same commands,
+same failure modes, same exit paths as before this card. Duplicate the
+mode lookup inside the `sdk` branch rather than sharing a hoisted one; the
+duplication is the cheaper price. The prior attempt's tree is discarded;
+its OAuth injection, fail-closed probe, and doc changes were all judged
+sound, so reproduce their behaviour under the corrected structure. All
+other constraints and criteria stand unchanged.

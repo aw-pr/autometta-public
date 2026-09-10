@@ -7,9 +7,9 @@ metadata:
 
 The worker leaves a dirty working tree as its deliverable. The verifier reads that dirty tree, writes a JSON artefact under `state/verifiers/<stage-id>.json`, and exits. The orchestrator (`scripts/tick.sh`) reads `jq -r '.overall'` from the artefact and decides:
 
-- `overall: PASS` — orchestrator stages the non-state working-tree changes and commits with `--author=<worker-identity>` plus a `Co-Authored-By: <verifier-identity>` trailer drawn from `state/state.yaml`. Commit subject: `<stage-id>: <headline>`. Stage status moves to `completed`; the commit SHA is recorded back into `stages[].commit`.
-- `overall: FAIL` (or missing / malformed, treated as FAIL by the fail-safe path) — no commit. Stage status moves to the new `verifier_failed` enum value, `current_stage` is cleared, and the dirty tree is left intact for the operator to inspect.
-- Clean working tree on a PASS artefact — backward-compat path for adopters whose workers still self-commit. Log a deprecated-path warning and mark the stage `completed` without erroring.
+- `overall: PASS` - orchestrator stages the non-state working-tree changes and commits with `--author=<worker-identity>` plus a `Co-Authored-By: <verifier-identity>` trailer drawn from `state/state.yaml`. Commit subject: `<stage-id>: <headline>`. Stage status moves to `completed`; the commit SHA is recorded back into `stages[].commit`.
+- `overall: FAIL` (or missing / malformed, treated as FAIL by the fail-safe path) - no commit. Stage status moves to the new `verifier_failed` enum value, `current_stage` is cleared, and the dirty tree is left intact for the operator to inspect.
+- Clean working tree on a PASS artefact - backward-compat path for adopters whose workers still self-commit. Log a deprecated-path warning and mark the stage `completed` without erroring.
 
 **Why:** Adopters running the dispatch loop end-to-end (`emergence-lab` was the first) observed three failure modes of worker self-commits:
 

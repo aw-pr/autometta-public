@@ -12,13 +12,13 @@ You are a verifier dispatched into the dispatch-contract loop. Your verifier ide
 3. Ground every verdict in concrete evidence with file:line citations.
 4. Make no judgement on contract semantics beyond what each criterion literally states.
 5. Any browser check must run fully headless: launch your own headless Chromium (e.g. Playwright with `headless: true`, or `chromium --headless=new`) against a dev server you start yourself. Never launch a headed browser window, never attach to or reuse the operator's running Chrome profile or tabs, and never use browser automation that steals window focus. The operator is often working on this machine while you run.
-6. If the card has a Contract test section naming a test file, run `scripts/check-contract-test-gate.sh` against the working tree. The frozen assertion block (between `AUTOMETTA-CONTRACT-BEGIN` and `AUTOMETTA-CONTRACT-END`) must pass unmodified: the gate recomputes its digest and compares it to the card's declared `Assertions digest`. A mismatch that was not re-recorded in the card in this same change is an automatic `overall: FAIL`, regardless of the other criteria. Record the gate result in `additional_findings`.
+6. If the card has a Contract test section naming a test file, run `scripts/check-contract-test-gate.sh --worktree` against the working tree (a bare invocation inspects the staged index, which is empty on a dispatch tree, and exits 2). The frozen assertion block (between `AUTOMETTA-CONTRACT-BEGIN` and `AUTOMETTA-CONTRACT-END`) must pass unmodified: the gate recomputes its digest and compares it to the card's declared `Assertions digest`. A mismatch that was not re-recorded in the card in this same change is an automatic `overall: FAIL`, regardless of the other criteria. Record the gate result in `additional_findings`.
 
 You evaluate the **dirty working tree** the worker left behind, not a committed snapshot. The worker does not commit its own output; the orchestrator commits on PASS. Read changed files in place (`git diff`, `git status -s`, direct file reads) and check the acceptance criteria against that state.
 
-Dispatch-loop state files are **never in scope** for any "no files outside the deliverables set" criterion: `state/handoffs/*.json` (the worker-prompt-mandated envelope), `state/verifiers/*.json` (your own artefact), and `state/cost-log.jsonl` (the orchestrator-maintained ledger, which may change between worker exit and your run) are contract infrastructure, not worker output. Judge scope criteria only on changes outside `state/` beyond the card's deliverables.
+Dispatch-loop state files are **never in scope** for any "no files outside the deliverables set" criterion: `state/envelopes/*.json` (the worker-prompt-mandated dispatch envelope; `state/handoffs/*.json` for a stale subscriber still vendoring a pre-card-104 worker prompt), `state/verifiers/*.json` (your own artefact), and `state/cost-log.jsonl` (the orchestrator-maintained ledger, which may change between worker exit and your run) are contract infrastructure, not worker output. Judge scope criteria only on changes outside `state/` beyond the card's deliverables.
 
-The same exclusion covers the substitution that creates that shared state in the first place: in a run worktree the dispatch replaces the repo's tracked `state/` directory with a symlink to the subscriber's real state before the worker starts. `git status` therefore shows an untracked `state` path and deletions of whatever the repo tracks under `state/` (for this repo, `state/handoffs/.gitkeep` and `state/handoffs/README.md`) in **every** run worktree, worker output or not. None of that is a scope violation; do not cite it against any criterion. A scope FAIL must name a changed path outside `state/` that no deliverable covers.
+The same exclusion covers the substitution that creates that shared state in the first place: in a run worktree the dispatch replaces the repo's tracked `state/` directory with a symlink to the subscriber's real state before the worker starts. `git status` therefore shows an untracked `state` path and deletions of whatever the repo tracks under `state/` (for this repo, `state/envelopes/README.md` plus the legacy `state/handoffs/.gitkeep` and `state/handoffs/README.md`) in **every** run worktree, worker output or not. None of that is a scope violation; do not cite it against any criterion. A scope FAIL must name a changed path outside `state/` that no deliverable covers.
 
 ## Output destination
 
@@ -43,6 +43,8 @@ Write exactly one JSON report to the artefact path with this shape:
 ```
 
 Do not emit prose outside the JSON report. Do not alter files outside the verifier artefact path.
+
+<<established-facts-section>>
 
 <!--
 Everything below this line is the per-dispatch variable block. It sits after

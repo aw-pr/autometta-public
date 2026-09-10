@@ -20,8 +20,10 @@ IFS=$'\n\t'
 #       Print sha256:<hex> of the test's frozen block, to paste into the
 #       card's "Assertions digest" line.
 #   check-contract-test-gate.sh
-#       Gate the staged change set. Exit non-zero on the first violation.
-#       Suitable for a verifier acceptance step or a pre-commit chain.
+#       Compare the staged index with HEAD and gate that change set.
+#       Exit non-zero on the first violation.
+#   check-contract-test-gate.sh --worktree
+#       Compare the working tree and index with HEAD, plus untracked candidates.
 
 MARKER_BEGIN='AUTOMETTA-CONTRACT-BEGIN'
 MARKER_END='AUTOMETTA-CONTRACT-END'
@@ -67,6 +69,43 @@ staged_content() {
   fi
 }
 
+working_content() {
+  cat -- "$1"
+}
+
+# Every path declared as a "Test file:" line in any stage card on disk,
+# paired with the card that names it, as "<path>\t<card>". Reads
+# to-be-committed content so a card and the test it names can be staged in
+# the same commit. Same glob set list-cards.sh uses, so a card is found
+# under whichever layout (current or legacy) the repo actually has.
+test_file_declarations() {
+  local reader="${1:-staged_content}" pattern card
+  for pattern in stage-cards/*.md docs/stages/*.md examples/self-host/*.md; do
+    for card in $pattern; do
+      [ -f "$card" ] || continue
+      "$reader" "$card" \
+        | awk '
+            /^[[:space:]]*-[[:space:]]+\*\*Test file:\*\*/ {
+              line = $0
+              gsub(/[*`]/, "", line)
+              sub(/^.*Test file:[[:space:]]*/, "", line)
+              print line
+            }' \
+        | tr ',' '\n' \
+        | while IFS= read -r path; do
+            path="$(printf '%s' "$path" \
+              | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+                    -e 's/[[:space:]]*([^)]*)[[:space:]]*$//')"
+            [ -n "$path" ] || continue
+            case "$path" in
+              None|'<<fill at dispatch>>'|'<<contract-test-path-or-None>>') continue ;;
+            esac
+            printf '%s\t%s\n' "$path" "$card"
+          done
+    done
+  done
+}
+
 # Digest the frozen block arriving on stdin. Uniform across print and gate so
 # the two always agree on the same bytes.
 digest_block() {
@@ -86,39 +125,97 @@ cmd_print() {
 }
 
 cmd_gate() {
-  local staged f card recomputed declared violations=0
+  local mode="$1" changed untracked f card recomputed declared violations=0 declarations naming_card content
 
-  staged="$(git diff --cached --name-only --diff-filter=ACM)"
-  [ -n "$staged" ] || exit 0
+  case "$mode" in
+    staged)
+      changed="$(git diff --cached --name-only --diff-filter=ACM)"
+      content=staged_content
+      ;;
+    worktree)
+      changed="$(git diff HEAD --name-only --diff-filter=ACM)"
+      content=working_content
+      ;;
+    *) die "internal error: unknown gate mode $mode" ;;
+  esac
+
+  declarations="$(test_file_declarations "$content")"
+
+  if [ "$mode" = worktree ]; then
+    untracked="$(git ls-files --others --exclude-standard)"
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      naming_card="$(printf '%s\n' "$declarations" | awk -F'\t' -v f="$f" '$1 == f { print $2; exit }')"
+      case "$f" in
+        scripts/*-smoke.sh) changed="$(printf '%s\n%s\n' "$changed" "$f" | awk 'NF && !seen[$0]++')" ;;
+        *) [ -n "$naming_card" ] && changed="$(printf '%s\n%s\n' "$changed" "$f" | awk 'NF && !seen[$0]++')" ;;
+      esac
+    done <<EOF
+$untracked
+EOF
+  fi
+
+  if [ -z "$changed" ]; then
+    if [ "$mode" = staged ]; then
+      warn "no staged files to inspect; use --worktree for unstaged dispatch changes"
+    else
+      warn "no relevant changed files to inspect in the working tree"
+    fi
+    exit 2
+  fi
 
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    staged_content "$f" | grep -q "$MARKER_BEGIN" || continue
 
-    card="$(staged_content "$f" | card_path_from_marker)"
-    if [ -z "$card" ]; then
-      warn "$f: $MARKER_BEGIN marker has no card=<path>"
-      violations=$((violations + 1)); continue
-    fi
+    naming_card="$(printf '%s\n' "$declarations" | awk -F'\t' -v f="$f" '$1 == f { print $2; exit }')"
+    case "$f" in
+      scripts/*-smoke.sh) ;;
+      *) [ -n "$naming_card" ] || continue ;;
+    esac
 
-    recomputed="$(staged_content "$f" | digest_block)" || { violations=$((violations + 1)); continue; }
-    declared="$(staged_content "$card" | declared_digest || true)"
-
-    if [ -z "$declared" ]; then
-      warn "$f: card $card has no 'Assertions digest' line"
-      violations=$((violations + 1)); continue
-    fi
-
-    if [ "$recomputed" != "$declared" ]; then
-      if printf '%s\n' "$staged" | grep -qx -- "$card"; then
-        warn "$f: assertions changed but card $card still declares $declared (recomputed $recomputed); update the card's 'Assertions digest' line in this commit"
-      else
-        warn "$f: frozen assertions changed but their card $card is not in this commit (declared $declared, recomputed $recomputed)"
+    if "$content" "$f" | grep -q "$MARKER_BEGIN"; then
+      card="$("$content" "$f" | card_path_from_marker)"
+      if [ -z "$card" ]; then
+        warn "$f: $MARKER_BEGIN marker has no card=<path>"
+        violations=$((violations + 1)); continue
       fi
-      violations=$((violations + 1))
+
+      recomputed="$("$content" "$f" | digest_block)" || { violations=$((violations + 1)); continue; }
+      if ! "$content" "$card" >/dev/null 2>&1; then
+        warn "$f: card $card does not exist"
+        violations=$((violations + 1)); continue
+      fi
+      declared="$("$content" "$card" | declared_digest || true)"
+
+      if [ -z "$declared" ]; then
+        warn "$f: card $card has no 'Assertions digest' line"
+        violations=$((violations + 1)); continue
+      fi
+
+      if [ "$recomputed" != "$declared" ]; then
+        if printf '%s\n' "$changed" | grep -qx -- "$card"; then
+          warn "$f: assertions changed but card $card still declares $declared (recomputed $recomputed); update the card's 'Assertions digest' line in this commit"
+        else
+          warn "$f: frozen assertions changed but their card $card is not in this commit (declared $declared, recomputed $recomputed)"
+        fi
+        violations=$((violations + 1))
+      fi
+      continue
     fi
+
+    # No marker in this file. A file no card names as its contract test is
+    # genuinely not this gate's business and is skipped, as before. A file a
+    # card DOES name as its contract test is supposed to carry a frozen
+    # block; its absence is a violation, not a skip -- that gap is the
+    # fail-open defect this rewrite closes.
+    if [ -n "$naming_card" ]; then
+      warn "$f: no $MARKER_BEGIN marker found, but $naming_card names it as this stage's contract test"
+    else
+      warn "$f: no $MARKER_BEGIN marker found, but scripts/*-smoke.sh files are contract-test candidates"
+    fi
+    violations=$((violations + 1))
   done <<EOF
-$staged
+$changed
 EOF
 
   [ "$violations" -eq 0 ] || die "$violations contract-test freeze violation(s); see messages above"
@@ -127,8 +224,9 @@ EOF
 main() {
   case "${1:-}" in
     print)        shift; cmd_print "$@" ;;
-    ""|--staged)  cmd_gate ;;
-    *)            die "unknown argument: $1 (use 'print <file>' or no args)" ;;
+    ""|--staged)  cmd_gate staged ;;
+    --worktree)    cmd_gate worktree ;;
+    *)             die "unknown argument: $1 (use 'print <file>', --staged, or --worktree)" ;;
   esac
 }
 

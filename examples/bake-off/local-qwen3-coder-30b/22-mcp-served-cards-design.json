@@ -8,43 +8,43 @@
       "id": 1,
       "name": "docs/design/mcp-cards.md exists with the eight required sections",
       "verdict": "PASS",
-      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:1"
+      "evidence": "file://<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:1"
     },
     {
       "id": 2,
       "name": "The 'Relationship to filesystem-is-the-message-bus' section is at least one paragraph and reaches an explicit conclusion",
       "verdict": "PASS",
-      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:43"
+      "evidence": "file://<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:43"
     },
     {
       "id": 3,
       "name": "The URI scheme is concrete (literal example given)",
       "verdict": "PASS",
-      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:13"
+      "evidence": "file://<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:13"
     },
     {
       "id": 4,
       "name": "The fallback-to-filesystem path is described well enough that tick.sh could be patched against the design without further specification",
       "verdict": "PASS",
-      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:34"
+      "evidence": "file://<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:34"
     },
     {
       "id": 5,
       "name": "The 'Smallest-possible-prototype card outline' fits on one page and could be lifted into a future implementation card",
       "verdict": "PASS",
-      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:55"
+      "evidence": "file://<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/design/mcp-cards.md:55"
     },
     {
       "id": 6,
       "name": "memory/decision-mcp-cards.md follows the decision-memo format and links to [[decision-sweep-stage]]",
       "verdict": "FAIL",
-      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/memory/decision-mcp-cards.md:1"
+      "evidence": "file://<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/memory/decision-mcp-cards.md:1"
     },
     {
       "id": 7,
       "name": "docs/philosophy.md edit is at most three lines and is additive",
       "verdict": "PASS",
-      "evidence": "file:///Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/philosophy.md:1"
+      "evidence": "file://<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/philosophy.md:1"
     },
     {
       "id": 8,

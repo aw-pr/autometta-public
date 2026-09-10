@@ -1,6 +1,6 @@
 # The tick loop: pass-2 design
 
-This is the design doc for the autonomous-loop layer that sits on top of the pass-1 dispatch contract. It is a brief for stage-5 implementation, not the implementation itself. Stage 5 produces the scripts; this doc fixes the contract those scripts must satisfy.
+This is the design and operating record for the autonomous-loop layer that sits on top of the pass-1 dispatch contract. It began as the brief for the stage-5 implementation and has been kept in step with the scripts since they shipped; where the two disagree, the scripts win and this doc is the thing to fix.
 
 The pass-2 layer is the tick loop: a cron-supervised tick that reads state,
 makes one transition, writes state and exits. The name **phat-controller** is
@@ -22,25 +22,128 @@ A tick is a single non-interactive invocation of `autometta tick`, which delegat
 
 1. Reads the current `state/state.yaml` of the repo it is operating on.
 2. Reads the current `state/budget.json` of the same repo.
-3. Checks the budget. If any of `token_cap_total`, `wall_clock_cap_seconds`, `clock_tick_cap`, or `consecutive_failure_cap` is exhausted, the tick writes a stall marker into `state.yaml` and exits without dispatching.
-4. Selects one queue transition to make. Normally this is serial: advance the
-   `current_stage`, or claim the next `pending` stage when none is in flight.
-   The one bounded exception is a declared pipeline pair: while verifier N is
-   live, the tick may dispatch worker N+1 and record both flights by stage id.
-   It never starts a third stage.
+3. Checks the budget. If any of `token_cap_total`, `wall_clock_cap_seconds`, `clock_tick_cap`, or `consecutive_failure_cap` is exhausted, the tick latches the halt in `state/budget.json` (`halted: true`, `halt_reason`) and exits without dispatching.
+4. Selects one queue transition per stage to make. Normally this is serial:
+   advance the `current_stage`, or claim the next `pending` stage when none is
+   in flight. When a verifier lands stage N, that stage is terminal and the
+   same fire may claim eligible stage N+1: nothing about N can be re-read by a
+   later fire. The one bounded exception is a declared pipeline pair: while
+   verifier N is live, the tick may dispatch worker N+1 and record both
+   flights by stage id. It never starts a third stage.
 5. Updates `state.yaml` and `budget.json` atomically. "Atomically" means: write to a temp file in the same directory, then `mv` into place. The `mv` is the atomicity primitive on POSIX filesystems given same-directory restraint.
 6. Snapshots the state update onto the `autometta/state` ref, using the per-agent author attribution from the global dev rules. It does this with git plumbing and never checks the branch out: see (j).
 7. Exits. The next tick is the next cron fire.
 
-A tick is one transition, not a loop within the tick. This is the "cron + tick > daemon" belief from `docs/philosophy.md`. The cron schedule defines the loop; the script is a one-shot.
+A tick makes one transition per stage, not two transitions on the same stage
+within a fire. This is the "cron + tick > daemon" belief from
+`docs/philosophy.md`: the cron schedule defines the loop and the script is a
+one-shot, while a terminal landing may release the next stage without a fire
+that can learn anything new about the landed one.
+
+### Tick cost model
+
+The floor for an idle fleet tick is controller-wide work plus the per-repo
+work. On 2026-09-01, three six-subscriber runs measured 90.20s, 90.22s and
+91.54s wall time, with 63-64s user and 30-31s system time. The high system
+share pointed to process creation rather than YAML parsing, quota reads,
+state hashing or an explicit sleep.
+
+The profile isolated the cost to the installed-build comparison inside
+`heartbeat.sh`. It walked and SHA-256 hashed the installed and checkout trees
+once for every subscriber, even though both trees are controller-wide facts.
+Measured directly on the same host, that one comparison took 14.65s / 10.33s
+user / 4.76s system, then 14.35s / 10.24s / 4.70s, then 14.25s / 10.25s /
+4.57s. Six copies explain the observed floor.
+
+`tick.sh` now obtains one sanitised build-check JSON result per fleet fire and
+passes it to each heartbeat. Every repo still writes its own heartbeat report
+and receives the same build-drift verdict; only the repeated tree walk is
+removed. The resulting model is `fixed tick work + one build comparison`,
+rather than `fixed tick work + subscribers × build comparison`. The offline
+six-repo cost smoke uses a one-second stand-in for that comparison: the
+pre-change path took 9.51s with six calls; the cached path took 3.81s with one,
+below its 6.0s fixture budget. The fixture leaves every repo idle, with one
+`idle_ticks_used` increment and no `clock_ticks_used` increment.
+
+The cost smoke is deliberately a regression guard, not a substitute for a
+live fleet measurement. Re-measure three clean live runs after installing the
+changed build before changing the LaunchAgent cadence. Record wall, user and
+system time together, because a later regression may move cost between those
+categories without changing wall time.
+
+### The effective period, and why the plist interval is not the whole story
+
+launchd does not overlap fires of the same LaunchAgent job: if a fire is still
+running when the next one is scheduled, launchd waits for the first to exit.
+The loop's effective period is therefore `max(plist_interval, fire_duration)`,
+not the plist interval alone. Card 100 cut an idle six-repo bench fire from
+90s to 18s and the plist interval was set to 30s on the strength of that
+figure, but a live four-subscriber fire with one stage in flight measured a
+46s median on 2026-09-02 and 2026-09-06 -- the plist interval was never the
+binding constraint once real dispatch work entered the mix. A stage needs
+three to five fires to land, so the loop's own latency is `fire_duration ×
+(3..5)`, not `plist_interval × (3..5)`. Cutting fire duration is the only
+lever that moves this number; cutting the plist interval below the fire
+duration does nothing.
+
+### Profiling a fire (card 114)
+
+`AUTOMETTA_TICK_PROFILE=1 scripts/tick.sh` emits one log line per repo per
+phase (`profile repo=<r> phase=<p> ms=<n>`) plus a fire summary line
+(`profile fire total_ms=<n>`), all through the ordinary `log()` path so they
+land in the controller log alongside everything else. Unset, the flag costs
+one `[[ ]]` test per phase boundary and nothing else. The phases share a
+single running mark rather than an independent start/end pair each (see the
+comment on `profile_lap` in `scripts/tick.sh`), so consecutive phases tile
+the fire's wall clock with no unmeasured gap between them and their `ms`
+values sum to within a few percent of the fire's own real time.
+
+`scripts/tick-profile.sh` runs one fire with the flag on and prints a cost
+table sorted by phase cost, ending with a `TOTAL` row and the fire summary
+line. It reads the same `AUTOMETTA_ROOT` / `PHAT_CONTROLLER_HOME` overrides
+`tick.sh` itself does, so it can be pointed at a throwaway fixture fleet
+instead of the operator's live one.
+
+A four-repo offline fixture run (`scripts/tick-profile-smoke.sh`'s fleet)
+measured, per repo, before the fix in this card:
+
+| phase | ms (typical) |
+| --- | --- |
+| `dispatch` (queue read, decision, `commit_state_branch`) | ~320-360 |
+| `heartbeat` | ~85-130 |
+| `retention` | ~110-135 |
+| `subscriber-read` | ~20-30 |
+| `lock` | ~5-15 |
+| `tmux-viewer` | ~15-20 |
+| `vendor-stale` | ~4-10 |
+
+`dispatch` was, and remains, the largest phase per repo. Inside it, every
+tick -- including an idle one that changed nothing but its own bookkeeping --
+paid a full `commit_state_branch` write: state.yaml's `tick_count` and
+`last_tick_at`, and budget.json's `idle_ticks_used`, are odometers bumped on
+every fire, so the pre-existing tree-comparison short-circuit in
+`commit_state_branch` never matched and every idle tick committed onto
+`autometta/state` (roughly nine git subprocesses plus an `agent-whoami`
+shell-out). The fix stages a second, throwaway comparison tree with just
+those three fields stripped from both the current capture and the parent
+commit; when that comparison also finds nothing changed, the commit is
+skipped. Everything else captured -- the rest of state.yaml and budget.json,
+`state/verifiers`, `state/envelopes`, `state/handoffs`,
+`state/facts-pending.jsonl` -- still participates in the comparison
+unstripped, and a real change to any of it still produces a real commit with
+full, unstripped content; only the decision to commit is affected, never
+what a commit holds. `tick_count` itself, and what the tick decides to
+dispatch, are unchanged: a second consecutive idle fire still increments
+`tick_count` and still writes no new commit to the state snapshot branch.
 
 ### Pipeline pairs
 
-Serial remains the default. Two adjacent stages become a pipeline pair only
-when both queued stage records have non-empty `path_claims`, the claimed paths
-are disjoint, their worker **dispatch targets** differ, and remaining token
-headroom covers twice the repo's p95 historical dispatch cost from
-`state/cost-log.jsonl`.
+Every new card must declare non-empty `path_claims` or opt out with
+`- **Dispatch:** serial`; `add-stage.sh` refuses an omitted choice. Existing
+queued records without claims remain serial and are not rewritten. Two adjacent
+claimed stages become a pipeline pair only when the claimed paths are disjoint,
+their worker **dispatch targets** differ, and remaining token headroom covers
+twice the repo's p95 historical dispatch cost from `state/cost-log.jsonl`.
 
 The dispatch target is the vendor family by default, so the rule reads exactly
 as it always did: two Codex workers do not pair, a Codex and a Claude worker
@@ -69,6 +172,13 @@ worker family, or thin headroom is logged as an explicit refusal. The ordinary
 provider-window and `budget_gate_dispatch` checks still guard the second worker
 spawn individually.
 
+The serial-only claim rule is asymmetric. A head claiming `scripts/lib` stays
+serial, while a head claiming `scripts/tick.sh` may take a disjoint tail,
+including a docs-only or smoke-only card. A tail claiming either
+`scripts/tick.sh` or `scripts/lib` stays serial. This keeps shared library
+changes out of a pair without blocking a tail that cannot touch the head's
+implementation.
+
 `current_stage` remains the ordered landing head. `pipeline_pair` records the
 head, tail, common pre-head base tip, phase, and whether the tail needs rebasing;
 each stage retains its own worker and verifier PIDs. Heartbeat and worktree
@@ -81,15 +191,24 @@ ordinary fast-forward path. If N passes, the tick compares the actual changed
 file names in N's landed commit with N+1's tracked and untracked work. A
 file-disjoint tail is stashed, reset onto the new base, and restored before its
 verifier runs. Any overlap or restore conflict halts with
-`controller-escalation`; the tick does not resolve a conflict. A FAIL or stall
-in either member latches pairing off for the repo until that stage's re-brief
-lands, while the remaining queue proceeds serially where safe.
+`controller-escalation`; the tick does not resolve a conflict. A failure in
+either member drops the current pair to serial but does not disable pairing for
+the repo. Only a claim collision found from the actual diffs or a tail rebase
+failure increments that stage's `pairing_failures`, and the attributed cause is
+appended to `pairing_failure_causes`. A verifier FAIL on the merits, agent death
+or provider refusal increments nothing. A stage with one attributed failure may
+pair again; a count of two refuses that stage, and a landed re-brief clears its
+count and causes. The remaining queue proceeds serially where safe.
+
+Accepted risks: two dispatches may share a provider window when `pair_on` is
+`off`; budget headroom is checked at dispatch and tokens are accounted at reap,
+so a pair can overshoot the cap by up to two p95s.
 
 ## (b) The state file `state.yaml`
 
 **Location.** Per repo: `state/state.yaml` at the repo root. State lives in the repo it describes; one repo's state is never visible to another repo's tick except through the subscriber index (see section (f)).
 
-**Schema.** `schemas/state.yaml.json` (JSON Schema draft 2020-12). The schema is committed in this stage; the tick script (stage 5) will validate `state.yaml` against it on every read.
+**Schema.** `schemas/state.yaml.json` (JSON Schema draft 2020-12). The tick does not validate `state.yaml` against it on every read; the schema is a regression guard, exercised by `scripts/state-schema-smoke.sh`. As of stage 102 the schema is enforceable: it declares every field `tick.sh` writes (including `tokens`, `worker_tokens`, `verifier_tokens`, `verifier_started_at`, and the orchestrator's hand-added `notes` / `integration.integrated_at` / `integration.note`), so both autometta's and a subscriber's live `state.yaml` validate with zero errors while `additionalProperties: false` still rejects a typo or a stray field. `scripts/state-schema-smoke.sh` is the regression guard. When the tick gains a field, add it to `schemas/state.yaml.json` in the same change that adds the write, note which code path writes it, and re-run the smoke script before landing.
 
 **Lifecycle.** The file is created when a repo first subscribes to the tick loop (see section (f)). It is mutated only by `autometta tick`; humans may read but should not edit, because human edits without a tick will silently desync `tick_count` from `last_tick_at`. If a human must edit, they must run `autometta tick --repair`.
 
@@ -132,7 +251,7 @@ Any cap exhaustion writes a stall marker and exits the tick cleanly; the loop do
 
 Per [`decision-verifier-handoff-naming`](../memory/decision-verifier-handoff-naming.md), the verifier writes its structured report into `state/verifiers/<stage-id>.json`. The path name "verifiers" is the chosen convention; the pass-28 `result.worker.json` rename is abandoned.
 
-**Fields** (formal schema deferred to stage 5 if a JSON Schema is warranted; this design doc fixes the shape):
+**Fields** (the formal schema is `schemas/verifier.json`; `scripts/validate-verifier-artefacts.sh` checks artefacts against it):
 
 ```
 {
@@ -159,16 +278,16 @@ branch; future ticks and humans can read the audit trail in `git log` plus
 
 ## (e) Identity resolution at tick time
 
-Per [`decision-identity-via-orchestrator-skill`](../memory/decision-identity-via-orchestrator-skill.md), identity drift (a stage card authored when model X was current but dispatched after X retires) is handled via the `agent-orchestrator` skill's per-family equivalence table. The skill's REFERENCE.md maintains the tier-to-current-model map; the tick uses the *tier* the stage card names, not the model name directly. If the card names a model that has been retired, the tick resolves it to the current model at the matching tier of the same family.
+Per [`decision-identity-via-orchestrator-skill`](../memory/decision-identity-via-orchestrator-skill.md), identity drift (a stage card authored when model X was current but dispatched after X retires) is handled by a per-family tier-to-current-model map. The `agent-orchestrator` skill's REFERENCE.md documents that map for humans; the executable copy dispatch reads is `scripts/models.sh` (the `AUTOMETTA_MODEL_*` variables and `claude_model_for_identity`). The tick uses the *tier* the stage card names, not the model name directly. If the card names a model that has been retired, the tick resolves it to the current model at the matching tier of the same family.
 
 Concretely:
 
 - Stage card names `Worker: Claude Sonnet 4.6` (model identity).
 - Tick reads the worker line, extracts family ("Claude") and tier ("T2/T3 workhorse" implied by Sonnet 4.6).
-- Tick consults the skill's tier table at dispatch time to resolve the current Anthropic T2/T3 model. If Sonnet 4.6 is still current, no drift; if it has been retired, the table names the replacement.
+- Tick consults `models.sh` at dispatch time to resolve the current Anthropic T2/T3 model. If Sonnet 4.6 is still current, no drift; if it has been retired, the table names the replacement.
 - The dispatched worker carries the resolved identity; the per-agent-attribution rules pick up the resolved identity for the commit author.
 
-The skill is the only source of truth for the table; this design doc does not duplicate the table content.
+`scripts/models.sh` is the source of truth dispatch acts on, and the skill's table is kept in step with it; this design doc does not duplicate the table content.
 
 ## (f) Single tick, multi-repo subscribe
 
@@ -193,7 +312,7 @@ Each subscriber file names one absolute repo path, a poll order weight (integer;
 2. Runs the one-transition logic from section (a) on that repo's `state/state.yaml`.
 3. Moves to the next subscriber.
 
-Total work per cron fire is bounded by `min(N_subscribers, max_per_fire)` where `max_per_fire` is a top-level limit in the controller config (also at `~/.autometta/config.yaml`, schema deferred to stage 5).
+Total work per cron fire was designed to be bounded by `min(N_subscribers, max_per_fire)`, with `max_per_fire` a top-level limit in `~/.autometta/config.yaml`. That cap is not implemented: `init-host.sh` still writes the key, but no script reads it, and a fire visits every enabled subscriber.
 
 **Why filesystem, not a service.** One process per cron fire, no resident daemon, no IPC. Matches the philosophy.md belief "cron + tick > daemon". A repo "publishes" itself by writing a file; the tick reads the directory each fire.
 
@@ -201,18 +320,32 @@ Total work per cron fire is bounded by `min(N_subscribers, max_per_fire)` where 
 
 The tick is the source of stall detection; workers do not self-report stalls.
 
-**Worker stall.** A stage in `in_progress` whose `last_tick_at` (or worker process start time, whichever is more recent) is older than the per-stage worker wall-clock budget plus a grace factor (default 1.5x) is considered stalled. The tick:
+**Worker stall.** A stage in `in_progress` whose `last_tick_at` (or worker process start time, whichever is more recent) is older than the per-stage worker wall-clock budget plus a grace factor (default 1.5x) is considered stalled. A Claude worker is also stalled when its newest worktree transcript contains at least five `system` rows with `subtype: api_error` in the last ten minutes and no assistant `tool_use` row in that window. Set `AUTOMETTA_API_ERROR_WINDOW_MIN` to change the window. A missing transcript is neutral, and Codex workers skip this check.
+
+The tick terminates the recorded worker wrapper and every descendant with TERM, waits for a short grace period, then sends KILL to any process still alive. Claude worker wrappers are started in their own process group as an additional lifecycle boundary. The tick then:
 
 1. Marks the stage as `stalled` in `state.yaml`.
-2. Writes a stall marker into `state/verifiers/<stage-id>.json` with `overall: STALLED`.
+2. Records why in the stage's `stall_marker` field in `state.yaml` (for example `worker_envelope_missing_after_exit`); nothing is written to `state/verifiers/`.
 3. Increments `consecutive_failures`.
 4. Exits.
 
 The next tick respects `consecutive_failure_cap` and halts the loop if exceeded; otherwise the operator (human, on next session) decides whether to retry, re-brief, or abandon.
 
-**Verifier stall.** Same logic. A verifier process that has not written its output file within its declared budget plus grace is killed by the tick (the kill mechanism is `kill -TERM` on the PID recorded when the verifier was spawned; recorded in `state.yaml`).
+**Verifier stall.** The same wall-clock rule and process-tree termination apply. A verifier process that has not written its output file within its declared budget plus grace is terminated before the stage is marked stalled. The transcript API-error rule applies only to Claude workers.
 
 **Dispatch configuration fault.** A worker or verifier that exits within two seconds, writes no completion artefact, leaves only a tiny log (at most 512 bytes), and reports a recognised CLI usage, missing-executable, or auth-route error has not attempted its role. The tick marks the stage `stalled`, records `dispatch_configuration_fault:<role>` on the stage, and halts the repo with `dispatch-configuration-fault` so an operator fixes the command or credentials. For a verifier, the attempt reserved before spawn is returned. The halt prevents an uncounted fault from looping forever. A crash or genuine verification failure that does not satisfy the full conjunction retains its attempt and follows the existing retry cap of three.
+
+**Network preflight, and deferral against halt.** Two rules came out of the 2026-09-03 evening watch, when the machine's resolvers stopped answering at about 22:35 and one outage cost a 50-minute worker, two dispatches that died at launch, and a stale quota read.
+
+The first rule is that the tick refuses to spend a dispatch on a network it has just measured as dead. Immediately before every worker and verifier spawn, and before the pipeline pair forms, `scripts/preflight-network.sh` resolves `api.anthropic.com` and `api.openai.com` through the system resolver (`dig +short` with no `@server`, falling back to `getent` then `host` if `dig` is absent). On a refusal the tick logs `dispatch deferred: network preflight failed (<reason>)` and starts nothing.
+
+The second rule is that a dispatch which dies on credential resolution is a configuration fault, not a worker failure. `op-fetch: error: failed to resolve CLAUDE_CODE_OAUTH_TOKEN (op exit 1)` now matches the instant-fault alternation, so the repo halts once with that line in `halt_reason` instead of charging each launch to `consecutive_failures` as though three unrelated workers had stalled. `halt_reasons` keeps the bare `dispatch-configuration-fault` category.
+
+**A deferral is not a halt.** A halt says something is wrong with the repo and stops the loop until an operator clears it: the stage is marked `stalled`, the fault is recorded against it, and `halted` latches. A deferral says nothing is wrong with the stage, only with the moment: no attempt is reserved, no failure is counted, no run worktree is cut, no `started_at` is stamped, and the stage is still pending when the next tick fires. A dead resolver is temporary and belongs to the machine, not to the work, so it defers; unresolvable credentials are a standing misconfiguration, so they halt.
+
+The preflight is unconditional and has no bypass. A test that needs to reach the dispatch behind it supplies a resolver the preflight can satisfy (a `dig` stub first on `PATH`, as `scripts/budget-cap-smoke.sh` and `scripts/network-fault-smoke.sh` both do), because a dispatch gate that steps aside for a test is not a gate. For the same reason the preflight belongs to the tick, which runs unsandboxed under launchd: run from inside a sandboxed agent it will always defer, and correctly so, because that sandbox has no network.
+
+The quota reader's `unknown (snapshot stale)` had the same root cause on the night, and correlating the two is the natural next step; it would hook in where `quota_write_repo_state` records staleness. Not built.
 
 **Stale log markers.** Every dispatched process logs to a predictable path under `state/logs/<stage-id>-<worker|verifier>.log` per [gotcha 3 (opaque log paths)](./lessons.md#headless-gotcha-3-opaque-log-paths). The tick checks size and mtime on these files when deciding stall status; a log file with non-zero size and recent mtime is evidence the process is making progress, even past nominal budget. Treat as progress and extend grace once per stage.
 
@@ -222,7 +355,7 @@ The next tick respects `consecutive_failure_cap` and halts the loop if exceeded;
 
 The tick loop does not replace the dispatch contract; it *instantiates* the dispatch contract once per dispatched worker. Every tick that spawns a worker:
 
-1. Authors the stage card on disk (step 1 of the dispatch contract). For an autonomously-driven stage, the card may already exist (human-authored in `examples/` or similar) and the tick simply reads it.
+1. Authors the stage card on disk (step 1 of the dispatch contract). For an autonomously-driven stage, the card already exists on disk, found through the subscriber's `stage_card_globs` (default `stage-cards/*.md`), and the tick simply reads it.
 2. Assembles the worker prompt (step 2) by filling in `templates/worker-prompt.md`.
 3. Dispatches the worker (step 3) with the sandbox role boundary the stage card specifies.
 4. On worker return, schedules the next tick to do the verifier handoff (step 4 and step 5).
@@ -245,9 +378,10 @@ The controller is observable through files it already owns:
 `autometta status` is the read-only operator view over those files. `autometta
 init <repo>` creates a detached tmux viewer named
 `autometta-<project-name>` when `tmux` is available. `autometta attach <repo>`
-opens or refreshes that viewer with two windows: `repo`, a full-window ticker
-for the subscriber, and `log`, the latest controller log filtered to that
-repo. It is deliberately downstream of the filesystem state; it does not
+opens or refreshes that viewer with three windows: `tui`, the landing view;
+`repo`, a full-window ticker for the subscriber; and `log`, the latest
+controller log filtered to that repo. The control-plane session for the
+autometta repo itself has five (`tui`, `repo`, `status`, `fleet`, `log`). It is deliberately downstream of the filesystem state; it does not
 dispatch, supervise, or retry work.
 
 This gives the operator an attachable cockpit without creating a resident controller daemon.
@@ -260,15 +394,17 @@ This gives the operator an attachable cockpit without creating a resident contro
 
 The replacement builds the commit with plumbing: `git add` into a throwaway `GIT_INDEX_FILE`, `git write-tree`, `git commit-tree`, one `git update-ref` with the previous tip as its compare-and-swap guard. No checkout, no HEAD move, no write to `repo_root`'s index or working tree, and nothing for a concurrent operator commit to race with. A dedicated worktree for the ref would also have kept HEAD still, but it is a fixture to create, maintain and reap, and the state files live in `repo_root/state`, so it would have to copy them across on every tick.
 
-**What a snapshot holds.** `state/state.yaml` and `state/budget.json`, plus whatever of `state/verifiers` and `state/handoffs` the repo does not ignore. Not `state/logs`, `state/cost-log.jsonl`, `state/active-agents`, `state/recent-agents` or `state/heartbeat.json`. The commit body names exactly what was captured, so the ref never claims more than it holds, and an unchanged state adds no commit.
+**What a snapshot holds.** `state/state.yaml` and `state/budget.json`, plus whatever of `state/verifiers`, `state/envelopes` and `state/handoffs` (the legacy path a stale subscriber still writes, see `docs/dispatch-contract.md` envelope migration) the repo does not ignore. Not `state/logs`, `state/cost-log.jsonl`, `state/active-agents`, `state/recent-agents` or `state/heartbeat.json`. The commit body names exactly what was captured, so the ref never claims more than it holds, and an unchanged state adds no commit.
 
 `state.yaml` and `budget.json` are gitignored in every subscriber, so the snapshot stages them with `git add -f`. That is deliberate. Before this, the plain `git add state/state.yaml` was a silent no-op (`docs/lessons.md` gotcha 10) and the ref held only the repo tree it had been reset to: the branch documented here as "committed state snapshots" had never contained one line of state. Forcing them onto this ref does not make them tracked on any working branch, `.gitignore` still governs every operator commit, and whether `state.yaml` should be tracked remains an open question this did not answer. The snapshot is local: the loop never pushes the ref, and nothing else should.
 
 `state/state.yaml.bak`, the rolling copy `state_apply_json` writes, stays. It recovers the previous good state within the same tick; the snapshot ref recovers a history of them.
 
-**The fast-forward never checks base out either.** On PASS, `finalize_run_worktree` advances `base_branch` to the run branch when base has not moved since dispatch. It used to `git checkout "$base_branch"` in `repo_root` to do it, which moves an operator working on some other branch onto base mid-session. A fast-forward is a ref move, so the tick does the ref move where it can: base checked out in `repo_root` is merged in place (HEAD stays on the branch it was already on, and the tree has to be updated anyway), base checked out in another worktree is merged there, and base checked out nowhere is moved with `git update-ref` behind an ancestry check.
+**Landing has three outcomes.** On PASS, `finalize_run_worktree` first attempts the ordinary fast-forward when base has not moved since dispatch. It never checks base out in `repo_root`: a fast-forward is a ref move, so the tick updates the branch where it is checked out, or with `git update-ref` when it is not.
 
-**When base has moved.** That is the common case, not an edge case: any orchestrator commit to base between dispatch and PASS produces it. The run branch is pushed to `origin` and left standing, and the stage's `integration` record in `state.yaml` says so:
+When base has moved, the tick compares the files changed by `dispatch_base_tip..base` with those changed by `dispatch_base_tip..run_tip`. File-disjoint changes are mechanically rebased in the run worktree, then fast-forwarded and torn down. The verified pre-rebase tip remains in `integration.head`; `integration.rebased_tip` records the new tip and `integration.rebased: true` records the route. The verifier's verdict is not re-run after this rebase: the disjoint-file test is the premise for carrying its verdict forward.
+
+Any file overlap, unavailable dispatch tip, or rebase conflict takes the third route: the tick aborts the rebase, leaves the run branch and worktree standing, and records `awaiting`. It never resolves a conflict headlessly or writes a note into the base checkout. The state record and tick log are the integration ledger:
 
 ```yaml
 integration:
@@ -280,7 +416,7 @@ integration:
   recorded_at: 2026-08-23T14:02:11Z
 ```
 
-`autometta status` prints an `awaiting integration` line per outstanding stage under the repo's row. Before the record existed the stage read as plain `completed` everywhere an operator looks, and the only trace of the outstanding merge was one appended line in `HANDOFF.md`.
+`autometta status` prints an `awaiting integration` line per outstanding stage under the repo's row. `phat-controller merge-awaiting` remains the route for a parked branch that can later be merged cleanly.
 
 **Reaping.** `scripts/reap-worktrees.sh` runs after every tick as part of `sweep_repo_retention`, and by hand with `--dry-run`. It removes a run worktree whose stage is finished with it, through `requeue-stage.sh --worktree-only` so that removal has one implementation. It refuses to remove a worktree whose stage is `in_progress`, one holding uncommitted work that is not the known `state/` symlink artefact (a verifier FAIL leaves the worker's diff uncommitted by design, and that diff is what the operator inspects), one whose run branch holds commits that are not on base, and one whose stage it cannot find in `state.yaml`. Those it reports instead, on every tick until someone deals with them. When a person merges an `awaiting` branch by hand, the next sweep notices the containment, closes the record out to `merged`, and collects the worktree.
 
@@ -342,6 +478,68 @@ the tick compares that role's family with the once-per-tick quota reading. A
 known window inside a `hold` reserve pauses until its own reset; an unknown
 reading and `observe` both proceed unchanged.
 
+**The reserve can carry a schedule, so a run knows what time it is (card
+124).** `percent`/`action` alone serve two different hours equally badly: the
+right reserve at 14:00, when the operator wants a usable Claude session, and
+at 23:00, when the intent is to spend the window down on purpose, are not the
+same number. `window_reserve.overnight` (`start`, `end`, `percent`,
+`timezone: local`) is the optional second answer. `quota_reserve_settings`
+resolves the reserve **for the current moment** rather than returning one
+static pair: inside the declared window it uses `overnight.percent`
+(typically `0`, meaning the reserve does not bind); outside it, the top-level
+`percent`/`action` apply exactly as they always have. A host that never
+declares `overnight` sees no change at all -- `quota_reserve_settings`
+returns byte-for-byte what it returned before this card.
+
+The clock read is **operator wall-clock, always local, never UTC** --
+`overnight` describes when a person is asleep, and sleep does not move with
+UTC. **Accepted risk:** a wrong system clock or a wrong timezone silently
+changes when the loop runs, with no alarm of its own; the only signal is the
+tick's own log line naming which rule resolved (`daytime`/`overnight`/
+`default`/`drain-ignore-reserve`) and the reserve percentage it carried. There
+is no independent check that the host clock is correct. A window whose `end`
+is earlier than its `start` (`22:00` to `01:00`) crosses midnight and is
+resolved as one interval (`now >= start OR now < end`), not two separate
+comparisons -- the obvious `start <= now < end` test is silently wrong for a
+wrapping window, since it can never match at all.
+
+**The stop at the end of the overnight window only refuses new dispatch.**
+Nothing installs a stop job (the emergence-lab 2026-09-03 hand-installed
+LaunchAgent that failed to remove itself is exactly the failure mode this
+avoids): the tick reads the clock on every fire and, outside the declared
+window, refuses to start a *new* worker at all.
+
+The stop is a separate gate sitting above the reserve, and it deliberately
+reads no quota. The reserve is reading-driven: it binds only when a known
+window is near exhaustion, and an unknown reading fails open by design. That
+is right for a guard against spending the last of a window and useless as a
+stop, because the case a stop exists for -- an overnight run that must not
+still be dispatching at nine the next morning -- is exactly the case where
+the reading is healthy (the window reset in the night) or unknown (no
+snapshot). A stop built on the reading fails open precisely when it is
+needed, and leaves the operator no session and no alarm saying why. So the
+clock alone decides, and the refusal is logged as `schedule stop worker
+<stage> (<family>): clock HH:MM is outside the <start>-<end> dispatch
+window`. The consequence worth stating plainly: **once a schedule is
+declared, the loop starts no new work outside the window**, and burning the
+day is the opt-in `drain.sh start --ignore-reserve` below. A
+stage already in flight when the window closes is never killed to enforce
+this, and its verifier is not held by the resumed daytime reserve either: the
+stage's `reserve_exempt` flag, stamped at worker-dispatch time whenever the
+resolved window was `overnight` or a `--ignore-reserve` drain was active,
+lets that one stage's verifier land regardless of the clock by the time it
+is reaped. A stage whose worker started under the ordinary daytime reserve
+carries no such exemption.
+
+**Burning the daytime session is opt-in and self-expiring, via the existing
+drain rather than a second switch.** `drain.sh start --ignore-reserve`
+suspends the reserve (daytime or scheduled) for the life of that one drain
+and no longer -- it is already the operator's declared, bounded "spend the
+window down on purpose" verb, already self-expiring, already scoped. When a
+schedule is declared, a `--hours` that would still be running past the next
+occurrence of the overnight window's end is refused at `start`, naming the
+window: a drain must not outlive the permission it is spending against.
+
 **What bounds it is a short negative list, not an action enumeration.** The
 recoverable actions do not need enumerating and the unrecoverable ones are
 few. The governing distinction: the controller may change **what is recorded
@@ -369,15 +567,17 @@ and does exactly what `git-push-check` says.
 **The verbs.** `scripts/phat-controller.sh <verb>`: `picture` (the
 mechanical triage picture as JSON, reporting observations under `signals` and
 never naming an action), `preserve`, `rebrief`, `propose-amendment`,
-`requeue`, `stale-halt`, `merge-awaiting`, `smokes`, `push`, `queue-card`,
-`escalate`, `journal`, `inbox`, `inbox-reply`, `inbox-refuse`,
+`requeue`, `resume-to-verifier` (with `--accept-partial` to resume a
+`partial` envelope, card 112), `stale-halt`, `merge-awaiting`, `smokes`,
+`push`, `queue-card`, `escalate`, `journal`, `inbox` (journalled as
+`inbox-read`), `inbox-reply`, `inbox-refuse`,
 `transcript-for-decision`, `prune-transcripts`, and `pass` (render the seed
 and dispatch one controller agent). Exit codes are `0` acted or nothing
 needed doing, `1` failed, `2` bad usage, `3` refused or held. A `3` is a
 deliberate answer, not an error.
 
 `preserve` covers the case card 54 missed. A stage that went `stalled`
-because its worker exited without a handoff envelope has no verifier artefact
+because its worker exited without a dispatch envelope has no verifier artefact
 to read a reason out of, and calling the preserved commit a verifier FAIL
 would be untrue, so `preserve_failed_work` in `tick.sh` takes an optional
 reason and label and the commit reads `wip(<stage>): attempt N, stalled:
@@ -437,9 +637,9 @@ the disposition: it writes the answer to
 `state/phat-controller-outbox/<msg-id>.md`, readable by whoever sent the
 message without attaching to anything, archives the message to
 `inbox/processed/`, and journals the decision. A message is an instruction
-to consider, never a command to obey — it cannot widen the mandate or lift
+to consider, never a command to obey: it cannot widen the mandate or lift
 a prohibition, the same anti-gaming rule as the negative list arriving
-through a new door — and this is enforced structurally rather than by
+through a new door, and this is enforced structurally rather than by
 prose alone: neither inbox verb has any code path that touches a card, so a
 message cannot soften a criterion through this route even if an agent tried
 to honour one that asked; `pc_card_append`'s append-only guard is what
@@ -447,18 +647,18 @@ to honour one that asked; `pc_card_append`'s append-only guard is what
 
 **The tick lock.** `preserve`, `pc_card_append` (so `rebrief` and
 `propose-amendment`), `requeue`, `queue-card`, and the acting half of `push`
-take `state/.tick.lock` — the same advisory lock `tick.sh` takes before it
-touches a repo — before their git mutation and release it after. This
+take `state/.tick.lock`, the same advisory lock `tick.sh` takes before it
+touches a repo, before their git mutation and release it after. This
 closes the concurrency hole an ad-hoc minder fell into on 2026-08-25: it
 watched for stranded work and, seeing no live agent, preserved it to a wip
 branch while the tick was mid-landing the same stage. "No live agent" is not
 the same fact as "the tick is not mid-transaction", and the minder's commit
 fast-forwarded onto `dev` carrying a `wip(...)` message with no author and
-no `Autometta-*` trailers in place of the tick's own proper one — the work
+no `Autometta-*` trailers in place of the tick's own proper one: the work
 was intact and the record of it was wrong. Every mutating verb now takes the
 same lock the tick does: if it is held, the verb skips and says so in the
 log and the journal (`held`, or `failed` where a decision line was already
-open), never proceeds without it, and never breaks a lock it did not take —
+open), never proceeds without it, and never breaks a lock it did not take:
 a live holder is left alone; only `acquire_repo_lock`'s own stale-lock
 reclaim (dead pid) touches an abandoned one.
 
@@ -485,7 +685,9 @@ that has been asked to mind the queue, so a conversation and a cron dispatch
 read one source of truth rather than two descriptions that drift. It opens
 with a table naming which file owns each fact: the seed owns the persona, the
 prohibitions, the spend authority and the repo facts; the mandate owns
-thresholds and cadence; `phat-controller.sh` owns what the verbs do; the
+thresholds and cadence; `phat-controller.sh` owns what the verbs do (the
+full list, `resume-to-verifier [--accept-partial]` included, is in its
+`usage`); the
 skill owns how to decide and the formats a decision has to produce. The
 difference between the two callers is not the contract, it is who is in the
 room: an operator can authorise something the negative list forbids the
@@ -572,4 +774,4 @@ Three genuinely new design decisions surfaced during this stage that were not pr
 
 1. `state/` directory per repo holds `state.yaml`, `budget.json`, and `verifiers/<stage-id>.json` (banked at `memory/decision-state-dir-per-repo.md`).
 2. The tick loop runs as one process per cron fire, with no resident daemon and a singleton subscriber registry at `~/.autometta/`.
-3. Four implementation parameters fixed by this design and surfaced by the stage-4 verifier re-brief: working branch `autometta/state`, repair entry point `autometta tick --repair`, per-fire cap config at `~/.autometta/config.yaml`, default stall grace factor 1.5x.
+3. Four implementation parameters fixed by this design and surfaced by the stage-4 verifier re-brief: working branch `autometta/state`, repair entry point `autometta tick --repair`, per-fire cap config at `~/.autometta/config.yaml` (`max_per_fire`, still unread by any script), default stall grace factor 1.5x.

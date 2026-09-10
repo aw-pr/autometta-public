@@ -416,10 +416,12 @@ check "and recorded as awaiting integration in state.yaml" \
   "$(eq awaiting "$(yq -r '.stages[] | select(.id == "13-unmerged") | .integration.state' "$reap/state/state.yaml")")"
 check "the state symlink alone is not read as uncommitted work" \
   "$(printf '%s' "$reap_out" | grep -q '10-done: uncommitted work' && printf '10-done misread\n' || printf 'ok\n')"
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/116-the-reaper-does-not-forgive-a-real-state-directory.md
 check "a real state directory with modified content is not forgiven" \
   "$(printf '%s' "$reap_out" | grep -q '14-real-state-dir: uncommitted work' && printf 'ok\n' || printf '14-real-state-dir was not reported\n')"
 check "and its worktree survives" \
   "$(test -d "$real_state_wt" && printf 'ok\n' || printf 'reaped with uncommitted content inside\n')"
+# AUTOMETTA-CONTRACT-END
 
 # Once a person merges it, the next sweep closes the record and collects the
 # worktree. This is the whole reason the reaper does not simply skip
@@ -481,8 +483,8 @@ check "the run worktree is left standing for the merge" \
   "$([[ -d "$moved_wt" ]] && printf 'ok\n' || printf 'removed\n')"
 check "repo_root is still on the operator's branch" \
   "$(eq dev "$(git -C "$moved" rev-parse --abbrev-ref HEAD)")"
-check "HANDOFF.md still gets its line too" \
-  "$(grep -q 'moved since dispatch' "$moved/HANDOFF.md" && printf 'ok\n' || printf 'no handoff line\n')"
+check "a parked branch leaves the base checkout clean" \
+  "$(test -z "$(git -C "$moved" status --porcelain)" && printf 'ok\n' || printf 'base checkout dirtied\n')"
 
 # The other half of the same path: base did not move, so it merges and the
 # record says there is nothing outstanding.

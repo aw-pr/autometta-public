@@ -8,13 +8,13 @@
       "id": 1,
       "name": "File exists at scripts/health-check.sh and is non-empty.",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta/scripts/health-check.sh:1 (file exists and is non-empty)"
+      "evidence": "<root>/autometta/scripts/health-check.sh:1 (file exists and is non-empty)"
     },
     {
       "id": 2,
       "name": "First three lines are exactly #!/usr/bin/env bash, set -euo pipefail, IFS=$'\n\t'.",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta/scripts/health-check.sh:1-3 (first three lines match)"
+      "evidence": "<root>/autometta/scripts/health-check.sh:1-3 (first three lines match)"
     },
     {
       "id": 3,
@@ -26,13 +26,13 @@
       "id": 4,
       "name": "Iterates scripts/*.sh: greppable evidence that the script iterates the scripts directory.",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta/scripts/health-check.sh:18 (for script_path in scripts/*.sh)"
+      "evidence": "<root>/autometta/scripts/health-check.sh:18 (for script_path in scripts/*.sh)"
     },
     {
       "id": 5,
       "name": "Calls bash -n somewhere in the script body. Single grep for bash -n returns at least one hit.",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta/scripts/health-check.sh:22 (bash -n $script_path)"
+      "evidence": "<root>/autometta/scripts/health-check.sh:22 (bash -n $script_path)"
     },
     {
       "id": 6,

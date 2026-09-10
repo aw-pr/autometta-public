@@ -2,10 +2,19 @@
 
 ## Metadata
 
-- **Authored:** 2026-05-27
-- **Orchestrator:** Claude Opus 4.7 <claude-opus-4-7@local>
-- **Worker:** Codex GPT-5.3 <codex-gpt-5-3@local>
-- **Verifier:** Claude Opus 4.7 <claude-opus-4-7@local>
+- **Authored:** 2026-05-27 (re-briefed 2026-08-31 for queueing: seats
+  moved to current identities, run metadata added; scope unchanged)
+- **Orchestrator:** Claude Fable 5 <claude-fable-5@local>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** Claude Opus 5 <claude-opus-5@local>
+- **Base branch:** dev
+- **Run branch:** autometta/23-sdk-controller-experiment
+- **Worker effort:** high
+- **Verifier effort:** high
+- **Requires network:** true
+- **Verifier panel:** false
+- **Gate:** stage-completed: 97-a-pause-is-not-a-stall
+- **Path claims:** scripts/controller-sdk-experiment.py, tests/sdk-controller-experiment/, docs/experiments/sdk-controller-postmortem.md, memory/decision-sdk-controller-experiment.md, docs/philosophy.md
 - **Pairing rationale:** Cross-family. Codex builds a deliberately minimal prototype; Claude verifies that the prototype's failure modes are accurately reported in the postmortem (this stage's deliverable is partly a negative result, and the verifier's job is to confirm honesty).
 - **Type:** Experiment-with-postmortem. The expected outcome is "we don't want this" — but the experiment validates that, rather than asserting it.
 
@@ -76,3 +85,94 @@ Worker writes the deliverables, runs both test stages, and pastes the test-`stat
 
 - **Codex (worker):** stdin redirect for any subprocess. Sandbox `workspace-write` is sufficient; tests write to `/tmp` and to `tests/sdk-controller-experiment/`.
 - **Claude (verifier):** the verifier does NOT need to run the SDK experiment itself; it reads the postmortem and the test artefacts. This is a deliberate cost guard.
+
+## Re-brief note (2026-08-31 22:45 BST, minder)
+
+Auth-route finding from tonight's run, load-bearing for this card: the
+long-lived session MUST be built on the `claude-agent-sdk` package, which
+drives the Claude Code engine and honours the subscription OAuth token.
+Do NOT use `scripts/verify-sdk.py` as prior art: despite its name it
+instantiates the raw `anthropic` client against the Messages API, and that
+path is refused instantly with a 429 on subscription OAuth (two refusals
+tonight, request ids req_011CebUkhN159VXfD28zBFci and
+req_011CebX8zh975kvsSmKpt2ST, while `claude -p` on the same account worked
+throughout). If any API call in this experiment is refused with a 429 on
+the first request, stop and record the refusal in the postmortem rather
+than retrying; a first-request 429 here means the auth route, not load.
+
+## Re-brief note (2026-09-01, orchestrator) — attempt 2
+
+Attempt 1 returned a `partial` envelope and the verifier scored 7 of 10.
+Criteria 1, 3, 5, 6, 8, 9 and 10 passed and the work behind them is sound;
+do not rebuild them. Three criteria failed, and all three are in reach.
+
+**Criterion 2 — stage A never completed.** This is the one that matters,
+because it is the apparatus failing rather than the experiment returning a
+negative result. `tests/sdk-controller-experiment/stage-A.md` is correct as
+written: its worker command is `echo hello > /tmp/sdk-exp-A.txt`, a command
+that cannot fail on its own merits. The run log
+(`state/logs/23-sdk-controller-experiment-worker.log:11682-11686`) shows
+`stage-A: worker dispatched` then `stage-A: failed: worker` for it and for
+stage B alike, so the session reported failure for a command that should
+have succeeded. Diagnose why before changing anything: capture the worker
+subprocess's exit status, stdout and stderr and put them in the log, rather
+than collapsing every outcome to `failed: worker`. If the cause is that the
+session's own sandbox refuses the `/tmp` write, say so plainly and move the
+fixture's target inside `tests/sdk-controller-experiment/`, updating the
+acceptance criterion's path in the postmortem to match. An experiment whose
+apparatus cannot run its own success case has not tested the hypothesis, so
+the Decision cannot rest on it until stage A completes for a real reason.
+
+**Criterion 4 — the SIGTERM was asserted, not observed.** The postmortem
+describes what would happen on SIGTERM as a design property. Actually send
+it: start the session against a stage, `kill -TERM` the process mid-run,
+and record what the test `state.yaml` and the log hold afterwards. Quote
+the observed state in the comparison matrix. If the observed behaviour
+differs from the design claim, the observation wins and the matrix says so.
+
+**Criterion 7 — the decision memo has no frontmatter.** `memory/README.md`
+mandates YAML frontmatter with `name`, `description` and `metadata.type`,
+plus a **Why:** / **How to apply:** pair for a project-type memory. The
+`[[decision-handoff-envelope]]` wikilink is already present and correct;
+keep it and add the missing envelope.
+
+The 2026-08-31 auth-route finding below still stands in full: build on
+`claude-agent-sdk`, never the raw `anthropic` client, and treat a
+first-request 429 as an auth-route verdict to be recorded rather than
+retried.
+
+Prior attempt's work is preserved at `wip/23-sdk-controller-experiment-attempt-1`
+(commit `94570284`). Start from it rather than from an empty tree.
+
+
+## Re-brief note (2026-09-01, orchestrator) — attempt 3
+
+Attempt 2 answered the question attempt 1 could not. The worker sent a real
+SIGTERM this time (exit 143, the interrupted stage recorded `failed` with the
+expected stall marker), so **criterion 4 is satisfied** and the postmortem
+reports an observation rather than a design claim. Do not redo it.
+
+**Criterion 2's cause is now known and has been removed.** Both synthetic
+stages died on `API Error: Unable to connect to API (FailedToOpenSocket)`
+before the SDK session's Bash tool ever ran. That was codex's `workspace-write`
+sandbox denying the socket to every shell command a worker starts, which is
+this repo's default and was never a fault in the experiment. The card now
+declares `- **Requires network:** true`, so this dispatch keeps the filesystem
+sandbox and opens the socket. Measured before granting it: a sandboxed
+`curl https://example.com` returned exit 6 "Could not resolve host" without the
+grant and HTTP 200 with it.
+
+So stage A should now run for real. Hold the same bar as before: capture the
+worker subprocess's exit status, stdout and stderr in the log rather than
+collapsing every outcome to `failed: worker`, and if it still cannot complete,
+report what the log actually says instead of inferring. The experiment's value
+is a Decision that rests on an observation, and stage A completing is what
+makes the "keep cron+tick" conclusion honest rather than assumed.
+
+**Criterion 7 is still open**: `memory/decision-sdk-controller-experiment.md`
+needs the frontmatter `memory/README.md` mandates (`name`, `description`,
+`metadata.type`, and a **Why:** / **How to apply:** pair for a project memory).
+The `[[decision-handoff-envelope]]` wikilink is already correct; keep it.
+
+Attempt 2's work is preserved at `wip/23-sdk-controller-experiment-attempt-2`.
+Start from it: the SIGTERM evidence and the postmortem structure are sound.

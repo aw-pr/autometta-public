@@ -6,7 +6,7 @@ The contract is family-agnostic. The same shape works for a Claude Code worker, 
 
 ## Contract version
 
-**Contract version: 2** (2026-08-24).
+**Contract version: 3** (2026-09-06).
 
 A change to the shape of the contract is a versioned decision, so the shape carries a number and a reason. Anything that alters what the roles owe each other, what a stage card must carry, or the set of states a stage can be in, bumps it. Wording, examples and typo fixes do not.
 
@@ -14,8 +14,12 @@ A change to the shape of the contract is a versioned decision, so the shape carr
 |---|---|---|
 | 1 | up to 2026-08-23 | The seven steps, contract tests, the pass-2 stage lifecycle with `pending, in_progress, completed, failed, stalled, verifier_failed`. Unnumbered at the time; recorded here as the shape everything before card 43 was written against. |
 | 2 | 2026-08-24 | Adds the terminal `superseded` stage status: a card an operator has decided should not run, which is not a failure. See [Stage statuses](#stage-statuses). |
+| 3 | 2026-09-06 | Requires every new card to declare path claims or explicit serial dispatch, and replaces the repository-wide pairing failure latch with per-stage attributed failure history. See [Pipeline pairing](#pipeline-pairing). |
 
 Version 2 is additive. A `state.yaml` written against version 1 validates and ticks identically under version 2; there is no migration step.
+
+Version 3 tightens queue-time validation for new cards. Historic queued cards
+without claims remain serial, and existing state needs no migration.
 
 ## Why a contract, and not a framework
 
@@ -45,6 +49,12 @@ The card path is the prompt. The worker is told one path; it reads that one file
 
 Before dispatch, the orchestrator runs `templates/orchestrator-checklist.md` against the card. Every item is a load-bearing check; skipping any one is the source of most failed stages.
 
+Every queued card must also state its scheduling choice. It either declares
+repo-relative `Path claims` and is eligible for pairing, or carries the exact
+line `- **Dispatch:** serial`. `add-stage.sh` refuses a new card that declares
+neither. Historic queued cards without claims remain serial and are not
+rewritten.
+
 ### Step 2: Worker prompt assembly
 
 The orchestrator assembles a worker prompt from `templates/worker-prompt.md`. The prompt names the stage card path, the worker tier, and any family-specific notes the worker needs (for example, that it should not write outside its sandbox).
@@ -56,6 +66,8 @@ The prompt is short and stable. The card carries the variable content; the promp
 The worker is dispatched headless. It reads the card, reads the named inputs, writes the named deliverables, and returns a short summary. It operates inside a sandbox the orchestrator has set for it. The sandbox is the role boundary, not a convenience.
 
 A worker cannot lift its own sandbox. This is the property the rest of the protocol relies on. A worker that could decide for itself whether acceptance has passed is a worker that can hallucinate green; a worker that cannot is a worker whose claim about its own work has to be checked from outside.
+
+A claude dispatch also does not inherit the operator's MCP servers. Left unconfigured, `claude` loads whatever user-level or project-level servers are configured on the dispatching machine: tool definitions swell every prompt's context, a child process starts per server per dispatch, and the worker gains access no card asked for. Card 120's surfacing incident was a worker whose only child process was an unrelated Obsidian vault MCP server. Every worker and verifier dispatch through `spawn-worker.sh` / `spawn-verifier.sh` therefore passes `--strict-mcp-config --mcp-config <file>`, where `<file>` defaults to an empty server list (`{"mcpServers":{}}`) written to the repo's `state/` scratch area, or to the path a repo names under `dispatch.claude.mcp_config` in `.autometta.local.yaml` when a stage genuinely needs a server. `--strict-mcp-config` makes that file authoritative rather than additive, so the operator's own configuration never merges in underneath it.
 
 ### Step 4: Acceptance command
 
@@ -69,6 +81,33 @@ The verifier returns a structured report: which criteria passed, which failed, e
 
 Cross-family verification is the default. Worker in family A, verifier in family B. Two independent training distributions reduce the chance both will hallucinate the same green.
 
+### Pipeline pairing
+
+The autonomous loop may overlap one adjacent tail worker behind a live head
+verifier. Both cards must declare non-empty, disjoint path claims, their worker
+dispatch targets must satisfy the repo's `pipeline.pair_on` rule, and budget
+headroom must cover two p95 dispatches. It never widens the pipeline to three.
+
+Claims under `scripts/lib` keep a head serial. A `scripts/tick.sh` head may pair
+with a disjoint tail, including a docs-only or smoke-only card, but a tail
+claiming `scripts/tick.sh` or `scripts/lib` remains serial. `current_stage`
+stays the ordered landing head. The tail waits for the head, then passes through
+the actual-diff overlap check and rebase path before verification, so strict
+landing order does not change.
+
+A member failure drops only the current pair to serial and never latches
+pairing off for the repository. Only failures caused by pairing are counted:
+a claim collision discovered from the actual diffs, or a tail that cannot
+rebase onto the moved head. Their machine-readable causes are appended beside
+the per-stage `pairing_failures` count. Verifier FAILs on the merits, agent
+deaths and provider refusals do not increment it. One attributed failure is
+allowed, a count of two refuses that stage from another pair, and a landed
+re-brief clears both the count and its causes.
+
+Accepted risks: two dispatches may share a provider window when `pair_on` is
+`off`; budget headroom is checked at dispatch and tokens are accounted at reap,
+so a pair can overshoot the cap by up to two p95s.
+
 ### Step 6: Orchestrator integration
 
 The orchestrator reads the diff in full. Not the summary, not the verifier's report alone, the actual diff. The orchestrator is the only party with full context across the stage; it is the last point at which a divergence between intent and output can be caught.
@@ -77,7 +116,7 @@ If the diff is correct and acceptance has passed, the stage is done. If either i
 
 ### Step 7: Commit
 
-The commit is atomic and follows the per-agent author attribution rule laid down in `~/.claude/rules/mcp-hub-dev-rules.md`: committer is the human user; author is the canonical agent identity of the primary worker. A co-author trailer is added when a second agent contributed non-trivially. The stage card is committed alongside the deliverables so the audit trail is in git, not in chat.
+The commit is atomic and follows the per-agent author attribution rule (the same one the operator's global dev rules state, restated here so no family has to read another family's private config): committer is always the human user; author is the canonical agent identity of the primary worker; one logical change per commit. A co-author trailer is added when a second agent contributed non-trivially. The stage card is committed alongside the deliverables so the audit trail is in git, not in chat.
 
 A dispatch involves three roles in at least two model families, so the commit records all three. The author is the worker, the coder, which keeps `git shortlog` and `git blame` attributing the code to the model that wrote it, at model-version granularity. The orchestrator and verifier are kept as `Co-Authored-By` trailers for git-native tooling, each carrying its plain canonical identity. On top of that, all three roles are recorded as role-keyed trailers carrying the clean canonical identity, so later analysis can ask which model performs best in each role:
 
@@ -105,9 +144,9 @@ The orchestrator identity is read from the stage card's `Orchestrator` metadata 
 
 **The orchestrator commits, not the worker.** The worker leaves a dirty working tree as its deliverable; the verifier evaluates that dirty tree and writes its artefact; the orchestrator reads the artefact's `overall` field and acts:
 
-- `overall: PASS` — orchestrator stages the non-state working-tree changes and commits with `--author=<worker-identity>`, role-named `Co-Authored-By` trailers for the orchestrator and verifier, and the `Autometta-Orchestrator` / `Autometta-Worker` / `Autometta-Verifier` role trailers (see the attribution note above). The commit subject is `<stage-id>: <headline>`, where the headline comes from the verifier artefact's `headline` field if present, otherwise from the stage card's title line. The stage moves to `completed`; the commit SHA is recorded in `state/state.yaml`.
-- `overall: FAIL` (or a missing / malformed `overall` field, treated as FAIL by the orchestrator) — no commit. The stage moves to `verifier_failed`, `current_stage` is cleared, and the dirty working tree is left intact for the operator to inspect, amend the stage card, and re-run, or revert.
-- Backward-compat — if a worker on an older prompt self-committed before the verifier ran, the working tree on a PASS artefact will be clean. The tick logs a deprecated-path warning and marks the stage `completed` without erroring. New stages should rely on the orchestrator commit path so the `Co-Authored-By: <verifier>` trailer appears in `git log`.
+- `overall: PASS`: orchestrator stages the non-state working-tree changes and commits with `--author=<worker-identity>`, plain `Co-Authored-By` trailers for the orchestrator and verifier, and the `Autometta-Orchestrator` / `Autometta-Worker` / `Autometta-Verifier` role trailers (see the attribution note above). The commit subject is `<stage-id>: <headline>`, where the headline comes from the verifier artefact's `headline` field if present, otherwise from the stage card's title line. The stage moves to `completed`; the commit SHA is recorded in `state/state.yaml`.
+- `overall: FAIL` (or a missing / malformed `overall` field, treated as FAIL by the orchestrator): no commit. The stage moves to `verifier_failed`, `current_stage` is cleared, and the dirty working tree is left intact for the operator to inspect, amend the stage card, and re-run, or revert.
+- Backward-compat: if a worker on an older prompt self-committed before the verifier ran, the working tree on a PASS artefact will be clean. The tick logs a deprecated-path warning and marks the stage `completed` without erroring. New stages should rely on the orchestrator commit path so the `Co-Authored-By: <verifier>` trailer appears in `git log`.
 
 **Committed is not integrated.** The commit lands on the stage's run branch, inside its own worktree. Whether it reaches the base branch depends on whether base moved between dispatch and PASS, and during an active session it usually has: any orchestrator commit to base produces it. Both outcomes are written to the stage's `integration` record in `state/state.yaml`.
 
@@ -128,7 +167,7 @@ This closes the gap a requirements document leaves open. A prose doc and the cod
 
 Three roles touch the contract test, and no role both writes the assertions and satisfies them:
 
-- **Orchestrator authors the assertions (step 1).** They are written from the card's intent, before any implementation exists, by the session that already owns the acceptance criteria. The worker does not author its own oracle, so the test cannot be tautological: it asserts what the card intended, not what the code happens to do.
+- **Orchestrator authors and records the assertions (step 1).** They are written from the card's intent before any implementation exists, and their digest is recorded on the card before it is queued. `scripts/add-stage.sh` refuses a card that names a test file without a `sha256:` assertions digest. A card with no contract test remains valid. This queue-time check would have caught cards 113, 114 and 124 in the 108-124 batch; card 124 landed with a worker-authored test. The worker does not author its own oracle, so the test cannot be tautological: it asserts what the card intended, not what the code happens to do.
 - **Worker satisfies the assertions (step 3), without editing them.** The worker may add fixtures, imports, and scaffolding around the frozen block, but the assertion lines between the markers are read-only to it. A worker that believes an assertion is wrong surfaces a blocker (worker prompt step 6) rather than editing the assertion to suit its implementation.
 - **Verifier runs the assertions and guards the freeze (steps 4-5).** The acceptance command is the contract test. The verifier also checks that the frozen block was not weakened: it recomputes the block digest and compares it to the digest the card declares. A changed assertion whose new digest is not recorded in the card is an automatic FAIL, independent of whether the other criteria pass.
 
@@ -158,12 +197,16 @@ The digest is a fingerprint of the exact assertion lines between the markers. Be
 
 `scripts/check-contract-test-gate.sh` is the mechanical enforcement. It runs in two places:
 
+Its candidate set is the union of test paths named by stage cards and staged `scripts/*-smoke.sh` files; every other staged path is skipped regardless of which marker text it contains.
+
 - **At verification (primary).** The verifier runs `check-contract-test-gate.sh` against the working tree as part of acceptance. For every staged contract test it recomputes the assertion-block digest and compares it to the digest declared in the matching card. A mismatch that was not re-recorded in the card in the same change is a FAIL.
 - **At commit (backstop).** The orchestrator can chain the same script into pre-commit alongside the publish-guard scan. Because the orchestrator is the only party that commits (step 7), a single mechanical check at commit time covers every stage that lands.
 
 The gate fires only on assertion changes, never on scaffolding. A worker that reshapes a fixture, renames a helper, or moves an import leaves the frozen block untouched, the digest unchanged, and the gate silent. Only a change to the assertions themselves trips it. That precision is the point: a gate that fired on every test edit would be disarmed by habit within a week.
 
 To regenerate the digest after a deliberate assertion change, run `scripts/check-contract-test-gate.sh print <test-file>` and paste the result into the card's `Assertions digest` line, in the same commit as the assertion change. The gate then sees a matching digest and a card that moved with the test, and passes.
+
+The gate distinguishes three states for a staged file, not two. A file no card names as its contract test is genuinely not the gate's business and is skipped. A file a card names as its contract test but that carries no `AUTOMETTA-CONTRACT-BEGIN`/`AUTOMETTA-CONTRACT-END` block is a violation, not a skip: absent and broken are different, and a gate that treats "nothing to check" as "nothing wrong" fails open, which is worse than no gate at all, because a passing gate is read as evidence. A marked file is recomputed and compared to its card's declared digest as described above. Consequently, a card whose `Assertions digest` line is prose rather than a real `sha256:` digest does not satisfy the contract-test requirement, and a card naming a test that carries no marker block will not dispatch clean: the worker prompt calls for the frozen block to exist and the card to record its real digest before the stage is considered done.
 
 ### When a contract test is not warranted
 
@@ -189,7 +232,7 @@ If the worker and verifier read the card from different git worktrees, or one re
 
 If the worker writes to a path determined by a harness-generated task ID, neither the verifier nor a watching human can reliably find the output afterwards. Logs disappear into directories with names like `/tmp/<uuid>/`; debugging becomes archaeology.
 
-**Mitigated at:** step 2 (worker prompt) and step 3 (dispatch). The stable log path is stated in the worker prompt and the card; the dispatch wrapper writes to that path explicitly. A path like `/tmp/codex-<stage-id>.log` is predictable; a harness UUID is not.
+**Mitigated at:** step 2 (worker prompt) and step 3 (dispatch). The stable log path is stated in the worker prompt and the card; the dispatch wrapper writes to that path explicitly. A path like `state/logs/<stage-id>-worker.log`, which is what the loop writes, is predictable; a harness UUID is not.
 
 ### 4. Sandbox-as-role-boundary
 
@@ -207,7 +250,7 @@ A stage that satisfies its own acceptance criteria may break the acceptance of a
 
 The dispatch contract is for one stage. Anything that spans stages is out of scope for pass 1.
 
-- **Queueing stages.** Pass 1 dispatches one stage at a time, by hand. Pass 2 layers a cron-driven tick on top of the dispatch contract to dispatch the next stage automatically. The loop is built on the contract, not in place of it. See the Future scope section below for the working name of the pass-2 layer.
+- **Queueing stages.** Pass 1 dispatches one stage at a time, by hand. Pass 2 layers a cron-driven tick on top of the dispatch contract to dispatch the next stage automatically. The loop is built on the contract, not in place of it. See [Pass-2 layer](#pass-2-layer) below; the loop has shipped and `docs/tick-loop.md` describes it.
 - **State persistence across stages.** Pass 1 uses git itself: one commit per stage, with the card and the deliverables in the same commit. Pass 2 uses `state/state.yaml` and verifier artefacts under `state/verifiers/`.
 - **Budget enforcement beyond wall-clock.** Pass 1 budgets are wall-clock per stage, stated in the card and enforced by the orchestrator. Pass 2 uses `state/budget.json` as a hard stop. Pass 1 has no spend ceiling beyond the orchestrator's judgement.
 - **Multi-worker stages.** The contract is for one worker per stage. Parallel workers are an orchestrator-level pattern (see the agent-orchestrator skill) and use the dispatch contract per worker. Coordination between parallel workers (disjoint file sets, integration order) is the orchestrator's responsibility, not the contract's.
@@ -320,25 +363,32 @@ Repeat per stage. Four retirements are four runs of this procedure, four reasons
 
 When `state/budget.json` is marked `halted: true`, the `halt_reason`
 field carries one of the following canonical strings. The set is
-closed — every call to `budget_halt` in the loop writes one of these,
+closed: every call to `budget_halt` in the loop writes one of these,
 and nothing else overwrites a pre-existing reason on subsequent ticks:
 
-- `token-cap` — `tokens_spent >= token_cap_total`.
-- `wall-clock-cap` — `wall_clock_elapsed_seconds >= wall_clock_cap_seconds`.
-- `tick-cap` — `clock_ticks_used >= clock_tick_cap`. Work ticks only: a
+- `token-cap`: `tokens_spent >= token_cap_total`.
+- `wall-clock-cap`: `wall_clock_elapsed_seconds >= wall_clock_cap_seconds`.
+- `tick-cap`: `clock_ticks_used >= clock_tick_cap`. Work ticks only: a
   tick that found nothing to do charges `idle_ticks_used` instead.
-- `idle-tick-cap` — `idle_ticks_used >= idle_tick_cap`. Only reachable
+- `idle-tick-cap`: `idle_ticks_used >= idle_tick_cap`. Only reachable
   where an operator has set `idle_tick_cap`; it is absent by default.
-- `failure-cap` — `consecutive_failures >= consecutive_failure_cap`.
-- `yq-missing` — the `yq` binary required to read `state/state.yaml`
+- `failure-cap`: `consecutive_failures >= consecutive_failure_cap`.
+- `yq-missing`: the `yq` binary required to read `state/state.yaml`
   was not on PATH.
-- `invalid-stage-id` — `current_stage` (or a referenced stage id) failed
+- `invalid-stage-id`: `current_stage` (or a referenced stage id) failed
   the id-format validator.
 - `controller-escalation` - phat-controller raised a blocking escalation: a
   repeated failure past the mandate's cap, a spend authority exhausted, or an
   unexpected provider-payment signal. It requires operator review.
   `warden-escalation` is the same reason under its card-54 name and may
   appear in a ledger written before card 58.
+- `state-corrupt`: the top-of-tick integrity guard found `state.yaml`
+  degenerate and could not restore it from `state.yaml.bak` (gotcha 10).
+- `dispatch-configuration-fault`: a spawn failed before the agent ran for a
+  reason no retry can fix (a missing credential, an unknown flag); the stage
+  is marked `stalled` with `stall_marker: dispatch_configuration_fault:<role>`,
+  and `halt_reason` carries the offending log line after the category when one
+  is known.
 
 `dirty-working-tree` is retired as of the worktree-per-run backport (see
 below): dispatch happens in an ephemeral sibling worktree, never
@@ -349,7 +399,7 @@ clears it at the start of the next run window regardless of reason (see
 "Budget window auto-reset" below), so it is not sticky.
 
 `budget_check_caps` distinguishes "real cap hit this tick" (return code
-1; one of the first four strings is selected via the
+1; one of the first five strings is selected via the
 `BUDGET_CHECK_LAST_HIT` side channel) from "already halted on a previous
 tick" (return code 2; caller must preserve the recorded reason rather
 than overwrite it).
@@ -368,7 +418,7 @@ The rc-2 log line is rate-limited rather than emitted every tick.
 `halt_reason` per `AUTOMETTA_HALT_LOG_INTERVAL` seconds (default
 3600), always logs immediately on a change of reason, and stamps
 `halt_logged_at` / `halt_logged_reason` in the budget file. It decides
-what is written to the log and nothing else — it never clears a halt.
+what is written to the log and nothing else; it never clears a halt.
 
 ### Worktree-per-run dispatch
 
@@ -382,8 +432,8 @@ field if set, else the repo's current branch at dispatch time). The stage's
 can detect whether the base moved in the meantime.
 
 `repo_root`'s `state/` directory stays the single source of truth for
-`state.yaml`, `budget.json`, logs, handoff envelopes, and verifier
-artefacts — the worktree gets a symlink (`state -> ../<repo>/state`) rather
+`state.yaml`, `budget.json`, logs, dispatch envelopes, and verifier
+artefacts: the worktree gets a symlink (`state -> ../<repo>/state`) rather
 than its own copy, so a worker or verifier writing to a `state/...`-relative
 path (as the worker/verifier prompt templates already instruct) lands in
 the shared location without any template change.
@@ -391,8 +441,9 @@ the shared location without any template change.
 On PASS, `tick.sh` commits the worker's non-state changes on the run branch
 inside the worktree, then fast-forwards the base branch to it if the base
 hasn't moved; if the base has moved, it pushes the run branch to `origin`
-instead and appends a note to `HANDOFF.md`, leaving branch and worktree
-standing for manual integration. On verifier FAIL, `tick.sh` automatically
+instead and records `integration.state: awaiting` (with the branch, tip and
+whether the push landed) on the stage in `state/state.yaml`, leaving branch
+and worktree standing for manual integration; `autometta status` lists them. On verifier FAIL, `tick.sh` automatically
 commits the non-state diff on the run branch with the worker as author, pins
 the commit at `wip/<stage>-attempt-<n>`, and records that ref and SHA as
 `wip_branch` and `wip_commit` in the stage record. A clean worktree has
@@ -415,7 +466,7 @@ or an interactive orchestrator turns a proposal into an actual criterion
 change.
 
 The same role covers the case where there is no verifier artefact at all: a
-stage that went `stalled` because its worker exited without a handoff
+stage that went `stalled` because its worker exited without a dispatch
 envelope still has its work preserved (`phat-controller.sh preserve`), its
 stall marker recorded, and a re-brief citing the preserved commit before it
 is requeued.
@@ -444,8 +495,8 @@ escalate and carry on with other work, `HOLD` stop and report.
 `budget_ensure_window` (in `scripts/budget.sh`) runs at the start of
 `_process_repo_locked`, before `budget_check_caps`. It compares
 `state/budget.json`'s `window_started_at` (a UTC calendar date) to today;
-on a mismatch, a *halted or at-cap* budget has every counter — including
-`consecutive_failures` — zeroed, `halted`/`halt_reason`/`halted_at`
+on a mismatch, a *halted or at-cap* budget has every counter, including
+`consecutive_failures`, zeroed, `halted`/`halt_reason`/`halted_at`
 cleared, and caps left untouched, with a log line recording the reset. A
 healthy budget crossing the same boundary is only re-stamped, not zeroed,
 so an in-progress run spanning midnight UTC is unaffected. Within a
@@ -536,11 +587,11 @@ halt reason rather than a decorative field.
   and exit immediately so the cron tick is not blocked by a 30-minute
   run.
 - **When.** Post-exit, on the same tick that reaps the phase:
-  - Worker phase — when `worker_pid` was recorded on a previous tick but
+  - Worker phase: when `worker_pid` was recorded on a previous tick but
     `kill -0` now fails. Accounting fires once, then `worker_pid` is
     cleared in `state.yaml` so subsequent ticks (still waiting on the
     verifier) do not double-count.
-  - Verifier phase — when the verifier artefact is present at
+  - Verifier phase: when the verifier artefact is present at
     `state/verifiers/<stage-id>.json`. Accounting fires immediately
     before `_process_verifier_artefact`, which clears `current_stage`
     on exit. If a prior verifier crashed without writing an artefact and
@@ -552,7 +603,7 @@ halt reason rather than a decorative field.
     line whose first token is a digit run (commas tolerated).
   - Claude inline: any line containing `Total tokens:` followed by a
     digit run (commas and spaces tolerated).
-  When both appear in one log — for example a worker that retried — the
+  When both appear in one log, for example a worker that retried, the
   **last match wins**. Earlier numbers are treated as cumulative
   subtotals or aborted-attempt counts; only the final figure is the
   authoritative usage. The parser is pure awk, bash 3.2-compatible, no
@@ -623,7 +674,7 @@ to change it and exactly one place to read it.
 | the `*-smoke.sh` harnesses | a smoke test exercises the tree it ships in |
 
 Scripts that compute a `repo_root` for their own fixtures
-(`validate-handoff-envelope.sh`, `validate-verifier-artefacts.sh`,
+(`validate-envelope.sh`, `validate-verifier-artefacts.sh`,
 `sdk-cache-smoke.sh`, `idle-tick-smoke.sh`, `superseded-status-smoke.sh`) are
 not resolving a dispatch root and are left alone.
 
@@ -675,8 +726,9 @@ operator has to think to check.
 The fleet LaunchAgent currently sets `AUTOMETTA_ROOT` to the checkout, which is
 rule 1, so this exposure is live. Moving the tick onto the installed build is an
 operator decision, not a code change: it means deleting that key from
-`com.autometta.tick.fleet.plist` and accepting that a fix is live only after a
-reinstall. Nothing in the repo repoints a running fleet.
+the plist `install-launchagent.sh` rendered (`com.autometta.tick.<repo-slug>`;
+no script installs a `com.autometta.tick.fleet` job, though `status.sh` still
+looks for that label) and accepting that a fix is live only after a reinstall. Nothing in the repo repoints a running fleet.
 
 ### Checking the split
 
@@ -794,6 +846,49 @@ It is a warning and only a warning. The stage still dispatches. Taking a
 release is the operator's decision, and a tick that refused to work until
 someone ran a refresh would turn a housekeeping note into an outage. A
 subscriber with a current stamp, or with no stamp at all, says nothing.
+
+### Envelope path migration (card 104)
+
+Card 104 (2026-09-01) renamed the worker's completion signal from "handoff
+envelope" to "dispatch envelope" and moved its path from
+`state/handoffs/<stage-id>.json` to `state/envelopes/<stage-id>.json`. The
+name was retired because it collided with the unrelated session handoff
+(`HANDOFF.md`) closely enough to cause a real misconfiguration:
+`handoff.mode` was set to `envelope` in this repo on the strength of the
+shared word, which silenced the session handoff outright. See
+`docs/dispatch-envelope.md` for the full account.
+
+The vendored set (above) is exactly what makes this migration reachable
+only through a dual read, never a flip. `tick.sh` is central and moves the
+instant this change lands in `autometta`, but the file that tells a worker
+*where to write* is `templates/worker-prompt.md`, a vendored copy each
+subscriber holds until an operator runs a refresh. A straight rename would
+have every un-refreshed subscriber's worker keep writing to the old path
+while a tick.sh that only read the new one found nothing there: every
+completed stage on every stale subscriber silently scored as stalled, one
+dispatch at a time, until someone happened to refresh. `worker_envelope_path()`
+in `tick.sh` reads `state/envelopes/<stage-id>.json` first and falls back to
+`state/handoffs/<stage-id>.json`; the new path always wins when both exist.
+`scripts/envelope-migration-smoke.sh` exercises all three path combinations
+(new only, old only, both) against the resolver directly, then drives a
+throwaway subscriber through the real `_process_repo_locked` reactor twice,
+once with a worker writing only the new path, once with a stale-subscriber
+worker writing only the legacy path, proving each one lands a stage as
+`completed`, not just that the resolver picks the right file.
+
+Only the writer moved. The 142 envelope files already sitting in
+`state/handoffs/` across the fleet as of 2026-09-01 were left exactly where
+they were: a stage mid-flight must not have its completion signal relocated
+underneath it, and the dual read makes moving them unnecessary.
+
+The old path is a compatibility shim, not a permanent second contract, and
+it stays until a checkable condition holds: every registered subscriber's
+`.autometta-vendor` stamp records a `vendored_from` sha that is a descendant
+of (or equal to) the commit that lands this migration, i.e.
+`git merge-base --is-ancestor <this-commit> <stamp-sha>` for every enabled
+entry in the subscriber registry. Nothing sweeps that automatically today.
+Retiring `state/handoffs/` from `worker_envelope_path()` once it does is a
+separate, later card.
 
 ## Reading order for a new operator
 

@@ -8,8 +8,8 @@
 #              to stdout, do not mutate state.yaml. Used by autometta panel.
 #
 # Fixed panel composition for v1:
-#   panel-0: Claude Opus 4.8  via SDK (scripts/verify-sdk.py --model claude-opus-4-8)
-#   panel-1: Claude Sonnet 4.6 via SDK (scripts/verify-sdk.py --model claude-sonnet-4-6)
+#   panel-0: Claude Opus 5   via SDK (scripts/verify-sdk.py --model claude-opus-5)
+#   panel-1: Claude Sonnet 5 via SDK (scripts/verify-sdk.py --model claude-sonnet-5)
 #   panel-2: GPT-5.6 Sol      via codex exec
 #
 # Requires: auth.claude.mode: api (ANTHROPIC_API_KEY must be in claude auth_pairs).
@@ -26,8 +26,8 @@ source "$script_dir/budget.sh"
 # shellcheck source=./models.sh
 source "$script_dir/models.sh"
 
-PANELLIST_OPUS="Claude Opus 4.8 <claude-opus-4-8@local>"
-PANELLIST_SONNET="Claude Sonnet 4.6 <claude-sonnet-4-6@local>"
+PANELLIST_OPUS="Claude Opus 5 <claude-opus-5@local>"
+PANELLIST_SONNET="Claude Sonnet 5 <claude-sonnet-5@local>"
 PANELLIST_CODEX="GPT-5.6 Sol <gpt-5-6-sol@local>"
 
 QUORUM_REQUIRED=2
@@ -40,7 +40,7 @@ extract_stage_id() {
   local base
   base="$(basename "$card_path")"
   base="${base%.md}"
-  if [[ ! "$base" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]; then
+  if [[ ! "$base" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]; then
     log_msg "rejecting malformed stage id derived from ${card_path}: ${base}"
     exit 1
   fi
@@ -234,6 +234,8 @@ main() {
     -e "s|<<family-specific-notes-or-none>>|Write the verifier artefact JSON to the artefact-path shown above. stdin redirect already applied.|g" \
     "$tmpl")"
 
+  codex_approval_argv
+
   local codex_home_override=""
   if [[ -n "$codex_auth_pairs" ]]; then
     codex_home_override="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}"
@@ -244,12 +246,12 @@ main() {
     fi
     # shellcheck disable=SC2086
     CODEX_HOME="$codex_home_override" op-fetch $codex_auth_pairs --pass CODEX_HOME -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" ${AUTOMETTA_CODEX_APPROVAL_ARGV[@]+"${AUTOMETTA_CODEX_APPROVAL_ARGV[@]}"} "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   else
     # shellcheck disable=SC2086
     op-fetch $codex_auth_pairs -- \
-      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" "$codex_prompt" \
+      codex exec -C "$repo_root" --model "$AUTOMETTA_MODEL_CODEX" ${codex_effort_argv[@]+"${codex_effort_argv[@]}"} --sandbox "$(resolve_panel_codex_sandbox "$repo_root" "$card_path")" ${AUTOMETTA_CODEX_APPROVAL_ARGV[@]+"${AUTOMETTA_CODEX_APPROVAL_ARGV[@]}"} "$codex_prompt" \
       </dev/null >"$p2_log" 2>&1 &
   fi
   local p2_pid=$!

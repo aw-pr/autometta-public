@@ -77,6 +77,7 @@ write_card() {
 
 - **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
 - **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
+- **Dispatch:** serial
 
 ## Budget
 
@@ -139,11 +140,13 @@ cat > "$parse_repo/cards/60-gated-stage.md" <<'CARD'
 - **Worker:** Worker <worker@local>
 - **Verifier:** Verifier <verifier@local>
 - **Gate:** stage-completed: 58-the-controller-decides-the-scripts-are-its-verbs
+- **Dispatch:** serial
 CARD
 cat > "$parse_repo/cards/62-ungated-stage.md" <<'CARD'
 # Stage card 62
 - **Worker:** Worker <worker@local>
 - **Verifier:** Verifier <verifier@local>
+- **Dispatch:** serial
 CARD
 "$script_dir/add-stage.sh" "$parse_repo" "$parse_repo/cards/60-gated-stage.md" >/dev/null
 "$script_dir/add-stage.sh" "$parse_repo" "$parse_repo/cards/62-ungated-stage.md" >/dev/null
@@ -347,6 +350,178 @@ run_tick "$script_dir/tick.sh" "$empty_repo"
 check "queue-empty opens when no other stage is pending or in_progress" \
   "$(eq 50-stage-cards-live-in-stage-cards "$(yq -r '.current_stage' "$empty_repo/state/state.yaml")")"
 drop_subscriber queue-empty
+
+printf '== 4. contract-test freeze gate: three states, not two ==\n' >&2
+
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/121-the-gate-checks-only-what-a-card-can-name.md
+gate_script="$script_dir/check-contract-test-gate.sh"
+mk_begin="$(sed -n "s/^MARKER_BEGIN='\(.*\)'/\1/p" "$gate_script")"
+mk_end="$(sed -n "s/^MARKER_END='\(.*\)'/\1/p" "$gate_script")"
+pre_fix_gate="$tmp_root/pre-fix-check-contract-test-gate.sh"
+if git -C "$repo_root_real" cat-file -e HEAD:scripts/check-contract-test-gate.sh 2>/dev/null; then
+  gate_introduction="$(git -C "$repo_root_real" log --diff-filter=A --format=%H -- scripts/gate-smoke.sh | head -n1)"
+  git -C "$repo_root_real" show "${gate_introduction}^:scripts/check-contract-test-gate.sh" > "$pre_fix_gate"
+else
+  cp "$gate_script" "$pre_fix_gate"
+fi
+chmod +x "$pre_fix_gate"
+
+make_gate_repo() {
+  local name="$1"
+  local repo="$tmp_root/gate-$name"
+  mkdir -p "$repo/stage-cards" "$repo/scripts"
+  (
+    cd "$repo"
+    git init -q -b dev .
+    git config user.email smoke@local
+    git config user.name smoke
+    git config commit.gpgsign false
+    git commit -q --allow-empty -m seed
+  )
+  printf '%s' "$repo"
+}
+
+# State 1: a staged file no card names, carrying no marker, is not this
+# gate's business and is skipped.
+unnamed_repo="$(make_gate_repo unnamed)"
+printf '#!/usr/bin/env bash\necho hi\n' > "$unnamed_repo/scripts/plain.sh"
+( cd "$unnamed_repo" && git add -A )
+unnamed_out="$tmp_root/gate-unnamed.log"
+if ( cd "$unnamed_repo" && bash "$gate_script" ) >"$unnamed_out" 2>&1; then
+  unnamed_result=ok
+else
+  unnamed_result="exited non-zero: $(cat "$unnamed_out")"
+fi
+check "state 1: an unnamed, unmarked staged file is skipped" "$unnamed_result"
+
+# State 2: a staged file a card names as its contract test, carrying no
+# marker, is a violation -- not a skip. This is the fail-open condition
+# stage 102 and emergence-lab stages 63/70 disagreed about.
+named_repo="$(make_gate_repo named)"
+cat > "$named_repo/stage-cards/50-example.md" <<'CARD'
+# Stage card 50
+## Contract test
+- **Test file:** `scripts/named-test.sh`
+- **Assertions digest:** `sha256:deadbeef`
+CARD
+printf '#!/usr/bin/env bash\necho hi\n' > "$named_repo/scripts/named-test.sh"
+( cd "$named_repo" && git add -A )
+named_out="$tmp_root/gate-named.log"
+if ( cd "$named_repo" && bash "$gate_script" ) >"$named_out" 2>&1; then
+  named_result="exited zero: $(cat "$named_out")"
+else
+  named_result=ok
+fi
+check "state 2: a card-named test with no marker is a violation, not a skip" "$named_result"
+check "the violation message names the file and its card" \
+  "$([[ "$(cat "$named_out")" == *'scripts/named-test.sh'*'stage-cards/50-example.md'* ]] && printf ok || printf 'message missing file or card')"
+
+# Regression proof: the same fixture wrongly passes under the pre-fix gate.
+# A smoke that passes against both the new and the old gate is not a
+# regression test.
+pre_fix_out="$tmp_root/gate-named-pre-fix.log"
+if ( cd "$named_repo" && bash "$pre_fix_gate" ) >"$pre_fix_out" 2>&1; then
+  pre_fix_result=ok
+else
+  pre_fix_result="exited non-zero: $(cat "$pre_fix_out")"
+fi
+check "the pre-fix gate wrongly passes the same fixture (fail-open regression proof)" "$pre_fix_result"
+
+# State 3: a marked file is recomputed and compared to its card's declared
+# digest, exactly as before.
+marked_repo="$(make_gate_repo marked)"
+cat > "$marked_repo/stage-cards/51-example.md" <<'CARD'
+# Stage card 51
+## Contract test
+- **Test file:** `scripts/marked-test.sh`
+- **Assertions digest:** `PLACEHOLDER`
+CARD
+printf '#!/usr/bin/env bash\n# %s card=stage-cards/51-example.md\necho hi\n# %s\n' \
+  "$mk_begin" "$mk_end" > "$marked_repo/scripts/marked-test.sh"
+digest="$( ( cd "$marked_repo" && bash "$gate_script" print scripts/marked-test.sh ) )"
+sed -i.bak "s/PLACEHOLDER/$digest/" "$marked_repo/stage-cards/51-example.md"
+rm -f "$marked_repo/stage-cards/51-example.md.bak"
+( cd "$marked_repo" && git add -A )
+marked_out="$tmp_root/gate-marked.log"
+if ( cd "$marked_repo" && bash "$gate_script" ) >"$marked_out" 2>&1; then
+  marked_result=ok
+else
+  marked_result="exited non-zero: $(cat "$marked_out")"
+fi
+check "state 3: a marked file whose digest matches its card passes" "$marked_result"
+
+# A marked file whose block changed without its card's digest moving still
+# fails, unchanged from today.
+printf '#!/usr/bin/env bash\n# %s card=stage-cards/51-example.md\necho changed\n# %s\n' \
+  "$mk_begin" "$mk_end" > "$marked_repo/scripts/marked-test.sh"
+( cd "$marked_repo" && git add -A )
+drift_out="$tmp_root/gate-drift.log"
+if ( cd "$marked_repo" && bash "$gate_script" ) >"$drift_out" 2>&1; then
+  drift_result="exited zero: $(cat "$drift_out")"
+else
+  drift_result=ok
+fi
+check "a changed frozen block without a moved digest still fails" "$drift_result"
+
+# Token-carrying documentation is outside the candidate set and must be
+# skipped. The old token-driven gate rejects the same staged content.
+docs_repo="$(make_gate_repo docs-token)"
+mkdir -p "$docs_repo/docs"
+printf '# Contract guide\n\nThe marker is `%s`.\n' "$mk_begin" > "$docs_repo/docs/dispatch-contract.md"
+( cd "$docs_repo" && git add docs/dispatch-contract.md )
+docs_out="$tmp_root/gate-docs-token.log"
+if ( cd "$docs_repo" && bash "$gate_script" ) >"$docs_out" 2>&1; then
+  docs_result=ok
+else
+  docs_result="exited non-zero: $(cat "$docs_out")"
+fi
+check "a staged docs file containing the token is skipped" "$docs_result"
+docs_pre_fix_out="$tmp_root/gate-docs-token-pre-fix.log"
+if ( cd "$docs_repo" && bash "$pre_fix_gate" ) >"$docs_pre_fix_out" 2>&1; then
+  docs_pre_fix_result="exited zero: $(cat "$docs_pre_fix_out")"
+else
+  docs_pre_fix_result=ok
+fi
+check "the pre-change gate rejects the same staged docs file" "$docs_pre_fix_result"
+
+template_repo="$(make_gate_repo template-token)"
+mkdir -p "$template_repo/templates"
+printf '# Worker prompt\n\nThe marker is `%s`.\n' "$mk_begin" > "$template_repo/templates/worker-prompt.md"
+( cd "$template_repo" && git add templates/worker-prompt.md )
+template_out="$tmp_root/gate-template-token.log"
+if ( cd "$template_repo" && bash "$gate_script" ) >"$template_out" 2>&1; then
+  template_result=ok
+else
+  template_result="exited non-zero: $(cat "$template_out")"
+fi
+check "a staged template containing the token is skipped" "$template_result"
+template_pre_fix_out="$tmp_root/gate-template-token-pre-fix.log"
+if ( cd "$template_repo" && bash "$pre_fix_gate" ) >"$template_pre_fix_out" 2>&1; then
+  template_pre_fix_result="exited zero: $(cat "$template_pre_fix_out")"
+else
+  template_pre_fix_result=ok
+fi
+check "the pre-change gate rejects the same staged template" "$template_pre_fix_result"
+
+# Smoke scripts are candidates even when no card names their path. A changed
+# block with a stale digest must still fail after narrowing the candidate set.
+smoke_repo="$(make_gate_repo bad-smoke)"
+cat > "$smoke_repo/stage-cards/52-example.md" <<'CARD'
+# Stage card 52
+## Contract test
+- **Assertions digest:** `sha256:deadbeef`
+CARD
+printf '#!/usr/bin/env bash\n# %s card=stage-cards/52-example.md\necho changed\n# %s\n' \
+  "$mk_begin" "$mk_end" > "$smoke_repo/scripts/example-smoke.sh"
+( cd "$smoke_repo" && git add -A )
+smoke_out="$tmp_root/gate-bad-smoke.log"
+if ( cd "$smoke_repo" && bash "$gate_script" ) >"$smoke_out" 2>&1; then
+  smoke_result="exited zero: $(cat "$smoke_out")"
+else
+  smoke_result=ok
+fi
+check "a staged smoke with a changed block and stale card digest still fails" "$smoke_result"
+# AUTOMETTA-CONTRACT-END
 
 if (( fail != 0 )); then
   printf 'gate smoke: FAIL\n' >&2

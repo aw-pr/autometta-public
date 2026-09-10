@@ -20,15 +20,17 @@ Autometta is that packaging.
 1. **Git is the state store.** State lives in files, files live in git, git is the audit log. No daemon, no database, no service.
 2. **The filesystem is the message bus.** One stage card per dispatch. The card path is the prompt. The worker reads it, the verifier reads it, nothing is in flight.
 3. **Sandbox is the role boundary.** The Codex `workspace-write` sandbox makes worker-self-verification structurally impossible. We exploit this accident rather than try to lift it.
+   See [the bounded worker SDK postmortem](experiments/worker-sdk-postmortem.md): an SDK worker still needs an independently enforced role boundary.
 4. **Cross-family verification by default.** Worker in family A, verifier in family B. Reduces collusion on hallucinated green.
-5. **Cron + tick > daemon.** Long-running != resident process. A tick that reads state, makes one transition, writes state, exits, is easier to reason about, debug, kill, and resume than any long-lived process. *Exception:* a sweep stage (opt-in, `Sweep: true` on the card) dispatches N workers in parallel into N scratch worktrees, then a synthesis agent. The tick model still holds; the exception is in the number of dispatches per card, not in the tick structure.
+5. **Cron + tick > daemon.** Long-running != resident process. A tick that reads state, makes one transition per stage, writes state, exits, is easier to reason about, debug, kill, and resume than any long-lived process. A terminal landing may dispatch an eligible next stage in the same fire because nothing about the landed stage can be re-read by the next fire. It never makes two transitions on the same stage in one fire. *Exception:* a sweep stage (opt-in, `Sweep: true` on the card) dispatches N workers in parallel into N scratch worktrees, then a synthesis agent. The tick model still holds; the exception is in the number of dispatches per card, not in the tick structure.
+   See [the bounded SDK controller postmortem](experiments/sdk-controller-postmortem.md).
 6. **Budget files, not retries.** The only safety against runaway spend is a budget file checked at the top of every tick. No exponential backoff, no circuit breakers ; bounded total spend, hard stop.
 7. **Operational failures are normal.** Tests fail, code crashes, agents hang. The cron tick detects and recovers from operational failure without human intervention; the operator only gets pulled back in when the work itself stalls.
 8. **Observability is plain text plus tmux.** A lightweight observability plane: per-stage logs on disk, a live agent graph on top, and tmux panes for attaching to workers and orchestrators when an operator does want to look. No dashboards, no services.
 
 *Considered and deferred:* serving stage cards as MCP resources rather than file paths (multi-machine readiness). The server would read cards from git and the filesystem path stays the mandatory fallback. Design only, see [`docs/design/mcp-cards.md`](design/mcp-cards.md).
 
-*Considered and deferred:* a Fable-as-advisor verifier, where a cheap request model consults Claude Fable 5 only at the decision point instead of running a frontier model for the whole verification. SDK-only, opt-in, an addition to a verifier and not a replacement for cross-family pairing. Design only, see [`docs/design/advisor-verifier.md`](design/advisor-verifier.md).
+*Shipped, opt-in:* a Fable-as-advisor verifier, where a cheap request model consults Claude Fable only at the decision point instead of running a frontier model for the whole verification. Set `verifier.claude.advisor` in the manifest or `AUTOMETTA_CLAUDE_ADVISOR` for one dispatch; it sits under the sdk transport on `auth.claude.mode: api` only and fails closed elsewhere (`scripts/advisor-order-smoke.sh` guards the ordering). An addition to a verifier and not a replacement for cross-family pairing. Design in [`docs/design/advisor-verifier.md`](design/advisor-verifier.md).
 
 ## Non-goals
 

@@ -170,4 +170,115 @@ if git -C "$broken_repo" show-ref --verify --quiet "refs/heads/wip/$broken_stage
 fi
 printf 'PASS git failure: tick FAIL transition completed and dirty worktree remains\n'
 
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/110-preserve-keeps-what-the-card-called-a-deliverable.md
+make_repo_with_card() {
+  local name="$1" stage_id="$2" started_at="$3"
+  local repo="$fixture/$name"
+  mkdir -p "$repo/state/verifiers" "$repo/state/handoffs" "$repo/state/logs" "$repo/stage-cards"
+  (
+    cd "$repo"
+    git init -q -b dev
+    git config user.name Smoke
+    git config user.email smoke@local
+    git config commit.gpgsign false
+    printf 'out/\nstate/**\n' > .gitignore
+    printf 'seed\n' > README.md
+    git add .gitignore README.md
+    git commit -qm seed
+  )
+  cat > "$repo/stage-cards/$stage_id.md" <<EOF
+# Stage card $stage_id: fixture
+
+## Deliverables
+
+1. \`out/frame.png\` is the rendered frame.
+EOF
+  cat > "$repo/state/state.yaml" <<YAML
+version: 1
+current_stage: $stage_id
+last_tick_at: "2026-08-24T00:00:00Z"
+tick_count: 1
+clock_tick_budget_remaining: 399
+stages:
+  - id: $stage_id
+    status: in_progress
+    worker: "GPT-5.6 Sol <gpt-5-6-sol@local>"
+    verifier: "Claude Sonnet 5 <claude-sonnet-5@local>"
+    base_branch: dev
+    verifier_attempts: 2
+    started_at: "$started_at"
+    verifier_artefact: state/verifiers/$stage_id.json
+YAML
+  cat > "$repo/state/verifiers/$stage_id.json" <<JSON
+{
+  "overall": "FAIL",
+  "criteria": [
+    {"id": 1, "name": "fixture preservation", "verdict": "FAIL", "evidence": "ignored deliverable survives"}
+  ],
+  "additional_findings": ""
+}
+JSON
+  write_budget "$repo"
+  printf '%s' "$repo"
+}
+
+printf '== an ignored deliverable named on the card is in the WIP commit ==\n'
+deliverable_stage=110-preserve-deliverable
+deliverable_repo="$(make_repo_with_card deliverable "$deliverable_stage" "2026-08-24T00:00:00Z")"
+deliverable_wt="$(ensure_run_worktree "$deliverable_repo" "$deliverable_stage" dev)"
+mkdir -p "$deliverable_wt/out"
+printf 'rendered frame\n' > "$deliverable_wt/out/frame.png"
+run_fail "$deliverable_repo" "$deliverable_stage"
+deliverable_sha="$(yq -r ".stages[] | select(.id == \"$deliverable_stage\") | .wip_commit" "$deliverable_repo/state/state.yaml")"
+assert_eq present "$([[ -n "$deliverable_sha" && "$deliverable_sha" != null ]] && echo present || echo missing)" "deliverable wip_commit exists"
+assert_contains "$(git -C "$deliverable_repo" show --stat "$deliverable_sha")" "out/frame.png" "ignored deliverable is in the WIP commit"
+printf 'PASS ignored deliverable named on the card: preserved at %s\n' "$deliverable_sha"
+
+printf '== an ignored non-deliverable is not preserved ==\n'
+nondeliverable_stage=110-preserve-nondeliverable
+nondeliverable_repo="$(make_repo_with_card nondeliverable "$nondeliverable_stage" "2026-08-24T00:00:00Z")"
+nondeliverable_wt="$(ensure_run_worktree "$nondeliverable_repo" "$nondeliverable_stage" dev)"
+mkdir -p "$nondeliverable_wt/out"
+printf 'not named by the card\n' > "$nondeliverable_wt/out/other.png"
+nondeliverable_out="$(run_fail "$nondeliverable_repo" "$nondeliverable_stage" 2>&1)"
+assert_contains "$nondeliverable_out" "clean worktree, nothing to preserve" "non-deliverable FAIL log"
+assert_eq null "$(yq -r ".stages[] | select(.id == \"$nondeliverable_stage\") | .wip_commit // null" "$nondeliverable_repo/state/state.yaml")" "non-deliverable wip_commit"
+printf 'PASS ignored non-deliverable: no commit or pin created\n'
+
+printf '== a stall produces a WIP branch ==\n'
+stall_stage=110-preserve-stall
+stall_repo="$(make_repo_with_card stall "$stall_stage" "2026-08-24T00:00:00Z")"
+stall_wt="$(ensure_run_worktree "$stall_repo" "$stall_stage" dev)"
+mkdir -p "$stall_wt/out"
+printf 'rendered frame under a stall\n' > "$stall_wt/out/frame.png"
+preserve_failed_work "$stall_repo" "$stall_repo/state/state.yaml" "$stall_stage" "" \
+  "worker_envelope_missing_after_exit" "stalled"
+stall_sha="$(yq -r ".stages[] | select(.id == \"$stall_stage\") | .wip_commit" "$stall_repo/state/state.yaml")"
+stall_branch="$(yq -r ".stages[] | select(.id == \"$stall_stage\") | .wip_branch" "$stall_repo/state/state.yaml")"
+assert_eq present "$([[ -n "$stall_sha" && "$stall_sha" != null ]] && echo present || echo missing)" "stall wip_commit exists"
+assert_eq "$stall_sha" "$(git -C "$stall_repo" rev-parse "refs/heads/$stall_branch")" "stall pin SHA"
+assert_contains "$(git -C "$stall_repo" show --stat "$stall_sha")" "out/frame.png" "stall WIP commit carries the deliverable"
+printf 'PASS stall: preserved as %s on %s before anything removes the worktree\n' "$stall_sha" "$stall_branch"
+
+printf '== requeue refuses the unpreserved-ignored case and proceeds after preserve ==\n'
+requeue_ignored_stage=110-preserve-requeue-refuse
+requeue_ignored_repo="$(make_repo_with_card requeue-refuse "$requeue_ignored_stage" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+requeue_ignored_wt="$(ensure_run_worktree "$requeue_ignored_repo" "$requeue_ignored_stage" dev)"
+sleep 1
+mkdir -p "$requeue_ignored_wt/out"
+printf 'fresh, unpreserved\n' > "$requeue_ignored_wt/out/frame.png"
+refuse_rc=0
+refuse_out="$("$script_dir/requeue-stage.sh" "$requeue_ignored_repo" "$requeue_ignored_stage" 2>&1)" || refuse_rc=$?
+[[ "$refuse_rc" -ne 0 ]] || fail "requeue did not refuse an unpreserved ignored deliverable"
+assert_contains "$refuse_out" "out/" "requeue refusal names the ignored path"
+[[ -d "$requeue_ignored_wt" ]] || fail "requeue removed the worktree despite refusing"
+printf 'PASS requeue refuses: exit %s, worktree retained\n' "$refuse_rc"
+
+run_fail "$requeue_ignored_repo" "$requeue_ignored_stage"
+proceed_out="$("$script_dir/requeue-stage.sh" "$requeue_ignored_repo" "$requeue_ignored_stage" 2>&1)"
+assert_contains "$proceed_out" "reset to pending" "requeue proceeds once preserved"
+[[ ! -d "$requeue_ignored_wt" ]] || fail "requeue left the run worktree standing after a successful preserve"
+printf 'PASS requeue proceeds once the ignored deliverable is preserved\n'
+# AUTOMETTA-CONTRACT-END
+
 printf 'PASS preserve-failed-work smoke\n'

@@ -4,10 +4,12 @@
 #
 # The tick trusts per-stage state on disk. Two traps make a hand re-queue
 # go wrong:
-#   1. A stale worker envelope in state/handoffs/<stage>.json still says
-#      status=pass, so the next tick skips the worker and dispatches the
-#      verifier straight at the old code, driving the stage toward the
-#      terminal verifier_failed state.
+#   1. A stale worker envelope in state/envelopes/<stage>.json (or, for a
+#      subscriber still vendoring a pre-card-104 worker prompt,
+#      state/handoffs/<stage>.json) still says status=pass, so the next
+#      tick skips the worker and dispatches the verifier straight at the
+#      old code, driving the stage toward the terminal verifier_failed
+#      state.
 #   2. A run worktree (../<repo>-run-<stage>) and branch (autometta/<stage>)
 #      left standing by a prior FAIL or stall would collide with the fresh
 #      one the next dispatch tries to cut.
@@ -29,7 +31,13 @@
 # this script refuses non-zero and names the status. Nothing unattended passes
 # --force: tick.sh --repair never considers a superseded stage.
 #
-# Usage: requeue-stage.sh [--worktree-only] [--force] <repo-root> <stage-id>
+# Without a recorded wip_commit, this script also refuses (exit 5, naming the
+# files) when the run worktree holds ignored files newer than the stage's
+# started_at -- unpreserved work from this attempt that removing the worktree
+# would discard for good. Preserve it first (tick.sh's preserve_failed_work
+# or `phat-controller.sh preserve`), or pass --discard to proceed anyway.
+#
+# Usage: requeue-stage.sh [--worktree-only] [--force] [--discard] <repo-root> <stage-id>
 # Example: requeue-stage.sh ~/repos/aegis-guardrails 01-per-call-approval-broker
 set -euo pipefail
 
@@ -42,14 +50,16 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/budget.sh"
 IFS=$' \t\n'
 
-usage() { sed -n '2,33p' "$0"; exit 2; }
+usage() { sed -n '2,41p' "$0"; exit 2; }
 
 worktree_only=false
 force=false
+discard=false
 while [ $# -gt 0 ]; do
   case "${1:-}" in
     --worktree-only) worktree_only=true; shift ;;
     --force) force=true; shift ;;
+    --discard) discard=true; shift ;;
     --) shift; break ;;
     -*) usage ;;
     *) break ;;
@@ -113,6 +123,62 @@ preserved_sha="$(yq -o=json '.' "$state_yaml" | jq -r --arg id "$stage_id" \
   '.stages[] | select(.id == $id) | .wip_commit // empty')"
 preserved_branch="$(yq -o=json '.' "$state_yaml" | jq -r --arg id "$stage_id" \
   '.stages[] | select(.id == $id) | .wip_branch // empty')"
+
+# Refuse to discard work nobody preserved. A run worktree can hold ignored
+# files (deliverables outside .gitignore's reach) that were never committed
+# because the stage stalled instead of FAILing through a verifier, or
+# because preserve itself declined (see preserve_failed_work in tick.sh).
+# started_at is the dispatch's own clock: an ignored file newer than it was
+# written during this attempt, not left over from an earlier one, so it is
+# this attempt's unpreserved work. Skipped when started_at is missing or
+# unparsable -- there is no baseline to call anything "newer" than.
+if [ -z "$preserved_sha" ]; then
+  started_at="$(yq -o=json '.' "$state_yaml" | jq -r --arg id "$stage_id" \
+    '.stages[] | select(.id == $id) | .started_at // empty')"
+  started_epoch=""
+  if [ -n "$started_at" ]; then
+    started_epoch="$(python3 - "$started_at" <<'PY' 2>/dev/null
+import datetime
+import sys
+
+value = sys.argv[1]
+if not value or value == "null":
+    raise SystemExit(1)
+dt = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+print(int(dt.timestamp()))
+PY
+)" || started_epoch=""
+  fi
+  work_dir_check="$(dirname "$repo_root")/$(basename "$repo_root")-run-${stage_id}"
+  if [ -n "$started_epoch" ] && [ -d "$work_dir_check" ]; then
+    stale_ignored="$(
+      git -C "$work_dir_check" status --porcelain --ignored -- . ':(exclude)state' 2>/dev/null \
+        | awk '/^!! / { print substr($0, 4) }' \
+        | while IFS= read -r f; do
+            [ -e "$work_dir_check/$f" ] || continue
+            mtime="$(stat -f%m "$work_dir_check/$f" 2>/dev/null || stat -c%Y "$work_dir_check/$f" 2>/dev/null || echo 0)"
+            if [ "$mtime" -gt "$started_epoch" ]; then
+              printf '%s\n' "$f"
+            fi
+          done
+    )"
+    if [ -n "$stale_ignored" ]; then
+      if [ "$discard" = true ]; then
+        echo "requeue: --discard passed; proceeding without preserving these ignored files:" >&2
+        printf '%s\n' "$stale_ignored" | sed 's/^/requeue:   /' >&2
+      else
+        echo "requeue: refusing -- $stage_id's run worktree holds ignored files newer than its" >&2
+        echo "requeue: started_at, and no wip_commit is recorded for this attempt:" >&2
+        printf '%s\n' "$stale_ignored" | sed 's/^/requeue:   /' >&2
+        echo "requeue: these files would be discarded with the worktree. If the card names" >&2
+        echo "requeue: them as deliverables, preserve first (tick.sh's preserve_failed_work," >&2
+        echo "requeue: or phat-controller.sh preserve). Pass --discard to proceed anyway." >&2
+        exit 5
+      fi
+    fi
+  fi
+fi
+
 remove_worktree_and_branch
 if [ -n "$preserved_sha" ]; then
   echo "requeue: preserved ${stage_id} attempt at ${preserved_sha} (${preserved_branch:-wip ref})"
@@ -137,7 +203,8 @@ for agent_file in "$repo_root"/state/active-agents/*.json; do
 done
 
 # Trap 1: purge every per-stage artefact the tick could misread as progress.
-rm -f "$repo_root/state/handoffs/$stage_id.json" \
+rm -f "$repo_root/state/envelopes/$stage_id.json" \
+      "$repo_root/state/handoffs/$stage_id.json" \
       "$repo_root/state/verifiers/$stage_id.json" \
       "$repo_root/state/logs/$stage_id-worker.log" \
       "$repo_root/state/logs/$stage_id-verifier.log"
@@ -157,6 +224,7 @@ yq -o=json '.' "$state_yaml" | jq --arg id "$stage_id" '
           | .worker_pid = null
           | .verifier_pid = null
           | .worker_tokens = 0
+          | .verifier_tokens = 0
           | .tokens = 0
           | .stall_marker = null
           | .worker_envelope = null

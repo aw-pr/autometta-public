@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://autometta.local/schemas/handoff-envelope.json",
-  "title": "Worker handoff envelope",
-  "description": "Written by the worker as its final action to state/handoffs/<stage-id>.json. tick.sh polls for this file and treats it as the sole completion signal. Process exit and log tail are fallback stuck-worker signals only.",
+  "$id": "https://autometta.local/schemas/envelope.json",
+  "title": "Worker dispatch envelope",
+  "description": "Written by the worker as its final action to state/envelopes/<stage-id>.json (or, for a subscriber still vendoring the pre-card-104 worker-prompt.md, state/handoffs/<stage-id>.json). tick.sh polls for this file and treats it as the sole completion signal. Process exit and log tail are fallback stuck-worker signals only.",
   "type": "object",
   "additionalProperties": false,
   "required": ["stage_id", "status", "deliverables", "notes"],
   "properties": {
     "stage_id": {
       "type": "string",
-      "pattern": "^[0-9]{2}[a-z]*-[a-z0-9-]+$",
+      "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$",
       "description": "Stage id, matching the stage card filename slug and the state.yaml stages[].id value."
     },
     "status": {

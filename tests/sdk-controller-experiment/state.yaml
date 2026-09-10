@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "current_stage": null,
+  "stages": [
+    {
+      "id": "23-sdk-exp-b",
+      "status": "failed",
+      "worker": "Claude Agent SDK experiment",
+      "verifier": "Claude Agent SDK experiment",
+      "started_at": "2026-09-01T09:05:50Z",
+      "completed_at": "2026-09-01T09:06:00Z",
+      "stall_marker": "worker failure: exit_status=None, sdk_completed=False"
+    }
+  ],
+  "last_tick_at": "2026-09-01T09:06:00Z",
+  "tick_count": 1,
+  "clock_tick_budget_remaining": 1
+}

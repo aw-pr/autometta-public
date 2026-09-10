@@ -9,13 +9,44 @@ IFS=$'\n\t'
 # This is a watchdog, not a gate. It never kills, retries, or escalates.
 # Exit is always 0 so it cannot break a tick.
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The installed-build comparison walks and hashes both trees. It belongs to
+# the controller, not an individual subscriber, so tick.sh obtains it once
+# and passes the same sanitised JSON to each per-repo heartbeat. Keeping the
+# calculation here also leaves direct heartbeat.sh calls self-contained.
+build_check_json() {
+  local build_checked_at build_check build_check_output build_check_rc
+  build_checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  build_check="$(jq -nc --arg checked_at "$build_checked_at" \
+    '{status:"unreadable",stale:false,installed_sha:null,checkout_sha:null,checked_at:$checked_at}')"
+  set +e
+  build_check_output="$("$script_dir/check-installed-build.sh" --json 2>/dev/null)"
+  build_check_rc=$?
+  set -e
+  if [[ "$build_check_rc" -le 2 ]] \
+    && printf '%s' "$build_check_output" | jq -e '
+      (.status == "current" or .status == "stale" or .status == "unreadable") and
+      (.stale | type == "boolean") and
+      ((.installed_sha == null) or (.installed_sha | type == "string")) and
+      ((.checkout_sha == null) or (.checkout_sha | type == "string")) and
+      (.checked_at | type == "string")' >/dev/null 2>&1; then
+    build_check="$(printf '%s' "$build_check_output" | jq -c '.')"
+  fi
+  printf '%s\n' "$build_check"
+}
+
+if [[ "${1:-}" == "--build-check-json" && $# -eq 1 ]]; then
+  build_check_json
+  exit 0
+fi
+
 if [[ $# -ne 1 ]]; then
   printf 'usage: %s <repo_root>\n' "$(basename "$0")" >&2
   exit 1
 fi
 
 repo_root="$1"
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 active_dir="$repo_root/state/active-agents"
 recent_dir="$repo_root/state/recent-agents"
 heartbeat_path="$repo_root/state/heartbeat.json"
@@ -25,6 +56,12 @@ stall_seconds="${AUTOMETTA_HEARTBEAT_STALL:-${PHAT_CONTROLLER_HEARTBEAT_STALL:-3
 outlier_window="${AUTOMETTA_OUTLIER_BASELINE_WINDOW:-10}"
 outlier_min_samples="${AUTOMETTA_OUTLIER_MIN_SAMPLES:-5}"
 outlier_multiple="${AUTOMETTA_OUTLIER_MULTIPLE:-10}"
+# The warning multiple observes; this one acts. Set above the largest spend a
+# legitimate stage has ever recorded -- 19,502,742 against a 1.64M median, or
+# 11.9x -- so a long-but-honest stage is never killed for being slow. Stage 73
+# reached 22.2x on 2026-09-02 and ran for 41 minutes past its warning because
+# nothing was listening. 0 disables the kill and restores observe-only.
+outlier_kill_multiple="${AUTOMETTA_OUTLIER_KILL_MULTIPLE:-15}"
 
 mkdir -p "$active_dir" "$recent_dir"
 
@@ -70,16 +107,18 @@ done
 
 python3 - "$active_dir" "$recent_dir" "$tmp_report" "$stall_seconds" \
   "$cost_log_path" "$tmp_usage" "$outlier_window" "$outlier_min_samples" \
-  "$outlier_multiple" <<'PY'
+  "$outlier_multiple" "$outlier_kill_multiple" <<'PY'
 import json
 import os
+import signal
 import statistics
+import subprocess
 import sys
 import time
 
 (
     active_dir, recent_dir, out_path, stall_str, cost_log_path, usage_path,
-    window_str, min_samples_str, multiple_str,
+    window_str, min_samples_str, multiple_str, kill_multiple_str,
 ) = sys.argv[1:]
 
 try:
@@ -98,6 +137,10 @@ try:
     warning_multiple = max(1.0, float(multiple_str))
 except ValueError:
     warning_multiple = 10.0
+try:
+    kill_multiple = max(0.0, float(kill_multiple_str))
+except ValueError:
+    kill_multiple = 15.0
 now = int(time.time())
 
 comparable_by_role = {}
@@ -228,11 +271,42 @@ for name in sorted(os.listdir(active_dir)):
         stage = doc.get("stage_id") or os.path.basename(
             doc.get("card_path") or "unknown"
         ).rsplit(".", 1)[0]
-        print(
-            "WARNING: token outlier: %s %s pid=%s live_tokens=%d "
-            "baseline_median=%s multiple=%.1fx; observation only, agent remains running"
-            % (stage, role, pid, live_total, baseline, multiple)
-        )
+        if kill_multiple > 0 and multiple >= kill_multiple:
+            # Terminate the dispatch rather than narrate it. The worktree is
+            # left standing, so the work survives for the reaper to preserve;
+            # what stops is the spending. Children first, then the wrapper, so
+            # the model process does not outlive the script that owns it.
+            killed = False
+            try:
+                subprocess.run(["pkill", "-TERM", "-P", str(pid)], check=False)
+                os.kill(int(pid), signal.SIGTERM)
+                killed = True
+            except (OSError, ValueError) as error:
+                print(
+                    "WARNING: token outlier: %s %s pid=%s at %.1fx could not be "
+                    "terminated (%s); it is still running"
+                    % (stage, role, pid, multiple, error)
+                )
+            if killed:
+                flags.append("token-outlier-killed")
+                doc["token_outlier"]["killed_at"] = "%dZ" % now
+                doc["token_outlier"]["kill_multiple"] = kill_multiple
+                doc["outcome"] = "killed-token-outlier"
+                print(
+                    "KILLED: token outlier: %s %s pid=%s live_tokens=%d "
+                    "baseline_median=%s multiple=%.1fx exceeded kill threshold "
+                    "%.1fx; work left in the run worktree"
+                    % (stage, role, pid, live_total, baseline, multiple,
+                       kill_multiple)
+                )
+        else:
+            print(
+                "WARNING: token outlier: %s %s pid=%s live_tokens=%d "
+                "baseline_median=%s multiple=%.1fx; below the %.1fx kill "
+                "threshold, agent remains running"
+                % (stage, role, pid, live_total, baseline, multiple,
+                   kill_multiple)
+            )
 
     doc["alive"] = alive
     doc["flags"] = flags
@@ -268,6 +342,7 @@ report = {
         "baseline_window": baseline_window,
         "minimum_comparable_rows": min_samples,
         "warning_multiple": warning_multiple,
+        "kill_multiple": kill_multiple,
     },
     "baselines": baselines,
     "active_count": len(entries),
@@ -283,21 +358,16 @@ PY
 # observability seam slower than its own refresh interval. Exit 1 means stale;
 # exit 2, malformed output, or a missing helper all become an unreadable
 # verdict. Heartbeat remains a watchdog and still exits 0.
-build_checked_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-build_check="$(jq -nc --arg checked_at "$build_checked_at" \
-  '{status:"unreadable",stale:false,installed_sha:null,checkout_sha:null,checked_at:$checked_at}')"
-set +e
-build_check_output="$("$script_dir/check-installed-build.sh" --json 2>/dev/null)"
-build_check_rc=$?
-set -e
-if [[ "$build_check_rc" -le 2 ]] \
-  && printf '%s' "$build_check_output" | jq -e '
+if [[ -n "${AUTOMETTA_BUILD_CHECK_JSON:-}" ]] \
+  && printf '%s' "$AUTOMETTA_BUILD_CHECK_JSON" | jq -e '
     (.status == "current" or .status == "stale" or .status == "unreadable") and
     (.stale | type == "boolean") and
     ((.installed_sha == null) or (.installed_sha | type == "string")) and
     ((.checkout_sha == null) or (.checkout_sha | type == "string")) and
     (.checked_at | type == "string")' >/dev/null 2>&1; then
-  build_check="$(printf '%s' "$build_check_output" | jq -c '.')"
+  build_check="$(printf '%s' "$AUTOMETTA_BUILD_CHECK_JSON" | jq -c '.')"
+else
+  build_check="$(build_check_json)"
 fi
 jq --argjson build_check "$build_check" '. + {build_check:$build_check}' \
   "$tmp_report" > "${tmp_report}.next"

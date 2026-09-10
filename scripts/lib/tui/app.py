@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render import (ACTIVE, ALERT, BOLD, DIM, NORMAL, REVERSE, TuiState,
                     ordered_run_stages, render)
 from messages import read_bus, write_pending
+from status_updates import read_status_updates
 
 
 def payload_from_aggregator(aggregator, repo_root):
@@ -25,6 +26,11 @@ def payload_from_aggregator(aggregator, repo_root):
 
 
 _NO_PAYLOAD = object()
+
+
+def confine_agent_selection(state):
+    live_count = len(state.payload.get("agents") or [])
+    state.selection[3] = min(state.selection[3], max(0, live_count - 1))
 
 
 def _poll(results, generation, started_at, aggregator, repo_root, payload):
@@ -62,6 +68,7 @@ def apply_poll_result(state, result, latest_generation):
     else:
         state.update(result["payload"], observed_at=result["started_at"],
                      data_started_at=result["started_at"])
+        confine_agent_selection(state)
     return True
 
 
@@ -76,6 +83,9 @@ def fixture_polls(path):
 
 def refresh_controller(state, repo_root):
     state.update_controller(read_bus(repo_root))
+    # Read on the same beat as the controller bus: both are small local files
+    # the tick appends to, and panel 5 is stale the moment the loop speaks.
+    state.update_status_updates(read_status_updates(repo_root))
 
 
 def open_card(repo_root, card_path):
@@ -208,6 +218,7 @@ def capture(args):
         polls = [payload_from_aggregator(args.aggregator, args.repo_root)]
     for index, payload in enumerate(polls):
         state.update(payload, observed_at=index * args.interval)
+        confine_agent_selection(state)
         refresh_controller(state, args.repo_root)
     ensure_card_body(state, args.repo_root)
     for key in filter(None, (part.strip() for part in args.keys.split(","))):
@@ -220,6 +231,10 @@ def curses_attr(attr):
     if attr == BOLD:
         return curses.A_BOLD
     if attr == REVERSE:
+        # Pastel selection to match the ANSI table in render.py; hard
+        # reverse video only where the terminal lacks 256 colours.
+        if curses.has_colors() and curses.COLORS >= 256:
+            return curses.color_pair(3)
         return curses.A_REVERSE
     if attr == ACTIVE:
         return curses.A_BOLD | (curses.color_pair(1) if curses.has_colors() else 0)
@@ -275,6 +290,10 @@ def interactive(args):
             curses.use_default_colors()
             curses.init_pair(1, curses.COLOR_CYAN, -1)
             curses.init_pair(2, curses.COLOR_RED, -1)
+            if curses.COLORS >= 256:
+                # Selection: near-black ink on light steel blue, the same
+                # 256-colour indices the ANSI table uses.
+                curses.init_pair(3, 235, 153)
 
         state = TuiState(args.interval)
         next_poll = 0.0

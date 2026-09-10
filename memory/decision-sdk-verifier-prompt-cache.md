@@ -1,6 +1,6 @@
 ---
 name: decision-sdk-verifier-prompt-cache
-description: Why and how prompt caching was added to the SDK verifier route — ephemeral TTL, static/variable split, anthropic library switch.
+description: Why and how prompt caching was added to the SDK verifier route - ephemeral TTL, static/variable split, anthropic library switch.
 metadata:
   type: project
 ---

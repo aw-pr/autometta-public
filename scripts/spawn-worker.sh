@@ -44,12 +44,22 @@ extract_requires_gui() {
   sed -n 's/^- \*\*Requires GUI:\*\* //p' "$card_path" | head -n1
 }
 
+extract_requires_network() {
+  local card_path="$1"
+  sed -n 's/^- \*\*Requires network:\*\* //p' "$card_path" | head -n1
+}
+
+extract_requires_agent_home() {
+  local card_path="$1"
+  sed -n 's/^- \*\*Requires agent home:\*\* //p' "$card_path" | head -n1
+}
+
 extract_stage_id() {
   local card_path="$1"
   local base
   base="$(basename "$card_path")"
   base="${base%.md}"
-  if [[ ! "$base" =~ ^[0-9]{2}[a-z]*-[a-z0-9-]+$ ]]; then
+  if [[ ! "$base" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]; then
     log_msg "rejecting malformed stage id derived from ${card_path}: ${base}"
     exit 1
   fi
@@ -129,13 +139,25 @@ main() {
   if [[ ${#AUTOMETTA_EFFORT_ARGV[@]} -gt 0 ]]; then
     log_msg "worker effort: ${effort} (${stage_id})"
   fi
-  local requires_gui codex_sandbox
+  local requires_gui codex_sandbox requires_network requires_agent_home
   requires_gui="$(extract_requires_gui "$card_path")"
   codex_sandbox="$(resolve_codex_sandbox_for_card "$repo_root" "$requires_gui")"
   if [[ "$codex_sandbox" == "danger-full-access" ]]; then
     log_msg "worker runs codex unsandboxed: card declares Requires GUI (${stage_id})"
   fi
+  requires_network="$(extract_requires_network "$card_path")"
+  codex_network_argv_for_card "$requires_network" "$codex_sandbox"
+  codex_approval_argv
+  if [[ ${#AUTOMETTA_CODEX_NETWORK_ARGV[@]} -gt 0 ]]; then
+    log_msg "worker keeps workspace-write but opens the network: card declares Requires network (${stage_id})"
+  fi
+  requires_agent_home="$(extract_requires_agent_home "$card_path")"
+  codex_agent_home_argv_for_card "$requires_agent_home" "$codex_sandbox"
+  if [[ ${#AUTOMETTA_CODEX_AGENT_HOME_ARGV[@]} -gt 0 ]]; then
+    log_msg "worker may write the agent home dir: card declares Requires agent home (${stage_id})"
+  fi
   codex_state_argv_for_repo "$repo_root"
+  claude_mcp_config_argv_for_repo "$repo_root"
   # Codex registers apply_patch from per-model metadata fetched from OpenAI's
   # model catalogue. A local Ollama model is not in that catalogue, so it falls
   # back to metadata carrying no apply_patch_tool_type and the tool is never
@@ -144,11 +166,11 @@ main() {
   # that does not exist: three stages stalled that way with
   # worker_envelope_missing_after_exit on 2026-08-28, one of them after 681k
   # tokens. exec_command works on this route, so name the edit path that does.
-  worker_family_notes="None"
+  worker_family_notes="Repository worktree: ${work_dir}. Use it as the working directory for every repository-relative command. The stage card may live in another checkout; reading it must not change the repository root."
   if [[ "$family" == codex ]]; then
     worker_route_mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" codex --print-mode --role worker 2>/dev/null || printf '')"
     if [[ "$worker_route_mode" == local ]]; then
-      worker_family_notes="The apply_patch tool is NOT registered on this local route. Do not call it; every call fails with \"unsupported call: apply_patch\". Create and edit files with shell commands through exec_command instead, for example a python3 heredoc, or a shell heredoc that writes the file. Read each file back after writing it to confirm the change landed."
+      worker_family_notes="${worker_family_notes} The apply_patch tool is NOT registered on this local route. Do not call it; every call fails with \"unsupported call: apply_patch\". Create and edit files with shell commands through exec_command instead, for example a python3 heredoc, or a shell heredoc that writes the file. Read each file back after writing it to confirm the change landed."
     fi
   fi
   prompt="$(render_prompt "$work_dir" "$card_path" "$worker_identity" "$stage_id" "$(basename "$repo_root")" "$worker_family_notes")"
@@ -209,6 +231,10 @@ main() {
     cloud_model="$(codex_cloud_model_for_identity "$worker_identity")"
   fi
 
+  # Non-interactive bash otherwise leaves background jobs in the tick's
+  # process group. Job control gives each worker wrapper its own group, led by
+  # the PID recorded below, while disown still protects it when the tick exits.
+  set -m
   case "$family" in
     codex)
       if [[ "$codex_mode" == "local" ]]; then
@@ -219,13 +245,13 @@ main() {
           exit 1
         fi
         # shellcheck disable=SC2086
-        op-fetch $auth_pairs -- codex exec --oss --local-provider=ollama -m "$local_model" -C "$work_dir" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec --oss --local-provider=ollama -m "$local_model" -C "$work_dir" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_APPROVAL_ARGV[@]+"${AUTOMETTA_CODEX_APPROVAL_ARGV[@]}"} ${AUTOMETTA_CODEX_NETWORK_ARGV[@]+"${AUTOMETTA_CODEX_NETWORK_ARGV[@]}"} ${AUTOMETTA_CODEX_AGENT_HOME_ARGV[@]+"${AUTOMETTA_CODEX_AGENT_HOME_ARGV[@]}"} ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       elif [[ -n "$codex_home_override" ]]; then
         # shellcheck disable=SC2086
-        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+        CODEX_HOME="$codex_home_override" op-fetch $auth_pairs --pass CODEX_HOME -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_APPROVAL_ARGV[@]+"${AUTOMETTA_CODEX_APPROVAL_ARGV[@]}"} ${AUTOMETTA_CODEX_NETWORK_ARGV[@]+"${AUTOMETTA_CODEX_NETWORK_ARGV[@]}"} ${AUTOMETTA_CODEX_AGENT_HOME_ARGV[@]+"${AUTOMETTA_CODEX_AGENT_HOME_ARGV[@]}"} ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       else
         # shellcheck disable=SC2086
-        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
+        op-fetch $auth_pairs -- codex exec -C "$work_dir" --model "$cloud_model" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --sandbox "$codex_sandbox" ${AUTOMETTA_CODEX_APPROVAL_ARGV[@]+"${AUTOMETTA_CODEX_APPROVAL_ARGV[@]}"} ${AUTOMETTA_CODEX_NETWORK_ARGV[@]+"${AUTOMETTA_CODEX_NETWORK_ARGV[@]}"} ${AUTOMETTA_CODEX_AGENT_HOME_ARGV[@]+"${AUTOMETTA_CODEX_AGENT_HOME_ARGV[@]}"} ${AUTOMETTA_CODEX_STATE_ARGV[@]+"${AUTOMETTA_CODEX_STATE_ARGV[@]}"} "$prompt" </dev/null >"$log_path" 2>&1 &
       fi
       ;;
     claude)
@@ -233,7 +259,7 @@ main() {
       # budget_parse_tokens_from_log needs; text-mode `claude -p` prints no
       # usage. stderr goes straight to the log so errors are never filtered.
       # shellcheck disable=SC2086
-      ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$worker_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+      ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$worker_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"} --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       ;;
     *)
       log_msg "unsupported worker family for identity: ${worker_identity}"

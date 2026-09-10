@@ -7,7 +7,7 @@ links out to the deep design docs under `docs/` rather than duplicating them.
 Autometta is a pattern library for headless agent orchestration on one machine.
 It dispatches worker and verifier agents across two CLI families (Claude Code
 and Codex CLI) in the same working tree, and uses cross-family verification:
-one family checks the other's work. Pre-alpha. macOS and Linux only.
+one family checks the other's work. v1.0.0, single operator. macOS and Linux only.
 
 If you are new, read in this order: this manual for orientation, then
 `docs/dispatch-contract.md` (the load-bearing document) and `docs/lessons.md`
@@ -67,8 +67,10 @@ Catches silent agent deaths in both manual and loop dispatches.
 - Heartbeat watchdog: `scripts/heartbeat.sh` surfaces stalls and over-budget
   conditions to `state/heartbeat.json`. It never kills or retries; exit is
   always 0 so it cannot break a tick.
-- tmux agent ticker: `scripts/agent-ticker.sh` (third pane of the
-  `autometta-<repo>` viewer).
+- tmux viewer: `autometta attach <repo>` opens `tui`, `repo` (full-window
+  repo ticker) and `log` windows; the control-plane session adds `status` and
+  `fleet`. Window set and keys in section 6. `scripts/agent-ticker.sh` is a
+  standalone ticker that `attach` does not launch.
 - Polling primitive: `scripts/watch-agent.sh` - a manual dispatch blocks on it
   until the agent exits cleanly (0), goes STUCK (2), or gets bad input (3).
 - Design: `docs/observability.md`.
@@ -83,10 +85,12 @@ Catches silent agent deaths in both manual and loop dispatches.
   block. `scripts/verify-sdk.py`, `scripts/sdk-cache-smoke.sh`,
   `schemas/verifier.json`, `scripts/validate-verifier-artefacts.sh`. Design:
   `docs/sdk-verifier.md`.
-- **Worker handoff envelope.** The worker's structured completion signal,
-  validated against `schemas/handoff-envelope.json` by
-  `scripts/validate-handoff-envelope.sh`, written to `state/handoffs/`. It is
-  the sole completion signal a worker emits. Design: `docs/handoff-envelope.md`.
+- **Worker dispatch envelope.** The worker's structured completion signal,
+  validated against `schemas/envelope.json` by
+  `scripts/validate-envelope.sh`, written to `state/envelopes/` (or, for a
+  subscriber still vendoring a pre-card-104 worker prompt, `state/handoffs/`).
+  It is the sole completion signal a worker emits. Design:
+  `docs/dispatch-envelope.md`.
 - **Dashboard.** A static HTML dashboard regenerated from subscriber state.
   `scripts/dashboard.sh`, `scripts/aggregate-dashboard.sh`. See
   `docs/dashboard.md`.
@@ -117,16 +121,16 @@ to one backing script.
 | `autometta refresh-all-repos [--dry-run]` | Refresh the vendored dispatch contract across every enabled subscriber, naming every skip or refusal. |
 | `autometta add-stage <repo-path> <stage-card-path>` | Append a stage to a subscribed repo's `state.yaml` from a stage card. It inherits the active `run_id` from the most recent pending or in-progress stage, or starts a new UTC timestamped run when none is active; historic rows are not backfilled. |
 | `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Any stage whose run branch is still waiting to be merged into its base branch gets an `awaiting integration` line under the repo's row, naming the branch to merge. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. `scripts/status.sh --repo <path>` narrows the table to one subscriber; the tmux status pane uses it so an attached dash shows the repo you attached to. |
-| `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`). An ordinary subscriber gets `repo` (full-window repo ticker) and `log` windows. The `autometta-autometta` control-plane session adds `status` and `fleet`, but still lands on the repo-scoped page. An interactive attach replaces an existing viewer so ticker changes take effect; `--dry-run` prints the commands and `--ensure` (used by `init`) creates only when absent. A separate job refreshes fleet `data.json` every 120 seconds. Orphaned viewers whose subscriber is disabled or gone are reported. |
+| `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`). An ordinary subscriber gets `tui`, `repo` (full-window repo ticker) and `log` windows. The `autometta-autometta` control-plane session opens `tui`, `repo`, `status`, `fleet` and `log`, but still lands on the repo-scoped page. An interactive attach replaces an existing viewer so ticker changes take effect; `--dry-run` prints the commands and `--ensure` (used by `init`) creates only when absent. A separate job refreshes fleet `data.json` every 120 seconds. Orphaned viewers whose subscriber is disabled or gone are reported. |
 | `autometta tui [repo-path]` | Open the full-screen terminal UI for one repo, defaulting to the current directory. It polls the shared per-repo dashboard aggregate every five seconds. |
 | `autometta detach [repo-path\|--all]` | Remove one tmux viewer, defaulting to the current repo, or tear down every `autometta-*` viewer with `--all`. Other tmux sessions are never touched. |
 | `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one tick across subscribers: read state, dispatch one worker and/or verifier, write next state, snapshot state onto `autometta/state`, sweep retention and stale run worktrees, exit. A declared pipeline pair may dispatch worker N+1 while verifier N is live, but landing remains ordered and overlap escalates. It never changes the branch checked out in a subscriber's own checkout. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` requeues every stalled or failed stage across all enabled subscribers, via the same reset `scripts/requeue-stage.sh` performs by hand; it leaves `in_progress` and `verifier_failed` alone, refuses a stage whose card no longer resolves (`stall_marker: card_missing`), skips a repo still over a spend cap, and stops at `repair_attempts` 2 per stage (`AUTOMETTA_REPAIR_ATTEMPT_CAP`). |
-| `autometta phat-controller <verb> [args]` | Run a queue-minder verb. `pass` dispatches one controller pass; the remaining verbs inspect, preserve, rebrief, requeue, integrate, message, journal or escalate work under the controller's guards. `autometta warden ...` is the deprecated one-release alias. |
+| `autometta phat-controller <verb> [args]` | Run a queue-minder verb. `pass` dispatches one controller pass; the remaining verbs inspect, preserve, rebrief, requeue, integrate, message, journal or escalate work under the controller's guards; `resume-to-verifier <repo> <stage-id> [--accept-partial]` sends a returned worker envelope on to its verifier without a fresh worker dispatch (the flag admits a `partial` envelope). `autometta warden ...` is the deprecated one-release alias. |
 | `autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]` | Render the phat-controller context seed and mirror its machine-readable spend authority into the mandate. Refuses to write without explicit spend authority. |
 | `autometta drain start [--cap N\|--lift] [--hours H] [--repo PATH] [--reason TEXT]`, `autometta drain status`, `autometta drain end` | Start, inspect or end a bounded, self-expiring host-level drain that temporarily raises the effective token cap without editing repo budgets. |
-| `autometta check-deps` | Verify required tooling is present (bash, git, jq, yq, tmux, the CLI families, op-fetch, etc.). |
+| `autometta check-deps` | Verify required tooling is present: bash 3.2+, jq, git, codex, claude, python3, yq, agent-whoami, op-fetch and op are required; tmux is optional (attach viewer). Also refuses credential-bearing symlinks in the checkout. |
 | `autometta check-build` | Compare the installed build with the source checkout file by file and report which root the loaded fleet tick runs. |
-| `autometta dashboard [--open]` | Regenerate the static dashboard under the controller home; `--open` opens it in the default browser. |
+| `autometta dashboard [--repo <repo-path>] [--open] [--watch] [--serve] [--interval <secs>] [--port <port>]` | Regenerate the static dashboard under the controller home. `--repo` narrows it to one subscriber; `--open` opens it in the default browser; `--watch` regenerates `data.json` every `--interval` seconds (default 5) until interrupted; `--serve` is `--watch` plus a loopback http server on `--port` (default 8787) so the page polls by fetch. |
 | `autometta failures (<repo-path>\|--fleet) [--json]` | Itemised failures history on demand: every terminal-status stage and every non-pass dispatch, with tokens lost. Moved out of the live ticker panes so they stop competing for space; `--fleet` covers every enabled subscriber instead of one repo. Reads the same aggregated JSON the pane it reports for reads, so the two never disagree. |
 | `autometta retro-grade [--last N] [--dry-run]` | Build and optionally submit an Anthropic Message Batch that re-runs the current verifier rubric over recent completed stages. |
 | `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
@@ -214,13 +218,24 @@ Each stage in `state/state.yaml` carries a `status`, one of:
 `pending`, `in_progress`, `completed`, `failed`, `stalled`, `verifier_failed`,
 `superseded`.
 
-On worker exit, the tick reads the handoff envelope and branches:
+On worker exit, the tick reads the dispatch envelope and branches:
 
 - envelope says pass: dispatch the verifier.
-- envelope says fail or partial: mark the stage failed.
+- envelope says partial: record `worker_envelope: partial` on the stage and
+  dispatch the verifier anyway; the deferred criteria reach it as a checklist
+  and acceptability is its call, not the worker's.
+- envelope says fail: mark the stage failed.
 - no envelope written: stall with marker `worker_envelope_missing_after_exit`.
 - envelope fails schema validation: stall with marker
   `worker_envelope_invalid` (the bad file is moved aside for inspection).
+
+Other stall markers the tick writes: `card_missing` (the stage card no longer
+resolves; `--repair` refuses it), `base_branch_unresolved`,
+`dispatch_base_tip_unresolved` and `run_worktree_failed` (the run worktree
+could not be prepared), `dispatch_configuration_fault:<role>` (an agent exited
+before attempting its role), and the pipeline-pair escalations
+`pipeline-rebase-input-missing`, `pipeline-rebase-conflict` and
+`pipeline-actual-diff-overlap:<paths>`.
 
 On a verifier FAIL, the stage is set to `verifier_failed`, `current_stage` is
 cleared, and the working tree is left intact for operator review.
@@ -243,6 +258,17 @@ tick writes `halted: true` with one of these canonical `halt_reason` values:
   `current_stage` is non-null; the halt only fires otherwise).
 - `yq-missing` - the `yq` binary was not on PATH.
 - `invalid-stage-id` - a stage id failed the id-format validator.
+- `state-corrupt` - the top-of-tick integrity guard found `state.yaml`
+  unreadable and could not restore `state/state.yaml.bak`.
+- `dispatch-configuration-fault` - a worker or verifier exited before
+  attempting its role (bad command, credentials or run worktree state
+  symlink); the stage carries `dispatch_configuration_fault:<role>`.
+- `controller-escalation` - a pipeline pair needs a human (rebase conflict,
+  overlap or missing input) or phat-controller escalated; the tail stage's
+  `stall_marker` says why.
+
+A window reset that clears a cap halt is recorded in the breach history as
+`window-reset` rather than as a halt reason.
 
 Clear a halt once you have fixed the cause:
 
@@ -373,9 +399,9 @@ modes.
 
 **Read a local verifier in the cost log.** Route and tier are independent.
 `auth_route` comes from the auth resolver; `tier` comes only from the stage's
-identity string (`scripts/cost-log.sh:212-215`, `scripts/rates.sh:40-59`). An
-identity containing `GPT-OSS` maps to T5, whose rate row is zero
-(`scripts/rates.sh:64-72`). A local route using a Terra, Sol or other identity
+identity string (`costlog_append` in `scripts/cost-log.sh` calls
+`tier_for_identity` in `scripts/rates.sh`). An identity containing `GPT-OSS`
+maps to T5, whose rate row from `rate_for_tier` is zero. A local route using a Terra, Sol or other identity
 keeps that identity's tier and estimate; local mode does not rewrite it to T5.
 Inspect all three facts together, including the actual tokens captured from
 the role log:
@@ -397,10 +423,14 @@ current per-family resolution from env override, repo manifest, then default,
 which is the same precedence used at launch (`scripts/auth-route.sh`). For a
 running codex verifier, `ps -p <pid> -o command=` identifies the local route by
 `--oss --local-provider=ollama`; API and subscription both use `--model`
-(`scripts/spawn-verifier.sh:338-362`). For Claude, the
-`verifier-transport: cli|sdk` log line reports the harness, not the billing
-route. CLI accepts subscription or API, while SDK requires API
-(`scripts/spawn-verifier.sh:307-320,365-380`). The running-agent registry does
+(`scripts/spawn-verifier.sh`, codex branch). For Claude, the
+`verifier-transport:` log line reports the harness (`cli`, `sdk` or
+`agent-sdk`) and its provenance, not the billing route. Both transports accept
+either auth mode; the route guard (`claude_route_refusal` in
+`scripts/models.sh`, applied by `resolve_verifier_transport` in
+`scripts/spawn-verifier.sh`) downgrades the raw-API `sdk` surface to `cli` on
+a subscription token, so a `cli (route-guard: ...)` line means the manifest
+asked for a pairing the credential cannot serve. The running-agent registry does
 not expose a separate billing-route field, so for a Claude CLI verifier use
 the launch-time auth resolution; after reap, read `auth_route` in its cost-log
 line.
@@ -454,7 +484,8 @@ and smoke tests, set `AUTOMETTA_TUI_CAPTURE=true`; optional
   Tunable via `AUTOMETTA_WATCH_POLL` (default 60s) and
   `AUTOMETTA_WATCH_STALL_GRACE` (default 120s).
 
-- **Viewer**: `autometta attach <repo>` opens a two-window tmux session. The
+- **Viewer**: `autometta attach <repo>` opens a tmux session with `tui`,
+  `repo` and `log` windows. The `tui` window is the terminal UI above; the
   `repo` window is a full-window repo ticker with NOW, NEXT, ESCALATIONS, SPEND
   AND LOSS and FRESHNESS; the `log` window tails controller lines for that
   repo. Switch with `tmux next-window`. Run `autometta detach --all` to tear
@@ -462,11 +493,11 @@ and smoke tests, set `AUTOMETTA_TUI_CAPTURE=true`; optional
 
 - **Fleet viewer**: `autometta attach /path/to/autometta` opens
   `autometta-autometta` landing on the repo-scoped fleet page for autometta
-  itself (TOTALS and ESCALATIONS, no REPOS table). The fleet-wide page --
+  itself (TOTALS and ESCALATIONS, no REPOS table). The fleet-wide page,
   every enabled subscriber, its operational state and why, queue depth,
   today's spend and spend against the cap that binds, plus one ESCALATIONS
   row per halted, paused, attempt-capped, stale-vendor or over-budget
-  condition -- is a `tmux next-window` away, sourced from the same read-only
+  condition, is a `tmux next-window` away, sourced from the same read-only
   dashboard `data.json`. Completed roles are excluded from provider-limit
   scans so source text and commit subjects cannot cry wolf. The itemised
   failures list and per-role spend breakdown are reachable with
@@ -478,8 +509,10 @@ and smoke tests, set `AUTOMETTA_TUI_CAPTURE=true`; optional
   mismatch between the installed command and checkout HEAD is shown as build
   drift and rechecked at most once a minute.
   Override the refresh interval with `AUTOMETTA_FLEET_REFRESH_INTERVAL`.
-  The control-plane repo's original three-pane view remains in the `repo`
-  window.
+  The control-plane session's window set is `tui`, `repo`, `status`, `fleet`
+  and `log`. In that session `repo` is the fleet ticker scoped to autometta
+  itself, `status` carries the per-repo ticker an ordinary subscriber shows in
+  `repo`, and `fleet` is the fleet-wide page.
 
 A family asymmetry to remember: `claude -p` does not stream its log; the file
 stays at 0 bytes until the run completes. So log-mtime staleness is not a stuck
@@ -490,17 +523,22 @@ See `docs/observability.md`.
 
 ## 7. Publish workflow
 
-Private development lives on `dev`; the clean public mirror lives on `publish`,
-populated via clean topic-branch merges. A fail-closed git gate guards the
-public push.
+Private development lives on `dev`; `publish` is a pointer on the same linear
+history that is fast-forwarded to `dev` when a batch is ready. A fail-closed
+git gate guards the public push.
 
 - Install the publish-guard hooks: `scripts/install-guards.sh`. The pre-commit
   hook blocks committing real `op://` refs and other configured patterns
   (`.publish-guard.local`).
-- The public force-push goes through the gate with `PUBLISH_GUARD_OK=1` and
-  `--force-with-lease`; never `--no-verify`.
+- Publish is never a force-push. Under the default `publishguard.boundary=pr`
+  the pre-push hook rejects any push to the public `main`; the flow is
+  `git switch publish && git merge --ff-only dev && git push origin publish
+  && git push public publish`, then a PR `publish -> main` on the forge
+  (`gh pr create --base main --head publish` when none is open) merged there.
+  Never `--no-verify`.
 
-Full model and the `git publish` flow: `docs/PUBLISH-WORKFLOW.md`. The
+Full model, including the `direct` boundary that keeps the `git publish`
+alias: `docs/PUBLISH-WORKFLOW.md` ("Normal publish"). The
 `repo-publish-workflow` and `repo-publish-guard-*` skills automate setup in
 other repos.
 
@@ -515,7 +553,8 @@ These are the failure modes that will bite you. Full write-up in
    redirect `</dev/null` from any wrapping harness.
 2. **Card-sync race across worktrees.** Verifier and worker must see the same
    card content; serialise writes.
-3. **Opaque log paths.** Use predictable paths (`/tmp/codex-<stage>.log`), not
+3. **Opaque log paths.** Use predictable paths (the loop writes
+   `state/logs/<stage-id>-worker.log` and `<stage-id>-verifier.log`), not
    harness-generated task ids.
 4. **Sandbox shadows.** A worker that appears to pass acceptance inside its
    sandbox may be lying about side effects it could not perform. This is why
@@ -560,7 +599,7 @@ For the dated session log and the current backlog, see `HANDOFF.md` and
 | Operator setup, cron, auth section 7 | `docs/setup.md` |
 | Observability model | `docs/observability.md` |
 | SDK verifier route + prompt caching | `docs/sdk-verifier.md` |
-| Worker handoff envelope | `docs/handoff-envelope.md` |
+| Worker dispatch envelope | `docs/dispatch-envelope.md` |
 | Dashboard | `docs/dashboard.md` |
 | Deployment, manifests, submodule escape hatch | `docs/deployment.md` |
 | Private/public branch model and gate | `docs/PUBLISH-WORKFLOW.md` |

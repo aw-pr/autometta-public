@@ -36,7 +36,8 @@ Usage:
   autometta tick [--repair|--reset-halt [--reset-tokens]]
   autometta phat-controller <verb> [args]   # pass | picture | preserve |
                                             # rebrief | propose-amendment |
-                                            # requeue | stale-halt |
+                                            # requeue | resume-to-verifier |
+                                            # stale-halt |
                                             # merge-awaiting | smokes | push |
                                             # queue-card | escalate | journal |
                                             # inbox | inbox-reply | inbox-refuse |
@@ -46,17 +47,18 @@ Usage:
   autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]
   autometta warden ...                      # deprecated alias for one release
   autometta drain start [--cap N|--lift] [--hours H] [--repo PATH] [--reason TEXT]
+                        [--ignore-reserve] [--replace]
   autometta drain status
   autometta drain end
   autometta check-deps
   autometta check-build
   autometta dashboard [--repo <repo-path>] [--open] [--watch] [--serve]
                       [--interval <secs>] [--port <port>]
-  autometta failures <repo-path> [--json]
+  autometta failures (<repo-path> | --fleet) [--json]
   autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]
   autometta uninstall-launchagent <repo-path>
-  autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--window-reserve-percent N] [--window-reserve-action hold|observe]
+  autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--token-ceiling N] [--expires ISO8601] [--window-reserve-percent N] [--window-reserve-action hold|observe]
   autometta uninstall-launchagent-phat-controller
   autometta install-homebrew-local [--dry-run]
   autometta auth status
@@ -223,7 +225,7 @@ case "$command_name" in
     ;;
   install-launchagent-phat-controller|install-launchagent-warden)
     if [[ $# -lt 1 ]]; then
-      printf 'usage: autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--window-reserve-percent N] [--window-reserve-action hold|observe]\n' >&2
+      printf 'usage: autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--token-ceiling N] [--expires ISO8601] [--window-reserve-percent N] [--window-reserve-action hold|observe]\n' >&2
       exit 1
     fi
     run_script install-launchagent-phat-controller.sh "$@"

@@ -20,7 +20,7 @@
       "id": 3,
       "name": "bash -n scripts/health-check.sh returns 0",
       "verdict": "PASS",
-      "evidence": "`bash -n /Users/AnthonyWest/repos/autometta/scripts/health-check.sh` returned exit code 0 with no output."
+      "evidence": "`bash -n <root>/autometta/scripts/health-check.sh` returned exit code 0 with no output."
     },
     {
       "id": 4,

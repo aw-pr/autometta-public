@@ -1,11 +1,11 @@
 ---
 name: decision-verifier-panel
-description: Why N=3 panel verifier, majority vote, fixed composition, opt-in default — stage 18 decision memo
+description: Why N=3 panel verifier, majority vote, fixed composition, opt-in default - stage 18 decision memo
 metadata:
   type: project
 ---
 
-Panel verification was introduced in stage 18 as an opt-in route for high-stakes stages. The design choices below are decisions, not preferences — changing them needs an explicit conversation.
+Panel verification was introduced in stage 18 as an opt-in route for high-stakes stages. The design choices below are decisions, not preferences - changing them needs an explicit conversation.
 
 **Why N=3 not N=5**
 
@@ -17,7 +17,7 @@ Unanimity blocks on any single over-strict verifier, recreating the same problem
 
 **Why fixed composition for v1**
 
-Per-card panel composition (choose your own models) adds significant implementation complexity — auth routes, prompt templates, and the aggregation schema all need to be parameterised. Fixed composition ships now; configurable composition is a separate future card if it proves necessary.
+Per-card panel composition (choose your own models) adds significant implementation complexity - auth routes, prompt templates, and the aggregation schema all need to be parameterised. Fixed composition ships now; configurable composition is a separate future card if it proves necessary.
 
 **Why opt-in not default**
 
