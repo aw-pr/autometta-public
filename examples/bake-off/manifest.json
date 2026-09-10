@@ -3,7 +3,7 @@
   "stages": [
     {
       "stage_id": "02-fractal-defaults-and-cycling",
-      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "repo": "<root>/emergence-lab",
       "card": "docs/stages/02-fractal-defaults-and-cycling.md",
       "frontier_artefact": "examples/bake-off/frontier/02-fractal-defaults-and-cycling.json",
       "frontier_overall": "FAIL",
@@ -11,7 +11,7 @@
     },
     {
       "stage_id": "05-math-formula-rendering",
-      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "repo": "<root>/emergence-lab",
       "card": "docs/stages/05-math-formula-rendering.md",
       "frontier_artefact": "examples/bake-off/frontier/05-math-formula-rendering.json",
       "frontier_overall": "FAIL",
@@ -19,7 +19,7 @@
     },
     {
       "stage_id": "15c-sdk-verifier-integration",
-      "repo": "/Users/AnthonyWest/repos/autometta",
+      "repo": "<root>/autometta",
       "card": "stage-cards/15c-sdk-verifier-integration.md",
       "frontier_artefact": "examples/bake-off/frontier/15c-sdk-verifier-integration.json",
       "frontier_overall": "FAIL",
@@ -27,7 +27,7 @@
     },
     {
       "stage_id": "16-sdk-verifier-prompt-cache",
-      "repo": "/Users/AnthonyWest/repos/autometta",
+      "repo": "<root>/autometta",
       "card": "stage-cards/16-sdk-verifier-prompt-cache.md",
       "frontier_artefact": "examples/bake-off/frontier/16-sdk-verifier-prompt-cache.json",
       "frontier_overall": "FAIL",
@@ -35,7 +35,7 @@
     },
     {
       "stage_id": "22-mcp-served-cards-design",
-      "repo": "/Users/AnthonyWest/repos/autometta",
+      "repo": "<root>/autometta",
       "card": "stage-cards/22-mcp-served-cards-design.md",
       "frontier_artefact": "examples/bake-off/frontier/22-mcp-served-cards-design.json",
       "frontier_overall": "FAIL",
@@ -43,7 +43,7 @@
     },
     {
       "stage_id": "06-real-dispatch-test",
-      "repo": "/Users/AnthonyWest/repos/autometta",
+      "repo": "<root>/autometta",
       "card": "stage-cards/06-real-dispatch-test.md",
       "frontier_artefact": "examples/bake-off/frontier/06-real-dispatch-test.json",
       "frontier_overall": "PASS",
@@ -51,7 +51,7 @@
     },
     {
       "stage_id": "45-a-free-verifier-tier-on-local-weights",
-      "repo": "/Users/AnthonyWest/repos/autometta",
+      "repo": "<root>/autometta",
       "card": "stage-cards/45-a-free-verifier-tier-on-local-weights.md",
       "frontier_artefact": "examples/bake-off/frontier/45-a-free-verifier-tier-on-local-weights.json",
       "frontier_overall": "PASS",
@@ -59,7 +59,7 @@
     },
     {
       "stage_id": "03-dla-revive",
-      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "repo": "<root>/emergence-lab",
       "card": "docs/stages/03-dla-revive.md",
       "frontier_artefact": "examples/bake-off/frontier/03-dla-revive.json",
       "frontier_overall": "PASS",
@@ -67,7 +67,7 @@
     },
     {
       "stage_id": "29-swarmalators-kernel",
-      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "repo": "<root>/emergence-lab",
       "card": "docs/stages/29-swarmalators-kernel.md",
       "frontier_artefact": "examples/bake-off/frontier/29-swarmalators-kernel.json",
       "frontier_overall": "PASS",
@@ -75,7 +75,7 @@
     },
     {
       "stage_id": "30-markus-lyapunov-kernel",
-      "repo": "/Users/AnthonyWest/repos/emergence-lab",
+      "repo": "<root>/emergence-lab",
       "card": "docs/stages/30-markus-lyapunov-kernel.md",
       "frontier_artefact": "examples/bake-off/frontier/30-markus-lyapunov-kernel.json",
       "frontier_overall": "PASS",

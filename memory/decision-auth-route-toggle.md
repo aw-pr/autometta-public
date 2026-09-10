@@ -22,13 +22,13 @@ allowlist plus only the named refs the route requires.
    Override per dispatch via `AUTOMETTA_<FAMILY>_MODE`.
 
 2. **References**:
-   - `op-refs.sh` — committed at the autometta repo root; placeholder refs
+   - `op-refs.sh` - committed at the autometta repo root; placeholder refs
      (`op://YOUR_VAULT/...`); searches for a local override in
      `$AUTOMETTA_LOCAL_REFS`, then `~/.config/autometta/op-refs.local.sh`
      (XDG, recommended), then `<repo-root>/op-refs.local.sh` (dev only).
-   - `templates/op-refs.local.sh.tpl` — committed template documenting the
+   - `templates/op-refs.local.sh.tpl` - committed template documenting the
      XDG path as canonical.
-   - `~/.config/autometta/op-refs.local.sh` — gitignored, mode 0600;
+   - `~/.config/autometta/op-refs.local.sh` - gitignored, mode 0600;
      real op:// references. The XDG location is the one place visible
      to both the dev checkout and the brew-installed CLI.
 
@@ -70,7 +70,7 @@ allowlist plus only the named refs the route requires.
   every child via inheritance. The earlier (now-superseded) iteration
   of card 14 used this pattern and was wrong.
 - `op-fetch` reads the SA token, calls `op read`, then `exec env -i`
-  with the resolved value — the parent shell never sees it.
+  with the resolved value - the parent shell never sees it.
 - `op-fetch` is the canonical wrapper from the auth-route-security
   skill; flagging "any remaining use of `op run --env-file` or raw
   `op read` in dispatch paths" is part of the skill's review checklist.

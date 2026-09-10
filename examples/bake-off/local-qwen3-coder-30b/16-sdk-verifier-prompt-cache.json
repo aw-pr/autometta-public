@@ -8,49 +8,49 @@
       "id": 1,
       "name": "python3 scripts/verify-sdk.py --help still works post-change",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/verify-sdk.py:100"
+      "evidence": "<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/verify-sdk.py:100"
     },
     {
       "id": 2,
       "name": "First run of scripts/sdk-cache-smoke.sh (cold cache) logs cache: write=<N>0 and read=0",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/sdk-cache-smoke.sh:17"
+      "evidence": "<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/sdk-cache-smoke.sh:17"
     },
     {
       "id": 3,
       "name": "Second run within 5 minutes logs read>0 and the script exits 0",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/sdk-cache-smoke.sh:23"
+      "evidence": "<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/sdk-cache-smoke.sh:23"
     },
     {
       "id": 4,
       "name": "Running the smoke test a third time after touch templates/verifier-prompt.md && sleep 1 (or otherwise mutating the cached block) logs read=0 on the next call",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/sdk-cache-smoke.sh:32"
+      "evidence": "<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/sdk-cache-smoke.sh:32"
     },
     {
       "id": 5,
       "name": "The artefact written by both cached and non-cached runs validates against schemas/verifier.json",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/verify-sdk.py:423"
+      "evidence": "<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/verify-sdk.py:423"
     },
     {
       "id": 6,
       "name": "The artefact's overall value is identical between cached and non-cached runs for stage 14 (cache must not change verifier behaviour)",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/verify-sdk.py:436"
+      "evidence": "<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/scripts/verify-sdk.py:436"
     },
     {
       "id": 7,
       "name": "docs/sdk-verifier.md Prompt caching section names the cache TTL, the cached block contents, and the cache-bust boundary",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/sdk-verifier.md:160"
+      "evidence": "<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/docs/sdk-verifier.md:160"
     },
     {
       "id": 8,
       "name": "memory/decision-sdk-verifier-prompt-cache.md links to [[decision-sdk-verifier-integration]]",
       "verdict": "PASS",
-      "evidence": "/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-local-against-cloud-free/memory/decision-sdk-verifier-prompt-cache.md:1"
+      "evidence": "<root>/autometta-run-46-verifier-bake-off-local-against-cloud-free/memory/decision-sdk-verifier-prompt-cache.md:1"
     },
     {
       "id": 9,

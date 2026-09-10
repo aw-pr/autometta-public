@@ -13,4 +13,4 @@ The autometta loop is local-machine. It cannot observe whether the public mirror
 
 **Why three routines for v1:** Each of the three surfaces fails independently and at different rates. A single combined check would obscure which surface is failing and would need different cadences (mirror: 6h; brew: daily; skills: weekly). Three routines also means one stale routine does not block the others.
 
-**Linked decisions:** [[decision-handoff-envelope]] (the loop's completion signal pattern — monitoring sits outside this envelope, which is why it can be read-only).
+**Linked decisions:** [[decision-handoff-envelope]] (the loop's completion signal pattern - monitoring sits outside this envelope, which is why it can be read-only).

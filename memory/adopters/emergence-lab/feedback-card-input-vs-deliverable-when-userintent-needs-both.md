@@ -1,6 +1,6 @@
 ---
 name: feedback-card-input-vs-deliverable-when-userintent-needs-both
-description: When user-visible intent spans files an orchestrator listed as input-only, the worker correctly stays in scope and the verifier correctly fails a "no files outside deliverables" criterion — but both decisions are individually right and the card is the bug.
+description: When user-visible intent spans files an orchestrator listed as input-only, the worker correctly stays in scope and the verifier correctly fails a "no files outside deliverables" criterion - but both decisions are individually right and the card is the bug.
 metadata:
   type: feedback
   run:
@@ -28,7 +28,7 @@ turned out to be mutually impossible in the target codebase:
 `docs/INTERFACE.md` in the target repo defines palette as a
 renderer-owned concern (kernels emit `Float32Array`, the renderer
 maps to colours via `colormap.ts`). The kernel `paramSchema` does
-not — by design — carry palette defaults. So:
+not - by design - carry palette defaults. So:
 
 - The Codex worker correctly stayed within deliverables, shipped the
   kernel-schema changes (cycle speed default 2x, max 5), and skipped
@@ -70,7 +70,7 @@ not.
 3. **Worker stays in scope:** the correct worker behaviour is to ship
    the deliverables and leave the orchestrator to resolve any
    resulting acceptance gap. Do not interpret-and-expand deliverables
-   in the field, even when the user-visible intent is obvious — that
+   in the field, even when the user-visible intent is obvious - that
    path leads to scope creep that the verifier cannot police.
 
 4. **Operator-of-last-resort hot-patch is acceptable** but should

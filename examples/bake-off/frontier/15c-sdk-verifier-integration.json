@@ -1,7 +1,7 @@
 {
   "stage_id": "15c-sdk-verifier-integration",
   "verifier_identity": "Codex GPT-5.3 <codex-gpt-5-3@local>",
-  "verifier_invocation": "codex exec -C /Users/AnthonyWest/repos/autometta --sandbox workspace-write <verifier prompt for stage 15c>",
+  "verifier_invocation": "codex exec -C <root>/autometta --sandbox workspace-write <verifier prompt for stage 15c>",
   "ran_at": "2026-05-27T16:03:46Z",
   "criteria": [
     {
