@@ -208,6 +208,8 @@ which is severity first, then dependency.
 
 ## Pass 5 - the fact ledger (graph engineering), designed 2026-08-31
 
+**Status, 2026-09-10:** every card in this table landed by 2026-09-01 (the queue cells below are as written on 2026-08-31). Batches 92-107 and 108-134 followed; `HANDOFF.md` and the dashboard carry the record. v1.0.0 was tagged from the tree that includes them.
+
 `docs/graph-engineering.md` is the brief: the commit DAG records what changed,
 nothing records what is true. The ledger cards are a strict data chain
 (83 needs 82's schema landed, 84 needs 83's ledger, 84 touches `tick.sh`),

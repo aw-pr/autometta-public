@@ -7,7 +7,7 @@ links out to the deep design docs under `docs/` rather than duplicating them.
 Autometta is a pattern library for headless agent orchestration on one machine.
 It dispatches worker and verifier agents across two CLI families (Claude Code
 and Codex CLI) in the same working tree, and uses cross-family verification:
-one family checks the other's work. Pre-alpha. macOS and Linux only.
+one family checks the other's work. v1.0.0, single operator. macOS and Linux only.
 
 If you are new, read in this order: this manual for orientation, then
 `docs/dispatch-contract.md` (the load-bearing document) and `docs/lessons.md`

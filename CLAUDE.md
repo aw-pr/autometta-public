@@ -14,7 +14,7 @@ State and memory that agents need across sessions live **in the repo**, not in a
 
 ## What this repo is
 
-Autometta is a **pattern library**, not a runtime. Pre-alpha. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-requeue`, `autometta-run-design`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
+Autometta is a **pattern library**, not a runtime. v1.0.0: the contract, the loop and the operator surfaces are stable and in daily use; still one human, one machine. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-requeue`, `autometta-run-design`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
 
 The repo extracts patterns from two prior projects (`fractals-from-the-90s` dispatch contract; `agentic-rag-kimble` pass 28-29 autonomous loop) and packages them for solo single-machine multi-agent CLI work. See `README.md` for the pitch and `docs/philosophy.md` for the long-form scope.
 

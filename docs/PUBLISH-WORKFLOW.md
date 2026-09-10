@@ -48,7 +48,7 @@ gh release create vX.Y.Z --repo PUB_MATCH --target main \
   --title "vX.Y.Z - <summary>" --notes "<release notes>"
 ```
 
-Versioning: pre-1.0 while pre-alpha (`v0.x.y`). The first tagged release is `v0.1.0`. A short CHANGELOG entry per release is optional but cheap.
+Versioning: semver. `v0.x.y` covered the pre-alpha passes; `v1.0.0` (2026-09-10) marks the contract, loop and operator surfaces as stable for single-operator use. A short CHANGELOG entry per release is optional but cheap.
 
 ## The gate (why it cannot be bypassed by accident)
 
