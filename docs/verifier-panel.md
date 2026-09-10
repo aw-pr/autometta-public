@@ -24,11 +24,11 @@ If the card declares `Verifier effort`, the panel applies it to every member. Th
 
 | Panellist | Route | Identity |
 |---|---|---|
-| 0 | Claude Opus 4.8 via SDK | `Claude Opus 4.8 <claude-opus-4-8@local>` |
-| 1 | Claude Sonnet 4.6 via SDK | `Claude Sonnet 4.6 <claude-sonnet-4-6@local>` |
+| 0 | Claude Opus 5 via SDK | `Claude Opus 5 <claude-opus-5@local>` |
+| 1 | Claude Sonnet 5 via SDK | `Claude Sonnet 5 <claude-sonnet-5@local>` |
 | 2 | GPT-5.6 Sol via `codex exec --model gpt-5.6-sol` | `GPT-5.6 Sol <gpt-5-6-sol@local>` |
 
-The two Claude panellists require `auth.claude.mode: api` in `.autometta.local.yaml`. If the API key is not available, the panel fails closed with an explicit error — it does not fall back to subscription or to a single verifier.
+The two Claude panellists require `auth.claude.mode: api` in `.autometta.local.yaml`. If the API key is not available, the panel fails closed with an explicit error; it does not fall back to subscription or to a single verifier.
 
 ## Quorum rule
 
@@ -40,9 +40,9 @@ Quorum is 2 of 3. A panellist that crashes or times out without writing its arte
 | 2 PASS, 1 FAIL | PASS |
 | 1 PASS, 2 FAIL | FAIL |
 | 0 PASS, 3 FAIL | FAIL |
-| 2 PASS, 0 FAIL (1 crash) | PASS — quorum met, strict majority |
-| 1 PASS, 1 FAIL (1 crash) | stall — quorum met but no majority (tie with crash) |
-| 1 PASS, 0 FAIL (2 crashes) | stall — quorum not met |
+| 2 PASS, 0 FAIL (1 crash) | PASS: quorum met, strict majority |
+| 1 PASS, 1 FAIL (1 crash) | stall: quorum met but no majority (tie with crash) |
+| 1 PASS, 0 FAIL (2 crashes) | stall: quorum not met |
 
 ## Synthesised artefact
 

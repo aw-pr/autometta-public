@@ -53,10 +53,10 @@ For the full operational sequence, see [Step 6: Orchestrator integration](dispat
 
 The pass-2 tick (`scripts/tick.sh`) operationalises Step 7's "orchestrator commits, not worker" rule by branching on the verifier artefact's `overall` field:
 
-- `overall: PASS` — orchestrator stages non-state working-tree changes and commits with `--author=<worker-identity>` and a `Co-Authored-By: <verifier-identity>` trailer derived from `state/state.yaml`. The commit subject is `<stage-id>: <headline>`. Stage moves to `completed`.
-- `overall: FAIL` — no commit. Stage moves to the `verifier_failed` status (new in the state schema). The dirty working tree is left intact for operator review.
-- Missing / malformed `overall` — treated as FAIL (fail-safe). Same handling as FAIL.
-- Clean working tree on PASS — logged as the deprecated worker-self-commit path; stage marked `completed` without erroring for adopters who have not yet updated their workers to the new prompt.
+- `overall: PASS`: orchestrator stages non-state working-tree changes and commits with `--author=<worker-identity>` and a `Co-Authored-By: <verifier-identity>` trailer derived from `state/state.yaml`. The commit subject is `<stage-id>: <headline>`. Stage moves to `completed`.
+- `overall: FAIL`: no commit. Stage moves to the `verifier_failed` status. The dirty working tree is left intact for operator review.
+- Missing / malformed `overall`: treated as FAIL (fail-safe). Same handling as FAIL.
+- Clean working tree on PASS: logged as the worker-self-commit path, retired by card 7 (2026-05); stage marked `completed` without erroring so a subscriber on a pre-card-7 worker prompt still lands.
 
 The worker prompt explicitly forbids `git commit` so the dirty-tree contract holds. The verifier prompt explicitly states that the verifier reads the dirty tree (not a committed snapshot) and that the `overall` field drives the orchestrator's commit decision.
 

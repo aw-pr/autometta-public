@@ -52,7 +52,7 @@ stages error immediately, five time out.
 
 **The manifest was rotten.** The five errors were `stage card not
 found`: five benchmark rows pointed at
-`/Users/AnthonyWest/repos/autometta-run-46-verifier-bake-off-.../examples/self-host/`,
+`<root>/autometta-run-46-verifier-bake-off-.../examples/self-host/`,
 an absolute path into card 46's own run worktree, torn down long ago.
 Card 50 then moved the surviving cards from `examples/self-host/` to
 `stage-cards/`, breaking the same rows a second way. Nothing noticed

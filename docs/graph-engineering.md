@@ -56,6 +56,12 @@ messages") before the lecture landed.
 
 ## The gap: the knowledge layer
 
+> **Dated note (2026-09-09).** This section describes the pre-ledger state.
+> Cards 82-85 shipped the fact ledger (`memory/facts.jsonl`, described in
+> [fact-ledger.md](fact-ledger.md)), which closes the structured-fact and
+> bounded-query points below. The assessment is kept as written because the
+> reasoning is what motivated the ledger.
+
 `memory/` is the right idea (in-repo, cross-family, authoritative, indexed,
 with a staleness discipline) but the wrong shape for graph engineering:
 

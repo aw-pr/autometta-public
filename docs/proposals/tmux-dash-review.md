@@ -1,7 +1,7 @@
 # Tmux dashboard review: the Autometta fleet and repo panes
 
 Read-only design review, 2026-08-24. Everything below was read from the live
-tree at `/Users/AnthonyWest/repos/autometta`, the five subscriber repos, and
+tree at `<root>/autometta`, the five subscriber repos, and
 `~/.phat-controller/`. Nothing was edited.
 
 ## What the instrumentation shows today

@@ -19,9 +19,9 @@ Checks that `origin/publish` and `public/main` are not diverged.
 Cadence: `0 */6 * * *` (every 6 hours).
 
 Expected outputs:
-- `OK: mirror in sync` — no action.
-- `OK: public/main is N commits behind origin/publish` — no action (normal lag).
-- `ERROR: divergence detected` — PR filed on `origin/dev`.
+- `OK: mirror in sync`: no action.
+- `OK: public/main is N commits behind origin/publish`: no action (normal lag).
+- `ERROR: divergence detected`: PR filed on `origin/dev`.
 
 ## Routine 2: brew install smoke test (daily)
 
@@ -34,23 +34,23 @@ Checks that `scripts/install-homebrew-local.sh` succeeds and that `autometta --v
 Cadence: `0 6 * * *` (daily at 06:00 UTC).
 
 Expected outputs:
-- `PASS: brew install smoke test complete` — no action.
-- `ERROR: version mismatch` or `ERROR: brew not on PATH` — PR filed on `origin/dev`.
+- `PASS: brew install smoke test complete`: no action.
+- `ERROR: version mismatch` or `ERROR: brew not on PATH`: PR filed on `origin/dev`.
 
 ## Routine 3: upstream skill drift (weekly)
 
 Checks that the `agent-orchestrator` skill in the repo matches the copy loaded into the Claude Code harness.
 
 ```
-/schedule "Once weekly on Monday, run scripts/monitoring/check-upstream-skills.sh from the autometta repo root. If it exits 0, do nothing (including if the output contains NOTICE — a symlink degeneracy is expected locally). If it exits non-zero, open a PR on origin/dev with the label 'monitoring:' and title 'monitoring: agent-orchestrator skill drift detected', body containing the script output. If an open PR with that title already exists, update its body instead of opening a new one. Never merge the PR. Never touch state/, state.yaml, or run autometta tick."
+/schedule "Once weekly on Monday, run scripts/monitoring/check-upstream-skills.sh from the autometta repo root. If it exits 0, do nothing (including if the output contains NOTICE, a symlink degeneracy is expected locally). If it exits non-zero, open a PR on origin/dev with the label 'monitoring:' and title 'monitoring: agent-orchestrator skill drift detected', body containing the script output. If an open PR with that title already exists, update its body instead of opening a new one. Never merge the PR. Never touch state/, state.yaml, or run autometta tick."
 ```
 
 Cadence: `0 8 * * 1` (Mondays at 08:00 UTC).
 
 Expected outputs:
-- `OK: agent-orchestrator skill is in sync` — no action.
-- `NOTICE: ... symlink ...` — no action (local degeneracy is expected).
-- `DRIFT: ...` + `ERROR: N drift(s) detected` — PR filed on `origin/dev`.
+- `OK: agent-orchestrator skill is in sync`: no action.
+- `NOTICE: ... symlink ...`: no action (local degeneracy is expected).
+- `DRIFT: ...` + `ERROR: N drift(s) detected`: PR filed on `origin/dev`.
 
 ## Triage
 

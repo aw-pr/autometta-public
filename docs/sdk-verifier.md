@@ -78,7 +78,7 @@ Exit codes:
 - `2`: environment error, including neither `ANTHROPIC_API_KEY` nor `CLAUDE_CODE_OAUTH_TOKEN` being set, missing `anthropic` or `jsonschema`, missing card, or missing verifier prompt template.
 - `3`: SDK returned JSON that failed `schemas/verifier.json`; an invalid report is written to `<out>.invalid.json`.
 
-The output envelope intentionally matches the existing verifier artefact shape:
+The output envelope intentionally matches the existing verifier artefact shape. The identity shown is the no-tier fallback (`VERIFIER_IDENTITY` in the script); a dispatch that passes `--model` writes the per-tier form instead, for example `Claude Opus 5 (SDK) <claude-opus-5@local>`:
 
 ```json
 {
@@ -181,15 +181,11 @@ scripts/validate-verifier-artefacts.sh /tmp/bad.json
 
 The validator prints `PASS <path>` or `FAIL <path>: <jsonschema error>` for each artefact and exits non-zero if any file fails.
 
-Known gaps after 15b:
-
-- The prototype feeds the listed artefacts into the prompt rather than giving the SDK broad filesystem write access.
-- There is no production dispatch integration, no budget accounting, no heartbeat registration, and no `state.yaml` transition.
-- The SDK package version is pinned in `scripts/requirements-sdk.txt`; upgrades need an explicit smoke test.
+The SDK package version is pinned in `scripts/requirements-sdk.txt`; upgrades need an explicit smoke test.
 
 ## Integration into spawn-verifier.sh
 
-`scripts/spawn-verifier.sh` selects between the SDK route and the existing CLI route at dispatch time. The SDK is the transport of first resort: both families authenticate it on every auth mode they support, so an unset `verifier.<family>.transport` means "whichever route works here" rather than "the old one". A repo lands on the CLI only when an SDK precondition is absent, and the log says which one.
+`scripts/spawn-verifier.sh` selects between the SDK route and the existing CLI route at dispatch time. The SDK is the transport of first resort where its credential fits: an unset `verifier.<family>.transport` means "whichever route works here" rather than "the old one". A repo lands on the CLI when an SDK precondition is absent, or when the route guard refuses the pairing (for claude, `auth.claude.mode: subscription` resolves to `cli (route-guard: ...)` unless `agent-sdk` is named, because the api-sdk cannot take an OAuth token), and the log says which.
 
 ### Transport resolution
 
@@ -197,14 +193,14 @@ Resolution order (most specific wins), per family:
 
 1. `AUTOMETTA_CLAUDE_TRANSPORT` / `AUTOMETTA_CODEX_TRANSPORT` env var (`sdk` or `cli`), provenance `env`
 2. `verifier.<family>.transport` in the repo's `.autometta.local.yaml`, provenance `manifest`
-3. Unset, with the family's SDK preconditions all present: `sdk`, provenance `default-sdk`
+3. Unset, with the family's SDK preconditions all present: `sdk`, provenance `default-sdk`, then through `claude_route_guard`, so a claude repo on subscription still lands on `cli (route-guard: ...)`
 4. Unset, with a precondition missing: `cli`, provenance `fallback-cli`, naming the reason
 
 The preconditions are checked only for an unset key. An explicit `sdk` never falls back on them: an operator who asked for the SDK by name wants to hear that it cannot run, not to be rerouted quietly.
 
 | Family | Preconditions for `default-sdk` |
 |---|---|
-| claude | `scripts/verify-sdk.py` present; `anthropic` and `jsonschema` importable by `python3`; `auth.claude.mode` is `api` or `subscription`; the mode's credential resolves (`OP_REF_ANTHROPIC_API_KEY` or `OP_REF_CLAUDE_CODE_OAUTH_TOKEN`) |
+| claude | `scripts/verify-sdk.py` present; `anthropic` and `jsonschema` importable by `python3`; `auth.claude.mode` is `api` and `OP_REF_ANTHROPIC_API_KEY` resolves. On `subscription` the preconditions may hold, but the route guard then downgrades the api-sdk to `cli`; only an explicit `transport: agent-sdk` takes the subscription token |
 | codex | `scripts/verify-sdk-openai.py` present; `openai-codex` and `jsonschema` importable by `python3`; `jq` present; `auth.codex.mode` is `api` or `subscription`; the matching `CODEX_HOME/auth.json` carries the matching `auth_mode` |
 
 `auth.codex.mode: local` has no SDK entrypoint, so a local route resolves to `cli (fallback-cli)` and keeps running. Nothing in this list turns a missing precondition into an error.
@@ -235,7 +231,7 @@ Nothing needs setting to reach the SDK. To hold a family on the CLI, name it in 
 ```yaml
 auth:
   claude:
-    mode: subscription # or api; both routes reach the SDK
+    mode: subscription # api reaches the api-sdk; subscription reaches the CLI or agent-sdk
 verifier:
   claude:
     transport: cli
@@ -330,14 +326,10 @@ claude setup-token
 
 Store the result in 1Password and point `OP_REF_CLAUDE_CODE_OAUTH_TOKEN` at it in `~/.config/autometta/op-refs.local.sh`. `op-refs.sh` has reserved that variable since the CLI route needed it; the SDK route reuses the same item. Nothing in the repo mints, reads, or logs the token: `auth-route.sh` emits the `op://` reference, `op-fetch` resolves it at exec time, and it exists only in the child env.
 
-`verify-sdk.py` sends the token as a bearer credential with the `anthropic-beta: oauth-2025-04-20` header the Claude Code entitlement requires. When the ref is unset or still a `YOUR_VAULT` placeholder, `spawn-verifier.sh` exits before spawning anything; it never falls back to `ANTHROPIC_API_KEY` or to the `cli` transport, because a silent fallback is how billing goes wrong invisibly.
-
-The api-only requirement this replaced was a leftover from before Anthropic supported subscription auth in the Agent SDK, not a limit of the SDK. No doc in this repo should steer the SDK route back to API keys on those grounds. The one thing that genuinely stays api-only is the Fable-as-advisor option, whose advisor tool is an API feature; requesting an advisor on the subscription route fails closed.
+An OAuth token handed to `verify-sdk.py` 429s: the api-sdk is the raw Messages API and does not accept a Claude Code subscription credential (measured at the top of this document). When the ref is unset or still a `YOUR_VAULT` placeholder, `spawn-verifier.sh` exits before spawning anything; it never falls back to `ANTHROPIC_API_KEY`, because a silent fallback is how billing goes wrong invisibly. The one thing that stays api-only by design is the Fable-as-advisor option, whose advisor tool is an API feature; requesting an advisor on the subscription route fails closed.
 
 **`scripts/verify-sdk-agent.py` is the production route for this credential.**
-The paragraph above describes what `verify-sdk.py` (api-sdk) does when handed
-an OAuth token directly -- true, and useful for manual testing, but no longer
-how the subscription route is dispatched: `spawn-verifier.sh`'s route guard
+The api-sdk is not how the subscription route is dispatched: `spawn-verifier.sh`'s route guard
 refuses that pairing (see the table at the top of this document) and downgrades
 to the `cli`. `transport: agent-sdk` is the surface `claude_route_refusal`
 actually permits on `CLAUDE_CODE_OAUTH_TOKEN`, and its entrypoint takes the
@@ -448,8 +440,8 @@ Verifier transport resolution is independent for each family:
 | verifier | claude | `verifier.claude.transport` | `sdk` (legacy spelling: `api-sdk`) | `scripts/verify-sdk.py` | api only -- subscription route-guards to `cli` |
 | verifier | claude | `verifier.claude.transport` | `agent-sdk` | `scripts/verify-sdk-agent.py` | api, subscription |
 | verifier | codex | `verifier.codex.transport` | `sdk` | `scripts/verify-sdk-openai.py` | api, subscription |
-| orchestrator | claude | `orchestrator.claude.transport` | design only | design only | design-pending card 23 |
-| orchestrator | codex | `orchestrator.codex.transport` | design only | design only | design-pending card 23 |
+| orchestrator | claude | `orchestrator.claude.transport` | not offered | none | card 23 ran the experiment and kept cron+tick; see `memory/decision-sdk-controller-experiment.md` and `docs/experiments/sdk-controller-postmortem.md` |
+| orchestrator | codex | `orchestrator.codex.transport` | not offered | none | same verdict as claude |
 
 `claude_entrypoint_for_surface` in `scripts/models.sh` is the single source of
 truth mapping a resolved claude surface to the script that implements it;

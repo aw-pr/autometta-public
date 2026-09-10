@@ -1,4 +1,4 @@
-# 2026-08-16 — the five broken `emergence-lab` stages, one verdict each
+# 2026-08-16: the five broken `emergence-lab` stages, one verdict each
 
 Card 36 assumed the five stages sitting in `verifier_failed` or `stalled` were
 victims of the two defects cards 29 and 30 describe, and that separating the
@@ -18,29 +18,29 @@ requeue.
 
 | Stage | Status | Cause | Verdict |
 |---|---|---|---|
-| 05-math-formula-rendering | `verifier_failed` (1) | worker missed a satisfiable criterion | genuine failure — leave |
+| 05-math-formula-rendering | `verifier_failed` (1) | worker missed a satisfiable criterion | genuine failure, leave |
 | 13-reset-all-controls-to-defaults | `stalled` (2) | worker died; verifier could not get browser evidence | re-brief the card |
 | 14-fractal-colour-cycle-pacing | `verifier_failed` (1) | worker hit the `claude -p` env-strip auth defect; verifier could not get browser evidence | re-brief the card |
 | 15-boids-density-motion-tuning | `verifier_failed` (1) | verifier could not get browser evidence | re-brief the card |
-| 16-sandpile-larger-slower | `stalled` (3) | worker hit the `claude -p` env-strip auth defect; no verifier ever ran | tooling victim — requeued |
+| 16-sandpile-larger-slower | `stalled` (3) | worker hit the `claude -p` env-strip auth defect; no verifier ever ran | tooling victim, requeued |
 
-### 05-math-formula-rendering — genuine failure
+### 05-math-formula-rendering: genuine failure
 
 `state/verifiers/05-math-formula-rendering.json` records six of seven criteria
 PASS and criterion 6 FAIL: *"Production build gzip size impact is reported"*.
 The verifier's log (`state/logs/05-math-formula-rendering-verifier.log`, 470
-bytes) is explicit that this is the only gap — "the commit message does not
+bytes) is explicit that this is the only gap, "the commit message does not
 report the production gzip bundle-size delta and no separate handoff note
 carries it".
 
 The worker knew the number. Its own closing summary reports "~85.82 kB, above
-the 80 kB soft cap, so reported" — it reported the figure to the orchestrator
+the 80 kB soft cap, so reported", it reported the figure to the orchestrator
 and then did not put it where the card required. That is a satisfiable
 criterion the worker missed, judged by a verifier that ran to completion and
 wrote its artefact. Requeuing it would be using the retry cap to ask again
 until the answer is yes.
 
-### 13, 14, 15 — the verifier could not obtain the evidence the card demands
+### 13, 14, 15: the verifier could not obtain the evidence the card demands
 
 All three carry a browser-smoke acceptance criterion:
 
@@ -67,7 +67,7 @@ Cards 14 and 15 report the same thing in their own words. Stage 15's worker
 flagged it in advance: "I could not perform the browser smoke test (acceptance
 criterion 4) from this environment."
 
-Two things follow. First, the work itself landed — `a0ba582`, `6af7104` and
+Two things follow. First, the work itself landed, `a0ba582`, `6af7104` and
 `38b5e6d` on `dev` carry stages 13, 14 and 15 respectively, and the verifiers
 read those commits when they passed every other criterion. Second, requeuing
 any of them reproduces the identical FAIL, because a headless verifier seat
@@ -78,7 +78,7 @@ it is surfaced here rather than done unilaterally.
 
 Stage 13's worker log is 0 bytes with `worker_pid: null`, so its worker died
 before writing anything. Two defects fixed later that same week produce that
-signature — the LaunchAgent SIGHUP kill (gotcha 9, fixed `237c8a6` +
+signature, the LaunchAgent SIGHUP kill (gotcha 9, fixed `237c8a6` +
 `2cc42c2`) and the auth defect below. The log does not distinguish them.
 
 Stage 15 also left a real design question the re-brief should settle: its
@@ -86,7 +86,7 @@ worker pinned `pointSize` at `min = max = 16`, making the slider degenerate,
 and flagged that `boidsGlyphRadius()` still hard-clamps at 8. The card's
 wording is genuinely ambiguous about whether 16 was a minimum or a fixed value.
 
-### 16-sandpile-larger-slower — the one tooling victim
+### 16-sandpile-larger-slower: the one tooling victim
 
 `state/logs/16-sandpile-larger-slower-worker.log` was 35 bytes:
 
@@ -98,7 +98,7 @@ That is the `claude -p` env-strip defect: `op-fetch` sanitises the environment
 and drops the session variables the keychain lookup needs, so the CLI reports
 itself logged out. It was fixed on 2026-05-27 in `436c597`, which makes
 `auth-route.sh` emit `CLAUDE_CODE_OAUTH_TOKEN` on the claude+subscription
-route — the same day the stage died, and after it.
+route, the same day the stage died, and after it.
 
 The worker therefore never ran. `state/logs/16-sandpile-larger-slower-verifier.log`
 was 0 bytes across all three attempts, so no verifier ever recorded a verdict
@@ -125,7 +125,7 @@ purged the verifier artefact and both per-stage logs, and reset the record to
 verifier at unfixed code. `state.yaml` was not hand-edited.
 
 The following tick cut a fresh worktree and dispatched a worker that was still
-running six minutes later — against an original attempt that was dead in
+running six minutes later, against an original attempt that was dead in
 seconds. Getting past the login refusal was the whole point.
 
 Stage 16's card still carries a browser-smoke criterion of its own (criterion

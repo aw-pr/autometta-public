@@ -107,12 +107,13 @@ Open or create the viewer manually:
 autometta attach <repo-path>
 ```
 
-The per-repo tmux viewer has two windows. The `repo` window is one pane, one
-process, one repo: **the repo ticker** (`scripts/repo-ticker.sh`, card 63),
+The per-repo tmux viewer has three windows. Window 0 is `tui`
+(`autometta tui <repo>`), the view an operator lands on. The `repo` window is
+one pane, one process, one repo: **the repo ticker** (`scripts/repo-ticker.sh`, card 63),
 which owns the whole window rather than sharing it with a status pane and a
 log pane the way it used to. That older three-pane layout squeezed the ticker
 into whatever fraction of the terminal the right-hand column happened to get
-— a 119-column pane routinely truncated a stage id to roughly 40 columns —
+(a 119-column pane routinely truncated a stage id to roughly 40 columns)
 and it mixed a status table, a log tail and an agent ticker that could not
 see each other's space. The `log` window (`tmux next-window`, or `autometta
 attach <repo>` then switch windows) still tails the latest controller log
@@ -122,15 +123,15 @@ rather than a quarter of the screen next to the ticker.
 The repo ticker reads exactly one source: `scripts/aggregate-dashboard.sh
 --repo <path>`, re-run on every refresh (every five seconds, override with
 `AUTOMETTA_TICKER_INTERVAL`) so the figures are as fresh as the render and
-scoped to that one subscriber — no other repo's data can appear in the frame.
+scoped to that one subscriber: no other repo's data can appear in the frame.
 It answers one question, "do I need to intervene?", in five sections:
 
-- `NOW`: the live stage, in full — stage id, phase (`worker running` /
+- `NOW`: the live stage, in full: stage id, phase (`worker running` /
   `verifying` / `landing` while a passed stage awaits integration), the
   acting family and identity, elapsed against the card's declared
   wall-clock budget, tokens spent on the stage so far, and, while verifying,
   the attempt count against the cap. Elapsed against budget is real time
-  spent, not work done, and never clamps at 99% or 100% — a stage past its
+  spent, not work done, and never clamps at 99% or 100%; a stage past its
   budget reads `OVER BUDGET` with the true percentage. When nothing is
   live, it reads `idle`.
 - `NEXT`: a counts line (stages done, outstanding, and how many of those are
@@ -148,14 +149,17 @@ It answers one question, "do I need to intervene?", in five sections:
   (non-pass dispatch spend), lost over the last seven days, and the
   resolved cap (drain, this repo's own, or the host default) with percent
   used. Carries a caveat when a codex/GPT dispatch in the last seven days
-  recorded `output_tokens: 0` against non-zero input — the currency figure
-  for those rows undercounts until card 59 lands.
+  recorded `output_tokens: 0` against non-zero input
+  (`spend.openai_zero_output_caveat` in the aggregate): the currency figure
+  for those rows undercounts, because output is the expensive bucket and the
+  row has none to price. Card 59 metered both providers; a zero-output row
+  from a dispatch that logged no usage still reads this way.
 - `FRESHNESS`: how long since the last tick, plainly, and loud
   (`AUTOMETTA_TICK_FRESHNESS_THRESHOLD`, default 1200s) past the threshold.
 
 Column widths are allocated the way lazygit does: each declares a minimum and
 a share of the remainder, and columns marked droppable drop lowest-priority
-first when the width will not hold them all — never truncation by the
+first when the width will not hold them all, never truncation by the
 terminal, never a fixed 40-column guess. The itemised failures list moved out
 of the live pane entirely: `scripts/failures-history.sh <repo-path>`
 (`autometta failures <repo-path>`) prints every terminal-status stage and
@@ -169,7 +173,7 @@ but neither is wired into `autometta attach` any longer. Their `SPEND` panel
 is the one place that still shows each family's most-used provider window and
 reset time, or an explicit unknown reason.
 
-Both windows are scoped to the attached repo: `aggregate-dashboard.sh --repo`
+The `repo` and `log` windows are scoped to the attached repo: `aggregate-dashboard.sh --repo`
 walks only that one subscriber, and the log window filters the shared tick
 log to lines naming that repo's path.
 
@@ -181,15 +185,15 @@ is deliberately not the same word as `pending`: it is a real and useful
 category, but it is not queue depth.
 
 `autometta-autometta` is the fleet viewer, and card 66 applied card 63's
-"fits its pane" discipline to it. It has four windows: `repo` (the landing
-window, `attach.sh --fleet-ticker <path>` scoped to the autometta repo
-itself), `status` (the ordinary per-repo ticker every subscriber gets), `fleet`
-(the fleet-wide page, every enabled subscriber) and `log`. Landing on the
-fleet-wide page by default was the wrong default for a session that is
-already scoped to one repo — "I rarely if ever will want a fleet view"
-(operator feedback, 2026-08-25) — so window 0 is the repo-scoped page and the
-fleet-wide page is one `tmux next-window` away, never the first thing an
-operator sees.
+"fits its pane" discipline to it. It has five windows: `tui` (window 0, the
+landing view, the same `autometta tui` every subscriber gets), `repo`
+(`attach.sh --fleet-ticker <path>`, the fleet page scoped to the autometta
+repo itself), `status` (the ordinary per-repo ticker every subscriber gets),
+`fleet` (the fleet-wide page, every enabled subscriber) and `log`. Landing on
+the fleet-wide page by default was the wrong default for a session that is
+already scoped to one repo ("I rarely if ever will want a fleet view",
+operator feedback, 2026-08-25), so the fleet-wide page is a few
+`tmux next-window` presses away, never the first thing an operator sees.
 
 The fleet page (`scripts/lib/fleet-ticker-render.py`, the sibling of the repo
 ticker's renderer) reads only `${AUTOMETTA_HOME}/dashboard/data.json`, the
@@ -200,7 +204,7 @@ existing dashboard aggregator's output, or a single repo object from
 depth, today's spend, and spend against the cap that binds), and ESCALATIONS:
 every halted, paused, attempt-capped or stale-vendor repo, every stage in an
 alert status, every over-budget live agent, and every provider-limit alert
-younger than 24 hours — one row each, repo/result/stage/role/identity
+younger than 24 hours, one row each, repo/result/stage/role/identity
 rendering whole and a trailing detail column carrying the ellipsis budget. A
 repo with nothing outstanding earns no ESCALATIONS row. Scoped to one repo,
 REPOS is dropped entirely (that repo's row would be the whole page's
@@ -283,19 +287,32 @@ signal in that direction. This makes the registry symmetric across the
 worker / verifier pairing: codex-worker / claude-verifier and the reverse
 both get accurate stuck-detection without false positives. Dead
 processes are moved to `state/recent-agents/` with `outcome: exited`. The
-watchdog never kills; it surfaces.
+watchdog surfaces stalls and budget overruns; it never kills for those. The
+one thing it does kill is a runaway token outlier, described below.
 
 For token spend, the heartbeat reads the running family transcript once at
 the heartbeat cadence. It compares the live total with the median of the last
 ten comparable cost-log rows for the same role. At least five rows are needed
-and the default warning point is ten times the median. `usage_status: unknown`
-and null totals do not enter the baseline. The report carries the baseline,
-sample size, live figure and multiple, while the warning is written to the
-controller tick log and shown in the repo ticker's `ESCALATIONS` section. It
-does not change state-machine status, budget state or process liveness.
+and the default warning point is ten times the median
+(`AUTOMETTA_OUTLIER_MULTIPLE`). `usage_status: unknown` and null totals do not
+enter the baseline. The report carries the baseline, sample size, live figure
+and multiple, while the warning is written to the controller tick log and
+shown in the repo ticker's `ESCALATIONS` section. The warning does not change
+state-machine status, budget state or process liveness.
+
+Above a second, higher multiple the heartbeat acts rather than narrates:
+`AUTOMETTA_OUTLIER_KILL_MULTIPLE` (default 15, `0` disables the kill and
+restores observe-only) sends SIGTERM to the dispatch's children and then to
+the wrapper itself, flags the entry `token-outlier-killed`, records
+`killed_at` and `kill_multiple` under `token_outlier`, and moves the entry to
+`state/recent-agents/` with `outcome: killed-token-outlier`. The run
+worktree is left standing so the work survives for the reaper to preserve;
+what stops is the spending. The default sits above the largest spend an
+honest stage has recorded (11.9x its median), after stage 73 ran 41 minutes
+past its warning at 22.2x on 2026-09-02 because nothing was listening.
 
 The heartbeat surface answers the "is this stuck?" question that
-`state.yaml` does not — `state.yaml` reflects the FSM, the heartbeat
+`state.yaml` does not: `state.yaml` reflects the FSM, the heartbeat
 reflects the process.
 
 ## Polling primitive: `watch-agent.sh`
@@ -319,7 +336,7 @@ scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 Defaults: poll every 60s (`AUTOMETTA_WATCH_POLL`), escalate to STUCK
 120s after the heartbeat first flags `silent` (`AUTOMETTA_WATCH_STALL_GRACE`).
 Exit codes: `0` clean exit, `2` STUCK, `3` bad input. The watcher itself
-never kills the agent — it returns a non-zero exit so the caller can
+never kills the agent; it returns a non-zero exit so the caller can
 decide.
 
 For the autonomous loop, the heartbeat is invoked once per tick and the

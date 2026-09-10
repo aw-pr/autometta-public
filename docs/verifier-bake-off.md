@@ -140,7 +140,7 @@ Paid Grok is excluded per the card: no usable free API route exists for it.
 > `ollama show`. Anyone re-running this harness should first run
 > `scripts/candidate-viability.sh`, which checks every local row in the table.
 > See the [measurement shelf-life policy](measurement-shelf-life.md) and
-> `docs/lessons.md` gotcha 13.
+> `docs/lessons.md` gotcha 19.
 
 **Substitution note.** Card 46's candidate table named
 `qwen/qwen3-coder:free` and `deepseek/deepseek-r1:free` as the two

@@ -123,7 +123,7 @@ choices and exceptions rather than extending this runbook.
 5. After a verifier FAIL, preserve the failed worktree for inspection, revise
    the card if needed, then re-queue through the canonical
    `autometta-requeue` path. That path owns cleanup of the run worktree,
-   branch and handoff artefacts.
+   branch and envelope artefacts.
 
    ```sh
    scripts/requeue-stage.sh <repo-path> <stage-id>

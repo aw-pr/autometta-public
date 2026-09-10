@@ -2,7 +2,7 @@
 
 A worker writes a JSON file to `state/envelopes/<stage-id>.json` as its final action. `tick.sh` treats this file as the sole completion signal. Process exit and log-tail inspection are fallback stuck-worker signals only, not success signals.
 
-A subscriber still vendoring the pre-card-104 `worker-prompt.md` writes to the legacy `state/handoffs/<stage-id>.json` path instead. `tick.sh` reads both — see [Envelope path migration](#envelope-path-migration) below.
+A subscriber still vendoring the pre-card-104 `worker-prompt.md` writes to the legacy `state/handoffs/<stage-id>.json` path instead. `tick.sh` reads both; see [Envelope path migration](#envelope-path-migration) below.
 
 ## Not the session handoff
 
@@ -35,7 +35,7 @@ Required fields: `stage_id`, `status`, `deliverables`, `notes`. Optional: `faile
 
 ## Why a file, not a tool call or log pattern
 
-A file on disk is the only completion signal that works identically for both worker families (Codex in `workspace-write` sandbox, Claude in headless `claude -p` mode). Tool calls are family-specific; log patterns are fragile — a worker that prints "done" mid-stream can be falsely classified. A file written as the last action is atomic on POSIX and inspectable without re-running the worker.
+A file on disk is the only completion signal that works identically for both worker families (Codex in `workspace-write` sandbox, Claude in headless `claude -p` mode). Tool calls are family-specific; log patterns are fragile: a worker that prints "done" mid-stream can be falsely classified. A file written as the last action is atomic on POSIX and inspectable without re-running the worker.
 
 ## tick.sh outcomes
 
@@ -67,7 +67,7 @@ tick.sh moves the bad file to `<envelope-path>.invalid.json` (alongside whicheve
 
 ## Legacy stages
 
-Stages already recorded as `completed` in state.yaml before stage 17 was shipped are grandfathered. tick.sh does not retroactively require envelopes for them. Envelope enforcement applies only to stages that transition from `pending` to `in_progress` after stage 17 is committed — i.e., stages whose worker dispatch goes through the updated `spawn-worker.sh` and worker prompt template.
+Stages already recorded as `completed` in state.yaml before stage 17 was shipped are grandfathered. tick.sh does not retroactively require envelopes for them. Envelope enforcement applies only to stages that transition from `pending` to `in_progress` after stage 17 is committed, that is, stages whose worker dispatch goes through the updated `spawn-worker.sh` and worker prompt template.
 
 ## Operator checklist when a stage stalls on envelope reasons
 
@@ -76,10 +76,10 @@ Stages already recorded as `completed` in state.yaml before stage 17 was shipped
 
 ## Envelope path migration
 
-Card 104 (2026-09-01) renamed this artefact from "handoff envelope" to "dispatch envelope" and moved the writer's target from `state/handoffs/<stage-id>.json` to `state/envelopes/<stage-id>.json`. The rename was needed because the shared word "handoff" had already caused this artefact to be confused with the unrelated session handoff (`HANDOFF.md`) — see [Not the session handoff](#not-the-session-handoff).
+Card 104 (2026-09-01) renamed this artefact from "handoff envelope" to "dispatch envelope" and moved the writer's target from `state/handoffs/<stage-id>.json` to `state/envelopes/<stage-id>.json`. The rename was needed because the shared word "handoff" had already caused this artefact to be confused with the unrelated session handoff (`HANDOFF.md`); see [Not the session handoff](#not-the-session-handoff).
 
 **Why both paths are read.** `tick.sh` is central and updates the moment this change lands in `autometta`, but the worker prompt that tells a worker where to write is a *vendored* file: each subscriber holds its own copy of `templates/worker-prompt.md`, refreshed only by an operator running `autometta refresh-repo` or `autometta refresh-all-repos` (see "Pushing a release to the subscribers" in `docs/dispatch-contract.md`). A subscriber that has not refreshed still hands its worker the old path. A tick.sh that read only the new path would find nothing there, and score every completed stage from that subscriber as stalled, silently, the first time this change reached them. `worker_envelope_path()` in `tick.sh` therefore checks `state/envelopes/<stage-id>.json` first and falls back to `state/handoffs/<stage-id>.json`; when both exist, the new path always wins. `scripts/envelope-migration-smoke.sh` exercises all three path combinations against the resolver directly, then drives a throwaway subscriber through the real tick reactor on the new path and on the legacy path, proving each one lands a stage as `completed`.
 
-**What moved and what did not.** Only the writer moved: the vendored `templates/worker-prompt.md` now names the new path, so every worker dispatched after a subscriber refresh writes there. The 142 envelope files already sitting in `state/handoffs/` across the fleet as of 2026-09-01 were not moved — a stage mid-flight must not have its completion signal relocated underneath it, and the dual read makes that unnecessary.
+**What moved and what did not.** Only the writer moved: the vendored `templates/worker-prompt.md` now names the new path, so every worker dispatched after a subscriber refresh writes there. The 142 envelope files already sitting in `state/handoffs/` across the fleet as of 2026-09-01 were not moved: a stage mid-flight must not have its completion signal relocated underneath it, and the dual read makes that unnecessary.
 
-**When the old path can be retired.** Not on a date — on a condition: every registered subscriber's `.autometta-vendor` stamp records a `vendored_from` sha that is a descendant of (or equal to) the commit that lands this migration. That is checkable by walking the subscriber registry and running `git merge-base --is-ancestor <this-commit> <stamp-sha>` for each enabled entry's stamp; it is not checked automatically today. Until that sweep reports clean, `state/handoffs/` stays load-bearing and the fallback in `worker_envelope_path()` stays in place. Retiring it is a separate, later card.
+**When the old path can be retired.** Not on a date, on a condition: every registered subscriber's `.autometta-vendor` stamp records a `vendored_from` sha that is a descendant of (or equal to) the commit that lands this migration. That is checkable by walking the subscriber registry and running `git merge-base --is-ancestor <this-commit> <stamp-sha>` for each enabled entry's stamp; it is not checked automatically today. Until that sweep reports clean, `state/handoffs/` stays load-bearing and the fallback in `worker_envelope_path()` stays in place. Retiring it is a separate, later card.
