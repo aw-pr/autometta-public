@@ -496,18 +496,24 @@ The clock read is **operator wall-clock, always local, never UTC** --
 UTC. **Accepted risk:** a wrong system clock or a wrong timezone silently
 changes when the loop runs, with no alarm of its own; the only signal is the
 tick's own log line naming which rule resolved (`daytime`/`overnight`/
-`default`/`drain-ignore-reserve`) and the reserve percentage it carried. There
-is no independent check that the host clock is correct. A window whose `end`
+`default`/`drain-ignore-reserve`), the reserve percentage it carried, and
+`curfew off` or `curfew on <start>-<end>`. There is no independent check that
+the host clock is correct. A window whose `end`
 is earlier than its `start` (`22:00` to `01:00`) crosses midnight and is
 resolved as one interval (`now >= start OR now < end`), not two separate
 comparisons -- the obvious `start <= now < end` test is silently wrong for a
 wrapping window, since it can never match at all.
 
-**The stop at the end of the overnight window only refuses new dispatch.**
+**The stop is opt-in and only refuses new dispatch.** Set
+`window_reserve.overnight.stop_outside: true` to arm it. The key defaults
+off: an overnight block alone changes the reserve percentage and permits
+new workers outside the window, subject to the ordinary reserve gate.
+Only boolean `true` inside `overnight`, with valid `start`/`end` times,
+arms the curfew; a key elsewhere or any other value is ignored.
 Nothing installs a stop job (the emergence-lab 2026-09-03 hand-installed
 LaunchAgent that failed to remove itself is exactly the failure mode this
-avoids): the tick reads the clock on every fire and, outside the declared
-window, refuses to start a *new* worker at all.
+avoids): with the curfew armed, the tick reads the clock on every fire and,
+outside the declared window, refuses to start a *new* worker at all.
 
 The stop is a separate gate sitting above the reserve, and it deliberately
 reads no quota. The reserve is reading-driven: it binds only when a known
@@ -520,10 +526,11 @@ snapshot). A stop built on the reading fails open precisely when it is
 needed, and leaves the operator no session and no alarm saying why. So the
 clock alone decides, and the refusal is logged as `schedule stop worker
 <stage> (<family>): clock HH:MM is outside the <start>-<end> dispatch
-window`. The consequence worth stating plainly: **once a schedule is
-declared, the loop starts no new work outside the window**, and burning the
-day is the opt-in `drain.sh start --ignore-reserve` below. A
-stage already in flight when the window closes is never killed to enforce
+window (overnight.stop_outside: true)`, followed by the resolved reserve
+rule and curfew state. **Only an explicitly armed curfew stops new workers
+outside the window**, and `drain.sh start --ignore-reserve` can temporarily
+override it as described below. A stage already in flight when the window
+closes is never killed to enforce
 this, and its verifier is not held by the resumed daytime reserve either: the
 stage's `reserve_exempt` flag, stamped at worker-dispatch time whenever the
 resolved window was `overnight` or a `--ignore-reserve` drain was active,
@@ -535,10 +542,13 @@ carries no such exemption.
 drain rather than a second switch.** `drain.sh start --ignore-reserve`
 suspends the reserve (daytime or scheduled) for the life of that one drain
 and no longer -- it is already the operator's declared, bounded "spend the
-window down on purpose" verb, already self-expiring, already scoped. When a
-schedule is declared, a `--hours` that would still be running past the next
-occurrence of the overnight window's end is refused at `start`, naming the
+window down on purpose" verb, already self-expiring, already scoped. When
+`window_reserve.overnight.stop_outside: true` arms a curfew, a `--hours` that
+would still be running past the next occurrence of the overnight window's
+end is refused at `start`, naming the
 window: a drain must not outlive the permission it is spending against.
+Without a curfew, the drain may outlive the percentage window; the existing
+maximum drain duration still applies.
 
 **What bounds it is a short negative list, not an action enumeration.** The
 recoverable actions do not need enumerating and the unrecoverable ones are

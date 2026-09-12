@@ -154,4 +154,55 @@ printf 'PASS acceptance 5: no window declared means no curfew, whatever else the
 
 # AUTOMETTA-CONTRACT-END
 
+# Cover malformed opt-ins and a misplaced key even when a window exists.
+variant="$fixture/variant.yaml"
+for value in false null 1 '"true"' '"yes"' '[]' '{}'; do
+  yq ".window_reserve.overnight.stop_outside = $value" "$reserve_only" > "$variant"
+  rc=0
+  AUTOMETTA_SCHEDULE_CLOCK=09:00 quota_schedule_permits_dispatch "$variant" "$repo" || rc=$?
+  assert_eq 0 "$rc" "non-boolean opt-in $value permits dispatch"
+  assert_contains "$QUOTA_SCHEDULE_STOP_REASON" "no curfew declared" "non-boolean opt-in reason"
+done
+yq '.window_reserve.stop_outside = true | .stop_outside = true' "$reserve_only" > "$variant"
+AUTOMETTA_SCHEDULE_CLOCK=09:00 quota_schedule_permits_dispatch "$variant" "$repo" \
+  || fail 'misplaced stop_outside with a valid window must be ignored'
+for field in start end; do
+  for value in '"24:00"' '"29:00"' '"22:60"' '"9:00"' null; do
+    yq ".window_reserve.overnight.$field = $value" "$curfew" > "$variant"
+    AUTOMETTA_SCHEDULE_CLOCK=09:00 quota_schedule_permits_dispatch "$variant" "$repo" \
+      || fail "invalid $field $value must not arm a curfew"
+    assert_contains "$QUOTA_SCHEDULE_STOP_REASON" "no curfew declared" "invalid boundary reason"
+  done
+done
+quota_schedule_permits_dispatch "$fixture/missing.yaml" "$repo" \
+  || fail 'missing mandate must permit dispatch'
+assert_contains "$QUOTA_SCHEDULE_STOP_REASON" "no curfew declared" "missing mandate reason"
+printf 'PASS opt-in validation: only boolean true with valid nested boundaries arms a curfew\n'
+
+# Exercise the actual drain command on both sides of the same window end.
+now_14="$(python3 -c 'import datetime as dt; print(int(dt.datetime.now().replace(hour=14, minute=0, second=0, microsecond=0).timestamp()))')"
+AUTOMETTA_DRAIN_NOW_EPOCH="$now_14" "$script_dir/drain.sh" start \
+  --cap 999999999 --hours 12 --ignore-reserve > "$fixture/drain.log" 2>&1 \
+  || fail "reserve-only drain may outlive the window: $(cat "$fixture/drain.log")"
+assert_eq true "$(jq -r '.ignore_reserve' "$AUTOMETTA_HOME/drain.json")" "drain persists reserve override"
+"$script_dir/drain.sh" end >/dev/null
+cp "$curfew" "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+rc=0
+AUTOMETTA_DRAIN_NOW_EPOCH="$now_14" "$script_dir/drain.sh" start \
+  --cap 999999999 --hours 12 --ignore-reserve > "$fixture/drain.log" 2>&1 || rc=$?
+assert_eq 1 "$rc" "curfew drain must not outlive the window"
+assert_contains "$(cat "$fixture/drain.log")" "stop_outside" "drain refusal names the opt-in"
+printf 'PASS drain window: only an armed curfew limits the reserve override to the window end\n'
+
+rc=0
+AUTOMETTA_SCHEDULE_CLOCK=09:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
+  pending-stage worker || rc=$?
+assert_eq 1 "$rc" "armed curfew stops worker before the unknown reading"
+tick_log="$(tail -n 1 "$AUTOMETTA_HOME/log/tick-$(date +%F).log")"
+assert_contains "$tick_log" "daytime" "stopped dispatch logs resolved rule"
+assert_contains "$tick_log" "curfew on 22:00-01:00" "stopped dispatch logs armed curfew"
+AUTOMETTA_SCHEDULE_CLOCK=23:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" \
+  pending-stage worker || fail 'worker inside curfew must dispatch with reserve zero'
+printf 'PASS curfew logging: stopped and permitted workers resolve the rule and curfew\n'
+
 printf 'PASS reserve-schedule-smoke: an overnight reserve is a percentage, not a curfew\n'

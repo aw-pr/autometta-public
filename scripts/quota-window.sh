@@ -203,10 +203,23 @@ quota_reserve_settings() {
 
 QUOTA_SCHEDULE_STOP_REASON=""
 
+# quota_schedule_curfew_window <mandate-path>: print start-end only for an
+# explicitly armed curfew with valid local wall-clock boundaries.
+quota_schedule_curfew_window() {
+  local mandate_path="$1" ov_start ov_end
+  [[ -f "$mandate_path" ]] && command -v yq >/dev/null 2>&1 || return 1
+  [[ "$(yq -r '.window_reserve.overnight.stop_outside | tag' "$mandate_path" 2>/dev/null)" == "!!bool" ]] || return 1
+  [[ "$(yq -r '.window_reserve.overnight.stop_outside' "$mandate_path" 2>/dev/null)" == "true" ]] || return 1
+  ov_start="$(yq -r '.window_reserve.overnight.start // ""' "$mandate_path" 2>/dev/null || true)"
+  ov_end="$(yq -r '.window_reserve.overnight.end // ""' "$mandate_path" 2>/dev/null || true)"
+  [[ "$ov_start" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ && "$ov_end" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || return 1
+  printf '%s-%s\n' "$ov_start" "$ov_end"
+}
+
 # quota_schedule_permits_dispatch <mandate-path> [repo-root]
 #
-# The stop (deliverable 3). Returns 0 when a *new* worker dispatch is
-# permitted at this moment, 1 when the declared schedule refuses it, with
+# Returns 0 when a *new* worker dispatch is permitted at this moment,
+# 1 when an explicit overnight.stop_outside curfew refuses it, with
 # QUOTA_SCHEDULE_STOP_REASON carrying the reason the caller logs.
 #
 # This deliberately does not read the quota. The reserve below is a
@@ -220,8 +233,8 @@ QUOTA_SCHEDULE_STOP_REASON=""
 # operator no session and no alarm saying why.
 #
 # Precedence, first hit wins:
-#   1. no schedule declared -- permitted, today's behaviour for every
-#      subscriber that never configures this.
+#   1. no valid curfew declared -- permitted; the schedule only selects a
+#      reserve percentage unless overnight.stop_outside is boolean true.
 #   2. an active --ignore-reserve drain -- permitted. Burning the daytime
 #      session is opt-in and self-expiring (deliverable 4).
 #   3. inside the declared window -- permitted.
@@ -232,16 +245,12 @@ QUOTA_SCHEDULE_STOP_REASON=""
 # work already claimed still reaps and lands after the window closes.
 quota_schedule_permits_dispatch() {
   local mandate_path="$1" repo_root="${2:-}"
-  QUOTA_SCHEDULE_STOP_REASON=""
+  QUOTA_SCHEDULE_STOP_REASON="no curfew declared"
 
-  [[ -f "$mandate_path" ]] && command -v yq >/dev/null 2>&1 || return 0
-  local ov_start ov_end
-  ov_start="$(yq -r '.window_reserve.overnight.start // ""' "$mandate_path" 2>/dev/null || true)"
-  ov_end="$(yq -r '.window_reserve.overnight.end // ""' "$mandate_path" 2>/dev/null || true)"
-  if [[ ! "$ov_start" =~ ^[0-2][0-9]:[0-5][0-9]$ || ! "$ov_end" =~ ^[0-2][0-9]:[0-5][0-9]$ ]]; then
-    QUOTA_SCHEDULE_STOP_REASON="no schedule declared"
-    return 0
-  fi
+  local curfew ov_start ov_end
+  curfew="$(quota_schedule_curfew_window "$mandate_path")" || return 0
+  ov_start="${curfew%-*}"
+  ov_end="${curfew#*-}"
 
   if [[ -n "$repo_root" ]] && quota_drain_ignore_reserve_active "$repo_root"; then
     QUOTA_SCHEDULE_STOP_REASON="--ignore-reserve drain in force"
@@ -254,7 +263,7 @@ quota_schedule_permits_dispatch() {
     QUOTA_SCHEDULE_STOP_REASON="clock ${now_hm} is inside the ${ov_start}-${ov_end} dispatch window"
     return 0
   fi
-  QUOTA_SCHEDULE_STOP_REASON="clock ${now_hm} is outside the ${ov_start}-${ov_end} dispatch window; it next opens at ${ov_start}"
+  QUOTA_SCHEDULE_STOP_REASON="clock ${now_hm} is outside the ${ov_start}-${ov_end} dispatch window (overnight.stop_outside: true); it next opens at ${ov_start}"
   return 1
 }
 

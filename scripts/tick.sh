@@ -170,15 +170,18 @@ QUOTA_GATE_RESOLVED_WINDOW="default"
 # outside-reserve, reserve off, observe and every unknown reading.
 quota_gate_family_dispatch() {
   local repo_root="$1" family="$2" what="$3"
-  local settings reserve action window reading
+  local settings reserve action window reading mandate_path curfew
   QUOTA_GATE_RESOLVED_WINDOW="default"
   case "$family" in claude|codex) ;; *)
     log "quota ${what}: family unknown; dispatch remains fail-open"
     return 0
   esac
-  settings="$(quota_reserve_settings "${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}" "$repo_root")"
+  mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}"
+  settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
   IFS=$'\t' read -r reserve action window <<<"$settings"
   QUOTA_GATE_RESOLVED_WINDOW="${window:-default}"
+  curfew="$(quota_schedule_curfew_window "$mandate_path" || true)"
+  log "quota ${what} (${family}): ${reserve}% reserve, ${action} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); curfew ${curfew:+on }${curfew:-off}"
   reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
   if quota_gate_reading "$reading" "$reserve" "$action"; then
     if [[ "$QUOTA_GATE_REASON" == reading\ unknown:* ]]; then
@@ -213,7 +216,7 @@ quota_gate_role_dispatch() {
     '.stages[] | select(.id == $id) | .[$role] // empty')"
   family="$(costlog_family_for_identity "$identity")"
   # The schedule stop, before the reserve and before any reading is
-  # consulted: outside a declared dispatch window no new work starts, however
+  # consulted: outside an explicitly armed curfew no new work starts, however
   # healthy the quota looks. Refusing here rather than pausing the repo is
   # what lets an in-flight stage still land -- a budget pause returns before
   # any stage work at all, verifier included, so a stop implemented as a
@@ -221,7 +224,12 @@ quota_gate_role_dispatch() {
   if [[ "$role" == "worker" ]]; then
     if ! quota_schedule_permits_dispatch \
          "${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}" "$repo_root"; then
-      log "schedule stop ${role} ${stage_id} (${family}): ${QUOTA_SCHEDULE_STOP_REASON}; no new dispatch this tick"
+      local settings reserve action window curfew mandate_path
+      mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}"
+      settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
+      IFS=$'\t' read -r reserve action window <<<"$settings"
+      curfew="$(quota_schedule_curfew_window "$mandate_path" || true)"
+      log "schedule stop ${role} ${stage_id} (${family}): ${QUOTA_SCHEDULE_STOP_REASON}; ${reserve}% reserve, ${action} (${window:-default} schedule); curfew ${curfew:+on }${curfew:-off}; no new dispatch this tick"
       return 1
     fi
   fi

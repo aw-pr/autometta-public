@@ -49,7 +49,10 @@ spend_authority:
 #       start: "22:00"
 #       end: "01:00"
 #       percent: 0
+#       stop_outside: false
 #     timezone: local
+#
+# overnight.stop_outside: true stops new workers outside the window; it defaults off.
 #
 # overnight.start/end are read in the clock named by `timezone`. Only
 # "local" is supported today: the window describes when the operator is
@@ -70,6 +73,7 @@ window_reserve:
   #   start:
   #   end:
   #   percent:
+  #   stop_outside: false
   # timezone: local
 
 escalation:

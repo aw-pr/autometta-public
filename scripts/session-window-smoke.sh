@@ -47,6 +47,7 @@ window_reserve:
     start: "22:00"
     end: "01:00"
     percent: 0
+    stop_outside: true
   timezone: local
 YAML
 
