@@ -101,3 +101,21 @@ autometta_only_filled_placeholders() {
   # which is ordinary staleness and must still read as drift.
   [ "$removed" -gt 0 ] && [ "$added" -gt 0 ]
 }
+
+# Missing upstream files remain drift (ORPHAN in the check): without a source
+# file there is no evidence that the subscriber holds the current contract.
+autometta_vendor_drifted_files() {
+  local repo_root="$1" source_root="$2" f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if [ ! -f "$source_root/$f" ] || [ ! -f "$repo_root/$f" ]; then
+      printf '%s\n' "$f"
+    elif [ "$(autometta_file_digest "$repo_root/$f")" = "$(autometta_file_digest "$source_root/$f")" ]; then
+      continue
+    elif autometta_only_filled_placeholders "$repo_root/$f" "$source_root/$f"; then
+      continue
+    else
+      printf '%s\n' "$f"
+    fi
+  done < <(autometta_vendored_files)
+}

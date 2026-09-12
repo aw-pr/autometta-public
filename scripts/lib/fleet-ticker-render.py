@@ -261,8 +261,8 @@ def collect_escalation_rows(repos, now):
                     "identity": "-", "detail": repo.get("halt_reason") or "budget"})
         if repo.get("vendor_stale"):
             add(5, {"repo": name, "result": "vendor-stale", "stage": "-", "role": "-",
-                    "identity": "-", "detail": "from %s, run: autometta refresh-repo %s" % (
-                        repo.get("vendor_from") or "unknown", repo.get("repo_path") or name)})
+                    "identity": "-", "detail": "%s; dispatch continues; run: autometta refresh-repo %s" % (
+                        ", ".join(repo.get("vendor_drifted") or []), repo.get("repo_path") or name)})
         paused_until = repo.get("paused_until")
         if isinstance(paused_until, (int, float)) and paused_until > now:
             add(4, {"repo": name, "result": "paused", "stage": "-", "role": "-", "identity": "-",

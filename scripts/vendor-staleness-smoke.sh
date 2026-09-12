@@ -126,4 +126,95 @@ printf 'PASS acceptance 4: filled placeholders read as current, matching automet
 
 # AUTOMETTA-CONTRACT-END
 
+# Exercise the checker from a subscriber, including its own vendored copy.
+cp "$source_root/templates/stage-card.md" "$repo/templates/stage-card.md"
+checker_output="$(cd "$repo" && AUTOMETTA_ROOT="$source_root" bash scripts/autometta-vendor-check.sh)"
+assert_contains "$checker_output" "vendor stamp behind" "checker notes stamp lag"
+assert_contains "$checker_output" "6 vendored files current" "checker counts current files"
+assert_contains "$checker_output" "dispatch continues" "checker note is non-blocking"
+assert_contains "$checker_output" "autometta refresh-repo ." "checker names the remedy"
+
+# Filled files count as current, while retaining the checker's FILLED line.
+python3 - "$repo/templates/stage-card.md" <<'PY'
+import re, sys
+p = sys.argv[1]
+with open(p) as f:
+    s = f.read()
+with open(p, "w") as f:
+    f.write(re.sub(r"<<[^>]*>>", "filled downstream", s, count=1))
+PY
+checker_output="$(cd "$repo" && AUTOMETTA_ROOT="$source_root" bash scripts/autometta-vendor-check.sh)"
+assert_contains "$checker_output" "FILLED templates/stage-card.md" "checker preserves filled reporting"
+assert_contains "$checker_output" "6 vendored files current" "checker includes filled files in current count"
+cp "$source_root/templates/stage-card.md" "$repo/templates/stage-card.md"
+
+reset_warning_guard
+warn_if_vendor_stale "$repo"
+warn_if_vendor_stale "$repo"
+assert_eq 1 "$(wc -l < "$tick_log_path" | tr -d '[:space:]')" "stamp note occurs once per pass"
+
+# A matching stamp cannot hide real drift or a missing file.
+autometta_write_vendor_stamp "$repo/$autometta_vendor_stamp_name" "$autometta_sha_this_pass"
+reset_warning_guard
+warn_if_vendor_stale "$repo"
+assert_eq "" "$(cat "$tick_log_path")" "matching stamp and files are silent"
+"$script_dir/aggregate-dashboard.sh" >/dev/null
+cp "$AUTOMETTA_HOME/dashboard/data.json" "$fixture/current-dashboard.json"
+assert_eq "$vendored_count" "$(jq -r '.repos[0].vendor_files_current' "$fixture/current-dashboard.json")" "dashboard counts current files"
+assert_eq '[]' "$(jq -c '.repos[0].vendor_drifted' "$fixture/current-dashboard.json")" "dashboard has no drifted paths"
+
+printf '\n# local drift\n' >> "$repo/scripts/check-contract-test-gate.sh"
+checker_rc=0
+checker_output="$(cd "$repo" && AUTOMETTA_ROOT="$source_root" bash scripts/autometta-vendor-check.sh)" || checker_rc=$?
+assert_eq 1 "$checker_rc" "checker exits 1 for content drift"
+assert_contains "$checker_output" "DRIFT  scripts/check-contract-test-gate.sh" "checker names content drift"
+rm "$repo/templates/worker-prompt.md"
+printf 'file: templates/retired.md\n' >> "$repo/$autometta_vendor_stamp_name"
+checker_rc=0
+checker_output="$(cd "$repo" && AUTOMETTA_ROOT="$source_root" bash scripts/autometta-vendor-check.sh)" || checker_rc=$?
+assert_eq 1 "$checker_rc" "checker exits 1 for missing files"
+assert_contains "$checker_output" "GONE   templates/worker-prompt.md" "checker preserves missing reporting"
+assert_contains "$checker_output" "RETIRED templates/retired.md" "checker preserves retired reporting"
+
+subscriber_snapshot() {
+  python3 - "$repo" <<'PY'
+import hashlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+for p in sorted(root.rglob("*")):
+    if p.is_file() and ".git" not in p.relative_to(root).parts:
+        print(p.relative_to(root), hashlib.sha256(p.read_bytes()).hexdigest())
+PY
+}
+snapshot_before="$(subscriber_snapshot)"
+reset_warning_guard
+warn_if_vendor_stale "$repo"
+warn_if_vendor_stale "$repo"
+assert_eq 1 "$(wc -l < "$tick_log_path" | tr -d '[:space:]')" "drift warning occurs once per pass"
+assert_contains "$(cat "$tick_log_path")" "templates/worker-prompt.md" "tick names missing file despite matching stamp"
+assert_contains "$(cat "$tick_log_path")" "scripts/check-contract-test-gate.sh" "tick names every drifted file"
+"$script_dir/aggregate-dashboard.sh" >/dev/null
+assert_eq "$snapshot_before" "$(subscriber_snapshot)" "tick and dashboard leave subscriber files unchanged"
+assert_eq 4 "$(jq -r '.repos[0].vendor_files_current' "$AUTOMETTA_HOME/dashboard/data.json")" "dashboard excludes missing and drifted files"
+assert_eq '["templates/worker-prompt.md","scripts/check-contract-test-gate.sh"]' \
+  "$(jq -c '.repos[0].vendor_drifted' "$AUTOMETTA_HOME/dashboard/data.json")" "dashboard names missing and drifted paths"
+
+python3 - "$script_dir/lib/fleet-ticker-render.py" "$fixture/current-dashboard.json" "$AUTOMETTA_HOME/dashboard/data.json" <<'PY'
+import importlib.util, json, sys, time
+spec = importlib.util.spec_from_file_location("fleet_renderer", sys.argv[1])
+renderer = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(renderer)
+with open(sys.argv[2]) as f:
+    current = json.load(f)
+with open(sys.argv[3]) as f:
+    drifted = json.load(f)
+assert not any(r["result"] == "vendor-stale" for r in renderer.collect_escalation_rows(current["repos"], time.time()))
+rows = [r for r in renderer.collect_escalation_rows(drifted["repos"], time.time()) if r["result"] == "vendor-stale"]
+assert len(rows) == 1
+for path in drifted["repos"][0]["vendor_drifted"]:
+    assert path in rows[0]["detail"]
+assert "dispatch continues" in rows[0]["detail"]
+assert "autometta refresh-repo" in rows[0]["detail"]
+PY
+printf 'PASS supplementary checks: checker exits, counts, fleet paths, matching stamps, once-per-pass guard and read-only consumers\n'
+
 printf 'PASS vendor-staleness-smoke: freshness is judged on the files, not the stamp\n'

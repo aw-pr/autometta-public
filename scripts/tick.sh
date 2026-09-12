@@ -2903,11 +2903,7 @@ process_repo() {
   return $rc
 }
 
-# Vendor staleness: a subscriber holding an older copy of the contract than the
-# autometta this tick runs from is dispatching against templates that are not
-# the ones being maintained, and nothing said so. emergence-lab sat on
-# `vendored_from: 496c7cc` while the source had moved on; it happened to still
-# match and nothing would have reported it either way.
+# File drift is stale; a behind stamp over current files is only cosmetic.
 #
 # It is a warning and only ever a warning. A stale copy still dispatches: the
 # operator decides when to take a release, and a tick that refused to work
@@ -2932,17 +2928,19 @@ warn_if_vendor_stale() {
   local vendored_from
   vendored_from="$(autometta_vendor_stamp_field "$stamp" vendored_from)"
   vendored_from="$(printf '%s' "$vendored_from" | tr -d '[:space:]')"
-  [[ -n "$vendored_from" ]] || return 0
 
+  autometta_resolve_root "$(autometta_self_root "$script_dir")"
   if [[ -z "$autometta_sha_this_pass" ]]; then
-    autometta_resolve_root "$(autometta_self_root "$script_dir")"
     autometta_sha_this_pass="$(autometta_root_sha "$AUTOMETTA_ROOT_RESOLVED")"
   fi
-  # A root that cannot name its own sha has no opinion about anyone else's.
-  [[ -n "$autometta_sha_this_pass" && "$autometta_sha_this_pass" != "unknown" ]] || return 0
 
-  if [[ "$vendored_from" != "$autometta_sha_this_pass" ]]; then
-    log "stale vendor: ${repo_root} holds the contract from ${vendored_from}, autometta is at ${autometta_sha_this_pass}; run: autometta refresh-repo ${repo_root}"
+  local drifted_files current_count
+  drifted_files="$(autometta_vendor_drifted_files "$repo_root" "$AUTOMETTA_ROOT_RESOLVED")"
+  if [[ -n "$drifted_files" ]]; then
+    log "stale vendor: ${repo_root} holds the contract from ${vendored_from:-unknown}, autometta is at ${autometta_sha_this_pass}; drifted files: ${drifted_files//$'\n'/, }; dispatch continues; run: autometta refresh-repo ${repo_root}"
+  elif [[ -n "$vendored_from" && -n "$autometta_sha_this_pass" && "$autometta_sha_this_pass" != unknown && "$vendored_from" != "$autometta_sha_this_pass" ]]; then
+    current_count="$(autometta_vendored_files | awk 'NF {n++} END {print n+0}')"
+    log "vendor stamp behind: ${repo_root}, ${current_count} vendored files current; dispatch continues; run: autometta refresh-repo ${repo_root}"
   fi
   return 0
 }

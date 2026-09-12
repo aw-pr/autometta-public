@@ -53,23 +53,29 @@ printf 'Autometta source: %s (HEAD %s)\n' "$src" "$upstream_head"
 printf 'Vendored from:    %s\n\n' "${vendored_from:-unknown}"
 
 canonical="$(autometta_vendored_files)"
+drifted_files="$(autometta_vendor_drifted_files . "$src")"
 
 drift=0 missing=0 ok=0 filled=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
-  if [ ! -f "$src/$f" ]; then
-    printf '  ORPHAN %s (in the upstream set but not in the upstream tree)\n' "$f"; drift=$((drift + 1)); continue
-  fi
-  if [ ! -f "$f" ]; then
-    printf '  GONE   %s (vendored file missing locally)\n' "$f"; missing=$((missing + 1)); continue
-  fi
+  case $'\n'"$drifted_files"$'\n' in
+    *$'\n'"$f"$'\n'*)
+      if [ ! -f "$src/$f" ]; then
+        printf '  ORPHAN %s (in the upstream set but not in the upstream tree)\n' "$f"; drift=$((drift + 1))
+      elif [ ! -f "$f" ]; then
+        printf '  GONE   %s (vendored file missing locally)\n' "$f"; missing=$((missing + 1))
+      else
+        printf '  DRIFT  %s\n' "$f"; drift=$((drift + 1))
+      fi
+      continue ;;
+  esac
+  # The classifier already accepted this file. The digest only distinguishes
+  # the existing up-to-date and FILLED reporting categories.
   if [ "$(autometta_file_digest "$f")" = "$(autometta_file_digest "$src/$f")" ]; then
     ok=$((ok + 1))
-  elif autometta_only_filled_placeholders "$f" "$src/$f"; then
+  else
     printf '  FILLED %s (placeholders completed downstream, not drift)\n' "$f"
     filled=$((filled + 1))
-  else
-    printf '  DRIFT  %s\n' "$f"; drift=$((drift + 1))
   fi
 done <<< "$canonical"
 
@@ -89,5 +95,8 @@ printf '\n%d up to date, %d filled, %d drifted, %d missing locally.\n' "$ok" "$f
 if [ "$drift" -gt 0 ] || [ "$missing" -gt 0 ]; then
   printf 'Refresh this repo from %s with: autometta refresh-repo .\n' "$src"
   exit 1
+fi
+if [ -n "$vendored_from" ] && [ "$upstream_head" != unknown ] && [ "$vendored_from" != "$upstream_head" ]; then
+  printf 'vendor stamp behind: %s vendored files current; dispatch continues; run: autometta refresh-repo .\n' "$((ok + filled))"
 fi
 printf 'Vendored Autometta contract is current.\n'

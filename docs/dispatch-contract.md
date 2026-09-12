@@ -835,17 +835,21 @@ outside it.
 
 ### The staleness warning
 
-The tick warns, once per repo per pass, when a subscriber's stamp lags the sha
-of the autometta root the tick is running from:
+The tick checks vendored files against the autometta root it is running from,
+accepting identical content and filled placeholders. Once per repo per pass,
+it reports either file drift or a behind stamp over current files:
 
 ```
-stale vendor: /path/to/repo holds the contract from 496c7cc, autometta is at 26213a5; run: autometta refresh-repo /path/to/repo
+stale vendor: /path/to/repo holds the contract from 496c7cc, autometta is at 26213a5; drifted files: templates/stage-card.md; dispatch continues; run: autometta refresh-repo /path/to/repo
+vendor stamp behind: /path/to/repo, 6 vendored files current; dispatch continues; run: autometta refresh-repo /path/to/repo
 ```
 
-It is a warning and only a warning. The stage still dispatches. Taking a
-release is the operator's decision, and a tick that refused to work until
-someone ran a refresh would turn a housekeeping note into an outage. A
-subscriber with a current stamp, or with no stamp at all, says nothing.
+A stamp lag is cosmetic; drift is what the word stale means. Only drift
+appears as a fleet warning, with the affected paths. Both log forms say that
+dispatch continues. Taking a release is the operator's decision, and only
+`autometta refresh-repo` restamps: the tick never writes to a subscriber's
+tree. A subscriber with current files and a matching stamp, or with no stamp
+at all, says nothing.
 
 ### Envelope path migration (card 104)
 
