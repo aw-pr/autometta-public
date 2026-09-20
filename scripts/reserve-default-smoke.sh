@@ -10,6 +10,8 @@
 # window and hand the rest of the run to purchased top-up credit.
 # shellcheck disable=SC2034  # AUTOMETTA_QUOTA_TICK_JSON is reset to force a re-read
 set -euo pipefail
+# Replay the historical reserve contract; codex-card-quota-smoke covers the new default.
+export AUTOMETTA_CODEX_QUOTA_POLICY=reserve
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

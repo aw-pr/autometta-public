@@ -143,9 +143,9 @@ main() {
   worker_identity="$(extract_worker_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
   family="$(worker_family "$worker_identity")"
-  if ! quota_spawn_permits "$repo_root" "$family"; then
+  if ! quota_spawn_permits "$repo_root" "$family" "$card_path"; then
     log_msg "worker ${stage_id} (${family}) not started: ${QUOTA_GATE_REASON}"
-    log_msg "  no new card starts past the provider-window reserve; AUTOMETTA_IGNORE_RESERVE=1 dispatches anyway"
+    log_msg "  no new card starts past its quota gate; AUTOMETTA_IGNORE_RESERVE=1 overrides only the legacy reserve"
     exit 4
   fi
   effort="$(extract_worker_effort "$card_path")"

@@ -27,10 +27,9 @@ quota_drain_ignore_reserve_active() {
   [[ "$(jq -r '.ignore_reserve // false' "$drain_path" 2>/dev/null)" == "true" ]]
 }
 
-# The reserve is on unless the operator switches it off. Twenty percent
-# unspent means no new card starts once any reported window (5-hour or
-# weekly) is past 80%, which is where a subscription plan starts drawing on
-# purchased top-up credit without asking. An operator turns it off with an
+# The legacy reserve is on unless the operator switches it off. Twenty
+# percent unspent stops new work at 80% used, leaving room for active work.
+# Codex defaults to card admission below 100% instead. An operator turns it off with an
 # explicit window_reserve.percent: 0 or action: off in the mandate; an
 # unanswered or invalid value is not an answer and takes the default.
 # The default needs a mandate file to be unanswered in: init-host installs
@@ -217,7 +216,32 @@ quota_reserve_settings() {
   printf '%s\t%s\t%s\n' "$percent" "$action" "$QUOTA_RESERVE_WINDOW"
 }
 
-# quota_spawn_permits <repo-root> claude|codex
+# The legacy reserve remains available for an explicitly chosen policy.
+quota_codex_card_policy() {
+  [[ "${AUTOMETTA_CODEX_QUOTA_POLICY:-card}" != "reserve" ]]
+}
+
+quota_codex_role_uses_subscription() {
+  local repo_root="$1" identity="$2" role="$3" mode
+  [[ "$identity" == *Codex* || "$identity" == *GPT* ]] || return 1
+  mode="$(REPO_ROOT="$repo_root" "$quota_window_script_dir/auth-route.sh" codex --print-mode --role "$role" 2>/dev/null)" || return 0
+  [[ "$mode" == subscription ]]
+}
+
+quota_gate_codex_reading() {
+  local result
+  QUOTA_GATE_WINDOW=""; QUOTA_GATE_RESET=""; QUOTA_GATE_REASON=""
+  result="$(printf '%s' "$1" | python3 "$quota_window_script_dir/quota-window.py" codex-admission)" || {
+    QUOTA_GATE_REASON="Codex quota admission reader failed"
+    return 1
+  }
+  QUOTA_GATE_REASON="$(printf '%s' "$result" | jq -r '.reason')"
+  QUOTA_GATE_WINDOW="$(printf '%s' "$result" | jq -r '.window')"
+  QUOTA_GATE_RESET="$(printf '%s' "$result" | jq -r '.reset // empty')"
+  [[ "$(printf '%s' "$result" | jq -r '.allowed')" == true ]]
+}
+
+# quota_spawn_permits <repo-root> claude|codex [card-path]
 #
 # The reserve check for a spawn that did not come through the tick: an
 # orchestrator at a prompt running scripts/spawn-worker.sh by hand. Same
@@ -233,11 +257,30 @@ quota_reserve_settings() {
 #                               would otherwise halt the repo with a
 #                               dispatch-configuration-fault on a refusal.
 quota_spawn_permits() {
-  local repo_root="$1" family="$2"
+  local repo_root="$1" family="$2" card_path="${3:-}"
   QUOTA_GATE_REASON=""
   if [[ "${AUTOMETTA_RESERVE_GATED:-}" == "1" ]]; then
     QUOTA_GATE_REASON="reserve already applied by the tick"
     return 0
+  fi
+  if quota_codex_card_policy; then
+    local worker_id verifier_id uses_codex=false
+    if [[ -n "$card_path" ]]; then
+      worker_id="$(sed -n 's/^- \*\*Worker:\*\* //p' "$card_path" | head -n1)"
+      verifier_id="$(sed -n 's/^- \*\*Verifier:\*\* //p' "$card_path" | head -n1)"
+      if quota_codex_role_uses_subscription "$repo_root" "$worker_id" worker || quota_codex_role_uses_subscription "$repo_root" "$verifier_id" verifier; then
+        uses_codex=true
+      fi
+    elif [[ "$family" == codex ]]; then
+      uses_codex=true
+    fi
+    if [[ "$uses_codex" == true ]]; then
+      [[ -n "$AUTOMETTA_QUOTA_TICK_JSON" ]] || quota_refresh_tick || true
+      local codex_reading
+      codex_reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c '.families.codex')"
+      quota_gate_codex_reading "$codex_reading" || return 1
+    fi
+    [[ "$family" != codex ]] || return 0
   fi
   if [[ "${AUTOMETTA_IGNORE_RESERVE:-}" == "1" ]]; then
     QUOTA_GATE_REASON="AUTOMETTA_IGNORE_RESERVE=1"

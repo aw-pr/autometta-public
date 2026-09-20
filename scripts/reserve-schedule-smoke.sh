@@ -14,6 +14,8 @@
 # After this card the curfew is its own opt-in key, overnight.stop_outside.
 # Without it the block only moves the percentage; with it, today's stop.
 set -euo pipefail
+# Replay the historical reserve contract; codex-card-quota-smoke covers the new default.
+export AUTOMETTA_CODEX_QUOTA_POLICY=reserve
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

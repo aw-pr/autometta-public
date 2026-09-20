@@ -469,37 +469,35 @@ prose answer lives in the seed; its machine-readable half
 (`--token-ceiling`, `--expires`) is mirrored into the mandate's
 `spend_authority` block so a pass can stop without parsing prose.
 
-**The provider-window reserve is the second configure-time answer, and it
-is on until answered otherwise (card 137).** The default is 20% unspent with
-action `hold`: no new card starts once any reported window of a family, the
-5-hour session or the weekly, is at or past 80%. That is the point at which a
-subscription plan starts drawing on purchased top-up credit, and the loop
-should never be the thing that crosses it. The operator may supply a
-different percentage, where an explicit zero means off (as does `action:
-off`), and choose `hold` or `observe`; an unanswered or unparseable value is
-not an answer and takes the default. The default lives in the mandate file,
-so `autometta init-host` installs the template; a host with no mandate at
-all is off, and the tick log names the missing file at every dispatch. The
-renderer records the answer in the
-seed and mirrors `window_reserve.percent` and `window_reserve.action` into
-the mandate. Before each worker or verifier spawn, the tick compares that
-role's family with the once-per-tick quota reading. A known window inside a
-`hold` reserve pauses until its own reset; an unknown reading and `observe`
-both proceed unchanged.
+**Codex subscription admission uses the full quota window by default.** A new
+card may start while fresh five-hour and weekly utilisation are both below
+100%. Its worker and verifier may finish in overage. Before admitting the next
+card, the tick checks Codex even when only that card's verifier uses Codex.
+The manual worker entry point applies the same admission rule and returns 4
+before spawning when held. API and local routes do not use subscription quota.
 
-The same line binds a spawn that never went through the tick.
-`scripts/spawn-worker.sh` calls `quota_spawn_permits` before it resolves an
-auth route or launches anything, so an orchestrator dispatching by hand at
-85% of a window gets exit 4, the binding window and reserve named, and no
-worker; `AUTOMETTA_IGNORE_RESERVE=1` overrides that one spawn on purpose.
-The tick marks its own spawn calls `AUTOMETTA_RESERVE_GATED=1` because it
-has already applied the gate and a refusal at spawn time would read as a
-dispatch-configuration fault. Verifiers are not gated at the spawn level: a
-verifier finishes a card already in flight, and the tick's verifier gate and
-`reserve_exempt` stamp are unchanged. The reserve protects dispatch only; an
-interactive Codex or Claude session is outside it by design, and the
-2026-09-19 burn that prompted the default was three interactive sessions,
-not the loop.
+At or above 100%, or when readings are missing, stale, incomplete or awaiting a
+fresh observation after reset, new Codex-backed cards remain pending. The gate
+does not pause the whole repo: a pending pipeline tail must not prevent the
+active head from finishing. Fresh readings below 100% allow dispatch to resume.
+Readings older than `AI_QUOTA_STALE_SECONDS` (default 600 seconds) are stale.
+This is admission control, not a cash cap or a kill switch. Concurrent cards
+already admitted elsewhere and interactive sessions can also consume allowance.
+The serial viewer run admits one card at a time.
+
+**Claude retains the provider-window reserve.** `window_reserve.percent` defaults
+to 20% with `action: hold`, so new Claude work normally stops at 80% used.
+Explicit zero or `action: off` disables that reserve; unknown Claude readings
+retain the existing fail-open behaviour. Scheduled reserve and curfew settings
+are unchanged. The template and `render-controller-seed.sh` retain those settings.
+
+`AUTOMETTA_CODEX_QUOTA_POLICY=reserve` explicitly selects the previous Codex
+reserve behaviour, including its unknown-reading semantics. Historical contract
+smokes select that policy; `codex-card-quota-smoke.sh` checks the new default.
+`AUTOMETTA_IGNORE_RESERVE=1` only bypasses the legacy reserve. It cannot bypass
+the default Codex exhaustion gate. Tick-owned spawns still carry
+`AUTOMETTA_RESERVE_GATED=1` after successful admission. Existing budget, failure,
+authentication and GUI gates continue to apply. No reset is redeemed automatically.
 
 **The reserve can carry a schedule, so a run knows what time it is (card
 124).** `percent`/`action` alone serve two different hours equally badly: the

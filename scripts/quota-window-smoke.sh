@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Offline contract proof for provider-window readings and the pre-dispatch gate.
 set -euo pipefail
+# Replay the historical reserve contract; codex-card-quota-smoke covers the new default.
+export AUTOMETTA_CODEX_QUOTA_POLICY=reserve
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,6 +24,8 @@ export AI_QUOTA_STALE_SECONDS=600
 export AUTOMETTA_HOME="$fixture/controller"
 mkdir -p "$AI_QUOTA_DIR" "$AUTOMETTA_CODEX_SESSIONS/2026/08/25" \
   "$AUTOMETTA_HOME/log" "$AUTOMETTA_HOME/subscribers"
+
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/138a-legacy-quota-regression.md
 
 write_claude() {
   local fetched="$1"
@@ -195,3 +199,5 @@ for file in quota-window.sh quota-window-smoke.sh tick.sh agent-ticker.sh aggreg
 done
 PYTHONPYCACHEPREFIX="$fixture/pycache" python3 -m py_compile "$script_dir/quota-window.py"
 printf 'PASS syntax: touched shell and Python files parse\n'
+
+# AUTOMETTA-CONTRACT-END

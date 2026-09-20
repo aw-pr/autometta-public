@@ -177,6 +177,13 @@ quota_gate_family_dispatch() {
     return 0
   esac
   mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}"
+  if [[ "$family" == codex ]] && quota_codex_card_policy; then
+    reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c '.families.codex')"
+    QUOTA_GATE_RESOLVED_WINDOW="codex-card"
+    if quota_gate_codex_reading "$reading"; then return 0; fi
+    log "quota ${what} (codex): ${QUOTA_GATE_REASON}; no new card, active work may finish"
+    return 1
+  fi
   settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
   IFS=$'\t' read -r reserve action window <<<"$settings"
   QUOTA_GATE_RESOLVED_WINDOW="${window:-default}"
@@ -232,6 +239,23 @@ quota_gate_role_dispatch() {
       curfew="$(quota_schedule_curfew_window "$mandate_path" || true)"
       log "schedule stop ${role} ${stage_id} (${family}): ${QUOTA_SCHEDULE_STOP_REASON}; ${reserve}% reserve, ${action} (${window:-default} schedule); curfew ${curfew:+on }${curfew:-off}; no new dispatch this tick"
       return 1
+    fi
+  fi
+  if quota_codex_card_policy; then
+    local worker_id verifier_id uses_codex=false
+    worker_id="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .worker // empty')"
+    verifier_id="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .verifier // empty')"
+    if quota_codex_role_uses_subscription "$repo_root" "$worker_id" worker || quota_codex_role_uses_subscription "$repo_root" "$verifier_id" verifier; then
+      uses_codex=true
+    fi
+    if [[ "$role" == worker && "$uses_codex" == true ]]; then
+      quota_gate_family_dispatch "$repo_root" codex "card ${stage_id}" || return 1
+      [[ "$family" != codex ]] || return 0
+    elif [[ "$role" == verifier && "$family" == codex ]]; then
+      log "quota verifier ${stage_id} (codex): finishing the admitted card; overage permitted"
+      return 0
+    elif [[ "$family" == codex ]]; then
+      return 0
     fi
   fi
   if [[ "$role" == "verifier" ]]; then

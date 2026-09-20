@@ -135,7 +135,14 @@ scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 
 `watch-agent.sh` exit code: `0` clean, `2` STUCK, `3` bad input. STUCK escalates when the heartbeat first flags `silent` and the grace window expires (defaults 60s poll, 120s grace, both env-overridable). For the `claude` family swap the launch line for `( cd "$repo" && op-fetch $auth_pairs -- claude -p "$prompt" </dev/null >log 2>&1 ) &` and pass `claude` as the family arg to `auth-route.sh` and `register-agent.sh`.
 
-A manual dispatch through `scripts/spawn-worker.sh` is held by the same provider-window reserve as the tick: past 80% used on any window of that family it exits 4 and starts nothing. That is the intended answer when the session is nearly spent; `AUTOMETTA_IGNORE_RESERVE=1` overrides one spawn when you mean to spend it. Verifiers are not held, so an in-flight card can always be finished.
+A manual dispatch through `scripts/spawn-worker.sh` uses the same quota admission
+as the tick. Codex subscription cards may start below 100% in both fresh usage
+windows; the active card may finish in overage, then further cards wait. This
+also checks a Codex verifier before admitting its Claude worker. Missing/stale
+Codex quota holds new cards. Claude keeps its configured reserve (20% by default).
+`AUTOMETTA_CODEX_QUOTA_POLICY=reserve` explicitly selects the legacy Codex policy;
+`AUTOMETTA_IGNORE_RESERVE=1` bypasses only that reserve, not the default cutoff.
+See `docs/tick-loop.md` for completion, freshness and concurrent-use limits.
 
 `op-fetch` resolves any named refs via the 1Password service-account token at `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`) and exec's the child with a sanitised env. No biometric prompt, works under cron / LaunchAgent. See `docs/setup.md` section 7 and `docs/observability.md` for the full surface.
 

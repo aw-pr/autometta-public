@@ -29,6 +29,9 @@ spend_authority:
   token_ceiling:
   expires_at:
 
+# Claude reserve, and Codex only with AUTOMETTA_CODEX_QUOTA_POLICY=reserve.
+# Default Codex subscription admission instead uses fresh quota below 100%;
+# the active card may finish in overage, then further cards wait.
 # Written when the operator answers the setup question. Unanswered (empty)
 # is NOT off: the loop then holds a 20% reserve (no new card past 80% of any
 # reported window, 5-hour or weekly, per family). Zero is the explicit

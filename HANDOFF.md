@@ -1,12 +1,11 @@
 # Handover
 
-**Status (2026-09-10):** docs audit and v1.0.0 publish. Every doc, template and
-skill was checked against the scripts and corrected (about 90 stale claims,
-113 em dashes, 50 home-dir paths); the README was restructured with a skimmable
-overview; `publish` fast-forwarded to `dev` for PR #4 on the public mirror and
-`v1.0.0` tagged. HANDOFF.md now crosses the publish boundary by decision
-(privatefile guard lifted 2026-09-10): keep it free of paths and secrets. The
-queue is empty and the machine is free.
+**Status (2026-09-20):** Codex subscription cards now use fresh quota below
+100% in both windows for admission. The active card may finish in overage;
+subsequent cards wait. Checks cover manual dispatch and both roles of a new
+card. Claude reserve and explicit legacy Codex policy remain supported.
+Offline admission, reserve, schedule and budget regressions passed; no provider
+calls were used in tests. No automatic reset redemption was added.
 
 ## Previous status (2026-09-07 20:30)
 

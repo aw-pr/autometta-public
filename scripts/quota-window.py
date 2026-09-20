@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -47,7 +48,7 @@ def unknown(family: str, reason: str) -> dict[str, Any]:
     }
 
 
-def sanitise_windows(value: Any) -> list[dict[str, Any]] | None:
+def sanitise_windows(value: Any, *, allow_overage: bool = False) -> list[dict[str, Any]] | None:
     if not isinstance(value, list) or not value:
         return None
     result = []
@@ -65,7 +66,9 @@ def sanitise_windows(value: Any) -> list[dict[str, Any]] | None:
             or not label
             or not isinstance(utilisation, (int, float))
             or isinstance(utilisation, bool)
-            or not 0 <= float(utilisation) <= 100
+            or not math.isfinite(float(utilisation))
+            or float(utilisation) < 0
+            or (not allow_overage and float(utilisation) > 100)
         ):
             return None
         result.append(
@@ -166,7 +169,7 @@ def codex_snapshot(line: str) -> dict[str, Any] | None:
                 "resets_at": iso(reset_epoch) if reset_epoch is not None else None,
             }
         )
-    windows = sanitise_windows(windows)
+    windows = sanitise_windows(windows, allow_overage=True)
     if windows is None:
         return None
     fetched_epoch = parse_time(event.get("timestamp"))
@@ -175,7 +178,7 @@ def codex_snapshot(line: str) -> dict[str, Any] | None:
         "status": "known",
         "reason": None,
         "source": "codex-rollout-log",
-        "fetched_at": iso(fetched_epoch if fetched_epoch is not None else now_epoch()),
+        "fetched_at": iso(fetched_epoch) if fetched_epoch is not None else None,
         "windows": windows,
     }
 
@@ -214,6 +217,31 @@ def read_codex() -> dict[str, Any]:
     return unknown("codex", f"no rate_limits event in newest {MAX_CODEX_FILES} rollout files")
 
 
+def codex_admission(reading: Any) -> dict[str, Any]:
+    result = {"allowed": False, "reason": "Codex quota reading unavailable", "window": "", "reset": None}
+    if not isinstance(reading, dict) or reading.get("status") != "known":
+        return result
+    now = now_epoch()
+    fetched = parse_time(reading.get("fetched_at"))
+    try:
+        max_age = max(0, int(os.environ.get("AI_QUOTA_STALE_SECONDS", DEFAULT_STALE_SECONDS)))
+    except ValueError:
+        max_age = DEFAULT_STALE_SECONDS
+    if fetched is None or fetched > now + 60 or now - fetched > max_age:
+        return {**result, "reason": "Codex quota reading stale or undated"}
+    windows = sanitise_windows(reading.get("windows"), allow_overage=True)
+    if not windows or not {"primary", "secondary"}.issubset({w["key"] for w in windows}):
+        return {**result, "reason": "Codex quota windows incomplete"}
+    for window in windows:
+        reset = parse_time(window["resets_at"])
+        if reset is None or reset <= now:
+            return {**result, "reason": "Codex quota needs a fresh reading after reset", "window": window["label"]}
+        if window["utilization"] >= 100:
+            return {**result, "reason": f"Codex {window['label']} exhausted ({window['utilization']:g}% used)",
+                    "window": window["label"], "reset": int(reset)}
+    return {**result, "allowed": True, "reason": "Codex quota below 100%; current card may finish in overage"}
+
+
 def read_family(family: str) -> dict[str, Any]:
     if family == "claude":
         return read_claude()
@@ -223,10 +251,16 @@ def read_family(family: str) -> dict[str, Any]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in {"claude", "codex", "all"}:
-        print(f"usage: {Path(sys.argv[0]).name} claude|codex|all", file=sys.stderr)
+    if len(sys.argv) != 2 or sys.argv[1] not in {"claude", "codex", "all", "codex-admission"}:
+        print(f"usage: {Path(sys.argv[0]).name} claude|codex|all|codex-admission", file=sys.stderr)
         return 2
-    if sys.argv[1] == "all":
+    if sys.argv[1] == "codex-admission":
+        try:
+            reading = json.load(sys.stdin)
+        except (ValueError, OSError):
+            reading = None
+        result = codex_admission(reading)
+    elif sys.argv[1] == "all":
         result = {
             "read_at": iso(now_epoch()),
             "families": {family: read_family(family) for family in ("claude", "codex")},
