@@ -94,3 +94,28 @@ done
 printf 'PASS non-subscription routes do not require subscription telemetry\n'
 
 # AUTOMETTA-CONTRACT-END
+
+# Supplemental regression: a live account snapshot can observe a manual reset
+# before any new model turn has written a rollout event.
+python3 - "$script_dir" <<'PYTEST'
+import importlib.util, json, os
+from pathlib import Path
+import sys
+spec = importlib.util.spec_from_file_location("quota", Path(sys.argv[1]) / "quota-window.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+path = Path(os.environ["AI_QUOTA_DIR"]) / "codex.json"
+rollout = module.read_codex()
+assert rollout["windows"][0]["utilization"] == 105
+snapshot = {**rollout, "source": "codex-app-server", "fetched_at": "2033-05-18T03:33:21Z"}
+snapshot["windows"][0]["utilization"] = 12
+path.write_text(json.dumps(snapshot))
+assert module.read_codex()["windows"][0]["utilization"] == 12
+snapshot["fetched_at"] = "2033-05-18T03:33:19Z"
+path.write_text(json.dumps(snapshot))
+assert module.read_codex()["windows"][0]["utilization"] == 105
+snapshot["fetched_at"] = "2033-05-18T03:00:00Z"
+path.write_text(json.dumps(snapshot))
+assert module.read_codex()["windows"][0]["utilization"] == 105
+print("PASS fresh account snapshot supersedes old rollout; older/stale snapshots do not")
+PYTEST

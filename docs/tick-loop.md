@@ -481,6 +481,12 @@ fresh observation after reset, new Codex-backed cards remain pending. The gate
 does not pause the whole repo: a pending pipeline tail must not prevent the
 active head from finishing. Fresh readings below 100% allow dispatch to resume.
 Readings older than `AI_QUOTA_STALE_SECONDS` (default 600 seconds) are stale.
+The Codex reader also accepts a sanitised `codex.json` in `AI_QUOTA_DIR`
+(default `~/.local/state/ai-quota`), using the same snapshot envelope as Claude.
+It selects the newer observation between that fresh snapshot and rollout logs.
+An account `account/rateLimits/read` response can therefore reveal a manual
+reset without spending tokens on a model turn. Preserve its actual fetch time;
+do not restamp cached data to make it appear fresh.
 This is admission control, not a cash cap or a kill switch. Concurrent cards
 already admitted elsewhere and interactive sessions can also consume allowance.
 The serial viewer run admits one card at a time.

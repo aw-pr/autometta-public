@@ -82,33 +82,33 @@ def sanitise_windows(value: Any, *, allow_overage: bool = False) -> list[dict[st
     return result
 
 
-def read_claude() -> dict[str, Any]:
+def read_snapshot(family: str) -> dict[str, Any]:
     quota_dir = Path(
         os.path.expanduser(os.environ.get("AI_QUOTA_DIR", "~/.local/state/ai-quota"))
     )
-    snapshot = quota_dir / "claude.json"
+    snapshot = quota_dir / f"{family}.json"
     if not snapshot.is_file():
-        return unknown("claude", "snapshot absent")
+        return unknown(family, "snapshot absent")
     try:
         payload = json.loads(snapshot.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return unknown("claude", "snapshot malformed")
+        return unknown(family, "snapshot malformed")
     if not isinstance(payload, dict):
-        return unknown("claude", "snapshot malformed")
+        return unknown(family, "snapshot malformed")
     fetched_epoch = parse_time(payload.get("fetched_at"))
     source = payload.get("source")
-    windows = sanitise_windows(payload.get("windows"))
+    windows = sanitise_windows(payload.get("windows"), allow_overage=family == "codex")
     if fetched_epoch is None or not isinstance(source, str) or not source or windows is None:
-        return unknown("claude", "snapshot malformed")
+        return unknown(family, "snapshot malformed")
     try:
         stale_seconds = int(os.environ.get("AI_QUOTA_STALE_SECONDS", DEFAULT_STALE_SECONDS))
     except ValueError:
         stale_seconds = DEFAULT_STALE_SECONDS
     age = max(0, int(now_epoch() - fetched_epoch))
     if age > max(0, stale_seconds):
-        return unknown("claude", f"snapshot stale ({age}s old, limit {max(0, stale_seconds)}s)")
+        return unknown(family, f"snapshot stale ({age}s old, limit {max(0, stale_seconds)}s)")
     return {
-        "family": "claude",
+        "family": family,
         "status": "known",
         "reason": None,
         "source": source,
@@ -116,6 +116,9 @@ def read_claude() -> dict[str, Any]:
         "windows": windows,
     }
 
+
+def read_claude() -> dict[str, Any]:
+    return read_snapshot("claude")
 
 def find_rate_limits(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
@@ -183,7 +186,7 @@ def codex_snapshot(line: str) -> dict[str, Any] | None:
     }
 
 
-def read_codex() -> dict[str, Any]:
+def read_codex_rollout() -> dict[str, Any]:
     sessions_root = Path(
         os.path.expanduser(os.environ.get("AUTOMETTA_CODEX_SESSIONS", "~/.codex/sessions"))
     )
@@ -215,6 +218,15 @@ def read_codex() -> dict[str, Any]:
             if reading is not None:
                 return reading
     return unknown("codex", f"no rate_limits event in newest {MAX_CODEX_FILES} rollout files")
+
+
+def read_codex() -> dict[str, Any]:
+    rollout = read_codex_rollout()
+    snapshot = read_snapshot("codex")
+    candidates = [value for value in (rollout, snapshot) if value.get("status") == "known"]
+    if not candidates:
+        return rollout
+    return max(candidates, key=lambda value: parse_time(value.get("fetched_at")) or 0)
 
 
 def codex_admission(reading: Any) -> dict[str, Any]:
