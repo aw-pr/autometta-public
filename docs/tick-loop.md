@@ -469,14 +469,37 @@ prose answer lives in the seed; its machine-readable half
 (`--token-ceiling`, `--expires`) is mirrored into the mandate's
 `spend_authority` block so a pass can stop without parsing prose.
 
-**The provider-window reserve is the second configure-time answer.** The
-operator supplies a percentage, where zero explicitly means off, and chooses
-`hold` or `observe`. No answer is committed as a default. The renderer records
-the answer in the seed and mirrors `window_reserve.percent` and
-`window_reserve.action` into the mandate. Before each worker or verifier spawn,
-the tick compares that role's family with the once-per-tick quota reading. A
-known window inside a `hold` reserve pauses until its own reset; an unknown
-reading and `observe` both proceed unchanged.
+**The provider-window reserve is the second configure-time answer, and it
+is on until answered otherwise (card 137).** The default is 20% unspent with
+action `hold`: no new card starts once any reported window of a family, the
+5-hour session or the weekly, is at or past 80%. That is the point at which a
+subscription plan starts drawing on purchased top-up credit, and the loop
+should never be the thing that crosses it. The operator may supply a
+different percentage, where an explicit zero means off (as does `action:
+off`), and choose `hold` or `observe`; an unanswered or unparseable value is
+not an answer and takes the default. The default lives in the mandate file,
+so `autometta init-host` installs the template; a host with no mandate at
+all is off, and the tick log names the missing file at every dispatch. The
+renderer records the answer in the
+seed and mirrors `window_reserve.percent` and `window_reserve.action` into
+the mandate. Before each worker or verifier spawn, the tick compares that
+role's family with the once-per-tick quota reading. A known window inside a
+`hold` reserve pauses until its own reset; an unknown reading and `observe`
+both proceed unchanged.
+
+The same line binds a spawn that never went through the tick.
+`scripts/spawn-worker.sh` calls `quota_spawn_permits` before it resolves an
+auth route or launches anything, so an orchestrator dispatching by hand at
+85% of a window gets exit 4, the binding window and reserve named, and no
+worker; `AUTOMETTA_IGNORE_RESERVE=1` overrides that one spawn on purpose.
+The tick marks its own spawn calls `AUTOMETTA_RESERVE_GATED=1` because it
+has already applied the gate and a refusal at spawn time would read as a
+dispatch-configuration fault. Verifiers are not gated at the spawn level: a
+verifier finishes a card already in flight, and the tick's verifier gate and
+`reserve_exempt` stamp are unchanged. The reserve protects dispatch only; an
+interactive Codex or Claude session is outside it by design, and the
+2026-09-19 burn that prompted the default was three interactive sessions,
+not the loop.
 
 **The reserve can carry a schedule, so a run knows what time it is (card
 124).** `percent`/`action` alone serve two different hours equally badly: the

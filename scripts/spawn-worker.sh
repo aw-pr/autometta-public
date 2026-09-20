@@ -9,6 +9,8 @@ source "$script_dir/resolve-root.sh"
 source "$script_dir/budget.sh"
 # shellcheck source=./models.sh
 source "$script_dir/models.sh"
+# shellcheck source=./quota-window.sh
+source "$script_dir/quota-window.sh"
 
 # Token-usage accounting (stage 10).
 #
@@ -24,6 +26,13 @@ source "$script_dir/models.sh"
 #   - Codex two-line:  `tokens used` then a digit run (commas tolerated)
 #   - Claude inline:   `Total tokens: <N>`
 # grep tokens: "tokens used" "Total tokens:"
+#
+# Exit codes: 1 is a dispatch configuration fault (bad card, missing tool,
+# unresolved auth route). 4 is the provider-window reserve refusing to start
+# a new card because this family's window is past the reserve line; nothing
+# was spawned and nothing was written. A tick never sees 4 (it applies the
+# gate itself and marks its spawns AUTOMETTA_RESERVE_GATED=1); a manual
+# orchestrator does, and may override with AUTOMETTA_IGNORE_RESERVE=1.
 
 log_msg() {
   printf '%s\n' "$1" >&2
@@ -134,6 +143,11 @@ main() {
   worker_identity="$(extract_worker_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
   family="$(worker_family "$worker_identity")"
+  if ! quota_spawn_permits "$repo_root" "$family"; then
+    log_msg "worker ${stage_id} (${family}) not started: ${QUOTA_GATE_REASON}"
+    log_msg "  no new card starts past the provider-window reserve; AUTOMETTA_IGNORE_RESERVE=1 dispatches anyway"
+    exit 4
+  fi
   effort="$(extract_worker_effort "$card_path")"
   effort_argv_for_family "$family" "$effort"
   if [[ ${#AUTOMETTA_EFFORT_ARGV[@]} -gt 0 ]]; then

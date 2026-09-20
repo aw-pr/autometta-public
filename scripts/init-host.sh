@@ -132,6 +132,21 @@ YAML
   printf 'PASS template created %s\n' "$template_file"
 fi
 
+# The provider-window reserve reads its answer from this file, and an
+# installed-but-unanswered copy is what makes the 20% default bind. Without
+# the file the reserve is off, so a host is not initialised until it exists.
+mandate_file="$controller_home/phat-controller-mandate.yaml"
+mandate_template="$autometta_root/templates/phat-controller-mandate.yaml.tpl"
+if [[ -f "$mandate_file" ]]; then
+  printf 'PASS mandate exists %s\n' "$mandate_file"
+elif [[ -f "$mandate_template" ]]; then
+  cp "$mandate_template" "$mandate_file"
+  chmod 600 "$mandate_file"
+  printf 'PASS mandate installed %s (provider-window reserve defaults to 20%% hold; set window_reserve.percent: 0 to switch it off)\n' "$mandate_file"
+else
+  printf 'WARN mandate template missing %s; the provider-window reserve is off until one is installed\n' "$mandate_template"
+fi
+
 if [[ "$(uname -s)" == "Darwin" ]]; then
   printf 'PASS macOS host uses per-repo LaunchAgents; run autometta subscribe <repo> to install one\n'
 else

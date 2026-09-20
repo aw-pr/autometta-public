@@ -148,7 +148,13 @@ choices and exceptions rather than extending this runbook.
    autometta drain status
    ```
 
-8. Leave the daytime session protected by default. If the controller
+8. Leave the daytime session protected by default. With no answer in the
+   controller mandate (installed by `autometta init-host`) the loop holds
+   20% of every window: no new card past
+   80% used, per family, for the loop and for a manual
+   `scripts/spawn-worker.sh` alike (the manual spawn exits 4 and names
+   `AUTOMETTA_IGNORE_RESERVE=1` as the override). Set
+   `window_reserve.percent: 0` to switch it off. If the controller
    mandate's `window_reserve.overnight` is declared, its percentage applies
    inside that window and the top-level percentage applies outside it.
    Set `window_reserve.overnight.stop_outside: true` to stop new workers

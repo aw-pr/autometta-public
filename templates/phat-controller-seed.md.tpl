@@ -89,7 +89,8 @@ and stop; do not escalate into a wait that nothing will service.
 The usage reading is advisory when it is unknown. An absent, malformed or
 stale snapshot must never become zero utilisation and must never stop work.
 When the configured action is `hold`, a known window inside the reserve pauses
-dispatch only until that window's published reset time. A zero reserve is off.
+dispatch only until that window's published reset time. A zero reserve is off;
+an unanswered one is the default, 20% hold.
 
 ## Human presence, and the push protocol
 

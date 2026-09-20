@@ -182,6 +182,7 @@ quota_gate_family_dispatch() {
   QUOTA_GATE_RESOLVED_WINDOW="${window:-default}"
   curfew="$(quota_schedule_curfew_window "$mandate_path" || true)"
   log "quota ${what} (${family}): ${reserve}% reserve, ${action} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); curfew ${curfew:+on }${curfew:-off}"
+  [[ -f "$mandate_path" ]] || log "quota ${what}: no controller mandate at ${mandate_path}; reserve off until autometta init-host installs one"
   reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
   if quota_gate_reading "$reading" "$reserve" "$action"; then
     if [[ "$QUOTA_GATE_REASON" == reading\ unknown:* ]]; then
@@ -1176,7 +1177,7 @@ network_preflight_ok() {
 
 spawn_worker_for_stage() {
   local card_path="$1" repo_root="$2" work_dir="$3"
-  "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
+  AUTOMETTA_RESERVE_GATED=1 "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
 }
 
 spawn_verifier_for_stage() {
@@ -2858,7 +2859,7 @@ dispatch_pending_stage_if_available() {
         --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch" --arg dispatch_base_tip "$dispatch_base_tip" \
         --argjson exempt "$next_stage_reserve_exempt"
       local worker_spawn_rc=0
-      "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
+      AUTOMETTA_RESERVE_GATED=1 "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
       if (( worker_spawn_rc != 0 )); then
         halt_dispatch_configuration_fault "$repo_root" "$next_stage" worker
         log "stage ${next_stage} halted: worker dispatch command failed before an agent started (dispatch-configuration-fault, exit ${worker_spawn_rc})"

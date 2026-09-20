@@ -27,6 +27,19 @@ quota_drain_ignore_reserve_active() {
   [[ "$(jq -r '.ignore_reserve // false' "$drain_path" 2>/dev/null)" == "true" ]]
 }
 
+# The reserve is on unless the operator switches it off. Twenty percent
+# unspent means no new card starts once any reported window (5-hour or
+# weekly) is past 80%, which is where a subscription plan starts drawing on
+# purchased top-up credit without asking. An operator turns it off with an
+# explicit window_reserve.percent: 0 or action: off in the mandate; an
+# unanswered or invalid value is not an answer and takes the default.
+# The default needs a mandate file to be unanswered in: init-host installs
+# the template, so an initialised host is on. A host with no mandate at all
+# (a fixture controller home in a smoke, a tick run before init-host) is off,
+# and the tick log names the missing file at every dispatch.
+QUOTA_RESERVE_DEFAULT_PERCENT=20
+QUOTA_RESERVE_DEFAULT_ACTION=hold
+
 AUTOMETTA_QUOTA_TICK_JSON=""
 QUOTA_GATE_WINDOW=""
 QUOTA_GATE_RESET=""
@@ -167,14 +180,17 @@ quota_reserve_settings() {
     return 0
   fi
   local percent action
-  percent="$(yq -r '.window_reserve.percent // 0' "$mandate_path" 2>/dev/null || printf 0)"
-  action="$(yq -r '.window_reserve.action // "off"' "$mandate_path" 2>/dev/null || printf off)"
-  if ! [[ "$percent" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  percent="$(yq -r '.window_reserve.percent // ""' "$mandate_path" 2>/dev/null || true)"
+  action="$(yq -r '.window_reserve.action // ""' "$mandate_path" 2>/dev/null || true)"
+  # Only an explicit, valid zero (or action: off) switches the reserve off.
+  # Empty is the template's unanswered state and anything unparseable is a
+  # typo; neither is a decision to spend the window down, so both take the
+  # default rather than silently disarming the guard.
+  if [[ -z "$percent" ]] || ! [[ "$percent" =~ ^[0-9]+([.][0-9]+)?$ ]] \
      || ! awk -v value="$percent" 'BEGIN { exit !(value >= 0 && value <= 100) }'; then
-    percent=0
-    action=off
+    percent="$QUOTA_RESERVE_DEFAULT_PERCENT"
   fi
-  case "$action" in hold|observe|off) ;; *) action=off ;; esac
+  case "$action" in hold|observe|off) ;; *) action="$QUOTA_RESERVE_DEFAULT_ACTION" ;; esac
 
   local ov_start ov_end
   ov_start="$(yq -r '.window_reserve.overnight.start // ""' "$mandate_path" 2>/dev/null || true)"
@@ -199,6 +215,49 @@ quota_reserve_settings() {
     QUOTA_RESERVE_WINDOW="daytime"
   fi
   printf '%s\t%s\t%s\n' "$percent" "$action" "$QUOTA_RESERVE_WINDOW"
+}
+
+# quota_spawn_permits <repo-root> claude|codex
+#
+# The reserve check for a spawn that did not come through the tick: an
+# orchestrator at a prompt running scripts/spawn-worker.sh by hand. Same
+# reading and same rule as the tick's quota_gate_family_dispatch, but pure:
+# it pauses nothing and writes nothing, because the caller is a person who
+# will read the refusal, not a loop that must remember to resume. Returns 1
+# with QUOTA_GATE_REASON when a known window of this family is inside a hold
+# reserve, 0 otherwise, including every unknown reading (fail-open, as the
+# tick). Two escapes, both explicit and both named in the log line:
+#   AUTOMETTA_IGNORE_RESERVE=1  the operator means to spend the window.
+#   AUTOMETTA_RESERVE_GATED=1   set by tick.sh on its own spawn calls, which
+#                               have already passed the gate this tick and
+#                               would otherwise halt the repo with a
+#                               dispatch-configuration-fault on a refusal.
+quota_spawn_permits() {
+  local repo_root="$1" family="$2"
+  QUOTA_GATE_REASON=""
+  if [[ "${AUTOMETTA_RESERVE_GATED:-}" == "1" ]]; then
+    QUOTA_GATE_REASON="reserve already applied by the tick"
+    return 0
+  fi
+  if [[ "${AUTOMETTA_IGNORE_RESERVE:-}" == "1" ]]; then
+    QUOTA_GATE_REASON="AUTOMETTA_IGNORE_RESERVE=1"
+    return 0
+  fi
+  case "$family" in claude|codex) ;; *)
+    QUOTA_GATE_REASON="family unknown"
+    return 0
+  esac
+  local mandate_path settings reserve action window reading
+  mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(autometta_controller_home)/phat-controller-mandate.yaml}"
+  settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
+  IFS=$'\t' read -r reserve action window <<<"$settings"
+  [[ -n "$AUTOMETTA_QUOTA_TICK_JSON" ]] || quota_refresh_tick || true
+  reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]' 2>/dev/null || printf '{}')"
+  if quota_gate_reading "$reading" "$reserve" "$action"; then
+    return 0
+  fi
+  QUOTA_GATE_REASON="${QUOTA_GATE_REASON} (${window:-default} schedule); resets $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+  return 1
 }
 
 QUOTA_SCHEDULE_STOP_REASON=""
