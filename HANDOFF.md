@@ -1,11 +1,57 @@
 # Handover
 
-**Status (2026-09-20):** Codex subscription cards now use fresh quota below
-100% in both windows for admission. The active card may finish in overage;
-subsequent cards wait. Checks cover manual dispatch and both roles of a new
-card. Claude reserve and explicit legacy Codex policy remain supported.
-Offline admission, reserve, schedule and budget regressions passed; no provider
-calls were used in tests. No automatic reset redemption was added.
+**Status (2026-09-26):** Card 137's 20% reserve default landed and rolled out
+fleet-wide (emergence-lab, reflexivity, emergence-viewer); the
+external-dependencies proposal is filed awaiting three operator decisions; an
+untracked `scripts/publish-sync.sh` needs a keep-or-delete call.
+
+## Recent activity (2026-09-26 card-137-reserve-and-fleet-rollout)
+
+- **Card 137 landed**: provider-window reserve defaults to a 20% hold (no new
+  card past 80% used on any window, per family); `percent: 0` or `action: off`
+  disarms it; the default lives in the mandate file so a host with no mandate
+  stays off (keeps fixture controller homes in smokes off the live reading).
+- `scripts/spawn-worker.sh` is gated by the same rule (`quota_spawn_permits`,
+  exit 4 on hold); the tick marks its own spawns
+  `AUTOMETTA_RESERVE_GATED=1`; verifiers are not gated at spawn. Host mandate
+  `~/.autometta/phat-controller-mandate.yaml` set to 20% hold (was 25%).
+- **Fleet rollout**: `refresh-all-repos` restamped emergence-lab and
+  reflexivity (committed + pushed on their `dev`); `~/repos/emergence-viewer`
+  was vendored but never registered, so it was subscribed (LaunchAgent
+  `com.autometta.tick.emergence-viewer` now loaded) and refreshed
+  `496c7cc` -> `7f9e6a4`, both commits pushed.
+- Docs proposal filed: `docs/proposals/external-dependencies.md` (a
+  `dependencies/` directory plan, candidate cards 138-141) — waits on three
+  operator decisions (extract the Claude quota publisher from the private
+  vibe-menuapp; how `op-fetch`/`agent-whoami` reach a fresh machine given
+  `mcp-hub` is private; whether subscriber repos carry the directory,
+  recommend no).
+- Two later commits by Codex GPT-5.6 Terra (`261bc32`, `9c2d0b0`,
+  2026-09-20) layered a Codex admission-policy change on top of card 137 and
+  already hold the status line above this section — left as-is, not
+  overwritten.
+- **Deferred**: stale disabled registry entry
+  `~/.autometta/subscribers/emergence-viewer-deep-zoom.yaml` (points at a
+  directory that no longer exists, retire it); six pre-existing red smokes on
+  clean `dev` (state-branch, state-schema, ticker-fit, tick-cost,
+  verify-sdk-schema-path, sdk-cache — not caused by this session);
+  `scripts/state-writable-smoke.sh` is named by card 101 as a contract test
+  but has no `AUTOMETTA-CONTRACT` block, so the gate will trip the first time
+  it is edited.
+- **Open questions**: is untracked `scripts/publish-sync.sh` (predates this
+  session, untouched) meant to be committed or deleted; the 2026-09-19 Codex
+  100% burn came from interactive `codex-tui`/Codex Desktop sessions, not the
+  loop, so the reserve protects dispatch only — is that the intended
+  boundary?
+
+## Previous status (2026-09-20)
+
+Codex subscription cards now use fresh quota below 100% in both windows for
+admission. The active card may finish in overage; subsequent cards wait.
+Checks cover manual dispatch and both roles of a new card. Claude reserve and
+explicit legacy Codex policy remain supported. Offline admission, reserve,
+schedule and budget regressions passed; no provider calls were used in
+tests. No automatic reset redemption was added.
 
 ## Previous status (2026-09-07 20:30)
 
