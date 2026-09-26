@@ -1,7 +1,34 @@
 # Handover
 
-**Status (2026-09-26):** publish-sync.sh review findings fixed, tested and
-synced fleet-wide; research-sweeper's dev push held on an ASK (CI watches it).
+**Status (2026-09-26):** Claude identities now dispatch by their weight-naming
+slug, not tier words; Opus tier moved to Claude Opus 5.5 fleet-wide.
+
+## Recent activity (2026-09-26 model-routing-by-identity-slug)
+
+- `claude_model_for_identity` (`scripts/models.sh`) now routes by the
+  identity's `<claude-...@local>` slug, which is the API model id; tier
+  words only serve identities that carry no slug. `AUTOMETTA_MODEL_OPUS`
+  default is now `claude-opus-5-5`. Cards naming "Claude Opus 5" keep
+  running `claude-opus-5` until re-carded as "Claude Opus 5.5" — deliberate,
+  since attribution must match the weights that actually ran. Committed
+  `9cdee02`.
+- `scripts/rates.sh` gained `rate_for_model` (per-model USD/1M, mirrors
+  `mcp-hub/config/models.json` pricing); `cost-log.sh` now prices the model
+  the identity dispatches to (and the advisor's raw model id), falling back
+  to `rate_for_tier`. T1 fallback corrected from $15/$75 (Opus 4.1-era) to
+  $5/$25; local T5 stays free. Committed `2906059`.
+- Verified: new `claude-model-routing-smoke` and `model-rates-smoke` pass;
+  `cost-log`, `tick-cost`, `budget-cap`, `adjudicated-spend`,
+  `advisor-order`, `ticker-spend` and `verifier-route-matrix` smokes all
+  still pass.
+- **Deferred**: `rate_for_model` is a hand mirror of the registry pricing,
+  not yet wired into mcp-hub's `pricing-check` MIRRORS list. Pre-existing
+  smoke failures — `effort-flags`, `local-route`, `phat-controller` (stale
+  or undated codex quota reading), `pipeline-pair` — are identical on the
+  clean tree before this session and were not investigated.
+- **Open questions**: re-card queued Opus 5 stages as Claude Opus 5.5 the
+  next time a run is designed?
+- Direction: Opus tier moved to Claude Opus 5.5 fleet-wide.
 
 ## Recent activity (2026-09-26 publish-sync-review-and-fleet-sync)
 
