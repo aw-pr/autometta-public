@@ -1,9 +1,40 @@
 # Handover
 
-**Status (2026-09-26):** Card 137's 20% reserve default landed and rolled out
-fleet-wide (emergence-lab, reflexivity, emergence-viewer); the
-external-dependencies proposal is filed awaiting three operator decisions; an
-untracked `scripts/publish-sync.sh` needs a keep-or-delete call.
+**Status (2026-09-26):** publish-sync.sh review findings fixed, tested and
+synced fleet-wide; research-sweeper's dev push held on an ASK (CI watches it).
+
+## Recent activity (2026-09-26 publish-sync-review-and-fleet-sync)
+
+- All 15 code-review findings on `scripts/publish-sync.sh` fixed in the
+  canonical `mcp-hub` copy, re-synced into this repo, committed (`0675157`)
+  and pushed; no stubs left behind.
+- `publish-sync.sh` now fast-forwards the publish ref when no commit in the
+  range touches a `publishguard.privatefile` path, keeping this repo's
+  linear publish model; replay engages only when stripping is actually
+  needed. Each replayed commit carries a `Publish-Sync-Source: <sha>`
+  trailer as the watermark for the next run, and the attribution
+  commit-msg hook is skipped for replay commits so the source message
+  otherwise stands unchanged.
+- Drift, or a private-path leak after the ref move, now exits 1; a leak
+  already on the target is reported and exits 1 even with nothing to
+  replay. A glob in `publishguard.privatefile` is refused at startup; a
+  trailing slash is accepted.
+- Verified: `mcp-hub/tests/test-publish-sync.sh` passes 42/42; a dry run
+  here reports mode `fast-forward` for the 9 pending `dev` commits.
+  Nothing was run with `--apply`; the `publish` branch is untouched.
+- Fleet sync ran: agentic-rag-kimble, bench-marks, emergence-lab and
+  explainer-batch pushed clean. research-sweeper committed (`47ad5c9`) but
+  its `dev` push was held on an ASK verdict — a GitHub Actions workflow
+  watches `dev` there, so that push waits on a human yes.
+- **Deferred**: the new mcp-hub test `tests/test-publish-sync.sh` is not
+  wired into any CI or quality-check runner (matches the existing test
+  there); `docs/PUBLISH-SYNC.md` in mcp-hub still has pre-existing em
+  dashes outside the sections touched this session.
+- **Open questions**: is this repo's configured privatefile
+  (`memory/project-publish-topology-linear-not-orphan.md`), which is
+  tracked on neither `dev` nor `publish`, still wanted; should the 9
+  pending `dev` commits be published now (a plain fast-forward per the dry
+  run) and PR #4 updated?
 
 ## Recent activity (2026-09-26 card-137-reserve-and-fleet-rollout)
 
