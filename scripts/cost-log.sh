@@ -234,8 +234,17 @@ costlog_append() {
     wall_clock_s=0
   fi
 
-  local rates rin rcached rout
-  rates="$(rate_for_tier "$tier")"
+  # A local run is free by tier, and a codex identity that names no cloud
+  # model would otherwise be priced as the default cloud model it never ran.
+  local model="" rates rin rcached rout
+  if [[ "$tier" != "T5" ]]; then
+    case "$family" in
+      claude) model="$(claude_model_for_identity "$identity")" ;;
+      codex)  model="$(codex_cloud_model_for_identity "$identity")" ;;
+    esac
+  fi
+  rates="$(rate_for_model "$model")"
+  [[ -n "$rates" ]] || rates="$(rate_for_tier "$tier")"
   IFS=' ' read -r rin rcached rout <<<"$rates"
 
   # Advisor (Fable et al.) is a separate, stronger tier consulted at the
@@ -247,7 +256,8 @@ costlog_append() {
   if [[ -n "$advisor_raw" ]]; then
     IFS=' ' read -r adv_model adv_in adv_out <<<"$advisor_raw"
     adv_tier="$(tier_for_identity "$adv_model")"
-    adv_rates="$(rate_for_tier "$adv_tier")"
+    adv_rates="$(rate_for_model "$adv_model")"
+    [[ -n "$adv_rates" ]] || adv_rates="$(rate_for_tier "$adv_tier")"
     IFS=' ' read -r arin _ arout <<<"$adv_rates"
   fi
   adv_model="${adv_model:-}"
