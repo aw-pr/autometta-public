@@ -242,6 +242,16 @@ refusal_smoke() {
     && fail "thin headroom formed a pair"
   assert_log 'is below two p95 dispatches'
 
+  # A repo that never set its own cap is on the host default, not at zero.
+  new_fixture no-own-cap
+  jq 'del(.token_cap_total)' "$fixture_repo/state/budget.json" \
+    >"$fixture_repo/state/budget.json.tmp"
+  mv "$fixture_repo/state/budget.json.tmp" "$fixture_repo/state/budget.json"
+  pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
+    && true
+  grep -Fq 'is below two p95 dispatches' "$smoke_log" \
+    && fail "a repo without its own token_cap_total was treated as zero headroom"
+
   new_fixture serial-only head.txt scripts/tick.sh
   pipeline_try_dispatch_tail "$fixture_repo" "$fixture_repo/state/state.yaml" 01-head "" \
     && fail "serial-only tail tick claim formed a pair"

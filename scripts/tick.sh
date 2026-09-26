@@ -1324,17 +1324,16 @@ pipeline_try_dispatch_tail() {
     fi
   fi
 
-  local p95 budget_path cap spent headroom required active_drain_cap=""
+  local p95 budget_path cap spent headroom required
   if ! p95="$(pipeline_p95_tokens "$repo_root")" || [[ ! "$p95" =~ ^[0-9]+$ ]]; then
     log "pipeline pair ${head_stage} + ${tail_stage} refused: no repo p95 dispatch history"
     return 1
   fi
   budget_path="$(budget_file "$repo_root")"
-  cap="$(jq -r '.token_cap_total // 0' "$budget_path")"
-  if active_drain_cap="$(budget_drain_active "$repo_root" 2>/dev/null)" \
-     && [[ -n "$active_drain_cap" ]]; then
-    cap="$active_drain_cap"
-  fi
+  # The same resolution the caps use (drain, then repo, then host default,
+  # then floor): a repo without its own token_cap_total is not at zero
+  # headroom, it is on the host default.
+  cap="$(budget_effective_token_cap "$repo_root")"
   spent="$(jq -r '.tokens_spent // 0' "$budget_path")"
   headroom=$((cap - spent))
   required=$((p95 * 2))
