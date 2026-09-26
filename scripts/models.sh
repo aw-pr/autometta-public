@@ -5,7 +5,7 @@
 #
 # Sourced by spawn-worker.sh, spawn-verifier.sh, and spawn-verifier-panel.sh.
 
-AUTOMETTA_MODEL_OPUS="claude-opus-5"
+AUTOMETTA_MODEL_OPUS="claude-opus-5-5"
 AUTOMETTA_MODEL_SONNET="claude-sonnet-5"
 AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5-20251001"
 # Frontier tier a step above Opus. Opt-in per card only: no existing identity
@@ -199,11 +199,22 @@ effort_argv_for_family() {
   done < <(effort_flags_for_family "$family" "$effort")
 }
 
-# Map a worker/verifier identity string (e.g. "Claude Opus 4.8 <...>") to the
-# model ID it should run on. Falls back to the sonnet alias when no tier matches.
+# Map a worker/verifier identity string to the model ID it should run on.
+# A canonical identity names its weights in the email slug, and for Claude the
+# slug IS the API model id ("Claude Opus 5.5 <claude-opus-5-5@local>" runs
+# claude-opus-5-5). Routing on the tier word alone ran a card that said Opus 5
+# on whatever AUTOMETTA_MODEL_OPUS pointed at, so the commit credited one model
+# and the work came from another. The tier defaults below serve only an
+# identity with no Claude slug. Falls back to the sonnet alias when no tier
+# matches.
 claude_model_for_identity() {
-  local identity="$1"
-  if [[ "$identity" == *Sonnet* ]]; then
+  local identity="$1" slug=""
+  if [[ "$identity" =~ \<(claude-[a-z0-9-]+)@local\> ]]; then
+    slug="${BASH_REMATCH[1]}"
+  fi
+  if [[ -n "$slug" ]]; then
+    printf '%s\n' "$slug"
+  elif [[ "$identity" == *Sonnet* ]]; then
     printf '%s\n' "$AUTOMETTA_MODEL_SONNET"
   elif [[ "$identity" == *Fable* ]]; then
     printf '%s\n' "$AUTOMETTA_MODEL_FABLE"
