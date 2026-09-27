@@ -284,14 +284,23 @@ codex_state_argv_for_repo() {
 #
 # --strict-mcp-config makes --mcp-config authoritative rather than additive,
 # so the operator's project/user-level servers never merge in underneath it.
+#
+# Claude in Chrome is not an MCP server in that file: a headless `claude -p`
+# gets its browser tools only from --chrome, even with
+# claudeInChromeDefaultEnabled set (probed 2026-09-27: no chrome tools without
+# the flag, the full set with it). A card that declares Requires GUI in a repo
+# whose manifest sets dispatch.claude.chrome: true gets the flag; every other
+# dispatch stays browserless. The browser still has to be running and paired.
 claude_mcp_config_argv_for_repo() {
   local repo_root="$1"
+  local requires_gui="${2:-}"
   local manifest="$repo_root/.autometta.local.yaml"
-  local mcp_config=""
+  local mcp_config="" chrome=""
   AUTOMETTA_CLAUDE_MCP_ARGV=()
 
   if [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
     mcp_config="$(yq -r '.dispatch.claude.mcp_config // ""' "$manifest" 2>/dev/null || true)"
+    chrome="$(yq -r '.dispatch.claude.chrome // ""' "$manifest" 2>/dev/null || true)"
   fi
 
   if [[ -z "$mcp_config" ]]; then
@@ -301,6 +310,13 @@ claude_mcp_config_argv_for_repo() {
   fi
 
   AUTOMETTA_CLAUDE_MCP_ARGV=(--strict-mcp-config --mcp-config "$mcp_config")
+
+  case "$requires_gui" in
+    true|True|TRUE|yes|1) ;;
+    *) return 0 ;;
+  esac
+  [[ "$chrome" == "true" ]] && AUTOMETTA_CLAUDE_MCP_ARGV+=(--chrome)
+  return 0
 }
 
 # Codex's workspace-write sandbox denies network to every model-generated

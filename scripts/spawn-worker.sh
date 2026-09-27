@@ -171,7 +171,7 @@ main() {
     log_msg "worker may write the agent home dir: card declares Requires agent home (${stage_id})"
   fi
   codex_state_argv_for_repo "$repo_root"
-  claude_mcp_config_argv_for_repo "$repo_root"
+  claude_mcp_config_argv_for_repo "$repo_root" "$requires_gui"
   # Codex registers apply_patch from per-model metadata fetched from OpenAI's
   # model catalogue. A local Ollama model is not in that catalogue, so it falls
   # back to metadata carrying no apply_patch_tool_type and the tool is never

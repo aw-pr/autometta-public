@@ -557,7 +557,7 @@ main() {
     log_msg "verifier may write the agent home dir: card declares Requires agent home (${stage_id})"
   fi
   codex_state_argv_for_repo "$repo_root"
-  claude_mcp_config_argv_for_repo "$repo_root"
+  claude_mcp_config_argv_for_repo "$repo_root" "$requires_gui"
   log_path="$logs_dir/${stage_id}-verifier.log"
   artefact_path="state/verifiers/${stage_id}.json"
   local family_notes established_facts facts_section
