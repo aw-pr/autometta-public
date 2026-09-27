@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # claude-chrome-smoke.sh — offline check that a Claude dispatch gets --chrome
 # only when the card declares Requires GUI AND the repo manifest sets
-# dispatch.claude.chrome: true. Headless `claude -p` has no browser tools
-# without the flag, so a GUI card's worker and verifier would otherwise be
-# blind to the browser the card requires.
+# dispatch.claude.chrome: true, and that such a dispatch drops the
+# CLAUDE_CODE_OAUTH_TOKEN pair. Headless `claude -p` has no browser tools
+# without the flag, and a setup-token session has none even with it, so a GUI
+# card's worker and verifier would otherwise be blind to the browser the card
+# requires.
 #
 # Harness mirrors mcp-isolation-smoke.sh: op-fetch is stubbed to capture the
 # argv `claude` would receive, so nothing is ever dispatched.
@@ -97,6 +99,7 @@ capture_dispatch() {
     export AUTOMETTA_CLAUDE_MODE=subscription
     export AUTOMETTA_CLAUDE_TRANSPORT=cli
     export AUTOMETTA_CODEX_TRANSPORT=cli
+    export OP_REF_CLAUDE_CODE_OAUTH_TOKEN="op://smoke-vault/claude-setup-token/credential"
     "$autometta_root/scripts/$spawn" "$card" "$repo_root" >/dev/null 2>>"$tmp/spawn.log"
   )
   local waited=0
@@ -108,6 +111,7 @@ capture_dispatch() {
 }
 
 dispatched() { printf '%s\n' "$1" | grep -qxF -- '--strict-mcp-config' && printf 'ok\n' || printf 'no dispatch captured\n'; }
+has_token() { printf '%s\n' "$1" | grep -q '^CLAUDE_CODE_OAUTH_TOKEN=' && printf 'yes\n' || printf 'no\n'; }
 has_chrome() { printf '%s\n' "$1" | grep -qxF -- '--chrome' && printf 'yes\n' || printf 'no\n'; }
 
 set_manifest_chrome() {
@@ -130,15 +134,18 @@ for spawn in spawn-worker.sh spawn-verifier.sh; do
   argv="$(capture_dispatch "$spawn" "$gui_card" 901-gui "$repo")"
   check "GUI card + manifest opt-in passes --chrome" "$(eq yes "$(has_chrome "$argv")")"
   check "GUI card + manifest opt-in keeps --strict-mcp-config" "$(dispatched "$argv")"
+  check "GUI card + manifest opt-in drops the setup-token pair" "$(eq no "$(has_token "$argv")")"
 
   argv="$(capture_dispatch "$spawn" "$plain_card" 902-plain "$repo")"
   check "non-GUI card dispatched" "$(dispatched "$argv")"
   check "non-GUI card ignores the manifest opt-in" "$(eq no "$(has_chrome "$argv")")"
+  check "non-GUI card keeps the setup-token pair" "$(eq yes "$(has_token "$argv")")"
 
   set_manifest_chrome false
   argv="$(capture_dispatch "$spawn" "$gui_card" 901-gui "$repo")"
   check "GUI card without manifest opt-in dispatched" "$(dispatched "$argv")"
   check "GUI card without manifest opt-in stays browserless" "$(eq no "$(has_chrome "$argv")")"
+  check "GUI card without manifest opt-in keeps the setup-token pair" "$(eq yes "$(has_token "$argv")")"
 done
 
 printf '\n' >&2

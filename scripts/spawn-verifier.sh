@@ -843,7 +843,7 @@ main() {
         # JSON output + claude-token-log.sh restore the "Total tokens:"
         # line the budget parser needs; see spawn-worker.sh claude branch.
         # shellcheck disable=SC2086
-        ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$verifier_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"} --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+        ( cd "$work_dir" && op-fetch $(claude_dispatch_auth_pairs "$auth_pairs") -- claude --model "$(claude_model_for_identity "$verifier_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"} --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       fi
       ;;
     *)

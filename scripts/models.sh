@@ -319,6 +319,26 @@ claude_mcp_config_argv_for_repo() {
   return 0
 }
 
+# Claude in Chrome needs the claude.ai login, and a setup-token session
+# silently has none: with CLAUDE_CODE_OAUTH_TOKEN set, `claude -p --chrome`
+# exposes zero browser tools (probed 2026-09-27; 22 on the keychain login,
+# including from launchd through op-fetch). A --chrome dispatch therefore
+# drops the token pair and authenticates from the keychain login instead.
+# Operator-approved for opted-in GUI cards only; every other claude dispatch
+# keeps the pinned token. Call after claude_mcp_config_argv_for_repo.
+claude_dispatch_auth_pairs() {
+  local auth_pairs="$1" pair
+  local has_chrome=false
+  for pair in ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"}; do
+    [[ "$pair" == "--chrome" ]] && has_chrome=true
+  done
+  if [[ "$has_chrome" != "true" ]]; then
+    printf '%s' "$auth_pairs"
+    return 0
+  fi
+  printf '%s\n' "$auth_pairs" | grep -v '^CLAUDE_CODE_OAUTH_TOKEN=' || true
+}
+
 # Codex's workspace-write sandbox denies network to every model-generated
 # shell command. That is the right default: a worker editing files has no
 # business reaching the internet, and the loopback denial is what stopped a
