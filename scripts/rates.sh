@@ -71,10 +71,12 @@ tier_for_identity() {
 # nothing when the model is not listed, so the caller falls back to its tier.
 rate_for_model() {
   case "$1" in
-    claude-fable-5-1|claude-fable-5)       printf '10.0 1.0 50.0\n' ;;
+    claude-fable-5-1)                      printf '10.0 0.25 50.0\n' ;;
+    claude-fable-5)                        printf '10.0 1.0 50.0\n' ;;
     claude-opus-5-5)                       printf '4.0 0.2 20.0\n' ;;
     claude-opus-5|claude-opus-4-8|claude-opus-4-7) printf '5.0 0.5 25.0\n' ;;
-    claude-sonnet-5|claude-sonnet-4-6)     printf '3.0 0.3 15.0\n' ;;
+    claude-sonnet-5)                       printf '2.0 0.2 10.0\n' ;;
+    claude-sonnet-4-6)                     printf '3.0 0.3 15.0\n' ;;
     claude-haiku-4-5|claude-haiku-4-5-20251001) printf '1.0 0.1 5.0\n' ;;
     gpt-6-astra)                           printf '10.0 1.0 50.0\n' ;;
     gpt-5.6-sol)                           printf '5.0 0.5 30.0\n' ;;
