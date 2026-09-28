@@ -491,6 +491,11 @@ This is admission control, not a cash cap or a kill switch. Concurrent cards
 already admitted elsewhere and interactive sessions can also consume allowance.
 The serial viewer run admits one card at a time.
 
+`window_reserve.codex_admit_percent` in the controller mandate lowers that
+ceiling: at 90, no new Codex card starts once either Codex window is 90% used,
+and the tick keeps re-reading until the window resets. An admitted card still
+finishes. Unset, zero, over 100 or non-numeric keeps the 100% default.
+
 **Claude retains the provider-window reserve.** `window_reserve.percent` defaults
 to 20% with `action: hold`, so new Claude work normally stops at 80% used.
 Explicit zero or `action: off` disables that reserve; unknown Claude readings

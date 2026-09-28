@@ -76,6 +76,7 @@ spend_authority:
 window_reserve:
   percent:   # empty = default 20; 0 = off
   action:    # empty = default hold; hold | observe | off
+  codex_admit_percent:   # empty = 100; no new Codex card at or past this % used
   # overnight:
   #   start:
   #   end:

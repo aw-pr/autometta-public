@@ -119,3 +119,24 @@ path.write_text(json.dumps(snapshot))
 assert module.read_codex()["windows"][0]["utilization"] == 105
 print("PASS fresh account snapshot supersedes old rollout; older/stale snapshots do not")
 PYTEST
+
+# Supplemental regression: the mandate's codex_admit_percent lowers the
+# admission ceiling below 100, and an invalid value keeps the 100 default.
+cat > "$AUTOMETTA_HOME/phat-controller-mandate.yaml" <<'YAML'
+window_reserve:
+  percent: 20
+  action: hold
+  codex_admit_percent: 90
+YAML
+set_reading "$(reading 89.9)"
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'ceiling 90 held at 89.9%'
+for used in 90 95; do
+  set_reading "$(reading "$used")"
+  if quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker; then fail "ceiling 90 admitted $used%"; fi
+  if quota_spawn_permits "$repo" codex "$repo/docs/stages/02-next.md"; then fail "manual ceiling 90 admitted $used%"; fi
+  quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 01-active verifier || fail 'active verifier held under ceiling'
+done
+yq -i '.window_reserve.codex_admit_percent = "ninety"' "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+set_reading "$(reading 95)"
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'invalid ceiling did not fall back to 100'
+printf 'PASS mandate codex_admit_percent lowers the admission ceiling; invalid value keeps 100\n'

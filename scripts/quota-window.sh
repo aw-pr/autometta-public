@@ -228,10 +228,20 @@ quota_codex_role_uses_subscription() {
   [[ "$mode" == subscription ]]
 }
 
+# quota_codex_admit_percent: window_reserve.codex_admit_percent from the
+# controller mandate, the used percentage at which no new Codex card starts.
+# Empty when unset, so the reader keeps its 100% default.
+quota_codex_admit_percent() {
+  local mandate_path
+  mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(autometta_controller_home)/phat-controller-mandate.yaml}"
+  [[ -f "$mandate_path" ]] || return 0
+  yq -r '.window_reserve.codex_admit_percent // ""' "$mandate_path" 2>/dev/null || true
+}
+
 quota_gate_codex_reading() {
   local result
   QUOTA_GATE_WINDOW=""; QUOTA_GATE_RESET=""; QUOTA_GATE_REASON=""
-  result="$(printf '%s' "$1" | python3 "$quota_window_script_dir/quota-window.py" codex-admission)" || {
+  result="$(printf '%s' "$1" | AUTOMETTA_CODEX_ADMIT_PERCENT="$(quota_codex_admit_percent)" python3 "$quota_window_script_dir/quota-window.py" codex-admission)" || {
     QUOTA_GATE_REASON="Codex quota admission reader failed"
     return 1
   }

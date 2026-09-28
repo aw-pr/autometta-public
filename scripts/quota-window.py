@@ -244,14 +244,26 @@ def codex_admission(reading: Any) -> dict[str, Any]:
     windows = sanitise_windows(reading.get("windows"), allow_overage=True)
     if not windows or not {"primary", "secondary"}.issubset({w["key"] for w in windows}):
         return {**result, "reason": "Codex quota windows incomplete"}
+    ceiling = codex_admit_percent()
     for window in windows:
         reset = parse_time(window["resets_at"])
         if reset is None or reset <= now:
             return {**result, "reason": "Codex quota needs a fresh reading after reset", "window": window["label"]}
-        if window["utilization"] >= 100:
-            return {**result, "reason": f"Codex {window['label']} exhausted ({window['utilization']:g}% used)",
+        if window["utilization"] >= ceiling:
+            state = "exhausted" if ceiling >= 100 else f"at or past the {ceiling:g}% admission ceiling"
+            return {**result, "reason": f"Codex {window['label']} {state} ({window['utilization']:g}% used)",
                     "window": window["label"], "reset": int(reset)}
-    return {**result, "allowed": True, "reason": "Codex quota below 100%; current card may finish in overage"}
+    return {**result, "allowed": True, "reason": f"Codex quota below {ceiling:g}%; current card may finish in overage"}
+
+
+def codex_admit_percent() -> float:
+    """Used percentage at which no new Codex card is admitted. Out-of-range or
+    unparseable values fall back to 100 rather than to a stricter guess."""
+    try:
+        value = float(os.environ.get("AUTOMETTA_CODEX_ADMIT_PERCENT", "100"))
+    except ValueError:
+        return 100.0
+    return value if 0 < value <= 100 else 100.0
 
 
 def read_family(family: str) -> dict[str, Any]:
