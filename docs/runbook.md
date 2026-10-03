@@ -54,6 +54,16 @@ choices and exceptions rather than extending this runbook.
    autometta add-stage <repo-path> <stage-card-path>
    ```
 
+   When a card builds on earlier stages' landed code, declare them with
+   `Depends on` and queue parents first; existing `Gate` cards keep their
+   status-only meaning and are not migrated. The
+   [dependency graph guide](dependency-graph.md#operator-guide) covers the
+   syntax, the migration choice and serial execution. Check readiness with:
+
+   ```sh
+   autometta graph --repo <repo-path>
+   ```
+
 6. Arm the heartbeat by installing the macOS LaunchAgent for this repository.
    On Linux, install the cron entry in [scheduling](setup.md#4-scheduling);
    each tick invokes the heartbeat and maintains the viewer.
@@ -83,6 +93,12 @@ choices and exceptions rather than extending this runbook.
    autometta tick
    ```
 
+`autometta graph` and any other command added to the checkout reach an
+installed Homebrew CLI only after a separate refresh
+(`scripts/install-homebrew-local.sh`, then `autometta --version`). Pulling or
+editing the checkout does not update it; until you refresh deliberately, run
+`AUTOMETTA_ROOT=<autometta-checkout> <autometta-checkout>/bin/autometta graph`.
+
 ## Daily drive
 
 1. Start with the fleet summary after an overnight run. It shows subscribed
@@ -110,7 +126,16 @@ choices and exceptions rather than extending this runbook.
    autometta attach <repo-path>
    ```
 
-4. Read a halt before clearing it: inspect its reason in status and the repo's
+4. If a dependent card is still pending, ask why before touching state. The
+   graph names each blocking parent and its reason; a failed parent and a
+   budget or quota halt are different stops, and neither clears itself. See
+   [inspecting a stopped run](dependency-graph.md#inspecting-a-stopped-run).
+
+   ```sh
+   autometta graph --repo <repo-path>
+   ```
+
+5. Read a halt before clearing it: inspect its reason in status and the repo's
    `state/state.yaml` and `state/budget.json`, fix the stated cause, then use
    the reset only when it is safe to resume. See the [tick loop](tick-loop.md)
    for halt semantics.
@@ -120,7 +145,7 @@ choices and exceptions rather than extending this runbook.
    autometta tick --reset-halt
    ```
 
-5. After a verifier FAIL, preserve the failed worktree for inspection, revise
+6. After a verifier FAIL, preserve the failed worktree for inspection, revise
    the card if needed, then re-queue through the canonical
    `autometta-requeue` path. That path owns cleanup of the run worktree,
    branch and envelope artefacts.
@@ -129,7 +154,7 @@ choices and exceptions rather than extending this runbook.
    scripts/requeue-stage.sh <repo-path> <stage-id>
    ```
 
-6. Land a stage awaiting integration only after checking its pinned worktree
+7. Land a stage awaiting integration only after checking its pinned worktree
    and the current base branch. Ask phat-controller to perform the ordered
    integration; [the controller role](phat-controller.md) explains its remit.
 
@@ -137,7 +162,7 @@ choices and exceptions rather than extending this runbook.
    autometta phat-controller merge-awaiting <repo-path> <stage-id>
    ```
 
-7. Feed the next bounded batch before the end of the day: write cards, queue
+8. Feed the next bounded batch before the end of the day: write cards, queue
    them, then review the scheduled work and budget before leaving the
    scheduler running overnight. Keep card detail in the templates and setup
    guide rather than this runbook.
@@ -148,7 +173,7 @@ choices and exceptions rather than extending this runbook.
    autometta drain status
    ```
 
-8. Leave the daytime session protected by default. With no answer in the
+9. Leave the daytime session protected by default. With no answer in the
    controller mandate (installed by `autometta init-host`) the loop holds
    20% of every window: no new card past
    80% used, per family, for the loop and for a manual
