@@ -206,6 +206,94 @@ which is severity first, then dependency.
   own comment forbidding exactly that. The operator's ticker showed a full
   queue throughout, which is card 37's third defect.
 
+## Dependency graph batch 142-144, designed 2026-10-03
+
+**Prepared, not queued or implemented.** Operator request: make the proposed
+dependency graph runnable with Opus or Terra. The declared seats alternate
+Opus 5.5 and GPT-5.6 Terra, with the other family verifying every card.
+IDs 139-141 are left free for the external-dependencies proposal; existing
+138 and 138a are not renumbered.
+
+Implementation DAG and queue order: **142 -> 143 -> 144**, strictly serial.
+142 supplies read-only readiness evidence before 143 changes dispatch; 144
+exposes the operator command and verifies the lifecycle. All cards declare
+`Dispatch: serial`; shared scheduling surfaces rule out pipeline overlap.
+The implementation cards use today's single-predecessor gate so they can
+bootstrap the new capability without relying on it.
+
+| Card | Outcome | Worker | Verifier | Frozen mode |
+| --- | --- | --- | --- | --- |
+| [142](142-dependency-readiness-has-evidence.md) | Git-backed dependency readiness and diagnostics | Opus 5.5 | Terra | `inspect` |
+| [143](143-stage-cards-declare-all-their-prerequisites.md) | Multiple prerequisites, safe admission and serial scheduling | Terra | Opus 5.5 | `inspect`, `dispatch` |
+| [144](144-the-operator-can-inspect-the-dependency-graph.md) | Read-only CLI and restart/admission evidence | Opus 5.5 | Terra | `all` |
+
+The shared oracle is `scripts/dependency-graph-smoke.sh`. Its single frozen
+block names 142 and all three cards record its digest. The orchestrator authored
+the complete assertions and fixtures in advance; workers cannot amend them.
+Baseline implementation is `3172a77`. Syntax and freeze checks should be green;
+the feature assertions are intentionally red until their implementation lands.
+
+Preparation checks on that baseline: all three cards were accepted by the
+current `add-stage.sh` in a temporary queue, in the declared gate order; both
+role identities resolved to their requested weights. The contract gate, shell
+syntax and embedded Python syntax passed. Running `all` exercised 15 test
+methods: the legacy-card, legacy-gate and independent admission/restart controls
+passed. Feature cases failed because the inspector is absent, admission ignores
+`Depends on`, the selector releases the join too soon and graph members still
+enter the pipeline. These are implementation targets, not passing acceptance.
+
+The opt-in syntax after 143 is `- **Depends on:** 21-backend, 22-frontend`.
+This means all prerequisites are completed and their landed tips are ancestors
+of the child's starting base. Existing completion gates keep their historical
+status-only semantics. A new graph member stays serial even with disjoint claims.
+No LangGraph/runtime dependency, service, dynamic planner or automatic repair
+loop is proposed. This graph schedules coding stages, each retaining its worker,
+independent verifier and landing contract.
+
+### Spend and admission
+
+Measured from this checkout's `state/cost-log.jsonl` on 2026-10-03, using
+`usage_status: recorded` and positive `total_tokens`: 38 role records dated
+2026-09-06 through 2026-09-12, across mixed models. Median worker 1,102,984
+tokens (17 records), median verifier 1,304,667 (21 records). Nearest-rank p95
+across both roles is 4,911,921; largest recorded dispatch is 10,577,536.
+These are historical planning observations, not current Opus/Terra forecasts
+or a cash quote; cached tokens are included in the recorded totals.
+
+Three median stage pairs total 7,222,953 tokens. Adding one observed maximum
+dispatch gives 17,800,489, rounded to an **18M-token planning allowance**.
+Declared role wall-clock ceilings total 175 minutes. They are stop limits,
+not predicted runtime. Re-estimate after an outlier or re-brief; an attempt-2
+worker is not assumed cheaper. No drain, cap increase, quota override, API
+fallback or credit/reset redemption is part of preparing these cards.
+
+Before actual admission, check fresh auth/quota for both declared families,
+the installed toolchain, remaining repo budget and any global halt. Reserve
+enough for verification as well as the worker. If a drain is separately
+authorised, derive its expiry from the then-current UTC window, never from
+this dated plan. No GUI seat or provider call is needed for the frozen tests.
+
+### Queue handover
+
+Commit the cards and shared oracle before dispatch so isolated run worktrees
+receive them. Use the checkout CLI with its root explicitly resolved when the
+installed Homebrew version differs. Queue **one card at a time** with the
+existing command, after checking its predecessor's actual integration:
+
+```sh
+autometta add-stage . stage-cards/142-dependency-readiness-has-evidence.md
+# After 142 passes and lands on dev:
+autometta add-stage . stage-cards/143-stage-cards-declare-all-their-prerequisites.md
+# After 143 passes and lands on dev:
+autometta add-stage . stage-cards/144-the-operator-can-inspect-the-dependency-graph.md
+```
+
+Do not paste the three commands as an unattended batch. The legacy bootstrap
+gates can read completed while integration is still awaiting, so the human or
+controller must confirm landed code before queueing each successor. On conflict,
+park the branch for adjudication; no headless conflict resolution. Queueing and
+live dispatch have not been performed by this design session.
+
 ## Pass 5 - the fact ledger (graph engineering), designed 2026-08-31
 
 **Status, 2026-09-10:** every card in this table landed by 2026-09-01 (the queue cells below are as written on 2026-08-31). Batches 92-107 and 108-134 followed; `HANDOFF.md` and the dashboard carry the record. v1.0.0 was tagged from the tree that includes them.
