@@ -1026,15 +1026,55 @@ validate_stage_id() {
   [[ "$stage_id" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]
 }
 
+# Print the graph inspector report. Exit 0 means valid, 2 means structurally
+# invalid with a report, and any other status means inspection was impossible.
+dependency_graph_report() {
+  local repo_root="$1" state_yaml="$2" base_branch="$3"
+  "$script_dir/dependency-graph.sh" "$repo_root" "$state_yaml" "$base_branch"
+}
+
 # Print the first pending stage whose declared dispatch precondition is met.
 # Unmet gates are observations, not state transitions: each one stays pending
 # and the scan continues so a later eligible stage can still run.
 select_next_dispatchable_stage() {
   local state_yaml="$1"
-  local stage_id gate_type prerequisite prerequisite_status active_others
+  local repo_root="${2:-}" base_branch="${3:-}" graph_report='' graph_rc=0
+  local stage_id gate_type prerequisite prerequisite_status active_others graph_ready graph_member blocker
+
+  if [[ -n "$repo_root" || -n "$base_branch" ]]; then
+    if [[ -z "$repo_root" || -z "$base_branch" ]]; then
+      log "dependency graph inspection unavailable: selector requires both repo root and base branch"
+      graph_rc=1
+    else
+      graph_report="$(dependency_graph_report "$repo_root" "$state_yaml" "$base_branch")" || graph_rc=$?
+      if (( graph_rc != 0 && graph_rc != 2 )); then
+        log "dependency graph inspection unavailable; dependency cards remain pending"
+      elif (( graph_rc == 2 )); then
+        log "dependency graph inspection found invalid graph; graph members remain pending"
+      fi
+    fi
+  fi
 
   while IFS=$'\t' read -r stage_id gate_type prerequisite; do
     [[ -n "$stage_id" ]] || continue
+    if [[ -n "$graph_report" ]]; then
+      graph_ready="$(jq -r --arg id "$stage_id" '([.stages[] | select(.id == $id)][0]) as $stage | if $stage == null then true else $stage.dependency_ready end' <<<"$graph_report")"
+      graph_member="$(jq -r --arg id "$stage_id" '[.stages[] | select(.id == $id)][0].graph_member // false' <<<"$graph_report")"
+      if [[ "$graph_ready" != "true" ]]; then
+        blocker="$(jq -r --arg id "$stage_id" '[.stages[] | select(.id == $id)][0].blocked_by[0] // {} | "\(.id // "unknown") is \(.reason // "unready")"' <<<"$graph_report")"
+        log "stage ${stage_id} dependency unmet, stepping over: prerequisite ${blocker}"
+        continue
+      fi
+    elif [[ "$graph_rc" != "0" ]]; then
+      graph_member="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '
+        any(.stages[];
+          (.id == $id and ((.depends_on // []) | length > 0))
+          or (((.depends_on // []) | index($id)) != null))')"
+      if [[ "$graph_member" == "true" ]]; then
+        log "stage ${stage_id} dependency unmet, stepping over: dependency graph inspection unavailable"
+        continue
+      fi
+    fi
     case "$gate_type" in
       "")
         printf '%s\n' "$stage_id"
@@ -1267,10 +1307,30 @@ pipeline_try_dispatch_tail() {
   local repo_root="$1" state_yaml="$2" head_stage="$3" manifest_path="$4"
   local tail_stage head_claims tail_claims head_failures tail_failures head_causes tail_causes
   local head_worker tail_worker head_family tail_family
+  local base_branch graph_report='' graph_rc=0 head_graph_member tail_graph_member
 
   [[ "$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')" == "" ]] || return 1
   tail_stage="$(pipeline_adjacent_pending_stage "$state_yaml" "$head_stage")"
   [[ -n "$tail_stage" ]] || return 1
+  base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
+  [[ -n "$base_branch" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: base branch unresolved"; return 1; }
+  graph_report="$(dependency_graph_report "$repo_root" "$state_yaml" "$base_branch")" || graph_rc=$?
+  if (( graph_rc == 0 || graph_rc == 2 )); then
+    head_graph_member="$(jq -r --arg id "$head_stage" '[.stages[] | select(.id == $id)][0].graph_member // false' <<<"$graph_report")"
+    tail_graph_member="$(jq -r --arg id "$tail_stage" '[.stages[] | select(.id == $id)][0].graph_member // false' <<<"$graph_report")"
+    if [[ "$head_graph_member" == "true" || "$tail_graph_member" == "true" ]]; then
+      log "pipeline pair ${head_stage} + ${tail_stage} refused: dependency graph member (${head_graph_member}/${tail_graph_member})"
+      return 1
+    fi
+  elif state_json "$state_yaml" | jq -e --arg head "$head_stage" --arg tail "$tail_stage" \
+      '([.stages[] | .depends_on? // []] | flatten) as $prerequisites
+       | any(.stages[]; (.id == $head or .id == $tail)
+           and ((.depends_on // []) | length > 0))
+         or ($prerequisites | index($head) != null)
+         or ($prerequisites | index($tail) != null)' >/dev/null; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: dependency graph inspection unavailable"
+    return 1
+  fi
   head_claims="$(state_json "$state_yaml" | jq -c --arg id "$head_stage" \
     '[.stages[] | select(.id == $id)][0].path_claims // []')"
   tail_claims="$(state_json "$state_yaml" | jq -c --arg id "$tail_stage" \
@@ -1342,7 +1402,7 @@ pipeline_try_dispatch_tail() {
     return 1
   fi
 
-  local card_path base_branch work_dir now_iso base_tip dispatch_base_tip
+  local card_path work_dir now_iso base_tip dispatch_base_tip
   card_path="$(stage_card_for_id "$repo_root" "$tail_stage" "$manifest_path")"
   [[ -n "$card_path" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: tail card missing"; return 1; }
   if ! quota_gate_role_dispatch "$repo_root" "$state_yaml" "$tail_stage" worker; then
@@ -1363,8 +1423,6 @@ pipeline_try_dispatch_tail() {
     log "dispatch deferred: network preflight failed (${NETWORK_PREFLIGHT_REASON}); pipeline pair ${head_stage} + ${tail_stage} not formed"
     return 1
   fi
-  base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
-  [[ -n "$base_branch" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: base branch unresolved"; return 1; }
   base_tip="$(git -C "$repo_root" rev-parse "refs/heads/${base_branch}" 2>/dev/null || true)"
   if ! work_dir="$(ensure_run_worktree "$repo_root" "$tail_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
     log "pipeline pair ${head_stage} + ${tail_stage} refused: tail run worktree failed"
@@ -2813,11 +2871,16 @@ consume_orphaned_verifier_artefacts() {
 PENDING_STAGE_FOUND=false
 dispatch_pending_stage_if_available() {
   local repo_root="$1" state_yaml="$2" manifest_path="$3"
-  local next_stage
+  local next_stage base_branch
   PENDING_STAGE_FOUND=false
   # Selection steps over terminal stages and pending stages whose declared
   # gate is not met. Neither case is a state transition or a failure.
-  next_stage="$(select_next_dispatchable_stage "$state_yaml")"
+  base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
+  if [[ -z "$base_branch" ]]; then
+    log "could not resolve a base branch for pending-stage selection in ${repo_root}"
+    return 0
+  fi
+  next_stage="$(select_next_dispatchable_stage "$state_yaml" "$repo_root" "$base_branch")"
   if [[ -z "$next_stage" ]]; then
     return 0
   fi
@@ -2852,15 +2915,8 @@ dispatch_pending_stage_if_available() {
     local next_stage_reserve_exempt=false
     [[ "$QUOTA_GATE_RESOLVED_WINDOW" == "overnight" || "$QUOTA_GATE_RESOLVED_WINDOW" == "drain-ignore-reserve" ]] \
       && next_stage_reserve_exempt=true
-    local base_branch work_dir dispatch_base_tip
-    base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
-    if [[ -z "$base_branch" ]]; then
-      log "could not resolve a base branch for ${next_stage} in ${repo_root}, stalling stage"
-      state_apply_json "$state_yaml" \
-        '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "base_branch_unresolved"' \
-        --arg id "$next_stage"
-      budget_record_failure "$repo_root"
-    elif ! work_dir="$(ensure_run_worktree "$repo_root" "$next_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
+    local work_dir dispatch_base_tip
+    if ! work_dir="$(ensure_run_worktree "$repo_root" "$next_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
       log "could not cut a run worktree for ${next_stage} in ${repo_root} from ${base_branch}, stalling stage"
       state_apply_json "$state_yaml" \
         '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "run_worktree_failed"' \

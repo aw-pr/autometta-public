@@ -172,6 +172,15 @@ worker family, or thin headroom is logged as an explicit refusal. The ordinary
 provider-window and `budget_gate_dispatch` checks still guard the second worker
 spawn individually.
 
+Cards declaring `depends_on`, and roots named by such cards, never form a
+pipeline pair. Before both ordinary pending selection and this refusal, the
+tick resolves the intended base branch and asks the shared dependency inspector
+whether the recorded prerequisite commits are ancestors of that base. An unmet
+dependency is a deferral: the child remains pending without an attempt or
+failure increment, while later independent pending work remains eligible.
+Legacy `stage_completed` gates remain status-only for compatibility; `depends_on`
+is the opt-in landed-code guarantee.
+
 The serial-only claim rule is asymmetric. A head claiming `scripts/lib` stays
 serial, while a head claiming `scripts/tick.sh` may take a disjoint tail,
 including a docs-only or smoke-only card. A tail claiming either

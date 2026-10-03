@@ -1,13 +1,10 @@
 # Stage dependency graph
 
-> **Status (card 142).** Only the read-only inspector,
-> `scripts/dependency-graph.sh`, exists. **Graph dispatch is unavailable
-> until card 143 lands**: `add-stage.sh` does not parse a `Depends on` line,
-> the state schema does not declare `depends_on`, and `tick.sh` neither reads
-> the field nor consults the inspector. **The `autometta graph` operator
-> command is unavailable until card 144 lands.** Until then, `depends_on`
-> appears only in hand-built fixtures and in the frozen oracle,
-> `scripts/dependency-graph-smoke.sh`.
+> **Status (card 143).** Queue admission and dispatch enforce the read-only
+> inspector. `add-stage.sh` accepts `Depends on`, and `tick.sh` dispatches a
+> dependent card only when all named commits are on its intended base branch.
+> **The `autometta graph` operator command remains unavailable until card 144
+> lands.**
 
 ## What this is, and what it is not
 
@@ -26,6 +23,36 @@ dependency work changes the ledger.
 It is not a workflow engine and not a new agent role. The existing tick still
 runs one transition per fire, the dispatch contract and the cross-family
 verifier boundary are unchanged, and graph members stay serial.
+
+## Queueing a dependency card
+
+Use one metadata line with full stage IDs in the order they are declared:
+
+```md
+- **Depends on:** 21-backend, 22-frontend
+- **Dispatch:** serial
+```
+
+The referenced cards must already be in the queue. Queue admission constructs
+the prospective queue and asks the inspector to validate it before it writes
+anything, so missing IDs, self references, duplicates and cycles are rejected
+without changing the queue. A dependency card cannot also use `Gate` or `Path
+claims`; it is serial even where its files would otherwise be disjoint.
+
+At every tick the selector resolves the intended base using the normal
+base-branch policy, then asks the inspector again. It selects the first pending
+card whose dependencies and any legacy gate are satisfied, stepping over a
+blocked child to independent work later in queue order. An unlanded, failed or
+awaiting parent changes neither the child status nor its counters. After a
+parent lands, the next tick rechecks actual Git ancestry, so no requeue is
+needed. Pipeline pairing is refused for either endpoint of a dependency graph,
+including a root named only by another card.
+
+`stage_completed` and `queue_empty` retain their legacy, status-only meaning.
+In particular, a legacy completion gate can pass when the recorded parent is
+`completed` but its commit is not on the child base. That weaker guarantee is
+intentional for compatibility. Use `Depends on` when landed-code evidence is
+required.
 
 ## The inspector
 
@@ -163,6 +190,6 @@ Three serial cards share one frozen oracle,
 | 143 | `- **Depends on:**` card metadata parsed by `add-stage.sh` and validated with this inspector, `depends_on` in the state schema, tick selection that steps over unready stages, and refusal of pipeline pairs involving graph members. | `dispatch` |
 | 144 | The read-only `autometta graph [--repo <path>] [--json]` command over this report, operator documentation, and lifecycle proof across restarted ticks and the existing admission gates. | `lifecycle` |
 
-Each card lands before its successor is admitted. Until 143 lands, writing
-`depends_on` into a live `state.yaml` has no effect on dispatch, and the state
-schema rejects the field.
+Each card lands before its successor is admitted. The operator CLI remains
+pending card 144; it will expose this same report without creating a second
+graph implementation.
