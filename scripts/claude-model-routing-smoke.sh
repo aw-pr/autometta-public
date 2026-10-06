@@ -23,6 +23,7 @@ check() {  # check <identity> <want>
 check 'Claude Opus 5.5 <claude-opus-5-5@local>'  'claude-opus-5-5'
 check 'Claude Opus 5 <claude-opus-5@local>'      'claude-opus-5'
 check 'Claude Fable 5.1 <claude-fable-5-1@local>' 'claude-fable-5-1'
+check 'Claude Sonnet 5.5 <claude-sonnet-5-5@local>' 'claude-sonnet-5-5'
 check 'Claude Sonnet 5 <claude-sonnet-5@local>'  'claude-sonnet-5'
 check 'Claude Haiku 4.5 <claude-haiku-4-5@local>' 'claude-haiku-4-5'
 check 'Claude Opus'                              "$AUTOMETTA_MODEL_OPUS"
