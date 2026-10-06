@@ -21,7 +21,7 @@ REQUIREMENTS = "scripts/requirements-sdk.txt"
 # Messages API), whatever a filename saying "sdk" might suggest -- see
 # docs/sdk-verifier.md for why that ambiguity is load-bearing.
 VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
-MODEL = "claude-sonnet-5"
+MODEL = "claude-sonnet-5-5"
 
 
 def load_shared() -> Any:
