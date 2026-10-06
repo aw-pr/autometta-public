@@ -70,6 +70,25 @@ except m.AdvisorOrderingError:
     ok = False
 check("equal pair (opus request + opus advisor) allowed", ok)
 
+rejected = False
+try:
+    m.assert_advisor_ordering("claude-sonnet-5-5", "claude-opus-4-8")
+except m.AdvisorOrderingError:
+    rejected = True
+check("sonnet 5.5 refuses an opus 4.8 advisor despite the rank", rejected)
+
+ok = True
+try:
+    m.assert_advisor_ordering("claude-sonnet-5-5", "claude-fable-5-1")
+except m.AdvisorOrderingError:
+    ok = False
+check("sonnet 5.5 + fable 5.1 advisor passes", ok)
+
+check("identity names the minor version", m.identity_for_model("claude-sonnet-5-5").startswith("Claude Sonnet 5.5 (SDK)")
+      and m.identity_for_model("claude-opus-5-5").startswith("Claude Opus 5.5 (SDK)")
+      and m.identity_for_model("claude-fable-5-1").startswith("Claude Fable 5.1 (SDK)")
+      and m.identity_for_model("claude-sonnet-5").startswith("Claude Sonnet 5 (SDK)"))
+
 print("", file=sys.stderr)
 if fail == 0:
     print("advisor-order-smoke: PASS", file=sys.stderr)
