@@ -1,8 +1,43 @@
 # Handover
 
-**Status (2026-10-09):** live progress batch 145-147 carded and committed,
-not queued; queue one card at a time per `stage-cards/PLAN.md` section
-"Live progress batch 145-147", 145 first.
+**Status (2026-10-09):** batch 145-147 landed; 148 (model-scoped reserve fix) in flight under a drain until 20:19 BST; next agent ends drain once 148 lands.
+
+## Recent activity (2026-10-09 batch-145-147-landed)
+
+- Batch 145-147 queued one at a time; all three passed first attempt and
+  landed on `dev`, pushed: 145 `01f4c1c` (Terra/Opus 5.5), 146 `dd7af39`
+  (Sol/Opus 5.5), 147 `4318274` (Opus 5.5/Terra).
+- Fleet tick LaunchAgent (`com.autometta.tick.fleet`) had been unloaded since
+  2026-10-08 18:28; reloaded. Only emergence-viewer has pending work, blocked
+  on stage 49 `verifier_failed`.
+- The reserve gate is model-blind: `quota_gate_reading` takes the most-used
+  Claude window, so Weekly (Fable) at 73% held 145's Opus 5.5 verifier and
+  paused the repo until 2026-10-12. Operator chose a watched `--ignore-reserve`
+  drain scoped to autometta (ended early after 147).
+- 146 verifier moved from Fable 5.1 to Opus 5.5 (`f264c41`): Fable weekly 73%
+  is past the 70% line, Claude weekly 46%.
+- Carded the fix as 148 "a model window holds only its model", frozen smoke
+  `scripts/model-window-smoke.sh` (`61400bef`). 148 is queued (Terra worker,
+  Opus 5.5 verifier) under a second 3h drain until 20:19 BST, because its own
+  Opus verifier would otherwise hit the Fable hold it fixes. In flight.
+- 145 streaming confirmed live: the 146 verifier log filled with progress
+  lines during the run. Quiet gaps are not measurable, as the filter writes no
+  timestamps.
+- 147 finding: keep `verifier.claude.transport` on cli; the agent-sdk
+  entrypoint runs without tools and its probe returned FAIL
+  (`state/verifiers/147-probe-144.json` is the probe record, not a stage
+  failure).
+- Deferred: `jsonschema` pin drift (pinned 4.23.0, installed 4.26.0, found by
+  147's worker, out of scope). Five smokes read the live quota and fail on
+  admission depending on the day (non-hermetic); `sdk-cache-smoke` needs an
+  API key. Not investigated.
+- Direction: hold Claude windows at 70% (reserve 30%); Fable is short, prefer
+  Opus 5.5 for Claude seats; OpenAI (Astra/Sol) may pass 100% of the session
+  window if really needed; operator resets OAI near 80% weekly.
+- Open: once 148 lands, end any open drain (`autometta drain end`) and confirm
+  a Fable-scoped hold no longer blocks Opus seats. Make the quota-reading
+  smokes hermetic? Quota at handoff: Claude weekly 47%, 5-hour 20%, Fable 73%,
+  Codex weekly 64%.
 
 ## Recent activity (2026-10-09 live-progress-batch-design)
 
