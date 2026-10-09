@@ -1629,7 +1629,7 @@ pc_pass() {
   fi
 
   local identity family
-  identity="$(pc_mandate_get '.dispatch.identity' 'Claude Sonnet 5 <claude-sonnet-5@local>')"
+  identity="$(pc_mandate_get '.dispatch.identity' 'Claude Sonnet 5.5 <claude-sonnet-5-5@local>')"
   family="$(costlog_family_for_identity "$identity")"
   if [[ "$family" != "claude" && "$family" != "codex" ]]; then
     log "phat-controller: the mandate names an unsupported controller identity (${identity})"

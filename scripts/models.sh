@@ -5,17 +5,26 @@
 #
 # Sourced by spawn-worker.sh, spawn-verifier.sh, and spawn-verifier-panel.sh.
 
-AUTOMETTA_MODEL_OPUS="claude-opus-5"
-AUTOMETTA_MODEL_SONNET="claude-sonnet-5"
+AUTOMETTA_MODEL_OPUS="claude-opus-5-5"
+AUTOMETTA_MODEL_SONNET="claude-sonnet-5-5"
 AUTOMETTA_MODEL_HAIKU="claude-haiku-4-5-20251001"
 # Frontier tier a step above Opus. Opt-in per card only: no existing identity
 # resolves here, so a stage uses it only when its card names a *Fable* role.
 AUTOMETTA_MODEL_FABLE="claude-fable-5-1"
 # The fallback codex cloud model: what a codex identity dispatches to when it
-# names no model of its own. Cards that name Sol, Terra or Luna resolve through
-# codex_cloud_model_for_identity below and reach those weights directly, so the
-# identity now drives the model as well as the git attribution and the cost
-# tier. An identity that names none of them still lands here.
+# names no model of its own. Cards that name Astra, Sol, Terra or Luna resolve
+# through codex_cloud_model_for_identity below and reach those weights directly,
+# so the identity now drives the model as well as the git attribution and the
+# cost tier. An identity that names none of them still lands here.
+#
+# Astra (gpt-6-astra, 2026-09-03) is the frontier coding option and OpenAI's
+# own pick for software engineering, at T0 rates -- the same $10/$50 as Fable.
+# It is opt-in per card rather than the default on purpose: this fallback is
+# what every card written before Astra existed dispatches to, and silently
+# moving all of them onto a 3x tier is a bill, not an upgrade. A card that
+# wants the best model for its task names it; one that does not need it keeps
+# Sol, Terra, Luna or a local model, which is the point of the per-card
+# mechanism.
 AUTOMETTA_MODEL_CODEX="gpt-5.6-sol"
 # The codex `local` auth route (auth.codex.mode: local) runs this Ollama model
 # id via `codex exec --oss --local-provider=ollama -m <id>` instead of the API
@@ -82,6 +91,7 @@ codex_local_model_for_identity() {
 # this dispatching exactly as it did.
 codex_cloud_model_for_identity() {
   case "$1" in
+    *GPT-6\ Astra*|*gpt-6-astra*)     printf 'gpt-6-astra' ;;
     *GPT-5.6\ Sol*|*gpt-5.6-sol*)     printf 'gpt-5.6-sol' ;;
     *GPT-5.6\ Terra*|*gpt-5.6-terra*) printf 'gpt-5.6-terra' ;;
     *GPT-5.6\ Luna*|*gpt-5.6-luna*)   printf 'gpt-5.6-luna' ;;
@@ -189,11 +199,22 @@ effort_argv_for_family() {
   done < <(effort_flags_for_family "$family" "$effort")
 }
 
-# Map a worker/verifier identity string (e.g. "Claude Opus 4.8 <...>") to the
-# model ID it should run on. Falls back to the sonnet alias when no tier matches.
+# Map a worker/verifier identity string to the model ID it should run on.
+# A canonical identity names its weights in the email slug, and for Claude the
+# slug IS the API model id ("Claude Opus 5.5 <claude-opus-5-5@local>" runs
+# claude-opus-5-5). Routing on the tier word alone ran a card that said Opus 5
+# on whatever AUTOMETTA_MODEL_OPUS pointed at, so the commit credited one model
+# and the work came from another. The tier defaults below serve only an
+# identity with no Claude slug. Falls back to the sonnet alias when no tier
+# matches.
 claude_model_for_identity() {
-  local identity="$1"
-  if [[ "$identity" == *Sonnet* ]]; then
+  local identity="$1" slug=""
+  if [[ "$identity" =~ \<(claude-[a-z0-9-]+)@local\> ]]; then
+    slug="${BASH_REMATCH[1]}"
+  fi
+  if [[ -n "$slug" ]]; then
+    printf '%s\n' "$slug"
+  elif [[ "$identity" == *Sonnet* ]]; then
     printf '%s\n' "$AUTOMETTA_MODEL_SONNET"
   elif [[ "$identity" == *Fable* ]]; then
     printf '%s\n' "$AUTOMETTA_MODEL_FABLE"
@@ -263,14 +284,23 @@ codex_state_argv_for_repo() {
 #
 # --strict-mcp-config makes --mcp-config authoritative rather than additive,
 # so the operator's project/user-level servers never merge in underneath it.
+#
+# Claude in Chrome is not an MCP server in that file: a headless `claude -p`
+# gets its browser tools only from --chrome, even with
+# claudeInChromeDefaultEnabled set (probed 2026-09-27: no chrome tools without
+# the flag, the full set with it). A card that declares Requires GUI in a repo
+# whose manifest sets dispatch.claude.chrome: true gets the flag; every other
+# dispatch stays browserless. The browser still has to be running and paired.
 claude_mcp_config_argv_for_repo() {
   local repo_root="$1"
+  local requires_gui="${2:-}"
   local manifest="$repo_root/.autometta.local.yaml"
-  local mcp_config=""
+  local mcp_config="" chrome=""
   AUTOMETTA_CLAUDE_MCP_ARGV=()
 
   if [[ -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
     mcp_config="$(yq -r '.dispatch.claude.mcp_config // ""' "$manifest" 2>/dev/null || true)"
+    chrome="$(yq -r '.dispatch.claude.chrome // ""' "$manifest" 2>/dev/null || true)"
   fi
 
   if [[ -z "$mcp_config" ]]; then
@@ -280,6 +310,33 @@ claude_mcp_config_argv_for_repo() {
   fi
 
   AUTOMETTA_CLAUDE_MCP_ARGV=(--strict-mcp-config --mcp-config "$mcp_config")
+
+  case "$requires_gui" in
+    true|True|TRUE|yes|1) ;;
+    *) return 0 ;;
+  esac
+  [[ "$chrome" == "true" ]] && AUTOMETTA_CLAUDE_MCP_ARGV+=(--chrome)
+  return 0
+}
+
+# Claude in Chrome needs the claude.ai login, and a setup-token session
+# silently has none: with CLAUDE_CODE_OAUTH_TOKEN set, `claude -p --chrome`
+# exposes zero browser tools (probed 2026-09-27; 22 on the keychain login,
+# including from launchd through op-fetch). A --chrome dispatch therefore
+# drops the token pair and authenticates from the keychain login instead.
+# Operator-approved for opted-in GUI cards only; every other claude dispatch
+# keeps the pinned token. Call after claude_mcp_config_argv_for_repo.
+claude_dispatch_auth_pairs() {
+  local auth_pairs="$1" pair
+  local has_chrome=false
+  for pair in ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"}; do
+    [[ "$pair" == "--chrome" ]] && has_chrome=true
+  done
+  if [[ "$has_chrome" != "true" ]]; then
+    printf '%s' "$auth_pairs"
+    return 0
+  fi
+  printf '%s\n' "$auth_pairs" | grep -v '^CLAUDE_CODE_OAUTH_TOKEN=' || true
 }
 
 # Codex's workspace-write sandbox denies network to every model-generated

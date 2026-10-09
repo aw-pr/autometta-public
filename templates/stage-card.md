@@ -34,6 +34,13 @@ The first waits for the named stage to read completed. The second waits until
 no other stage is pending or in_progress. An unmet gate does not prevent the
 card being queued and does not change its pending status.
 
+For an explicit landed-code prerequisite graph, use `Depends on` instead of a
+Gate. List full stage IDs in queue order. Dependency cards must use serial
+dispatch and cannot also declare a Gate or Path claims:
+
+- **Depends on:** 21-backend, 22-frontend
+- **Dispatch:** serial
+
 Required dispatch metadata. Every card must choose exactly how it dispatches:
 declare Path claims for pairing eligibility, or declare serial dispatch. Use
 comma-separated repo-relative file or directory paths; add-stage refuses

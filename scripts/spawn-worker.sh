@@ -9,6 +9,8 @@ source "$script_dir/resolve-root.sh"
 source "$script_dir/budget.sh"
 # shellcheck source=./models.sh
 source "$script_dir/models.sh"
+# shellcheck source=./quota-window.sh
+source "$script_dir/quota-window.sh"
 
 # Token-usage accounting (stage 10).
 #
@@ -24,6 +26,13 @@ source "$script_dir/models.sh"
 #   - Codex two-line:  `tokens used` then a digit run (commas tolerated)
 #   - Claude inline:   `Total tokens: <N>`
 # grep tokens: "tokens used" "Total tokens:"
+#
+# Exit codes: 1 is a dispatch configuration fault (bad card, missing tool,
+# unresolved auth route). 4 is the provider-window reserve refusing to start
+# a new card because this family's window is past the reserve line; nothing
+# was spawned and nothing was written. A tick never sees 4 (it applies the
+# gate itself and marks its spawns AUTOMETTA_RESERVE_GATED=1); a manual
+# orchestrator does, and may override with AUTOMETTA_IGNORE_RESERVE=1.
 
 log_msg() {
   printf '%s\n' "$1" >&2
@@ -134,6 +143,11 @@ main() {
   worker_identity="$(extract_worker_identity "$card_path")"
   stage_id="$(extract_stage_id "$card_path")"
   family="$(worker_family "$worker_identity")"
+  if ! quota_spawn_permits "$repo_root" "$family" "$card_path"; then
+    log_msg "worker ${stage_id} (${family}) not started: ${QUOTA_GATE_REASON}"
+    log_msg "  no new card starts past its quota gate; AUTOMETTA_IGNORE_RESERVE=1 overrides only the legacy reserve"
+    exit 4
+  fi
   effort="$(extract_worker_effort "$card_path")"
   effort_argv_for_family "$family" "$effort"
   if [[ ${#AUTOMETTA_EFFORT_ARGV[@]} -gt 0 ]]; then
@@ -157,7 +171,7 @@ main() {
     log_msg "worker may write the agent home dir: card declares Requires agent home (${stage_id})"
   fi
   codex_state_argv_for_repo "$repo_root"
-  claude_mcp_config_argv_for_repo "$repo_root"
+  claude_mcp_config_argv_for_repo "$repo_root" "$requires_gui"
   # Codex registers apply_patch from per-model metadata fetched from OpenAI's
   # model catalogue. A local Ollama model is not in that catalogue, so it falls
   # back to metadata carrying no apply_patch_tool_type and the tool is never
@@ -255,11 +269,11 @@ main() {
       fi
       ;;
     claude)
-      # JSON output + claude-token-log.sh restore the "Total tokens:" line
-      # budget_parse_tokens_from_log needs; text-mode `claude -p` prints no
-      # usage. stderr goes straight to the log so errors are never filtered.
+      # Stream JSON + claude-token-log.sh forward progress and restore the
+      # "Total tokens:" line budget_parse_tokens_from_log needs. stderr goes
+      # straight to the log so errors are never filtered.
       # shellcheck disable=SC2086
-      ( cd "$work_dir" && op-fetch $auth_pairs -- claude --model "$(claude_model_for_identity "$worker_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"} --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+      ( cd "$work_dir" && op-fetch $(claude_dispatch_auth_pairs "$auth_pairs") -- claude --model "$(claude_model_for_identity "$worker_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"} --dangerously-skip-permissions --output-format stream-json --verbose -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       ;;
     *)
       log_msg "unsupported worker family for identity: ${worker_identity}"
@@ -282,8 +296,13 @@ main() {
   elif [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(seconds?|secs?|s)([^[:alpha:]]|$) ]]; then
     budget_secs="${BASH_REMATCH[1]}"
   fi
-  "$script_dir/register-agent.sh" "$repo_root" "$pid" "worker" "$family" \
-    "$worker_identity" "$card_path" "$log_path" "$budget_secs" "$work_dir" >/dev/null 2>&1 || true
+  if [[ "$family" == "claude" ]]; then
+    AUTOMETTA_LOG_STREAMS=1 "$script_dir/register-agent.sh" "$repo_root" "$pid" "worker" "$family" \
+      "$worker_identity" "$card_path" "$log_path" "$budget_secs" "$work_dir" >/dev/null 2>&1 || true
+  else
+    "$script_dir/register-agent.sh" "$repo_root" "$pid" "worker" "$family" \
+      "$worker_identity" "$card_path" "$log_path" "$budget_secs" "$work_dir" >/dev/null 2>&1 || true
+  fi
 
   printf '%s\n' "$pid"
 }

@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.metadata
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Any
 
 
 REQUIREMENTS = "scripts/requirements-sdk.txt"
+SDK_PACKAGE = "claude-agent-sdk"
 # This entrypoint is the agent-sdk surface: it imports claude_agent_sdk, the
 # Claude Code harness as a library, and authenticates the way the `claude`
 # binary does -- on CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, whichever
@@ -21,7 +24,7 @@ REQUIREMENTS = "scripts/requirements-sdk.txt"
 # Messages API), whatever a filename saying "sdk" might suggest -- see
 # docs/sdk-verifier.md for why that ambiguity is load-bearing.
 VERIFIER_IDENTITY = "Claude Agent SDK verifier <claude-agent-sdk@local>"
-MODEL = "claude-sonnet-5"
+MODEL = "claude-sonnet-5-5"
 
 
 def load_shared() -> Any:
@@ -50,18 +53,63 @@ def load_agent_sdk() -> Any:
     return claude_agent_sdk
 
 
+def requirements_path() -> Path:
+    override = os.environ.get("AUTOMETTA_SDK_REQUIREMENTS")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().with_name("requirements-sdk.txt")
+
+
+def sdk_pin_mismatch() -> str | None:
+    """Name the gap between the pinned and installed SDK, or None when they match.
+
+    The route was tested against the pinned release only. A different release
+    on this python3 is refused before any prompt is assembled, so a stale
+    install costs an exit code rather than a verifier attempt.
+    """
+    path = requirements_path()
+    prefix = f"{SDK_PACKAGE}=="
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return f"cannot read {path}: {exc}"
+    pinned = next(
+        (line.strip()[len(prefix):] for line in lines if line.strip().startswith(prefix)),
+        None,
+    )
+    if not pinned:
+        return f"{path} carries no exact {SDK_PACKAGE} pin"
+    try:
+        installed = importlib.metadata.version(SDK_PACKAGE)
+    except importlib.metadata.PackageNotFoundError:
+        installed = "nothing"
+    if installed == pinned:
+        return None
+    return (
+        f"{SDK_PACKAGE} {installed} installed, {pinned} pinned in {path}; "
+        f'install with: python3 -m pip install "{SDK_PACKAGE}=={pinned}"'
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run a Claude Agent SDK verifier against a stage card and artefacts."
     )
-    parser.add_argument("--stage-id", required=True, help="Stage id for the verifier artefact.")
-    parser.add_argument("--card", required=True, help="Path to the stage card to verify.")
+    parser.add_argument(
+        "--check-sdk",
+        action="store_true",
+        help=(
+            f"Only compare the installed {SDK_PACKAGE} with the pin in {REQUIREMENTS} "
+            "(or $AUTOMETTA_SDK_REQUIREMENTS); exit 0 on a match, 2 on a mismatch."
+        ),
+    )
+    parser.add_argument("--stage-id", help="Stage id for the verifier artefact.")
+    parser.add_argument("--card", help="Path to the stage card to verify.")
     parser.add_argument(
         "--artefact-glob",
-        required=True,
         help="Glob for worker artefacts to include in the verifier prompt.",
     )
-    parser.add_argument("--out", required=True, help="Path to write the verifier JSON artefact.")
+    parser.add_argument("--out", help="Path to write the verifier JSON artefact.")
     parser.add_argument(
         "--worker-notes",
         default=None,
@@ -81,7 +129,21 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional Claude effort level supplied by the card's Verifier effort field.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.check_sdk:
+        missing = [
+            flag
+            for flag, value in (
+                ("--stage-id", args.stage_id),
+                ("--card", args.card),
+                ("--artefact-glob", args.artefact_glob),
+                ("--out", args.out),
+            )
+            if value is None
+        ]
+        if missing:
+            parser.error(f"the following arguments are required: {', '.join(missing)}")
+    return args
 
 
 def fail_env(message: str) -> int:
@@ -106,14 +168,20 @@ async def run_agent_sdk(
     grants a worker, which is out of scope here. ``output_format`` asks the
     CLI for schema-conformant structured output directly (its own
     ``--json-schema`` flag) rather than parsing JSON out of prose.
+
+    The CLI's validator has no draft 2020-12 metaschema and refuses a schema
+    that declares one, before any request is sent, so the ``$schema`` key is
+    dropped from the copy it receives. The returned envelope is still
+    validated against the full schema here.
     """
+    cli_schema = {key: value for key, value in schema.items() if key != "$schema"}
     options = agent_sdk.ClaudeAgentOptions(
         model=model,
         effort=effort,
         tools=[],
         max_turns=1,
         setting_sources=[],
-        output_format={"type": "json_schema", "schema": schema},
+        output_format={"type": "json_schema", "schema": cli_schema},
     )
     result: Any = None
     live_input = 0
@@ -127,6 +195,12 @@ async def run_agent_sdk(
 
 def main() -> int:
     args = parse_args()
+
+    mismatch = sdk_pin_mismatch()
+    if mismatch:
+        return fail_env(mismatch)
+    if args.check_sdk:
+        return 0
 
     try:
         agent_sdk = load_agent_sdk()

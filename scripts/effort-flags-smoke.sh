@@ -178,6 +178,9 @@ capture_dispatch() {
     # Force subscription so the auth route emits no op:// pairs and the stub
     # needs no 1Password service account.
     export AUTOMETTA_CODEX_MODE=subscription
+    # This smoke asserts argv, not the provider-window reserve; the host's
+    # live reading must not decide whether the stub is reached.
+    export AUTOMETTA_IGNORE_RESERVE=1
     if [[ "$transport" == "sdk" ]]; then
       export AUTOMETTA_CLAUDE_MODE=api
       export OP_REF_ANTHROPIC_API_KEY='op://smoke/item/key'
@@ -226,6 +229,7 @@ argv_lacks() {
   printf '%s' "$argv" | grep -q -F -e "$needle" && printf 'no\n' || printf 'ok\n'
 }
 
+# AUTOMETTA-CONTRACT-BEGIN card=stage-cards/101-the-verifier-passes-its-flags-the-way-the-worker-does.md
 printf '\n== dispatched argv (stub op-fetch) ==\n' >&2
 
 claude_id='Claude Opus 5 <claude-opus-5@local>'
@@ -311,6 +315,7 @@ check "codex worker with no effort field still dispatches" \
   "$(argv_lacks 'model_reasoning_effort' "$argv")"
 check "codex worker with no effort field still reaches the CLI" \
   "$([[ "$argv" == *codex* ]] && printf 'ok\n' || printf 'no\n')"
+# AUTOMETTA-CONTRACT-END
 
 printf '\n' >&2
 if [[ $fail -eq 0 ]]; then

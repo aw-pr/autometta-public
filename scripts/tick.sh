@@ -165,22 +165,33 @@ quota_log_tick_readings() {
 # back out even one level. The 3rd tab field is what actually survives.
 QUOTA_GATE_RESOLVED_WINDOW="default"
 
-# quota_gate_family_dispatch <repo> claude|codex <description>
+# quota_gate_family_dispatch <repo> claude|codex <description> [model]
 # Returns 1 only after recording a pause at the published reset. Zero covers
 # outside-reserve, reserve off, observe and every unknown reading.
 quota_gate_family_dispatch() {
-  local repo_root="$1" family="$2" what="$3"
-  local settings reserve action window reading
+  local repo_root="$1" family="$2" what="$3" model="${4:-}"
+  local settings reserve action window reading mandate_path curfew
   QUOTA_GATE_RESOLVED_WINDOW="default"
   case "$family" in claude|codex) ;; *)
     log "quota ${what}: family unknown; dispatch remains fail-open"
     return 0
   esac
-  settings="$(quota_reserve_settings "${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}" "$repo_root")"
+  mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}"
+  if [[ "$family" == codex ]] && quota_codex_card_policy; then
+    reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c '.families.codex')"
+    QUOTA_GATE_RESOLVED_WINDOW="codex-card"
+    if quota_gate_codex_reading "$reading"; then return 0; fi
+    log "quota ${what} (codex): ${QUOTA_GATE_REASON}; no new card, active work may finish"
+    return 1
+  fi
+  settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
   IFS=$'\t' read -r reserve action window <<<"$settings"
   QUOTA_GATE_RESOLVED_WINDOW="${window:-default}"
+  curfew="$(quota_schedule_curfew_window "$mandate_path" || true)"
+  log "quota ${what} (${family}): ${reserve}% reserve, ${action} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); curfew ${curfew:+on }${curfew:-off}"
+  [[ -f "$mandate_path" ]] || log "quota ${what}: no controller mandate at ${mandate_path}; reserve off until autometta init-host installs one"
   reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
-  if quota_gate_reading "$reading" "$reserve" "$action"; then
+  if quota_gate_reading "$reading" "$reserve" "$action" "$model"; then
     if [[ "$QUOTA_GATE_REASON" == reading\ unknown:* ]]; then
       log "quota ${what} (${family}): ${QUOTA_GATE_REASON}; dispatch remains fail-open"
     elif [[ "$QUOTA_GATE_REASON" == *"inside reserve"* ]]; then
@@ -189,8 +200,8 @@ quota_gate_family_dispatch() {
     return 0
   fi
   budget_pause_until "$repo_root" "$QUOTA_GATE_RESET" \
-    "quota reserve: ${family} ${QUOTA_GATE_WINDOW}; resets at $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
-  log "quota ${what} (${family}): held in ${reserve}% reserve on ${QUOTA_GATE_WINDOW} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); paused until $(date -r "$QUOTA_GATE_RESET" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+    "quota reserve: ${family} ${QUOTA_GATE_WINDOW}${model:+ for ${model}}; resets at $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+  log "quota ${what} (${family}${model:+ model ${model}}): held in ${reserve}% reserve on ${QUOTA_GATE_WINDOW} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); paused until $(date -r "$QUOTA_GATE_RESET" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
   return 1
 }
 
@@ -208,12 +219,15 @@ quota_gate_family_dispatch() {
 # this card.
 quota_gate_role_dispatch() {
   local repo_root="$1" state_yaml="$2" stage_id="$3" role="$4"
-  local identity family
+  local identity family model=""
   identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" --arg role "$role" \
     '.stages[] | select(.id == $id) | .[$role] // empty')"
   family="$(costlog_family_for_identity "$identity")"
+  if [[ "$family" == claude ]]; then
+    model="$(claude_model_for_identity "$identity")"
+  fi
   # The schedule stop, before the reserve and before any reading is
-  # consulted: outside a declared dispatch window no new work starts, however
+  # consulted: outside an explicitly armed curfew no new work starts, however
   # healthy the quota looks. Refusing here rather than pausing the repo is
   # what lets an in-flight stage still land -- a budget pause returns before
   # any stage work at all, verifier included, so a stop implemented as a
@@ -221,8 +235,30 @@ quota_gate_role_dispatch() {
   if [[ "$role" == "worker" ]]; then
     if ! quota_schedule_permits_dispatch \
          "${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}" "$repo_root"; then
-      log "schedule stop ${role} ${stage_id} (${family}): ${QUOTA_SCHEDULE_STOP_REASON}; no new dispatch this tick"
+      local settings reserve action window curfew mandate_path
+      mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$controller_home/phat-controller-mandate.yaml}"
+      settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
+      IFS=$'\t' read -r reserve action window <<<"$settings"
+      curfew="$(quota_schedule_curfew_window "$mandate_path" || true)"
+      log "schedule stop ${role} ${stage_id} (${family}): ${QUOTA_SCHEDULE_STOP_REASON}; ${reserve}% reserve, ${action} (${window:-default} schedule); curfew ${curfew:+on }${curfew:-off}; no new dispatch this tick"
       return 1
+    fi
+  fi
+  if quota_codex_card_policy; then
+    local worker_id verifier_id uses_codex=false
+    worker_id="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .worker // empty')"
+    verifier_id="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .verifier // empty')"
+    if quota_codex_role_uses_subscription "$repo_root" "$worker_id" worker || quota_codex_role_uses_subscription "$repo_root" "$verifier_id" verifier; then
+      uses_codex=true
+    fi
+    if [[ "$role" == worker && "$uses_codex" == true ]]; then
+      quota_gate_family_dispatch "$repo_root" codex "card ${stage_id}" || return 1
+      [[ "$family" != codex ]] || return 0
+    elif [[ "$role" == verifier && "$family" == codex ]]; then
+      log "quota verifier ${stage_id} (codex): finishing the admitted card; overage permitted"
+      return 0
+    elif [[ "$family" == codex ]]; then
+      return 0
     fi
   fi
   if [[ "$role" == "verifier" ]]; then
@@ -234,7 +270,7 @@ quota_gate_role_dispatch() {
       return 0
     fi
   fi
-  quota_gate_family_dispatch "$repo_root" "$family" "${role} ${stage_id}"
+  quota_gate_family_dispatch "$repo_root" "$family" "${role} ${stage_id}" "$model"
 }
 
 # Per-repo advisory lock. mkdir is atomic on POSIX and works on macOS
@@ -993,15 +1029,55 @@ validate_stage_id() {
   [[ "$stage_id" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]
 }
 
+# Print the graph inspector report. Exit 0 means valid, 2 means structurally
+# invalid with a report, and any other status means inspection was impossible.
+dependency_graph_report() {
+  local repo_root="$1" state_yaml="$2" base_branch="$3"
+  "$script_dir/dependency-graph.sh" "$repo_root" "$state_yaml" "$base_branch"
+}
+
 # Print the first pending stage whose declared dispatch precondition is met.
 # Unmet gates are observations, not state transitions: each one stays pending
 # and the scan continues so a later eligible stage can still run.
 select_next_dispatchable_stage() {
   local state_yaml="$1"
-  local stage_id gate_type prerequisite prerequisite_status active_others
+  local repo_root="${2:-}" base_branch="${3:-}" graph_report='' graph_rc=0
+  local stage_id gate_type prerequisite prerequisite_status active_others graph_ready graph_member blocker
+
+  if [[ -n "$repo_root" || -n "$base_branch" ]]; then
+    if [[ -z "$repo_root" || -z "$base_branch" ]]; then
+      log "dependency graph inspection unavailable: selector requires both repo root and base branch"
+      graph_rc=1
+    else
+      graph_report="$(dependency_graph_report "$repo_root" "$state_yaml" "$base_branch")" || graph_rc=$?
+      if (( graph_rc != 0 && graph_rc != 2 )); then
+        log "dependency graph inspection unavailable; dependency cards remain pending"
+      elif (( graph_rc == 2 )); then
+        log "dependency graph inspection found invalid graph; graph members remain pending"
+      fi
+    fi
+  fi
 
   while IFS=$'\t' read -r stage_id gate_type prerequisite; do
     [[ -n "$stage_id" ]] || continue
+    if [[ -n "$graph_report" ]]; then
+      graph_ready="$(jq -r --arg id "$stage_id" '([.stages[] | select(.id == $id)][0]) as $stage | if $stage == null then true else $stage.dependency_ready end' <<<"$graph_report")"
+      graph_member="$(jq -r --arg id "$stage_id" '[.stages[] | select(.id == $id)][0].graph_member // false' <<<"$graph_report")"
+      if [[ "$graph_ready" != "true" ]]; then
+        blocker="$(jq -r --arg id "$stage_id" '[.stages[] | select(.id == $id)][0].blocked_by[0] // {} | "\(.id // "unknown") is \(.reason // "unready")"' <<<"$graph_report")"
+        log "stage ${stage_id} dependency unmet, stepping over: prerequisite ${blocker}"
+        continue
+      fi
+    elif [[ "$graph_rc" != "0" ]]; then
+      graph_member="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '
+        any(.stages[];
+          (.id == $id and ((.depends_on // []) | length > 0))
+          or (((.depends_on // []) | index($id)) != null))')"
+      if [[ "$graph_member" == "true" ]]; then
+        log "stage ${stage_id} dependency unmet, stepping over: dependency graph inspection unavailable"
+        continue
+      fi
+    fi
     case "$gate_type" in
       "")
         printf '%s\n' "$stage_id"
@@ -1168,7 +1244,7 @@ network_preflight_ok() {
 
 spawn_worker_for_stage() {
   local card_path="$1" repo_root="$2" work_dir="$3"
-  "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
+  AUTOMETTA_RESERVE_GATED=1 "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir"
 }
 
 spawn_verifier_for_stage() {
@@ -1234,10 +1310,30 @@ pipeline_try_dispatch_tail() {
   local repo_root="$1" state_yaml="$2" head_stage="$3" manifest_path="$4"
   local tail_stage head_claims tail_claims head_failures tail_failures head_causes tail_causes
   local head_worker tail_worker head_family tail_family
+  local base_branch graph_report='' graph_rc=0 head_graph_member tail_graph_member
 
   [[ "$(state_json "$state_yaml" | jq -r '.pipeline_pair.tail // empty')" == "" ]] || return 1
   tail_stage="$(pipeline_adjacent_pending_stage "$state_yaml" "$head_stage")"
   [[ -n "$tail_stage" ]] || return 1
+  base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
+  [[ -n "$base_branch" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: base branch unresolved"; return 1; }
+  graph_report="$(dependency_graph_report "$repo_root" "$state_yaml" "$base_branch")" || graph_rc=$?
+  if (( graph_rc == 0 || graph_rc == 2 )); then
+    head_graph_member="$(jq -r --arg id "$head_stage" '[.stages[] | select(.id == $id)][0].graph_member // false' <<<"$graph_report")"
+    tail_graph_member="$(jq -r --arg id "$tail_stage" '[.stages[] | select(.id == $id)][0].graph_member // false' <<<"$graph_report")"
+    if [[ "$head_graph_member" == "true" || "$tail_graph_member" == "true" ]]; then
+      log "pipeline pair ${head_stage} + ${tail_stage} refused: dependency graph member (${head_graph_member}/${tail_graph_member})"
+      return 1
+    fi
+  elif state_json "$state_yaml" | jq -e --arg head "$head_stage" --arg tail "$tail_stage" \
+      '([.stages[] | .depends_on? // []] | flatten) as $prerequisites
+       | any(.stages[]; (.id == $head or .id == $tail)
+           and ((.depends_on // []) | length > 0))
+         or ($prerequisites | index($head) != null)
+         or ($prerequisites | index($tail) != null)' >/dev/null; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: dependency graph inspection unavailable"
+    return 1
+  fi
   head_claims="$(state_json "$state_yaml" | jq -c --arg id "$head_stage" \
     '[.stages[] | select(.id == $id)][0].path_claims // []')"
   tail_claims="$(state_json "$state_yaml" | jq -c --arg id "$tail_stage" \
@@ -1291,17 +1387,16 @@ pipeline_try_dispatch_tail() {
     fi
   fi
 
-  local p95 budget_path cap spent headroom required active_drain_cap=""
+  local p95 budget_path cap spent headroom required
   if ! p95="$(pipeline_p95_tokens "$repo_root")" || [[ ! "$p95" =~ ^[0-9]+$ ]]; then
     log "pipeline pair ${head_stage} + ${tail_stage} refused: no repo p95 dispatch history"
     return 1
   fi
   budget_path="$(budget_file "$repo_root")"
-  cap="$(jq -r '.token_cap_total // 0' "$budget_path")"
-  if active_drain_cap="$(budget_drain_active "$repo_root" 2>/dev/null)" \
-     && [[ -n "$active_drain_cap" ]]; then
-    cap="$active_drain_cap"
-  fi
+  # The same resolution the caps use (drain, then repo, then host default,
+  # then floor): a repo without its own token_cap_total is not at zero
+  # headroom, it is on the host default.
+  cap="$(budget_effective_token_cap "$repo_root")"
   spent="$(jq -r '.tokens_spent // 0' "$budget_path")"
   headroom=$((cap - spent))
   required=$((p95 * 2))
@@ -1310,7 +1405,7 @@ pipeline_try_dispatch_tail() {
     return 1
   fi
 
-  local card_path base_branch work_dir now_iso base_tip dispatch_base_tip
+  local card_path work_dir now_iso base_tip dispatch_base_tip
   card_path="$(stage_card_for_id "$repo_root" "$tail_stage" "$manifest_path")"
   [[ -n "$card_path" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: tail card missing"; return 1; }
   if ! quota_gate_role_dispatch "$repo_root" "$state_yaml" "$tail_stage" worker; then
@@ -1331,8 +1426,6 @@ pipeline_try_dispatch_tail() {
     log "dispatch deferred: network preflight failed (${NETWORK_PREFLIGHT_REASON}); pipeline pair ${head_stage} + ${tail_stage} not formed"
     return 1
   fi
-  base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
-  [[ -n "$base_branch" ]] || { log "pipeline pair ${head_stage} + ${tail_stage} refused: base branch unresolved"; return 1; }
   base_tip="$(git -C "$repo_root" rev-parse "refs/heads/${base_branch}" 2>/dev/null || true)"
   if ! work_dir="$(ensure_run_worktree "$repo_root" "$tail_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
     log "pipeline pair ${head_stage} + ${tail_stage} refused: tail run worktree failed"
@@ -2781,11 +2874,16 @@ consume_orphaned_verifier_artefacts() {
 PENDING_STAGE_FOUND=false
 dispatch_pending_stage_if_available() {
   local repo_root="$1" state_yaml="$2" manifest_path="$3"
-  local next_stage
+  local next_stage base_branch
   PENDING_STAGE_FOUND=false
   # Selection steps over terminal stages and pending stages whose declared
   # gate is not met. Neither case is a state transition or a failure.
-  next_stage="$(select_next_dispatchable_stage "$state_yaml")"
+  base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
+  if [[ -z "$base_branch" ]]; then
+    log "could not resolve a base branch for pending-stage selection in ${repo_root}"
+    return 0
+  fi
+  next_stage="$(select_next_dispatchable_stage "$state_yaml" "$repo_root" "$base_branch")"
   if [[ -z "$next_stage" ]]; then
     return 0
   fi
@@ -2820,15 +2918,8 @@ dispatch_pending_stage_if_available() {
     local next_stage_reserve_exempt=false
     [[ "$QUOTA_GATE_RESOLVED_WINDOW" == "overnight" || "$QUOTA_GATE_RESOLVED_WINDOW" == "drain-ignore-reserve" ]] \
       && next_stage_reserve_exempt=true
-    local base_branch work_dir dispatch_base_tip
-    base_branch="$(resolve_base_branch "$repo_root" "$manifest_path")"
-    if [[ -z "$base_branch" ]]; then
-      log "could not resolve a base branch for ${next_stage} in ${repo_root}, stalling stage"
-      state_apply_json "$state_yaml" \
-        '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "base_branch_unresolved"' \
-        --arg id "$next_stage"
-      budget_record_failure "$repo_root"
-    elif ! work_dir="$(ensure_run_worktree "$repo_root" "$next_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
+    local work_dir dispatch_base_tip
+    if ! work_dir="$(ensure_run_worktree "$repo_root" "$next_stage" "$base_branch")" || [[ -z "$work_dir" ]]; then
       log "could not cut a run worktree for ${next_stage} in ${repo_root} from ${base_branch}, stalling stage"
       state_apply_json "$state_yaml" \
         '(.stages[] | select(.id == $id)).status = "stalled" | (.stages[] | select(.id == $id)).stall_marker = "run_worktree_failed"' \
@@ -2850,7 +2941,7 @@ dispatch_pending_stage_if_available() {
         --arg id "$next_stage" --arg now "$now_iso" --arg base "$base_branch" --arg dispatch_base_tip "$dispatch_base_tip" \
         --argjson exempt "$next_stage_reserve_exempt"
       local worker_spawn_rc=0
-      "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
+      AUTOMETTA_RESERVE_GATED=1 "$script_dir/spawn-worker.sh" "$card_path" "$repo_root" "$work_dir" || worker_spawn_rc=$?
       if (( worker_spawn_rc != 0 )); then
         halt_dispatch_configuration_fault "$repo_root" "$next_stage" worker
         log "stage ${next_stage} halted: worker dispatch command failed before an agent started (dispatch-configuration-fault, exit ${worker_spawn_rc})"
@@ -2895,11 +2986,7 @@ process_repo() {
   return $rc
 }
 
-# Vendor staleness: a subscriber holding an older copy of the contract than the
-# autometta this tick runs from is dispatching against templates that are not
-# the ones being maintained, and nothing said so. emergence-lab sat on
-# `vendored_from: 496c7cc` while the source had moved on; it happened to still
-# match and nothing would have reported it either way.
+# File drift is stale; a behind stamp over current files is only cosmetic.
 #
 # It is a warning and only ever a warning. A stale copy still dispatches: the
 # operator decides when to take a release, and a tick that refused to work
@@ -2924,17 +3011,19 @@ warn_if_vendor_stale() {
   local vendored_from
   vendored_from="$(autometta_vendor_stamp_field "$stamp" vendored_from)"
   vendored_from="$(printf '%s' "$vendored_from" | tr -d '[:space:]')"
-  [[ -n "$vendored_from" ]] || return 0
 
+  autometta_resolve_root "$(autometta_self_root "$script_dir")"
   if [[ -z "$autometta_sha_this_pass" ]]; then
-    autometta_resolve_root "$(autometta_self_root "$script_dir")"
     autometta_sha_this_pass="$(autometta_root_sha "$AUTOMETTA_ROOT_RESOLVED")"
   fi
-  # A root that cannot name its own sha has no opinion about anyone else's.
-  [[ -n "$autometta_sha_this_pass" && "$autometta_sha_this_pass" != "unknown" ]] || return 0
 
-  if [[ "$vendored_from" != "$autometta_sha_this_pass" ]]; then
-    log "stale vendor: ${repo_root} holds the contract from ${vendored_from}, autometta is at ${autometta_sha_this_pass}; run: autometta refresh-repo ${repo_root}"
+  local drifted_files current_count
+  drifted_files="$(autometta_vendor_drifted_files "$repo_root" "$AUTOMETTA_ROOT_RESOLVED")"
+  if [[ -n "$drifted_files" ]]; then
+    log "stale vendor: ${repo_root} holds the contract from ${vendored_from:-unknown}, autometta is at ${autometta_sha_this_pass}; drifted files: ${drifted_files//$'\n'/, }; dispatch continues; run: autometta refresh-repo ${repo_root}"
+  elif [[ -n "$vendored_from" && -n "$autometta_sha_this_pass" && "$autometta_sha_this_pass" != unknown && "$vendored_from" != "$autometta_sha_this_pass" ]]; then
+    current_count="$(autometta_vendored_files | awk 'NF {n++} END {print n+0}')"
+    log "vendor stamp behind: ${repo_root}, ${current_count} vendored files current; dispatch continues; run: autometta refresh-repo ${repo_root}"
   fi
   return 0
 }

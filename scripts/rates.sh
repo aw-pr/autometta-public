@@ -5,11 +5,17 @@
 # or a new tier is added; cost-log.sh sources this file and nothing else
 # carries rate numbers of its own.
 #
-# Two mappings live here:
+# Three mappings live here:
 #   1. tier_for_identity  — an agent identity string -> capability tier
 #      (T1 / T2 / T4), matching the agent-orchestrator skill's tier table.
-#   2. rate_for_tier      — a tier -> "INPUT CACHED OUTPUT" USD per million
-#      tokens.
+#   2. rate_for_model     — a model id -> "INPUT CACHED OUTPUT" USD per million
+#      tokens. The primary rate: models sharing a tier do not share a price
+#      (Opus 5.5 is $4/$20, Opus 5 $5/$25, Sol $5/$30).
+#   3. rate_for_tier      — a tier -> the same triple, used only for a model
+#      rate_for_model does not list.
+#
+# rate_for_model mirrors the pricing block of mcp-hub's config/models.json;
+# keep the two in step when a price moves.
 #
 # Rates are list-price ESTIMATES, not invoices. They give FinOps a stable,
 # comparable cost_usd_est per role; reconcile against the real provider bill
@@ -44,6 +50,7 @@ tier_for_identity() {
   # resolved from the model id emitted on verify-sdk's `advisor:` line.
   case "$identity" in
     *Fable*|*fable*)   printf 'T0\n' ;;
+    *GPT-6\ Astra*|*gpt-6-astra*) printf 'T0\n' ;;
     *Opus*|*opus*)     printf 'T1\n' ;;
     *GPT-5.6\ Sol*|*gpt-5.6-sol*) printf 'T1\n' ;;
     *Gemini\ Pro*)     printf 'T1\n' ;;
@@ -60,13 +67,32 @@ tier_for_identity() {
   esac
 }
 
+# Print "INPUT CACHED OUTPUT" USD per one million tokens for a model id, or
+# nothing when the model is not listed, so the caller falls back to its tier.
+rate_for_model() {
+  case "$1" in
+    claude-fable-5-1)                      printf '10.0 0.25 50.0\n' ;;
+    claude-fable-5)                        printf '10.0 1.0 50.0\n' ;;
+    claude-opus-5-5)                       printf '4.0 0.2 20.0\n' ;;
+    claude-opus-5|claude-opus-4-8|claude-opus-4-7) printf '5.0 0.5 25.0\n' ;;
+    claude-sonnet-5-5|claude-sonnet-5)     printf '2.0 0.2 10.0\n' ;;
+    claude-sonnet-4-6)                     printf '3.0 0.3 15.0\n' ;;
+    claude-haiku-4-5|claude-haiku-4-5-20251001) printf '1.0 0.1 5.0\n' ;;
+    gpt-6-astra)                           printf '10.0 1.0 50.0\n' ;;
+    gpt-5.6-sol)                           printf '5.0 0.5 30.0\n' ;;
+    gpt-5.6-terra)                         printf '2.0 0.2 12.0\n' ;;
+    gpt-5.6-luna)                          printf '0.2 0.02 1.2\n' ;;
+    *)                                     printf '' ;;
+  esac
+}
+
 # Print "INPUT CACHED OUTPUT" USD per one million tokens for a tier.
 # Unknown tiers fall back to the T2 row.
 rate_for_tier() {
   local tier="$1"
   case "$tier" in
     T0) printf '10.0 1.0 50.0\n' ;;
-    T1) printf '15.0 1.5 75.0\n' ;;
+    T1) printf '5.0 0.5 25.0\n' ;;
     T2) printf '3.0 0.3 15.0\n' ;;
     T4) printf '1.0 0.1 5.0\n' ;;
     T5) printf '0.0 0.0 0.0\n' ;;

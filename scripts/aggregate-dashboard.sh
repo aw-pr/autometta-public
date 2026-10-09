@@ -333,18 +333,18 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      ([.entries[]? | select(.alive == true) | .pid | tostring] | join(",")),
      ((.outlier_policy // {}) | tojson)] | .[]')"
 
-  # Vendor staleness (card 66): the same comparison scripts/tick.sh's
-  # warn_if_vendor_stale makes each pass, offered here as data rather than a
-  # log line so the fleet page can show which subscribers are dispatching
-  # against a copy of the contract older than this autometta checkout.
+  # Stamp provenance is separate from file drift, which alone is a warning.
   vendor_stale=false; vendor_from=null
+  vendor_files_current=0; vendor_drifted='[]'
   vendor_stamp="$repo_path/$autometta_vendor_stamp_name"
-  if [[ -f "$vendor_stamp" && "$autometta_current_sha" != unknown ]]; then
+  if [[ -f "$vendor_stamp" ]]; then
     vendored_from_raw="$(autometta_vendor_stamp_field "$vendor_stamp" vendored_from | tr -d '[:space:]')"
     if [[ -n "$vendored_from_raw" ]]; then
       vendor_from="$(jq -nc --arg value "$vendored_from_raw" '$value')"
-      [[ "$vendored_from_raw" == "$autometta_current_sha" ]] || vendor_stale=true
     fi
+    vendor_drifted="$(autometta_vendor_drifted_files "$repo_path" "$script_dir/.." | jq -Rsc 'split("\n") | map(select(length > 0))')"
+    vendor_files_current="$(autometta_vendored_files | jq -Rsc --argjson drifted "$vendor_drifted" 'split("\n") | map(select(length > 0)) | length - ($drifted | length)')"
+    [[ "$vendor_drifted" == '[]' ]] || vendor_stale=true
   fi
 
   stages_json='[]'; last_tick_at=null; tick_count=0; current_stage=null; run_started_at=null
@@ -543,11 +543,12 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
              end)) | . + {elapsed:.elapsed_seconds}]')"
   fi
 
-  # Live transcript token totals, --repo mode only: reading the harness
+  # Live transcript token totals and activity, --repo mode only: reading the harness
   # transcript for every live agent across five repos every 5s is the cost
   # the fleet-wide pass cannot afford (see docs/lessons.md gotcha 14 for why
   # the read has to be incremental at all), but a single-repo ticker refresh
-  # can. Offsets are cached in the same active-agents registry file
+  # can. The enriched agent objects pass through this seam unchanged. Offsets
+  # and accumulated activity are cached in the same active-agents registry file
   # scripts/agent-ticker.sh already used for this, so the two never disagree
   # about how much of a transcript has been consumed.
   if [[ -n "$match_filter" && "$agents_json" != "[]" ]]; then
@@ -770,6 +771,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson drain_cap "$drain_cap" --argjson drain_expires_at "$drain_expires_at" \
     --argjson vendor_stale "$([[ "$vendor_stale" == true ]] && printf true || printf false)" \
     --argjson vendor_from "$vendor_from" --arg vendor_current "$autometta_current_sha" \
+    --argjson vendor_files_current "$vendor_files_current" --argjson vendor_drifted "$vendor_drifted" \
     --argjson build_check "$build_check" '
     input as $spend |
     (if $current_run_id == null then null else {
@@ -795,6 +797,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
      heartbeat_baselines:$heartbeat_baselines, heartbeat_outlier_policy:$heartbeat_outlier_policy,
      drain_active:$drain_active, drain_cap:$drain_cap, drain_expires_at:$drain_expires_at,
      vendor_stale:$vendor_stale, vendor_from:$vendor_from, vendor_current:$vendor_current,
+     vendor_files_current:$vendor_files_current, vendor_drifted:$vendor_drifted,
      build_check:$build_check,
      queue_depth:($queue|length), in_flight:([$stages[] | select(.status == "in_progress")] | length),
      alerts:$alerts, agents:$agents, active_agents:$agents, queue:$queue, queue_counts:$queue_counts,

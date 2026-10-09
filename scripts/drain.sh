@@ -22,10 +22,7 @@ source "$script_dir/budget.sh"
 # shellcheck source=./subscribers.sh
 source "$script_dir/subscribers.sh"
 # shellcheck source=./quota-window.sh
-# Sourced only for quota_schedule_next_overnight_end_epoch, the one read
-# --ignore-reserve needs to refuse a --hours that would outlive the
-# overnight window. Token-cap logic stays exactly what it was; this drain
-# learns nothing new about caps.
+# The reserve override must not outlive an explicitly armed curfew.
 source "$script_dir/quota-window.sh"
 
 usage() {
@@ -40,8 +37,8 @@ Usage:
           --lift              raise it to the lift ceiling (AUTOMETTA_DRAIN_LIFT_CAP)
           --repo              limit the drain to one repo; repeatable. Default: all.
           --ignore-reserve    suspend the window_reserve hold for the life of this
-                              drain and no longer. When a schedule (window_reserve.
-                              overnight) is declared, a --hours that would still be
+                              drain and no longer. When window_reserve.overnight.
+                              stop_outside is true, a --hours that would still be
                               running past the window's end is refused at start.
           --replace           explicitly replace an active drain. Without this,
                               compatible repo scopes join the drain already in force
@@ -188,9 +185,10 @@ cmd_start() {
   if [[ "$ignore_reserve" == "true" ]]; then
     local mandate_path window_end_epoch
     mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(budget_controller_home)/phat-controller-mandate.yaml}"
-    if window_end_epoch="$(quota_schedule_next_overnight_end_epoch "$mandate_path" "$now")" \
+    if quota_schedule_curfew_window "$mandate_path" >/dev/null \
+       && window_end_epoch="$(quota_schedule_next_overnight_end_epoch "$mandate_path" "$now")" \
        && [[ "$window_end_epoch" =~ ^[0-9]+$ ]] && (( expires > window_end_epoch )); then
-      printf 'drain: --ignore-reserve for %s hours would still be running past the overnight window ending %s; refusing. A drain must not outlive the window that permits it.\n' \
+      printf 'drain: --ignore-reserve for %s hours would still be running past the overnight window ending %s (overnight.stop_outside: true); refusing. A drain must not outlive the window that permits it.\n' \
         "$hours" "$(fmt_epoch "$window_end_epoch")" >&2
       exit 1
     fi

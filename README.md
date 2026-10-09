@@ -166,6 +166,7 @@ autometta/
 │   ├── tick-loop.md          # pass 2 - the autonomous loop design and operating record
 │   ├── setup.md              # pass 2 - operator setup guide, auth routes in section 7
 │   ├── runbook.md            # cold-start and daily operator path
+│   ├── dependency-graph.md   # stage prerequisites, `autometta graph`, migration from gates
 │   ├── phat-controller.md    # the scheduled queue minder
 │   ├── budget.md             # caps, drains and the quota window
 │   ├── cost-log.md           # per-role spend records and prompt caching
@@ -267,6 +268,8 @@ autometta --version                 # should match `git rev-parse --short HEAD`
 autometta check-build               # installed-build versus checkout check
 ```
 
+A new command in the checkout, such as `autometta graph`, reaches the installed CLI only through this step; editing or pulling the checkout alone does not change it. Until then, run the checkout launcher with `AUTOMETTA_ROOT` pointing at the checkout.
+
 Sessions started before the upgrade stay pinned to the old Cellar version until re-sourced or restarted; the ticker, fleet viewer and TUI warn on build drift. Full upgrade notes, including when `autometta init` is needed again, are in [docs/deployment.md](./docs/deployment.md).
 
 ## Billing routes: three tiers
@@ -300,6 +303,7 @@ Full surface, including the op-refs file layout, the sibling `CODEX_HOME` requir
 | Autonomous loop (pass 2)                                   | shipped      | Unattended macOS launchd path verified 2026-05-29 (gotcha 9 fix). Linux via cron.                                                                       |
 | Pipeline pairs                                             | shipped      | Adjacent stages with disjoint path claims overlap; landing stays ordered. A card pairs unless it says serial.                                            |
 | phat-controller (queue minder)                             | shipped      | Scheduled pass that re-briefs, re-queues, drains and escalates; keeps a journal and takes messages.                                                     |
+| Stage dependency graph                                     | shipped      | `Depends on` names the stages a card builds on; the tick dispatches it only once their commits are on its base. `autometta graph` shows readiness and blockers, read-only. Legacy gates keep their status-only meaning. See [docs/dependency-graph.md](./docs/dependency-graph.md). |
 | Contract-test gate                                         | shipped      | A card names its oracle and a frozen digest; `add-stage.sh` refuses a card without one; the verifier runs the gate against the tree it is shown.        |
 | Fact ledger (pass 5)                                       | shipped      | `memory/facts.jsonl`, schema and lint, backfilled from trailers, appended at landing, read by the verifier.                                              |
 | Worker dispatch envelope                                   | shipped      | Sole worker completion signal; `partial` goes to the verifier with the deferred criteria as a checklist.                                                |

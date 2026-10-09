@@ -154,10 +154,10 @@ Exit codes, identical to `verify-sdk.py`:
 - `0`: the turn returned `overall: "PASS"` and the JSON artefact was written.
 - `1`: the turn returned `overall: "FAIL"`, the JSON was malformed, or the
   turn itself came back as an SDK-level error (`ResultMessage.is_error`).
-- `2`: environment error -- missing `claude-agent-sdk` or `jsonschema`,
-  missing card, missing verifier prompt template or schema, or a
-  `ClaudeSDKError` from the underlying transport (CLI not found, connection
-  failure, malformed stream).
+- `2`: environment error -- an installed `claude-agent-sdk` that is not the
+  pinned release (or none at all), missing `jsonschema`, missing card,
+  missing verifier prompt template or schema, or a `ClaudeSDKError` from the
+  underlying transport (CLI not found, connection failure, malformed stream).
 - `3`: the turn returned JSON that failed `schemas/verifier.json`; an invalid
   report is written to `<out>.invalid.json`.
 
@@ -167,6 +167,42 @@ The verifier identity this route writes into every artefact is fixed --
 per-tier scheme here would tag an agent-sdk artefact with the same generic
 `(SDK)` suffix an api-sdk artefact carries, recreating on the git-attribution
 side the exact ambiguity this card exists to remove from the credential side.
+
+### Keeping the SDK current
+
+The route is tested against one release: the `claude-agent-sdk==<version>`
+line in `scripts/requirements-sdk.txt`. Whatever release the `python3` the
+spawn scripts resolve has installed must match it. Move the pin to the newest
+PyPI release, install that release on its own, and re-run the probe in
+`docs/experiments/agent-sdk-verifier-probe.md`:
+
+```sh
+python3 -m pip index versions claude-agent-sdk
+python3 -m pip install "claude-agent-sdk==<pin>"   # add --break-system-packages on the brew python
+python3 scripts/verify-sdk-agent.py --check-sdk
+```
+
+Install only that package. The `-r` form would also move the other three pins.
+
+`--check-sdk` compares the pin with
+`importlib.metadata.version("claude-agent-sdk")`. It reads the pin from
+`scripts/requirements-sdk.txt`, or from the file `AUTOMETTA_SDK_REQUIREMENTS`
+names. It exits `0` on a match. On a mismatch it exits `2` and prints one
+stderr line naming both versions. Every real dispatch runs the same check
+before it assembles a prompt, so a mismatch costs no tokens.
+
+`spawn-verifier.sh` runs the check in `verifier_sdk_precondition` for the
+`agent-sdk` surface. A mismatch on an explicit `transport: agent-sdk`
+(manifest or `AUTOMETTA_CLAUDE_TRANSPORT`) resolves to `refused`, naming the
+reason. It never reroutes to `cli`. The dispatch exits non-zero before
+spawning, and `--print-transport` prints the same line and exits `1`:
+
+```
+refused (env: claude-agent-sdk 0.1.81 installed, 0.2.165 pinned in .../scripts/requirements-sdk.txt; install with: python3 -m pip install "claude-agent-sdk==0.2.165")
+```
+
+`scripts/sdk-pin-smoke.sh` holds this machine to the pin. Like the other
+smokes, it runs offline.
 
 ## Rubric schema
 
@@ -196,7 +232,7 @@ Resolution order (most specific wins), per family:
 3. Unset, with the family's SDK preconditions all present: `sdk`, provenance `default-sdk`, then through `claude_route_guard`, so a claude repo on subscription still lands on `cli (route-guard: ...)`
 4. Unset, with a precondition missing: `cli`, provenance `fallback-cli`, naming the reason
 
-The preconditions are checked only for an unset key. An explicit `sdk` never falls back on them: an operator who asked for the SDK by name wants to hear that it cannot run, not to be rerouted quietly.
+The preconditions are checked only for an unset key. An explicit `sdk` never falls back on them: an operator who asked for the SDK by name wants to hear that it cannot run, not to be rerouted quietly. The one explicit check is the `agent-sdk` pin guard (see "Keeping the SDK current"). It resolves a mismatch to `refused` and never to another transport.
 
 | Family | Preconditions for `default-sdk` |
 |---|---|
@@ -291,7 +327,8 @@ artefacts contain personal data.
 | `transport: agent-sdk` + `auth.claude.mode: api` + `OP_REF_ANTHROPIC_API_KEY` unresolved | Exits non-zero before spawning any process. Message names the ref. |
 | `transport: agent-sdk` + `auth.claude.mode: local` | Refused by `auth-route.sh`: the local route is codex-family only. |
 | `transport: agent-sdk` + `scripts/verify-sdk-agent.py` missing | Falls back to `cli`, logged as `fallback-cli`. |
-| `transport: agent-sdk` + `claude-agent-sdk` package missing | `verify-sdk-agent.py` exits `2`; logged to the stage log. |
+| `transport: agent-sdk` + installed `claude-agent-sdk` differs from the pin in `scripts/requirements-sdk.txt` | Resolves to `refused (<provenance>: <installed> installed, <pinned> pinned ...)`. Exits non-zero before spawning any process. Never reroutes to `cli`. `verify-sdk-agent.py --check-sdk` exits `2` with the same line. |
+| `transport: agent-sdk` + `claude-agent-sdk` package missing | Treated as a mismatch (`nothing installed`): refused before spawning. |
 | `transport: agent-sdk` + declared `Verifier effort` | Passes the level through `ClaudeAgentOptions.effort` (the CLI's `--effort` flag); it is not discarded. |
 | `transport: agent-sdk` + `advisor` set | Not supported by this entrypoint; `resolve_claude_advisor` is not consulted on this branch. Set `transport: sdk` with `auth.claude.mode: api` for Fable-as-advisor. |
 

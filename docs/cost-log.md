@@ -112,7 +112,7 @@ run.
 | Codex CLI (`codex exec`) | Last cumulative `total_token_usage` in the matching Codex session JSONL | Full breakdown. Codex `input_tokens` includes cached input, so the producer records fresh input as `input_tokens - cached_input_tokens`, cached input separately, and output as emitted. The three fields reconcile to Codex `total_tokens`. |
 | Claude CLI (`claude -p`) | Per-message usage in the matching Claude Code transcript | Full breakdown, deduplicated by request and summed from dispatch start. Cache creation is folded into fresh input and cache reads remain separate. |
 | SDK verifier (`verify-sdk.py`) | `cache: write=W read=R input=I output=O` | Full breakdown. `input_tokens = I + W`, `cached_input_tokens = R`, `output_tokens = O`. |
-| Claude CLI with JSON output | a `usage` object with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` | Full breakdown when present in stdout. This is a fallback when the matching Claude transcript is unavailable. |
+| Claude CLI with stream JSON output | The final `result` line's `usage` object with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` | Full breakdown when present in stdout. `claude-token-log.sh` also reads that result line to write `Total tokens: N`; this is a fallback when the matching Claude transcript is unavailable. |
 | Terminal fallback | Codex `tokens used` or Claude `Total tokens: <N>` | `usage_status: "total_only"`, the real aggregate in `total_tokens`, and null breakdown, cost and cache-rate fields. |
 | No readable signal | Missing transcript usage and no terminal total | `usage_status: "unknown"` with null token, cost and cache-rate fields. The tick logs a `WARNING: usage unknown` line and does not charge an invented value to the budget. |
 
@@ -138,17 +138,26 @@ prices move. Rates are USD per one million tokens.
 
 | Tier | Models (Anthropic / OpenAI) | Input | Cached read | Output |
 |---|---|---|---|---|
-| T0 | Fable 5.1 | 10.00 | 1.00 | 50.00 |
+| T0 | Fable 5.1, GPT-6 Astra | 10.00 | 1.00 | 50.00 |
 | T1 | Opus, GPT-5.6 Sol | 15.00 | 1.50 | 75.00 |
 | T2 | Sonnet, GPT-5.6 Terra | 3.00 | 0.30 | 15.00 |
 | T4 | Haiku, GPT-5.6 Luna | 1.00 | 0.10 | 5.00 |
 | T5 | Codex GPT-OSS 120B (local Ollama) | 0.00 | 0.00 | 0.00 |
 
-T0 is the opt-in Claude Fable 5.1 tier, a step above Opus and the only tier above
-T1. It is dispatched per card only: no existing identity resolves to it, so a
-stage runs Fable solely when its card names a `*Fable*` worker or verifier. The
-label was previously a placeholder for the orchestrator's own main session,
-which is not a dispatched role and is not costed here.
+T0 is the opt-in frontier tier, holding Claude Fable 5.1 and GPT-6 Astra. It is
+dispatched per card only: no existing identity resolves to it, so a stage runs
+one of them solely when its card names a `*Fable*` or `*GPT-6 Astra*` worker or
+verifier. The label was previously a placeholder for the orchestrator's own main
+session, which is not a dispatched role and is not costed here.
+
+Note that T0 sits *below* T1 on price while sitting above it on capability. That
+is not a mistake in the table: T1 carries the Opus and Sol rates, and both are
+dearer per token than Astra or Fable. The tier numbers order capability, not
+cost, and have since T0 was added.
+
+Astra is worth naming explicitly on a card whose task is software engineering,
+which is where OpenAI positions it. Without a card naming it, every codex role
+keeps dispatching to `AUTOMETTA_MODEL_CODEX` (Sol) exactly as before.
 
 T5 is the codex `local` auth route: real tokens still get counted (the token
 cap still bounds attention and wall-clock), only the USD estimate is zero. An

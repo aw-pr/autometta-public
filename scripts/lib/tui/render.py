@@ -935,7 +935,32 @@ def run_lines(state, inner_width):
     return lines
 
 
-def agent_lines(state):
+def activity_suffix(activity, now, available):
+    if not isinstance(activity, dict) or available <= 0:
+        return ""
+    parts = ["turn %d" % int(activity.get("turns") or 0)]
+    tool = activity.get("last_tool")
+    if tool:
+        parts.append(str(tool))
+    stamp = activity.get("last_at")
+    if stamp:
+        parts.append(relative_age(stamp, now) + " ago")
+    fixed = " ".join(parts)
+    if len(fixed) >= available:
+        return fixed[:available]
+    detail = activity.get("last_detail")
+    if not detail:
+        return fixed
+    detail = str(detail).splitlines()[0].strip()
+    room = available - len(fixed) - 1
+    if room <= 0:
+        return fixed
+    if len(detail) > room:
+        detail = (detail[:room - 1] + "…") if room > 1 else "…"
+    return fixed + " " + detail
+
+
+def agent_lines(state, inner_width=None):
     lines = []
     agents = state.payload.get("agents") or []
     queue = state.payload.get("queue") or []
@@ -959,7 +984,14 @@ def agent_lines(state):
             )
         else:
             burn = "n/a"
-        text = "● %s %s  %s  %s  %s / %s" % (scope, role, alias, burn, elapsed, budget)
+        activity = agent.get("activity")
+        if isinstance(activity, dict) and inner_width:
+            base = "● %s %s %s %s %s/%s" % (
+                scope, role, alias, burn, elapsed, budget)
+            suffix = activity_suffix(activity, state.now, max(0, inner_width - len(base) - 2))
+            text = base + ("  " + suffix if suffix else "")
+        else:
+            text = "● %s %s  %s  %s  %s / %s" % (scope, role, alias, burn, elapsed, budget)
         spans = [(0, 1, ACTIVE)]
         burn_start = text.find(burn)
         if burn_start >= 0 and burn != "n/a":
@@ -1424,7 +1456,7 @@ def render(state, width, height):
         draw_box(canvas, (0, y2, left_width, run_h), run_title,
                  run_lines(state, left_width - 4), state.focus == 2)
         draw_box(canvas, (0, y3, left_width, agents_h), agents_title,
-                 agent_lines(state), state.focus == 3)
+                 agent_lines(state, left_width - 4), state.focus == 3)
         draw_box(canvas, (0, y4, left_width, inbox_h), "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
         draw_box(canvas, (0, y5, left_width, updates_h), "[5]─Status updates",
@@ -1444,7 +1476,7 @@ def render(state, width, height):
             cursor += panel_height + 1
         draw_box(canvas, rects[0], "[1]─Status", status_lines(state), state.focus == 1)
         draw_box(canvas, rects[1], run_title, run_lines(state, width - 4), state.focus == 2)
-        draw_box(canvas, rects[2], agents_title, agent_lines(state), state.focus == 3)
+        draw_box(canvas, rects[2], agents_title, agent_lines(state, width - 4), state.focus == 3)
         draw_box(canvas, rects[3], "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
                  inbox_lines(state), state.focus == 4)
         draw_box(canvas, rects[4], "[5]─Status updates",

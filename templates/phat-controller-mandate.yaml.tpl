@@ -29,8 +29,15 @@ spend_authority:
   token_ceiling:
   expires_at:
 
-# Written only when the operator answers the setup question. Zero is an
-# explicit answer meaning off; null means this older job has not been asked.
+# Claude reserve, and Codex only with AUTOMETTA_CODEX_QUOTA_POLICY=reserve.
+# Default Codex subscription admission instead uses fresh quota below 100%;
+# the active card may finish in overage, then further cards wait.
+# Written when the operator answers the setup question. Unanswered (empty)
+# is NOT off: the loop then holds a 20% reserve (no new card past 80% of any
+# reported window, 5-hour or weekly, per family). Zero is the explicit
+# answer meaning off, as is action: off. The same line binds a manual
+# scripts/spawn-worker.sh dispatch, which exits 4 rather than starting a
+# card; AUTOMETTA_IGNORE_RESERVE=1 overrides that one spawn.
 #
 # percent/action are the daytime default and, absent the optional overnight
 # block below, the only rule there is -- this is every host's setting until
@@ -49,7 +56,10 @@ spend_authority:
 #       start: "22:00"
 #       end: "01:00"
 #       percent: 0
+#       stop_outside: false
 #     timezone: local
+#
+# overnight.stop_outside: true stops new workers outside the window; it defaults off.
 #
 # overnight.start/end are read in the clock named by `timezone`. Only
 # "local" is supported today: the window describes when the operator is
@@ -64,12 +74,14 @@ spend_authority:
 # now < end, never start <= now < end, which never matches at all for a
 # wrapping window and fails silently rather than loudly.
 window_reserve:
-  percent:
-  action:
+  percent:   # empty = default 20; 0 = off
+  action:    # empty = default hold; hold | observe | off
+  codex_admit_percent:   # empty = 100; no new Codex card at or past this % used
   # overnight:
   #   start:
   #   end:
   #   percent:
+  #   stop_outside: false
   # timezone: local
 
 escalation:

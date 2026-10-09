@@ -138,6 +138,15 @@ agent's `live_usage` object in `data.json`; it omits that object when the
 registry has no SDK figure. The dashboard labels a present value `LIVE` and
 shows `n/a` for a CLI dispatch, rather than treating absence as zero.
 
+The agents table's `Activity` column reads `activity.turns`, `tool_calls`,
+`last_tool`, `last_detail` and `last_at`. The transcript reader derives the
+object while consuming its existing transcript chunk, retains incremental
+Claude counts beside the offset in the active-agent registry, and passes the
+object unchanged through the per-repo aggregate seam to the TUI and dashboard.
+No readable activity produces a blank cell, not a zero. The `--repo` path polls
+every five seconds; views using the fleet snapshot can be up to its 120-second
+interval behind.
+
 Latency is bounded by the SDK usage message, the registry's atomic rename, the
 next seam regeneration, and the page poll. `--watch` and `--serve` regenerate
 the dashboard every five seconds by default; the fleet snapshot job defaults

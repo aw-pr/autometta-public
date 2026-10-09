@@ -30,6 +30,7 @@ Usage:
   autometta refresh-all-repos [--dry-run]
   autometta add-stage <repo-path> <stage-card-path>
   autometta status
+  autometta graph [--repo <repo-path>] [--json]   # read-only dependency readiness
   autometta attach [repo-path] [--dry-run]
   autometta tui [repo-path]
   autometta detach [repo-path|--all]
@@ -164,6 +165,9 @@ case "$command_name" in
     ;;
   status)
     run_script status.sh "$@"
+    ;;
+  graph)
+    run_script graph.sh "$@"
     ;;
   attach)
     run_script attach.sh "$@"

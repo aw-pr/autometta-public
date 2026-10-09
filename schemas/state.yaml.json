@@ -114,6 +114,16 @@
               }
             ]
           },
+          "depends_on": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$"
+            },
+            "description": "Optional ordered full stage IDs whose landed commits must be on this stage's dispatch base before it can run. Structural graph validation is performed by scripts/dependency-graph.sh."
+          },
           "path_claims": {
             "type": "array",
             "minItems": 1,

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -47,7 +48,7 @@ def unknown(family: str, reason: str) -> dict[str, Any]:
     }
 
 
-def sanitise_windows(value: Any) -> list[dict[str, Any]] | None:
+def sanitise_windows(value: Any, *, allow_overage: bool = False) -> list[dict[str, Any]] | None:
     if not isinstance(value, list) or not value:
         return None
     result = []
@@ -65,7 +66,9 @@ def sanitise_windows(value: Any) -> list[dict[str, Any]] | None:
             or not label
             or not isinstance(utilisation, (int, float))
             or isinstance(utilisation, bool)
-            or not 0 <= float(utilisation) <= 100
+            or not math.isfinite(float(utilisation))
+            or float(utilisation) < 0
+            or (not allow_overage and float(utilisation) > 100)
         ):
             return None
         result.append(
@@ -79,33 +82,33 @@ def sanitise_windows(value: Any) -> list[dict[str, Any]] | None:
     return result
 
 
-def read_claude() -> dict[str, Any]:
+def read_snapshot(family: str) -> dict[str, Any]:
     quota_dir = Path(
         os.path.expanduser(os.environ.get("AI_QUOTA_DIR", "~/.local/state/ai-quota"))
     )
-    snapshot = quota_dir / "claude.json"
+    snapshot = quota_dir / f"{family}.json"
     if not snapshot.is_file():
-        return unknown("claude", "snapshot absent")
+        return unknown(family, "snapshot absent")
     try:
         payload = json.loads(snapshot.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return unknown("claude", "snapshot malformed")
+        return unknown(family, "snapshot malformed")
     if not isinstance(payload, dict):
-        return unknown("claude", "snapshot malformed")
+        return unknown(family, "snapshot malformed")
     fetched_epoch = parse_time(payload.get("fetched_at"))
     source = payload.get("source")
-    windows = sanitise_windows(payload.get("windows"))
+    windows = sanitise_windows(payload.get("windows"), allow_overage=family == "codex")
     if fetched_epoch is None or not isinstance(source, str) or not source or windows is None:
-        return unknown("claude", "snapshot malformed")
+        return unknown(family, "snapshot malformed")
     try:
         stale_seconds = int(os.environ.get("AI_QUOTA_STALE_SECONDS", DEFAULT_STALE_SECONDS))
     except ValueError:
         stale_seconds = DEFAULT_STALE_SECONDS
     age = max(0, int(now_epoch() - fetched_epoch))
     if age > max(0, stale_seconds):
-        return unknown("claude", f"snapshot stale ({age}s old, limit {max(0, stale_seconds)}s)")
+        return unknown(family, f"snapshot stale ({age}s old, limit {max(0, stale_seconds)}s)")
     return {
-        "family": "claude",
+        "family": family,
         "status": "known",
         "reason": None,
         "source": source,
@@ -113,6 +116,9 @@ def read_claude() -> dict[str, Any]:
         "windows": windows,
     }
 
+
+def read_claude() -> dict[str, Any]:
+    return read_snapshot("claude")
 
 def find_rate_limits(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
@@ -166,7 +172,7 @@ def codex_snapshot(line: str) -> dict[str, Any] | None:
                 "resets_at": iso(reset_epoch) if reset_epoch is not None else None,
             }
         )
-    windows = sanitise_windows(windows)
+    windows = sanitise_windows(windows, allow_overage=True)
     if windows is None:
         return None
     fetched_epoch = parse_time(event.get("timestamp"))
@@ -175,12 +181,12 @@ def codex_snapshot(line: str) -> dict[str, Any] | None:
         "status": "known",
         "reason": None,
         "source": "codex-rollout-log",
-        "fetched_at": iso(fetched_epoch if fetched_epoch is not None else now_epoch()),
+        "fetched_at": iso(fetched_epoch) if fetched_epoch is not None else None,
         "windows": windows,
     }
 
 
-def read_codex() -> dict[str, Any]:
+def read_codex_rollout() -> dict[str, Any]:
     sessions_root = Path(
         os.path.expanduser(os.environ.get("AUTOMETTA_CODEX_SESSIONS", "~/.codex/sessions"))
     )
@@ -214,6 +220,52 @@ def read_codex() -> dict[str, Any]:
     return unknown("codex", f"no rate_limits event in newest {MAX_CODEX_FILES} rollout files")
 
 
+def read_codex() -> dict[str, Any]:
+    rollout = read_codex_rollout()
+    snapshot = read_snapshot("codex")
+    candidates = [value for value in (rollout, snapshot) if value.get("status") == "known"]
+    if not candidates:
+        return rollout
+    return max(candidates, key=lambda value: parse_time(value.get("fetched_at")) or 0)
+
+
+def codex_admission(reading: Any) -> dict[str, Any]:
+    result = {"allowed": False, "reason": "Codex quota reading unavailable", "window": "", "reset": None}
+    if not isinstance(reading, dict) or reading.get("status") != "known":
+        return result
+    now = now_epoch()
+    fetched = parse_time(reading.get("fetched_at"))
+    try:
+        max_age = max(0, int(os.environ.get("AI_QUOTA_STALE_SECONDS", DEFAULT_STALE_SECONDS)))
+    except ValueError:
+        max_age = DEFAULT_STALE_SECONDS
+    if fetched is None or fetched > now + 60 or now - fetched > max_age:
+        return {**result, "reason": "Codex quota reading stale or undated"}
+    windows = sanitise_windows(reading.get("windows"), allow_overage=True)
+    if not windows or not {"primary", "secondary"}.issubset({w["key"] for w in windows}):
+        return {**result, "reason": "Codex quota windows incomplete"}
+    ceiling = codex_admit_percent()
+    for window in windows:
+        reset = parse_time(window["resets_at"])
+        if reset is None or reset <= now:
+            return {**result, "reason": "Codex quota needs a fresh reading after reset", "window": window["label"]}
+        if window["utilization"] >= ceiling:
+            state = "exhausted" if ceiling >= 100 else f"at or past the {ceiling:g}% admission ceiling"
+            return {**result, "reason": f"Codex {window['label']} {state} ({window['utilization']:g}% used)",
+                    "window": window["label"], "reset": int(reset)}
+    return {**result, "allowed": True, "reason": f"Codex quota below {ceiling:g}%; current card may finish in overage"}
+
+
+def codex_admit_percent() -> float:
+    """Used percentage at which no new Codex card is admitted. Out-of-range or
+    unparseable values fall back to 100 rather than to a stricter guess."""
+    try:
+        value = float(os.environ.get("AUTOMETTA_CODEX_ADMIT_PERCENT", "100"))
+    except ValueError:
+        return 100.0
+    return value if 0 < value <= 100 else 100.0
+
+
 def read_family(family: str) -> dict[str, Any]:
     if family == "claude":
         return read_claude()
@@ -223,10 +275,16 @@ def read_family(family: str) -> dict[str, Any]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in {"claude", "codex", "all"}:
-        print(f"usage: {Path(sys.argv[0]).name} claude|codex|all", file=sys.stderr)
+    if len(sys.argv) != 2 or sys.argv[1] not in {"claude", "codex", "all", "codex-admission"}:
+        print(f"usage: {Path(sys.argv[0]).name} claude|codex|all|codex-admission", file=sys.stderr)
         return 2
-    if sys.argv[1] == "all":
+    if sys.argv[1] == "codex-admission":
+        try:
+            reading = json.load(sys.stdin)
+        except (ValueError, OSError):
+            reading = None
+        result = codex_admission(reading)
+    elif sys.argv[1] == "all":
         result = {
             "read_at": iso(now_epoch()),
             "families": {family: read_family(family) for family in ("claude", "codex")},

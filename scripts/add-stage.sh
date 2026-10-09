@@ -2,6 +2,8 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 log_msg() {
   printf '%s\n' "$1" >&2
 }
@@ -60,6 +62,59 @@ extract_path_claims() {
     exit 1
   fi
   jq -c 'unique' <<<"$claims_json"
+}
+
+extract_depends_on() {
+  local card_path="$1" lines depends_text dependency depends_json='[]'
+  lines="$(grep -E '^- \*\*Depends on:' "$card_path" || true)"
+  if [[ -z "$lines" ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  if [[ "$(printf '%s\n' "$lines" | wc -l | tr -d ' ')" != "1" ]]; then
+    log_msg "refusing duplicate Depends on metadata lines in ${card_path}"
+    exit 1
+  fi
+  if [[ ! "$lines" =~ ^-\ \*\*Depends\ on:\*\*\ (.+)$ ]]; then
+    log_msg "refusing unparseable Depends on line: ${lines}"
+    exit 1
+  fi
+  depends_text="${BASH_REMATCH[1]}"
+  while IFS= read -r dependency; do
+    dependency="$(printf '%s' "$dependency" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    if [[ ! "$dependency" =~ ^[0-9]{2,}[a-z]*-[a-z0-9-]+$ ]]; then
+      log_msg "refusing unparseable Depends on line: ${lines}"
+      exit 1
+    fi
+    depends_json="$(jq -c --arg dependency "$dependency" '. + [$dependency]' <<<"$depends_json")"
+  done < <(printf '%s\n' "$depends_text" | tr ',' '\n')
+  if [[ "$(jq 'length' <<<"$depends_json")" == "0" ]] \
+     || [[ "$(jq 'unique | length' <<<"$depends_json")" != "$(jq 'length' <<<"$depends_json")" ]]; then
+    log_msg "refusing unparseable or duplicate Depends on line: ${lines}"
+    exit 1
+  fi
+  printf '%s\n' "$depends_json"
+}
+
+validate_dependency_graph() {
+  local repo_root="$1" state_path="$2" candidate_json="$3" base_branch prospective_state rc=0
+  base_branch="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [[ -z "$base_branch" ]]; then
+    log_msg "refusing dependency card: cannot resolve the target repository base branch"
+    exit 1
+  fi
+  prospective_state="$(mktemp "${TMPDIR:-/tmp}/autometta-dependency-state.XXXXXX")"
+  if ! yq -o=json '.' "$state_path" | jq --argjson stage "$candidate_json" '.stages += [$stage]' >"$prospective_state"; then
+    rm -f "$prospective_state"
+    log_msg "refusing dependency card: could not build prospective queue"
+    exit 1
+  fi
+  "$script_dir/dependency-graph.sh" "$repo_root" "$prospective_state" "$base_branch" >/dev/null || rc=$?
+  rm -f "$prospective_state"
+  if (( rc != 0 )); then
+    log_msg "refusing dependency card: prospective dependency graph is invalid"
+    exit 1
+  fi
 }
 
 extract_stage_id() {
@@ -121,7 +176,7 @@ main() {
     exit 1
   fi
 
-  local stage_id worker_identity verifier_identity gate_type gate_stage_id gate_json path_claims_json path_claims_state_json dispatch_line exists_count run_id
+  local stage_id worker_identity verifier_identity gate_type gate_stage_id gate_json path_claims_json path_claims_state_json depends_on_json dispatch_line exists_count run_id candidate_json
   stage_id="$(extract_stage_id "$stage_card_path")"
   validate_contract_test "$stage_card_path"
   exists_count="$(STAGE_ID="$stage_id" yq -r '.stages | map(select(.id == strenv(STAGE_ID))) | length' "$state_path")"
@@ -133,7 +188,22 @@ main() {
   verifier_identity="$(extract_identity "$stage_card_path" "Verifier")"
   IFS=$'\t' read -r gate_type gate_stage_id < <(extract_gate "$stage_card_path")
   path_claims_json="$(extract_path_claims "$stage_card_path")"
-  if [[ "$(jq 'length' <<<"$path_claims_json")" == "0" ]]; then
+  depends_on_json="$(extract_depends_on "$stage_card_path")"
+  if [[ "$(jq 'length' <<<"$depends_on_json")" != "0" ]]; then
+    if [[ -n "$gate_type" ]]; then
+      log_msg 'refusing dependency card with Gate metadata; Depends on replaces legacy gates'
+      exit 1
+    fi
+    if [[ "$(jq 'length' <<<"$path_claims_json")" != "0" ]]; then
+      log_msg 'refusing dependency card with Path claims; dependency graphs dispatch serially'
+      exit 1
+    fi
+    dispatch_line="$(grep -m1 -E '^- \*\*Dispatch' "$stage_card_path" || true)"
+    if [[ "$dispatch_line" != '- **Dispatch:** serial' ]]; then
+      log_msg 'refusing dependency card without "- **Dispatch:** serial"'
+      exit 1
+    fi
+  elif [[ "$(jq 'length' <<<"$path_claims_json")" == "0" ]]; then
     dispatch_line="$(grep -m1 -E '^- \*\*Dispatch' "$stage_card_path" || true)"
     if [[ "$dispatch_line" != '- **Dispatch:** serial' ]]; then
       log_msg 'refusing card without a dispatch declaration: add "- **Path claims:** path/to/file" or "- **Dispatch:** serial"'
@@ -153,6 +223,16 @@ main() {
     "") gate_json='{}' ;;
   esac
 
+  candidate_json="$(jq -cn --arg id "$stage_id" --arg worker "$worker_identity" --arg verifier "$verifier_identity" \
+    --argjson depends_on "$depends_on_json" '
+      {id:$id,status:"pending",worker:$worker,verifier:$verifier,
+       worker_pid:null,verifier_pid:null,verifier_artefact:null,
+       verifier_attempts:0,started_at:null,completed_at:null}
+      + (if ($depends_on | length) > 0 then {depends_on:$depends_on} else {} end)')"
+  if [[ "$(jq 'length' <<<"$depends_on_json")" != "0" ]]; then
+    validate_dependency_graph "$repo_root" "$state_path" "$candidate_json"
+  fi
+
   # A run remains current while any of its stages are pending or in progress.
   # Records from before run_id existed are historic and do not get backfilled.
   run_id="$(yq -r '
@@ -164,7 +244,7 @@ main() {
   fi
 
   STAGE_ID="$stage_id" WORKER="$worker_identity" VERIFIER="$verifier_identity" \
-    RUN_ID="$run_id" GATE_JSON="$gate_json" PATH_CLAIMS_STATE_JSON="$path_claims_state_json" yq -i \
+    RUN_ID="$run_id" GATE_JSON="$gate_json" PATH_CLAIMS_STATE_JSON="$path_claims_state_json" DEPENDS_ON_JSON="$depends_on_json" yq -i \
     '.stages += [({
       "id": strenv(STAGE_ID),
       "run_id": strenv(RUN_ID),
@@ -178,7 +258,9 @@ main() {
       "verifier_attempts": 0,
       "completed_at": null
     } + (strenv(GATE_JSON) | from_json)
-      + (strenv(PATH_CLAIMS_STATE_JSON) | from_json))]' "$state_path"
+      + (strenv(PATH_CLAIMS_STATE_JSON) | from_json)
+      + ((strenv(DEPENDS_ON_JSON) | from_json) as $depends
+         | if ($depends | length) > 0 then {"depends_on": $depends} else {} end))]' "$state_path"
   log_msg "added: ${stage_id}"
 }
 

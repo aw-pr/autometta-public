@@ -122,7 +122,8 @@ was rendered. Nothing has been written.
 
 Answer how much of a provider window to leave unspent and what to do at that
 point. Use --window-reserve-percent N (zero means off) together with
---window-reserve-action hold|observe. There is no committed default.
+--window-reserve-action hold|observe. Until the mandate carries an answer the
+loop holds the default, 20% (no new card past 80% of any window).
 REFUSED
   exit 2
 fi

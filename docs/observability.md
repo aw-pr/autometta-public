@@ -72,6 +72,14 @@ The `[3] Agents` panel shows live agents followed by the queued next stages.
 Queued rows come from the aggregate payload's `queue` field and are display-only;
 the cursor remains confined to live agents.
 
+For each readable live transcript, the panel also shows `activity.turns`, the
+latest tool, its age and `last_detail`; the dashboard also includes
+`activity.tool_calls`. `scripts/lib/transcript-tokens.py` derives those fields
+from the transcript bytes it already reads, caches incremental Claude counts in
+the agent registry, and returns them through `aggregate-dashboard.sh --repo` to
+the panel. Missing activity stays blank. The per-repo path refreshes every five
+seconds; a fleet dashboard can be up to the 120-second snapshot interval behind.
+
 It polls the same
 `aggregate-dashboard.sh --repo` seam as the repo ticker every five seconds,
 but does so on a background thread so input remains responsive during a read.
@@ -280,12 +288,12 @@ active-agents registry and writes `state/heartbeat.json` with one entry per
 agent, flagged for log-mtime staleness (default threshold 300 seconds;
 override with `AUTOMETTA_HEARTBEAT_STALL`), budget overrun and unusual live
 token spend. The
-`silent` flag is only applied to agents whose family streams its log; for
-the `claude` family, `claude -p` emits its entire log at completion and is
-legitimately silent for the whole run, so only `over-budget` is a stuck
-signal in that direction. This makes the registry symmetric across the
-worker / verifier pairing: codex-worker / claude-verifier and the reverse
-both get accurate stuck-detection without false positives. Dead
+`silent` flag applies to Codex entries and to any entry carrying
+`log_streams: true`. Claude CLI dispatches set that key because they use
+`--output-format stream-json --verbose`; a legacy Claude registration without
+the key stays exempt. This makes the registry symmetric across the worker /
+verifier pairing: codex-worker / claude-verifier and the reverse both get
+accurate stuck-detection without false positives. Dead
 processes are moved to `state/recent-agents/` with `outcome: exited`. The
 watchdog surfaces stalls and budget overruns; it never kills for those. The
 one thing it does kill is a runaway token outlier, described below.

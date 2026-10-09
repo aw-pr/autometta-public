@@ -32,7 +32,7 @@ TEMPLATE = Path("templates/verifier-prompt.md")
 # suggests, and artefacts carried the Agent SDK's name until 2026-09-01.
 # Superseded artefacts keep the label they were written with.
 VERIFIER_IDENTITY = "Claude API SDK verifier <claude-api-sdk@local>"
-MODEL = "claude-sonnet-5"
+MODEL = "claude-sonnet-5-5"
 MAX_TOKENS = 4096
 # Keep a broad fallback from consuming an unbounded portion of the verifier
 # context. This applies to source bytes before line numbering expands them.
@@ -106,8 +106,12 @@ def identity_for_model(model: str) -> str:
     # the generic label, which is what claude-sonnet-5 and claude-opus-5 did
     # between the 2026-07-26 model bump and this fix -- a real verifier's work
     # filed under a name no shortlog can group.
+    if "fable-5-1" in model:
+        return f"Claude Fable 5.1 (SDK) <{model}@local>"
     if "fable-5" in model:
         return f"Claude Fable 5 (SDK) <{model}@local>"
+    if "opus-5-5" in model:
+        return f"Claude Opus 5.5 (SDK) <{model}@local>"
     if "opus-5" in model:
         return f"Claude Opus 5 (SDK) <{model}@local>"
     if "opus-4-8" in model:
@@ -116,6 +120,8 @@ def identity_for_model(model: str) -> str:
         return f"Claude Opus 4.7 (SDK) <{model}@local>"
     if "opus-4" in model:
         return f"Claude Opus 4 (SDK) <{model}@local>"
+    if "sonnet-5-5" in model:
+        return f"Claude Sonnet 5.5 (SDK) <{model}@local>"
     if "sonnet-5" in model:
         return f"Claude Sonnet 5 (SDK) <{model}@local>"
     if "sonnet-4-6" in model:
@@ -134,6 +140,14 @@ def identity_for_model(model: str) -> str:
 # silently outranks the advisor.
 _CAPABILITY_RANK = {"haiku": 0, "sonnet": 1, "opus": 2, "fable": 3}
 _UNKNOWN_RANK = _CAPABILITY_RANK["sonnet"]
+# Rank alone is not enough: some request models refuse advisors that outrank
+# them. claude-sonnet-5-5 returns HTTP 400 on these advisor ids.
+_REJECTED_ADVISORS = {
+    "claude-sonnet-5-5": (
+        "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+        "claude-sonnet-5", "claude-sonnet-4-6",
+    ),
+}
 
 
 class AdvisorOrderingError(ValueError):
@@ -161,6 +175,13 @@ def assert_advisor_ordering(request_model: str, advisor_model: str) -> None:
             f"advisor '{advisor_model}'; the advisor must not be weaker than the "
             f"request model (see docs/design/advisor-verifier.md #66714). "
             f"Put the cheap model on --model and the strong model on --advisor."
+        )
+    rejected = _REJECTED_ADVISORS.get(request_model.split("[", 1)[0], ())
+    if advisor_model.split("[", 1)[0] in rejected:
+        raise AdvisorOrderingError(
+            f"advisor pairing: request model '{request_model}' does not accept "
+            f"advisor '{advisor_model}'; pick a newer advisor such as claude-opus-5-5 "
+            f"or claude-fable-5-1."
         )
 
 # Stable guidance appended to the cacheable block so the block exceeds the

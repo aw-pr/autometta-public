@@ -9,6 +9,8 @@
 # card's path claims. That case builds a window positioned relative to the
 # real now instead, so it too reads the same at any hour.
 set -euo pipefail
+# Replay the historical reserve contract; codex-card-quota-smoke covers the new default.
+export AUTOMETTA_CODEX_QUOTA_POLICY=reserve
 IFS=$'\n\t'
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,6 +49,7 @@ window_reserve:
     start: "22:00"
     end: "01:00"
     percent: 0
+    stop_outside: true
   timezone: local
 YAML
 

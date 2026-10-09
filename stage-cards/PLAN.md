@@ -206,6 +206,202 @@ which is severity first, then dependency.
   own comment forbidding exactly that. The operator's ticker showed a full
   queue throughout, which is card 37's third defect.
 
+## Dependency graph batch 142-144, designed 2026-10-03
+
+**Prepared, not queued or implemented.** Operator request: make the proposed
+dependency graph runnable with Opus or Terra. The declared seats alternate
+Opus 5.5 and GPT-5.6 Terra, with the other family verifying every card.
+IDs 139-141 are left free for the external-dependencies proposal; existing
+138 and 138a are not renumbered.
+
+Implementation DAG and queue order: **142 -> 143 -> 144**, strictly serial.
+142 supplies read-only readiness evidence before 143 changes dispatch; 144
+exposes the operator command and verifies the lifecycle. All cards declare
+`Dispatch: serial`; shared scheduling surfaces rule out pipeline overlap.
+The implementation cards use today's single-predecessor gate so they can
+bootstrap the new capability without relying on it.
+
+| Card | Outcome | Worker | Verifier | Frozen mode |
+| --- | --- | --- | --- | --- |
+| [142](142-dependency-readiness-has-evidence.md) | Git-backed dependency readiness and diagnostics | Opus 5.5 | Terra | `inspect` |
+| [143](143-stage-cards-declare-all-their-prerequisites.md) | Multiple prerequisites, safe admission and serial scheduling | Terra | Opus 5.5 | `inspect`, `dispatch` |
+| [144](144-the-operator-can-inspect-the-dependency-graph.md) | Read-only CLI and restart/admission evidence | Opus 5.5 | Terra | `all` |
+
+The shared oracle is `scripts/dependency-graph-smoke.sh`. Its single frozen
+block names 142 and all three cards record its digest. The orchestrator authored
+the complete assertions and fixtures in advance; workers cannot amend them.
+Baseline implementation is `3172a77`. Syntax and freeze checks should be green;
+the feature assertions are intentionally red until their implementation lands.
+
+Preparation checks on that baseline: all three cards were accepted by the
+current `add-stage.sh` in a temporary queue, in the declared gate order; both
+role identities resolved to their requested weights. The contract gate, shell
+syntax and embedded Python syntax passed. Running `all` exercised 15 test
+methods: the legacy-card, legacy-gate and independent admission/restart controls
+passed. Feature cases failed because the inspector is absent, admission ignores
+`Depends on`, the selector releases the join too soon and graph members still
+enter the pipeline. These are implementation targets, not passing acceptance.
+
+The opt-in syntax after 143 is `- **Depends on:** 21-backend, 22-frontend`.
+This means all prerequisites are completed and their landed tips are ancestors
+of the child's starting base. Existing completion gates keep their historical
+status-only semantics. A new graph member stays serial even with disjoint claims.
+No LangGraph/runtime dependency, service, dynamic planner or automatic repair
+loop is proposed. This graph schedules coding stages, each retaining its worker,
+independent verifier and landing contract.
+
+### Spend and admission
+
+Measured from this checkout's `state/cost-log.jsonl` on 2026-10-03, using
+`usage_status: recorded` and positive `total_tokens`: 38 role records dated
+2026-09-06 through 2026-09-12, across mixed models. Median worker 1,102,984
+tokens (17 records), median verifier 1,304,667 (21 records). Nearest-rank p95
+across both roles is 4,911,921; largest recorded dispatch is 10,577,536.
+These are historical planning observations, not current Opus/Terra forecasts
+or a cash quote; cached tokens are included in the recorded totals.
+
+Three median stage pairs total 7,222,953 tokens. Adding one observed maximum
+dispatch gives 17,800,489, rounded to an **18M-token planning allowance**.
+Declared role wall-clock ceilings total 175 minutes. They are stop limits,
+not predicted runtime. Re-estimate after an outlier or re-brief; an attempt-2
+worker is not assumed cheaper. No drain, cap increase, quota override, API
+fallback or credit/reset redemption is part of preparing these cards.
+
+Before actual admission, check fresh auth/quota for both declared families,
+the installed toolchain, remaining repo budget and any global halt. Reserve
+enough for verification as well as the worker. If a drain is separately
+authorised, derive its expiry from the then-current UTC window, never from
+this dated plan. No GUI seat or provider call is needed for the frozen tests.
+
+### Queue handover
+
+Commit the cards and shared oracle before dispatch so isolated run worktrees
+receive them. Use the checkout CLI with its root explicitly resolved when the
+installed Homebrew version differs. Queue **one card at a time** with the
+existing command, after checking its predecessor's actual integration:
+
+```sh
+autometta add-stage . stage-cards/142-dependency-readiness-has-evidence.md
+# After 142 passes and lands on dev:
+autometta add-stage . stage-cards/143-stage-cards-declare-all-their-prerequisites.md
+# After 143 passes and lands on dev:
+autometta add-stage . stage-cards/144-the-operator-can-inspect-the-dependency-graph.md
+```
+
+Do not paste the three commands as an unattended batch. The legacy bootstrap
+gates can read completed while integration is still awaiting, so the human or
+controller must confirm landed code before queueing each successor. On conflict,
+park the branch for adjudication; no headless conflict resolution. Queueing and
+live dispatch have not been performed by this design session.
+
+## Live progress batch 145-147, designed 2026-10-09
+
+**Prepared, not queued or implemented.** Operator request: finer-grained
+progress while agents run, raised as "run the repo through the SDKs". The
+design session found the granularity already on disk and the SDK route
+already tried twice (cards 23 and 98, both stopped by the sandbox), so the
+batch cards the reader and the flag, not a transport. One SDK card remains,
+and it is a verifier card: the agent-sdk entrypoint from card 99 is pinned
+at 0.2.87, the brew python moved to 3.14 and carries 0.1.81, and nothing in
+the dispatch path reads the pin.
+
+Queue order: **145 -> 146 -> 147**, gated in that order and effectively
+serial. 145 is the instrumentation card and goes first per the run-design
+rule; 146 is the prize; 147 is the only SDK work worth doing. 145 and 146
+both touch `docs/observability.md`, 145 and 147 both touch
+`scripts/spawn-verifier.sh`, and the repo's `pipeline.pair_on` is off, so no
+overlap is planned. Every card carries its own frozen contract test.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [145](145-a-claude-dispatch-streams-its-log.md) | `claude -p` dispatches stream their log; the heartbeat judges silence per dispatch; gotcha 6 amended | Terra | Opus 5.5 | `scripts/log-streams-smoke.sh` |
+| [146](146-the-agents-panel-says-what-the-agent-is-doing.md) | The `--repo` seam, the TUI agents panel and the dashboard show turns, tool calls, the last tool and its age | Sol | Opus 5.5 (swapped from Fable 5.1, window at 73%) | `scripts/agent-activity-smoke.sh` |
+| [147](147-the-agent-sdk-verifier-is-current.md) | The agent-sdk pin is current, installed and guarded; one subscription probe on record with a recommendation | Opus 5.5 | Terra | `scripts/sdk-pin-smoke.sh` |
+
+Each frozen block was authored by the orchestrator on 2026-10-09 from real
+record shapes (one streamed `claude -p` dispatch, a Claude Code project
+transcript, a Codex rollout) and run twice: once as is, where each stops at
+its first assertion for the right reason, and once with the assertions
+softened, where every later assertion is reached and no fixture crashes.
+The token-total assertions inside the 146 block already pass and must keep
+passing.
+
+Pairings: 145 is plumbing, so Terra works and Opus verifies by running the
+real flag pair, which a Codex seat cannot. 146 is display work and takes the
+premium pairing from the standing feedback memory. 147 needs an unsandboxed
+seat to `pip install` and to run a nested `claude` through `op-fetch`, so
+Opus works and Terra checks the pin, the guard and the recorded artefact
+offline. Worker families run Terra, Sol, Opus: the 146/147 pair alternates,
+the 145/146 pair does not, and neither matters with pairing off.
+
+### Spend and admission
+
+Measured from this checkout's `state/cost-log.jsonl` on 2026-10-09, rows
+with a positive `total_tokens`: median worker 1,136,220 (20 rows, p95
+3,931,374, max 10,577,536); median verifier 1,304,667 (25 rows, p95
+3,430,598). Three median pairs total 7.3M; adding one p95 worker and one p95
+verifier gives 14.7M, rounded to a **15M-token planning allowance**. Role
+wall-clock ceilings total 170 minutes and are stop limits, not forecasts.
+No drain, cap change or quota override is part of this plan; the repo cap is
+600M with 18.7M spent in the current window.
+
+Provider windows at design time: Claude weekly 41%, Claude weekly (Fable)
+68%, Codex weekly 60%, both 5-hour windows near empty. The reserve rule
+holds a new card past 80% on any window. If the Fable window is over that
+line when 146 comes up, swap its verifier to Claude Opus 5.5 and update the
+metadata and rationale before queueing; do not queue a card whose seat the
+gate will refuse.
+
+### Queue handover
+
+Commit the cards and smokes before dispatch so run worktrees receive them.
+Queue **one card at a time**, after confirming the predecessor has landed on
+`dev` and its integration record is closed, exactly as the 142-144 batch:
+
+```sh
+autometta add-stage . stage-cards/145-a-claude-dispatch-streams-its-log.md
+# After 145 passes and lands on dev:
+autometta add-stage . stage-cards/146-the-agents-panel-says-what-the-agent-is-doing.md
+# After 146 passes and lands on dev:
+autometta add-stage . stage-cards/147-the-agent-sdk-verifier-is-current.md
+```
+
+The gates would admit each successor as soon as its predecessor reads
+completed, which can precede the landing; queueing one at a time is what
+keeps a successor from cutting its worktree from an older `dev` and
+conflicting on the shared files above.
+
+Post-landing checks for the minder: once 145 is on `dev`, the next claude
+dispatch is 146's verifier, and its log must grow while it runs
+(`ls -l state/logs/146-*-verifier.log` mid-run). Note the longest quiet gap
+in that log against the 300-second `silent` threshold in the handoff; 145
+leaves that threshold alone on purpose. On a 145 FAIL, requeue through the
+`autometta-requeue` skill rather than editing the dispatch lines by hand:
+the checkout is the live toolchain, so a half-landed flag change would hit
+the very next claude dispatch.
+
+## Model-scoped reserve card 148, designed 2026-10-09
+
+**Prepared, not queued.** Found live while running 145-147: the Claude
+reading carries a `Weekly (Fable)` window beside the family `Weekly`, and
+the reserve gate held 145's Opus 5.5 verifier on the Fable window (73%
+against a 30% reserve) while the family window stood at 46%. The repo
+paused until the Fable reset, and a watched `--ignore-reserve` drain was the
+only way past, which also lifted the hold on the window the reserve exists
+to protect.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [148](148-a-model-window-holds-only-its-model.md) | A model-scoped window holds only the seats that run that model; an unnamed seat still sees every window | Terra | Opus 5.5 | `scripts/model-window-smoke.sh` |
+
+`scripts/tick.sh` is not claimed by 145-147, so 148 has no file overlap
+with that batch, but queue it after 147 has landed so the run is not cut
+from a `dev` that is still moving under it. Planning allowance 4M tokens.
+
+```sh
+autometta add-stage . stage-cards/148-a-model-window-holds-only-its-model.md
+```
+
 ## Pass 5 - the fact ledger (graph engineering), designed 2026-08-31
 
 **Status, 2026-09-10:** every card in this table landed by 2026-09-01 (the queue cells below are as written on 2026-08-31). Batches 92-107 and 108-134 followed; `HANDOFF.md` and the dashboard carry the record. v1.0.0 was tagged from the tree that includes them.

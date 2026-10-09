@@ -172,6 +172,15 @@ worker family, or thin headroom is logged as an explicit refusal. The ordinary
 provider-window and `budget_gate_dispatch` checks still guard the second worker
 spawn individually.
 
+Cards declaring `depends_on`, and roots named by such cards, never form a
+pipeline pair. Before both ordinary pending selection and this refusal, the
+tick resolves the intended base branch and asks the shared dependency inspector
+whether the recorded prerequisite commits are ancestors of that base. An unmet
+dependency is a deferral: the child remains pending without an attempt or
+failure increment, while later independent pending work remains eligible.
+Legacy `stage_completed` gates remain status-only for compatibility; `depends_on`
+is the opt-in landed-code guarantee.
+
 The serial-only claim rule is asymmetric. A head claiming `scripts/lib` stays
 serial, while a head claiming `scripts/tick.sh` may take a disjoint tail,
 including a docs-only or smoke-only card. A tail claiming either
@@ -469,14 +478,49 @@ prose answer lives in the seed; its machine-readable half
 (`--token-ceiling`, `--expires`) is mirrored into the mandate's
 `spend_authority` block so a pass can stop without parsing prose.
 
-**The provider-window reserve is the second configure-time answer.** The
-operator supplies a percentage, where zero explicitly means off, and chooses
-`hold` or `observe`. No answer is committed as a default. The renderer records
-the answer in the seed and mirrors `window_reserve.percent` and
-`window_reserve.action` into the mandate. Before each worker or verifier spawn,
-the tick compares that role's family with the once-per-tick quota reading. A
-known window inside a `hold` reserve pauses until its own reset; an unknown
-reading and `observe` both proceed unchanged.
+**Codex subscription admission uses the full quota window by default.** A new
+card may start while fresh five-hour and weekly utilisation are both below
+100%. Its worker and verifier may finish in overage. Before admitting the next
+card, the tick checks Codex even when only that card's verifier uses Codex.
+The manual worker entry point applies the same admission rule and returns 4
+before spawning when held. API and local routes do not use subscription quota.
+
+At or above 100%, or when readings are missing, stale, incomplete or awaiting a
+fresh observation after reset, new Codex-backed cards remain pending. The gate
+does not pause the whole repo: a pending pipeline tail must not prevent the
+active head from finishing. Fresh readings below 100% allow dispatch to resume.
+Readings older than `AI_QUOTA_STALE_SECONDS` (default 600 seconds) are stale.
+The Codex reader also accepts a sanitised `codex.json` in `AI_QUOTA_DIR`
+(default `~/.local/state/ai-quota`), using the same snapshot envelope as Claude.
+It selects the newer observation between that fresh snapshot and rollout logs.
+An account `account/rateLimits/read` response can therefore reveal a manual
+reset without spending tokens on a model turn. Preserve its actual fetch time;
+do not restamp cached data to make it appear fresh.
+This is admission control, not a cash cap or a kill switch. Concurrent cards
+already admitted elsewhere and interactive sessions can also consume allowance.
+The serial viewer run admits one card at a time.
+
+`window_reserve.codex_admit_percent` in the controller mandate lowers that
+ceiling: at 90, no new Codex card starts once either Codex window is 90% used,
+and the tick keeps re-reading until the window resets. An admitted card still
+finishes. Unset, zero, over 100 or non-numeric keeps the 100% default.
+
+**Claude retains the provider-window reserve.** `window_reserve.percent` defaults
+to 20% with `action: hold`, so new Claude work normally stops at 80% used.
+Explicit zero or `action: off` disables that reserve; unknown Claude readings
+retain the existing fail-open behaviour. Scheduled reserve and curfew settings
+are unchanged. A model-scoped window, keyed `<period>-<name>` such as
+`weekly-fable`, holds only seats whose model id has that name as a hyphen-delimited
+segment. An unnamed seat sees every window. The template and
+`render-controller-seed.sh` retain those settings.
+
+`AUTOMETTA_CODEX_QUOTA_POLICY=reserve` explicitly selects the previous Codex
+reserve behaviour, including its unknown-reading semantics. Historical contract
+smokes select that policy; `codex-card-quota-smoke.sh` checks the new default.
+`AUTOMETTA_IGNORE_RESERVE=1` only bypasses the legacy reserve. It cannot bypass
+the default Codex exhaustion gate. Tick-owned spawns still carry
+`AUTOMETTA_RESERVE_GATED=1` after successful admission. Existing budget, failure,
+authentication and GUI gates continue to apply. No reset is redeemed automatically.
 
 **The reserve can carry a schedule, so a run knows what time it is (card
 124).** `percent`/`action` alone serve two different hours equally badly: the
@@ -496,18 +540,24 @@ The clock read is **operator wall-clock, always local, never UTC** --
 UTC. **Accepted risk:** a wrong system clock or a wrong timezone silently
 changes when the loop runs, with no alarm of its own; the only signal is the
 tick's own log line naming which rule resolved (`daytime`/`overnight`/
-`default`/`drain-ignore-reserve`) and the reserve percentage it carried. There
-is no independent check that the host clock is correct. A window whose `end`
+`default`/`drain-ignore-reserve`), the reserve percentage it carried, and
+`curfew off` or `curfew on <start>-<end>`. There is no independent check that
+the host clock is correct. A window whose `end`
 is earlier than its `start` (`22:00` to `01:00`) crosses midnight and is
 resolved as one interval (`now >= start OR now < end`), not two separate
 comparisons -- the obvious `start <= now < end` test is silently wrong for a
 wrapping window, since it can never match at all.
 
-**The stop at the end of the overnight window only refuses new dispatch.**
+**The stop is opt-in and only refuses new dispatch.** Set
+`window_reserve.overnight.stop_outside: true` to arm it. The key defaults
+off: an overnight block alone changes the reserve percentage and permits
+new workers outside the window, subject to the ordinary reserve gate.
+Only boolean `true` inside `overnight`, with valid `start`/`end` times,
+arms the curfew; a key elsewhere or any other value is ignored.
 Nothing installs a stop job (the emergence-lab 2026-09-03 hand-installed
 LaunchAgent that failed to remove itself is exactly the failure mode this
-avoids): the tick reads the clock on every fire and, outside the declared
-window, refuses to start a *new* worker at all.
+avoids): with the curfew armed, the tick reads the clock on every fire and,
+outside the declared window, refuses to start a *new* worker at all.
 
 The stop is a separate gate sitting above the reserve, and it deliberately
 reads no quota. The reserve is reading-driven: it binds only when a known
@@ -520,10 +570,11 @@ snapshot). A stop built on the reading fails open precisely when it is
 needed, and leaves the operator no session and no alarm saying why. So the
 clock alone decides, and the refusal is logged as `schedule stop worker
 <stage> (<family>): clock HH:MM is outside the <start>-<end> dispatch
-window`. The consequence worth stating plainly: **once a schedule is
-declared, the loop starts no new work outside the window**, and burning the
-day is the opt-in `drain.sh start --ignore-reserve` below. A
-stage already in flight when the window closes is never killed to enforce
+window (overnight.stop_outside: true)`, followed by the resolved reserve
+rule and curfew state. **Only an explicitly armed curfew stops new workers
+outside the window**, and `drain.sh start --ignore-reserve` can temporarily
+override it as described below. A stage already in flight when the window
+closes is never killed to enforce
 this, and its verifier is not held by the resumed daytime reserve either: the
 stage's `reserve_exempt` flag, stamped at worker-dispatch time whenever the
 resolved window was `overnight` or a `--ignore-reserve` drain was active,
@@ -535,10 +586,13 @@ carries no such exemption.
 drain rather than a second switch.** `drain.sh start --ignore-reserve`
 suspends the reserve (daytime or scheduled) for the life of that one drain
 and no longer -- it is already the operator's declared, bounded "spend the
-window down on purpose" verb, already self-expiring, already scoped. When a
-schedule is declared, a `--hours` that would still be running past the next
-occurrence of the overnight window's end is refused at `start`, naming the
+window down on purpose" verb, already self-expiring, already scoped. When
+`window_reserve.overnight.stop_outside: true` arms a curfew, a `--hours` that
+would still be running past the next occurrence of the overnight window's
+end is refused at `start`, naming the
 window: a drain must not outlive the permission it is spending against.
+Without a curfew, the drain may outlive the percentage window; the existing
+maximum drain duration still applies.
 
 **What bounds it is a short negative list, not an action enumeration.** The
 recoverable actions do not need enumerating and the unrecoverable ones are

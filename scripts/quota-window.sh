@@ -12,6 +12,11 @@ quota_window_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
 source "$quota_window_script_dir/budget.sh"
 
+if ! declare -F claude_model_for_identity >/dev/null; then
+  # shellcheck source=./models.sh
+  source "$quota_window_script_dir/models.sh"
+fi
+
 # quota_drain_ignore_reserve_active <repo-root>: succeed (0) when the drain
 # in force for this repo (if any) was opened with --ignore-reserve and has
 # not expired. Reuses budget_drain_active's expiry-and-scope handling
@@ -26,6 +31,18 @@ quota_drain_ignore_reserve_active() {
   [[ -f "$drain_path" ]] || return 1
   [[ "$(jq -r '.ignore_reserve // false' "$drain_path" 2>/dev/null)" == "true" ]]
 }
+
+# The legacy reserve is on unless the operator switches it off. Twenty
+# percent unspent stops new work at 80% used, leaving room for active work.
+# Codex defaults to card admission below 100% instead. An operator turns it off with an
+# explicit window_reserve.percent: 0 or action: off in the mandate; an
+# unanswered or invalid value is not an answer and takes the default.
+# The default needs a mandate file to be unanswered in: init-host installs
+# the template, so an initialised host is on. A host with no mandate at all
+# (a fixture controller home in a smoke, a tick run before init-host) is off,
+# and the tick log names the missing file at every dispatch.
+QUOTA_RESERVE_DEFAULT_PERCENT=20
+QUOTA_RESERVE_DEFAULT_ACTION=hold
 
 AUTOMETTA_QUOTA_TICK_JSON=""
 QUOTA_GATE_WINDOW=""
@@ -167,14 +184,17 @@ quota_reserve_settings() {
     return 0
   fi
   local percent action
-  percent="$(yq -r '.window_reserve.percent // 0' "$mandate_path" 2>/dev/null || printf 0)"
-  action="$(yq -r '.window_reserve.action // "off"' "$mandate_path" 2>/dev/null || printf off)"
-  if ! [[ "$percent" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  percent="$(yq -r '.window_reserve.percent // ""' "$mandate_path" 2>/dev/null || true)"
+  action="$(yq -r '.window_reserve.action // ""' "$mandate_path" 2>/dev/null || true)"
+  # Only an explicit, valid zero (or action: off) switches the reserve off.
+  # Empty is the template's unanswered state and anything unparseable is a
+  # typo; neither is a decision to spend the window down, so both take the
+  # default rather than silently disarming the guard.
+  if [[ -z "$percent" ]] || ! [[ "$percent" =~ ^[0-9]+([.][0-9]+)?$ ]] \
      || ! awk -v value="$percent" 'BEGIN { exit !(value >= 0 && value <= 100) }'; then
-    percent=0
-    action=off
+    percent="$QUOTA_RESERVE_DEFAULT_PERCENT"
   fi
-  case "$action" in hold|observe|off) ;; *) action=off ;; esac
+  case "$action" in hold|observe|off) ;; *) action="$QUOTA_RESERVE_DEFAULT_ACTION" ;; esac
 
   local ov_start ov_end
   ov_start="$(yq -r '.window_reserve.overnight.start // ""' "$mandate_path" 2>/dev/null || true)"
@@ -201,12 +221,127 @@ quota_reserve_settings() {
   printf '%s\t%s\t%s\n' "$percent" "$action" "$QUOTA_RESERVE_WINDOW"
 }
 
+# The legacy reserve remains available for an explicitly chosen policy.
+quota_codex_card_policy() {
+  [[ "${AUTOMETTA_CODEX_QUOTA_POLICY:-card}" != "reserve" ]]
+}
+
+quota_codex_role_uses_subscription() {
+  local repo_root="$1" identity="$2" role="$3" mode
+  [[ "$identity" == *Codex* || "$identity" == *GPT* ]] || return 1
+  mode="$(REPO_ROOT="$repo_root" "$quota_window_script_dir/auth-route.sh" codex --print-mode --role "$role" 2>/dev/null)" || return 0
+  [[ "$mode" == subscription ]]
+}
+
+# quota_codex_admit_percent: window_reserve.codex_admit_percent from the
+# controller mandate, the used percentage at which no new Codex card starts.
+# Empty when unset, so the reader keeps its 100% default.
+quota_codex_admit_percent() {
+  local mandate_path
+  mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(autometta_controller_home)/phat-controller-mandate.yaml}"
+  [[ -f "$mandate_path" ]] || return 0
+  yq -r '.window_reserve.codex_admit_percent // ""' "$mandate_path" 2>/dev/null || true
+}
+
+quota_gate_codex_reading() {
+  local result
+  QUOTA_GATE_WINDOW=""; QUOTA_GATE_RESET=""; QUOTA_GATE_REASON=""
+  result="$(printf '%s' "$1" | AUTOMETTA_CODEX_ADMIT_PERCENT="$(quota_codex_admit_percent)" python3 "$quota_window_script_dir/quota-window.py" codex-admission)" || {
+    QUOTA_GATE_REASON="Codex quota admission reader failed"
+    return 1
+  }
+  QUOTA_GATE_REASON="$(printf '%s' "$result" | jq -r '.reason')"
+  QUOTA_GATE_WINDOW="$(printf '%s' "$result" | jq -r '.window')"
+  QUOTA_GATE_RESET="$(printf '%s' "$result" | jq -r '.reset // empty')"
+  [[ "$(printf '%s' "$result" | jq -r '.allowed')" == true ]]
+}
+
+# quota_spawn_permits <repo-root> claude|codex [card-path]
+#
+# The reserve check for a spawn that did not come through the tick: an
+# orchestrator at a prompt running scripts/spawn-worker.sh by hand. Same
+# reading and same rule as the tick's quota_gate_family_dispatch, but pure:
+# it pauses nothing and writes nothing, because the caller is a person who
+# will read the refusal, not a loop that must remember to resume. Returns 1
+# with QUOTA_GATE_REASON when a known window of this family is inside a hold
+# reserve, 0 otherwise, including every unknown reading (fail-open, as the
+# tick). Two escapes, both explicit and both named in the log line:
+#   AUTOMETTA_IGNORE_RESERVE=1  the operator means to spend the window.
+#   AUTOMETTA_RESERVE_GATED=1   set by tick.sh on its own spawn calls, which
+#                               have already passed the gate this tick and
+#                               would otherwise halt the repo with a
+#                               dispatch-configuration-fault on a refusal.
+quota_spawn_permits() {
+  local repo_root="$1" family="$2" card_path="${3:-}" model=""
+  QUOTA_GATE_REASON=""
+  if [[ "${AUTOMETTA_RESERVE_GATED:-}" == "1" ]]; then
+    QUOTA_GATE_REASON="reserve already applied by the tick"
+    return 0
+  fi
+  if quota_codex_card_policy; then
+    local worker_id verifier_id uses_codex=false
+    if [[ -n "$card_path" ]]; then
+      worker_id="$(sed -n 's/^- \*\*Worker:\*\* //p' "$card_path" | head -n1)"
+      verifier_id="$(sed -n 's/^- \*\*Verifier:\*\* //p' "$card_path" | head -n1)"
+      if quota_codex_role_uses_subscription "$repo_root" "$worker_id" worker || quota_codex_role_uses_subscription "$repo_root" "$verifier_id" verifier; then
+        uses_codex=true
+      fi
+    elif [[ "$family" == codex ]]; then
+      uses_codex=true
+    fi
+    if [[ "$uses_codex" == true ]]; then
+      [[ -n "$AUTOMETTA_QUOTA_TICK_JSON" ]] || quota_refresh_tick || true
+      local codex_reading
+      codex_reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c '.families.codex')"
+      quota_gate_codex_reading "$codex_reading" || return 1
+    fi
+    [[ "$family" != codex ]] || return 0
+  fi
+  if [[ "${AUTOMETTA_IGNORE_RESERVE:-}" == "1" ]]; then
+    QUOTA_GATE_REASON="AUTOMETTA_IGNORE_RESERVE=1"
+    return 0
+  fi
+  case "$family" in claude|codex) ;; *)
+    QUOTA_GATE_REASON="family unknown"
+    return 0
+  esac
+  local mandate_path settings reserve action window reading
+  if [[ "$family" == claude && -n "$card_path" ]]; then
+    local worker_identity
+    worker_identity="$(sed -n 's/^- \*\*Worker:\*\* //p' "$card_path" | head -n1)"
+    model="$(claude_model_for_identity "$worker_identity")"
+  fi
+  mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(autometta_controller_home)/phat-controller-mandate.yaml}"
+  settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
+  IFS=$'\t' read -r reserve action window <<<"$settings"
+  [[ -n "$AUTOMETTA_QUOTA_TICK_JSON" ]] || quota_refresh_tick || true
+  reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]' 2>/dev/null || printf '{}')"
+  if quota_gate_reading "$reading" "$reserve" "$action" "$model"; then
+    return 0
+  fi
+  QUOTA_GATE_REASON="${QUOTA_GATE_REASON} (${window:-default} schedule); resets $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+  return 1
+}
+
 QUOTA_SCHEDULE_STOP_REASON=""
+
+# quota_schedule_curfew_window <mandate-path>: print start-end only for an
+# explicitly armed curfew with valid local wall-clock boundaries.
+quota_schedule_curfew_window() {
+  local mandate_path="$1" ov_start ov_end
+  [[ -f "$mandate_path" ]] && command -v yq >/dev/null 2>&1 || return 1
+  [[ "$(yq -r '.window_reserve.overnight.stop_outside | tag' "$mandate_path" 2>/dev/null)" == "!!bool" ]] || return 1
+  [[ "$(yq -r '.window_reserve.overnight.stop_outside' "$mandate_path" 2>/dev/null)" == "true" ]] || return 1
+  ov_start="$(yq -r '.window_reserve.overnight.start // ""' "$mandate_path" 2>/dev/null || true)"
+  ov_end="$(yq -r '.window_reserve.overnight.end // ""' "$mandate_path" 2>/dev/null || true)"
+  [[ "$ov_start" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ && "$ov_end" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || return 1
+  printf '%s-%s\n' "$ov_start" "$ov_end"
+}
 
 # quota_schedule_permits_dispatch <mandate-path> [repo-root]
 #
-# The stop (deliverable 3). Returns 0 when a *new* worker dispatch is
-# permitted at this moment, 1 when the declared schedule refuses it, with
+# Returns 0 when a *new* worker dispatch is permitted at this moment,
+# 1 when an explicit overnight.stop_outside curfew refuses it, with
 # QUOTA_SCHEDULE_STOP_REASON carrying the reason the caller logs.
 #
 # This deliberately does not read the quota. The reserve below is a
@@ -220,8 +355,8 @@ QUOTA_SCHEDULE_STOP_REASON=""
 # operator no session and no alarm saying why.
 #
 # Precedence, first hit wins:
-#   1. no schedule declared -- permitted, today's behaviour for every
-#      subscriber that never configures this.
+#   1. no valid curfew declared -- permitted; the schedule only selects a
+#      reserve percentage unless overnight.stop_outside is boolean true.
 #   2. an active --ignore-reserve drain -- permitted. Burning the daytime
 #      session is opt-in and self-expiring (deliverable 4).
 #   3. inside the declared window -- permitted.
@@ -232,16 +367,12 @@ QUOTA_SCHEDULE_STOP_REASON=""
 # work already claimed still reaps and lands after the window closes.
 quota_schedule_permits_dispatch() {
   local mandate_path="$1" repo_root="${2:-}"
-  QUOTA_SCHEDULE_STOP_REASON=""
+  QUOTA_SCHEDULE_STOP_REASON="no curfew declared"
 
-  [[ -f "$mandate_path" ]] && command -v yq >/dev/null 2>&1 || return 0
-  local ov_start ov_end
-  ov_start="$(yq -r '.window_reserve.overnight.start // ""' "$mandate_path" 2>/dev/null || true)"
-  ov_end="$(yq -r '.window_reserve.overnight.end // ""' "$mandate_path" 2>/dev/null || true)"
-  if [[ ! "$ov_start" =~ ^[0-2][0-9]:[0-5][0-9]$ || ! "$ov_end" =~ ^[0-2][0-9]:[0-5][0-9]$ ]]; then
-    QUOTA_SCHEDULE_STOP_REASON="no schedule declared"
-    return 0
-  fi
+  local curfew ov_start ov_end
+  curfew="$(quota_schedule_curfew_window "$mandate_path")" || return 0
+  ov_start="${curfew%-*}"
+  ov_end="${curfew#*-}"
 
   if [[ -n "$repo_root" ]] && quota_drain_ignore_reserve_active "$repo_root"; then
     QUOTA_SCHEDULE_STOP_REASON="--ignore-reserve drain in force"
@@ -254,16 +385,16 @@ quota_schedule_permits_dispatch() {
     QUOTA_SCHEDULE_STOP_REASON="clock ${now_hm} is inside the ${ov_start}-${ov_end} dispatch window"
     return 0
   fi
-  QUOTA_SCHEDULE_STOP_REASON="clock ${now_hm} is outside the ${ov_start}-${ov_end} dispatch window; it next opens at ${ov_start}"
+  QUOTA_SCHEDULE_STOP_REASON="clock ${now_hm} is outside the ${ov_start}-${ov_end} dispatch window (overnight.stop_outside: true); it next opens at ${ov_start}"
   return 1
 }
 
-# quota_gate_reading <reading-json> <reserve-percent> <action>
+# quota_gate_reading <reading-json> <reserve-percent> <action> [model]
 # Returns 1 only when a known window is inside a non-zero hold reserve and has
 # a future reset. Unknown, zero and observe all fail open with an explicit
 # QUOTA_GATE_REASON. The caller owns budget_pause_until and logging.
 quota_gate_reading() {
-  local reading="$1" reserve="$2" action="$3" now
+  local reading="$1" reserve="$2" action="$3" model="${4:-}" now
   QUOTA_GATE_WINDOW=""; QUOTA_GATE_RESET=""; QUOTA_GATE_REASON=""
   if awk -v r="$reserve" 'BEGIN { exit !(r <= 0) }'; then
     QUOTA_GATE_REASON="reserve off"
@@ -277,8 +408,16 @@ quota_gate_reading() {
     return 0
   fi
   local binding
-  binding="$(printf '%s' "$reading" | jq -c --argjson reserve "$reserve" '
+  binding="$(printf '%s' "$reading" | jq -c --argjson reserve "$reserve" --arg model "$model" '
+    def scoped_model_name:
+      (.key // "") as $key
+      | if ($key | type) == "string" and ($key | test("^(weekly|5-hour)-.+$"))
+        then $key | sub("^(weekly|5-hour)-"; "")
+        else ""
+        end;
     [.windows[]? | select((.utilization | type) == "number")
+      | scoped_model_name as $scope
+      | select($model == "" or $scope == "" or ("-" + $model + "-" | contains("-" + $scope + "-")))
       | . + {remaining:(100 - .utilization)}
       | select(.remaining <= $reserve)]
     | sort_by(-.utilization) | .[0] // empty

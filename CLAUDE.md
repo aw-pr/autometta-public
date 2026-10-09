@@ -49,7 +49,7 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 3. Log paths must be predictable (the loop writes `state/logs/<stage-id>-worker.log` and `<stage-id>-verifier.log`), not harness-generated task IDs.
 4. Sandbox shadows: a worker that *appears* to pass acceptance inside its sandbox may be lying about side-effects it couldn't perform.
 5. Prior-gate regressions: re-running acceptance after a later change can surface a regression in an earlier stage.
-6. `claude -p` does not stream its log - the file stays at 0 bytes until the run completes and is then written in a single burst. Log-mtime staleness is *not* a stuck signal for the claude family; only over-budget is. The heartbeat encodes this asymmetry (see `scripts/heartbeat.sh`).
+6. Claude CLI dispatches use `--output-format stream-json --verbose`, then `claude-token-log.sh` forwards progress and writes the final `Total tokens:` line. The registry marks those entries `log_streams: true`, so heartbeat applies log-mtime staleness per dispatch; legacy Claude registrations remain exempt (see `scripts/heartbeat.sh`).
 7. `claude -p` needs `--dangerously-skip-permissions` to act autonomously; `--permission-mode bypassPermissions` combined with `-p` exits silently with an empty log.
 8. Codex CLI prefers `$CODEX_HOME/auth.json` over the `OPENAI_API_KEY` env var. If `~/.codex/auth.json` has `auth_mode: "chatgpt"` (the default after `codex login`), an `op-fetch OPENAI_API_KEY=... -- codex exec` dispatch still bills the subscription. Fix: a sibling `CODEX_HOME` (default `~/.codex-api-only`) with `auth_mode: "apikey"`; spawn scripts export and `--pass CODEX_HOME` through op-fetch in api mode and fail closed if the sibling is missing.
 9. Claude worker subshell (`( ... ) &`) receives SIGHUP when the LaunchAgent tick exits, silently killing the worker at ~21s with a 0-byte log. Codex is unaffected (no wrapping subshell). Fix is two complementary parts: `disown "$pid"` immediately after capturing `$!` in `spawn-worker.sh`, `spawn-verifier.sh`, and `spawn-verifier-panel.sh` (shell job-control SIGHUP), AND `AbandonProcessGroup` in `templates/launchagent.plist.tpl` (launchd reaping the tick's process group on exit). Keep both. Verified 2026-05-29 with a real LaunchAgent dispatch: a claude worker survived the tick exit and ran to completion. See `docs/lessons.md` gotcha 9.
@@ -134,6 +134,15 @@ scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 ```
 
 `watch-agent.sh` exit code: `0` clean, `2` STUCK, `3` bad input. STUCK escalates when the heartbeat first flags `silent` and the grace window expires (defaults 60s poll, 120s grace, both env-overridable). For the `claude` family swap the launch line for `( cd "$repo" && op-fetch $auth_pairs -- claude -p "$prompt" </dev/null >log 2>&1 ) &` and pass `claude` as the family arg to `auth-route.sh` and `register-agent.sh`.
+
+A manual dispatch through `scripts/spawn-worker.sh` uses the same quota admission
+as the tick. Codex subscription cards may start below 100% in both fresh usage
+windows; the active card may finish in overage, then further cards wait. This
+also checks a Codex verifier before admitting its Claude worker. Missing/stale
+Codex quota holds new cards. Claude keeps its configured reserve (20% by default).
+`AUTOMETTA_CODEX_QUOTA_POLICY=reserve` explicitly selects the legacy Codex policy;
+`AUTOMETTA_IGNORE_RESERVE=1` bypasses only that reserve, not the default cutoff.
+See `docs/tick-loop.md` for completion, freshness and concurrent-use limits.
 
 `op-fetch` resolves any named refs via the 1Password service-account token at `$OP_SERVICE_ACCOUNT_ENV` (default `~/.config/op/service-account.env`) and exec's the child with a sanitised env. No biometric prompt, works under cron / LaunchAgent. See `docs/setup.md` section 7 and `docs/observability.md` for the full surface.
 
