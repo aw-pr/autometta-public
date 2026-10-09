@@ -294,6 +294,92 @@ controller must confirm landed code before queueing each successor. On conflict,
 park the branch for adjudication; no headless conflict resolution. Queueing and
 live dispatch have not been performed by this design session.
 
+## Live progress batch 145-147, designed 2026-10-09
+
+**Prepared, not queued or implemented.** Operator request: finer-grained
+progress while agents run, raised as "run the repo through the SDKs". The
+design session found the granularity already on disk and the SDK route
+already tried twice (cards 23 and 98, both stopped by the sandbox), so the
+batch cards the reader and the flag, not a transport. One SDK card remains,
+and it is a verifier card: the agent-sdk entrypoint from card 99 is pinned
+at 0.2.87, the brew python moved to 3.14 and carries 0.1.81, and nothing in
+the dispatch path reads the pin.
+
+Queue order: **145 -> 146 -> 147**, gated in that order and effectively
+serial. 145 is the instrumentation card and goes first per the run-design
+rule; 146 is the prize; 147 is the only SDK work worth doing. 145 and 146
+both touch `docs/observability.md`, 145 and 147 both touch
+`scripts/spawn-verifier.sh`, and the repo's `pipeline.pair_on` is off, so no
+overlap is planned. Every card carries its own frozen contract test.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [145](145-a-claude-dispatch-streams-its-log.md) | `claude -p` dispatches stream their log; the heartbeat judges silence per dispatch; gotcha 6 amended | Terra | Opus 5.5 | `scripts/log-streams-smoke.sh` |
+| [146](146-the-agents-panel-says-what-the-agent-is-doing.md) | The `--repo` seam, the TUI agents panel and the dashboard show turns, tool calls, the last tool and its age | Sol | Fable 5.1 | `scripts/agent-activity-smoke.sh` |
+| [147](147-the-agent-sdk-verifier-is-current.md) | The agent-sdk pin is current, installed and guarded; one subscription probe on record with a recommendation | Opus 5.5 | Terra | `scripts/sdk-pin-smoke.sh` |
+
+Each frozen block was authored by the orchestrator on 2026-10-09 from real
+record shapes (one streamed `claude -p` dispatch, a Claude Code project
+transcript, a Codex rollout) and run twice: once as is, where each stops at
+its first assertion for the right reason, and once with the assertions
+softened, where every later assertion is reached and no fixture crashes.
+The token-total assertions inside the 146 block already pass and must keep
+passing.
+
+Pairings: 145 is plumbing, so Terra works and Opus verifies by running the
+real flag pair, which a Codex seat cannot. 146 is display work and takes the
+premium pairing from the standing feedback memory. 147 needs an unsandboxed
+seat to `pip install` and to run a nested `claude` through `op-fetch`, so
+Opus works and Terra checks the pin, the guard and the recorded artefact
+offline. Worker families run Terra, Sol, Opus: the 146/147 pair alternates,
+the 145/146 pair does not, and neither matters with pairing off.
+
+### Spend and admission
+
+Measured from this checkout's `state/cost-log.jsonl` on 2026-10-09, rows
+with a positive `total_tokens`: median worker 1,136,220 (20 rows, p95
+3,931,374, max 10,577,536); median verifier 1,304,667 (25 rows, p95
+3,430,598). Three median pairs total 7.3M; adding one p95 worker and one p95
+verifier gives 14.7M, rounded to a **15M-token planning allowance**. Role
+wall-clock ceilings total 170 minutes and are stop limits, not forecasts.
+No drain, cap change or quota override is part of this plan; the repo cap is
+600M with 18.7M spent in the current window.
+
+Provider windows at design time: Claude weekly 41%, Claude weekly (Fable)
+68%, Codex weekly 60%, both 5-hour windows near empty. The reserve rule
+holds a new card past 80% on any window. If the Fable window is over that
+line when 146 comes up, swap its verifier to Claude Opus 5.5 and update the
+metadata and rationale before queueing; do not queue a card whose seat the
+gate will refuse.
+
+### Queue handover
+
+Commit the cards and smokes before dispatch so run worktrees receive them.
+Queue **one card at a time**, after confirming the predecessor has landed on
+`dev` and its integration record is closed, exactly as the 142-144 batch:
+
+```sh
+autometta add-stage . stage-cards/145-a-claude-dispatch-streams-its-log.md
+# After 145 passes and lands on dev:
+autometta add-stage . stage-cards/146-the-agents-panel-says-what-the-agent-is-doing.md
+# After 146 passes and lands on dev:
+autometta add-stage . stage-cards/147-the-agent-sdk-verifier-is-current.md
+```
+
+The gates would admit each successor as soon as its predecessor reads
+completed, which can precede the landing; queueing one at a time is what
+keeps a successor from cutting its worktree from an older `dev` and
+conflicting on the shared files above.
+
+Post-landing checks for the minder: once 145 is on `dev`, the next claude
+dispatch is 146's verifier, and its log must grow while it runs
+(`ls -l state/logs/146-*-verifier.log` mid-run). Note the longest quiet gap
+in that log against the 300-second `silent` threshold in the handoff; 145
+leaves that threshold alone on purpose. On a 145 FAIL, requeue through the
+`autometta-requeue` skill rather than editing the dispatch lines by hand:
+the checkout is the live toolchain, so a half-landed flag change would hit
+the very next claude dispatch.
+
 ## Pass 5 - the fact ledger (graph engineering), designed 2026-08-31
 
 **Status, 2026-09-10:** every card in this table landed by 2026-09-01 (the queue cells below are as written on 2026-08-31). Batches 92-107 and 108-134 followed; `HANDOFF.md` and the dashboard carry the record. v1.0.0 was tagged from the tree that includes them.
