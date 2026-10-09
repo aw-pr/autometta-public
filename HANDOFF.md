@@ -34,6 +34,9 @@ not queued; queue one card at a time per `stage-cards/PLAN.md` section
   against the 300s `silent` threshold. If the Fable weekly window is past
   the 80% reserve line when 146 comes up, swap its verifier to Opus 5.5
   before queueing.
+- **Deferred**: moving `verifier.claude.transport` off `cli` waits on 147's
+  probe record (the manifest is gitignored and the operator's to change);
+  mirroring the SDK pin into mcp-hub's dependency registry is out of scope.
 
 ## Recent activity (2026-09-26 model-routing-by-identity-slug)
 
