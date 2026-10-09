@@ -5,7 +5,7 @@
 - **Authored:** 2026-10-09
 - **Orchestrator:** Claude Fable 5.1 <claude-fable-5-1@local>
 - **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
-- **Verifier:** Claude Fable 5.1 <claude-fable-5-1@local>
+- **Verifier:** Claude Opus 5.5 <claude-opus-5-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/146-the-agents-panel-says-what-the-agent-is-doing
 - **Worker effort:** high
@@ -15,11 +15,13 @@
 - **Path claims:** scripts/lib/transcript-tokens.py, scripts/aggregate-dashboard.sh, scripts/lib/tui/render.py, scripts/lib/tui/app.py, dashboard/dashboard.js, scripts/agent-activity-smoke.sh, docs/observability.md, docs/dashboard.md
 - **Pairing rationale:** display work takes the premium pairing by standing
   operator feedback (2026-08-25): cheaper tiers softened their own display
-  smokes on card 66, so Sol writes the panel and Fable judges what the
-  operator will look at. Verifier effort stays at the fleet default because
-  the contract test carries the mechanical checks and the verifier's own
-  eyes carry the rest; Fable's weekly window stood at 68% when this card
-  was designed, and a second attempt has to stay affordable.
+  smokes on card 66, so Sol writes the panel and a premium Claude seat
+  judges what the operator will look at. Designed with Fable 5.1; swapped to
+  Opus 5.5 on 2026-10-09 before queueing because Fable's weekly window had
+  reached 73%, past the operator's 70% line, while the Claude weekly window
+  stood at 46%. Opus keeps the cross-family pairing. Verifier effort stays at
+  the fleet default because the contract test carries the mechanical checks
+  and the verifier's own eyes carry the rest.
 
 ## Surfacing concern
 

@@ -315,7 +315,7 @@ overlap is planned. Every card carries its own frozen contract test.
 | Card | Outcome | Worker | Verifier | Contract test |
 | --- | --- | --- | --- | --- |
 | [145](145-a-claude-dispatch-streams-its-log.md) | `claude -p` dispatches stream their log; the heartbeat judges silence per dispatch; gotcha 6 amended | Terra | Opus 5.5 | `scripts/log-streams-smoke.sh` |
-| [146](146-the-agents-panel-says-what-the-agent-is-doing.md) | The `--repo` seam, the TUI agents panel and the dashboard show turns, tool calls, the last tool and its age | Sol | Fable 5.1 | `scripts/agent-activity-smoke.sh` |
+| [146](146-the-agents-panel-says-what-the-agent-is-doing.md) | The `--repo` seam, the TUI agents panel and the dashboard show turns, tool calls, the last tool and its age | Sol | Opus 5.5 (swapped from Fable 5.1, window at 73%) | `scripts/agent-activity-smoke.sh` |
 | [147](147-the-agent-sdk-verifier-is-current.md) | The agent-sdk pin is current, installed and guarded; one subscription probe on record with a recommendation | Opus 5.5 | Terra | `scripts/sdk-pin-smoke.sh` |
 
 Each frozen block was authored by the orchestrator on 2026-10-09 from real
