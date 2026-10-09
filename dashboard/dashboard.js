@@ -50,6 +50,24 @@
     var idx = s.indexOf("<");
     return idx > 0 ? s.slice(0, idx).trim() : s;
   }
+  function activityAge(stamp) {
+    var at = Date.parse(stamp);
+    if (!isFinite(at)) return "";
+    var seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
+    if (seconds < 60) return seconds + "s ago";
+    if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+    return Math.floor(seconds / 3600) + "h ago";
+  }
+  function activityText(activity) {
+    if (!activity) return "";
+    var parts = ["turn " + Number(activity.turns || 0)];
+    if (activity.tool_calls != null) parts.push(Number(activity.tool_calls) + " calls");
+    if (activity.last_tool) parts.push(activity.last_tool);
+    var age = activityAge(activity.last_at);
+    if (age) parts.push(age);
+    if (activity.last_detail) parts.push(String(activity.last_detail).split(/\r?\n/, 1)[0]);
+    return parts.join(" · ");
+  }
 
   // A page opened from file:// in a browser set to block site data throws on
   // the accessor itself, so every read and write is guarded and the page falls
@@ -475,14 +493,15 @@
           burn = "LIVE " + fmtInt(Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0));
           if (!usage.updated_at) burn += " (stale)";
         }
-        rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-", burn, elapsed]);
+        rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-",
+          activityText(a.activity), burn, elapsed]);
       });
       (r.queue || []).forEach(function (q) {
-        rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "-", "-"]);
+        rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "", "-", "-"]);
       });
     });
     renderSimpleTable("agents-table-wrap",
-      ["Repo", "Kind", "Stage", "Role", "Agent / worker", "Verifier", "Live burn", "Elapsed / budget"], rows);
+      ["Repo", "Kind", "Stage", "Role", "Agent / worker", "Verifier", "Activity", "Live burn", "Elapsed / budget"], rows);
   }
 
   function renderFailures(spend, names) {

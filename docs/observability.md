@@ -72,6 +72,14 @@ The `[3] Agents` panel shows live agents followed by the queued next stages.
 Queued rows come from the aggregate payload's `queue` field and are display-only;
 the cursor remains confined to live agents.
 
+For each readable live transcript, the panel also shows `activity.turns`, the
+latest tool, its age and `last_detail`; the dashboard also includes
+`activity.tool_calls`. `scripts/lib/transcript-tokens.py` derives those fields
+from the transcript bytes it already reads, caches incremental Claude counts in
+the agent registry, and returns them through `aggregate-dashboard.sh --repo` to
+the panel. Missing activity stays blank. The per-repo path refreshes every five
+seconds; a fleet dashboard can be up to the 120-second snapshot interval behind.
+
 It polls the same
 `aggregate-dashboard.sh --repo` seam as the repo ticker every five seconds,
 but does so on a background thread so input remains responsive during a read.

@@ -543,11 +543,12 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
              end)) | . + {elapsed:.elapsed_seconds}]')"
   fi
 
-  # Live transcript token totals, --repo mode only: reading the harness
+  # Live transcript token totals and activity, --repo mode only: reading the harness
   # transcript for every live agent across five repos every 5s is the cost
   # the fleet-wide pass cannot afford (see docs/lessons.md gotcha 14 for why
   # the read has to be incremental at all), but a single-repo ticker refresh
-  # can. Offsets are cached in the same active-agents registry file
+  # can. The enriched agent objects pass through this seam unchanged. Offsets
+  # and accumulated activity are cached in the same active-agents registry file
   # scripts/agent-ticker.sh already used for this, so the two never disagree
   # about how much of a transcript has been consumed.
   if [[ -n "$match_filter" && "$agents_json" != "[]" ]]; then
