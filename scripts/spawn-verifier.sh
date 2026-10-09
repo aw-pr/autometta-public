@@ -212,15 +212,41 @@ PY
 # Are this family's SDK preconditions all present?
 #
 # Silent and returns 0 when the SDK route can run; prints a short reason and
-# returns 1 when something it needs is missing. Consulted only when nothing
-# explicit has named a transport. An explicit `sdk` never comes through here:
-# it still fails closed further down, because an operator who asked for the
-# SDK by name wants to hear that it cannot run, not to be quietly rerouted.
+# returns 1 when something it needs is missing. For the default surface it is
+# consulted only when nothing explicit has named a transport. An explicit `sdk`
+# never comes through here: it still fails closed further down, because an
+# operator who asked for the SDK by name wants to hear that it cannot run, not
+# to be quietly rerouted.
+#
+# The claude `agent-sdk` surface is only ever explicit, so its precondition is
+# the part the dispatch branch cannot check for itself: the installed
+# claude-agent-sdk is the release scripts/requirements-sdk.txt pins. Its
+# credential is checked at dispatch, where the refusal can name the ref.
 verifier_sdk_precondition() {
   local family="$1"
   local repo_root="$2"
   local auth_pairs="$3"
+  local surface="${4:-api-sdk}"
   local mode
+
+  if [[ "$family" == "claude" && "$surface" == "agent-sdk" ]]; then
+    local agent_sdk_script check_err
+    agent_sdk_script="$script_dir/$(claude_entrypoint_for_surface agent-sdk)"
+    if [[ ! -f "$agent_sdk_script" ]]; then
+      printf 'scripts/verify-sdk-agent.py missing'
+      return 1
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+      printf 'python3 not on PATH'
+      return 1
+    fi
+    if ! check_err="$(python3 "$agent_sdk_script" --check-sdk 2>&1 >/dev/null)"; then
+      check_err="${check_err%%$'\n'*}"
+      printf '%s' "${check_err#verify-sdk-agent: }"
+      return 1
+    fi
+    return 0
+  fi
 
   if ! mode="$(REPO_ROOT="$repo_root" "$script_dir/auth-route.sh" "$family" --print-mode --role verifier 2>/dev/null)"; then
     printf 'auth mode unresolved'
@@ -299,12 +325,31 @@ verifier_sdk_precondition() {
   return 0
 }
 
+# Refuse an explicit agent-sdk resolution whose installed SDK is not the pin.
+# It never reroutes: an operator who named agent-sdk hears why it cannot run,
+# and dispatch exits before spawning. A missing entrypoint passes through to
+# the dispatch branch's logged cli fallback.
+agent_sdk_pin_gate() {
+  local family="$1" repo_root="$2" auth_pairs="$3" resolution="$4"
+  local transport provenance reason
+  IFS=' ' read -r transport provenance _ <<<"$resolution"
+  if [[ "$family" == "claude" && "$transport" == "agent-sdk" \
+    && -f "$script_dir/$(claude_entrypoint_for_surface agent-sdk)" ]] \
+    && ! reason="$(verifier_sdk_precondition claude "$repo_root" "$auth_pairs" agent-sdk)"; then
+    printf 'refused %s %s\n' "$provenance" "$reason"
+    return 0
+  fi
+  printf '%s\n' "$resolution"
+}
+
 # Resolve a verifier transport (sdk | cli) for one family.
 # Resolution order (most specific wins):
 #   1. AUTOMETTA_<FAMILY>_TRANSPORT env var override        -> env
 #   2. verifier.<family>.transport in .autometta.local.yaml -> manifest
 #   3. sdk, when the family's SDK preconditions hold        -> default-sdk
 #   4. cli, naming the precondition that is missing         -> fallback-cli
+# An explicit agent-sdk whose installed SDK misses the pin resolves to
+# `refused`, never to another transport.
 #
 # The SDK is the transport of first resort: both families authenticate it on
 # every mode they support, so an unset key means "whichever route works" rather
@@ -321,7 +366,8 @@ resolve_verifier_transport() {
   override_var="AUTOMETTA_${family_upper}_TRANSPORT"
 
   if [[ -n "${!override_var:-}" ]]; then
-    claude_route_guard "$family" "${!override_var}" env "$auth_pairs"
+    agent_sdk_pin_gate "$family" "$repo_root" "$auth_pairs" \
+      "$(claude_route_guard "$family" "${!override_var}" env "$auth_pairs")"
     return 0
   fi
 
@@ -329,7 +375,8 @@ resolve_verifier_transport() {
     local from_manifest
     from_manifest="$(yq -r ".verifier.${family}.transport // \"\"" "$manifest" 2>/dev/null || true)"
     if [[ -n "$from_manifest" ]]; then
-      claude_route_guard "$family" "$from_manifest" manifest "$auth_pairs"
+      agent_sdk_pin_gate "$family" "$repo_root" "$auth_pairs" \
+        "$(claude_route_guard "$family" "$from_manifest" manifest "$auth_pairs")"
       return 0
     fi
   fi
@@ -379,6 +426,7 @@ print_transport() {
   IFS=' ' read -r transport provenance reason <<<"$result"
   format_transport_resolution "$transport" "$provenance" "$reason"
   printf '\n'
+  [[ "$transport" != "refused" ]]
 }
 
 validate_codex_sdk_auth_home() {
@@ -492,7 +540,7 @@ is_panel_mode() {
 
 main() {
   if [[ "${1:-}" == "--print-transport" ]]; then
-    print_transport "${2:-}" "${3:-$PWD}"
+    print_transport "${2:-}" "${3:-$PWD}" || exit 1
     exit 0
   fi
 
@@ -604,6 +652,10 @@ main() {
     IFS=' ' read -r resolved_transport resolved_transport_provenance resolved_transport_reason <<<"$transport_result"
     case "$resolved_transport" in
       cli|sdk|agent-sdk) ;;
+      refused)
+        log_msg "verifier-transport: fail-closed; $(format_transport_resolution "$resolved_transport" "$resolved_transport_provenance" "$resolved_transport_reason")"
+        exit 1
+        ;;
       *)
         log_msg "verifier-transport: invalid value ${resolved_transport} (expected cli | sdk | agent-sdk)"
         exit 1
