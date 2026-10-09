@@ -128,10 +128,10 @@ Result files become ambiguous, then the orchestrator cannot tell which artefact 
 ### Mitigation
 Keep output ownership explicit through [Step 5: Verifier handoff](dispatch-contract.md#step-5-verifier-handoff) and [Step 6: Orchestrator integration](dispatch-contract.md#step-6-orchestrator-integration), with stable naming agreed in the stage card.
 
-## Headless gotcha 6: `claude -p` writes its log in one burst at exit
+## Headless gotcha 6: Claude logs need stream JSON and verbose mode
 
 ### One-sentence summary
-`claude -p` does not stream its log: the file stays at 0 bytes until the run completes and is then written in a single burst, so log-mtime staleness is not a stuck signal for the claude family (only over-budget is), and log scraping reports a false zero for usage throughout the run even while the harness transcript records it.
+Claude dispatches stream their logs with `--output-format stream-json --verbose`, so progress reaches the log during the run; heartbeat applies log-mtime staleness only to entries marked as streaming, preserving the exemption for legacy one-burst registrations.
 
 ### Incident origin
 On 2026-08-23 the repo ticker showed `tokens:0` for a 1,815-second Claude worker whose live transcript totalled 30,074,356 tokens. The run worktree, not the subscribed repo root, keyed the Claude transcript; Codex stored its working directory inside `session_meta` instead.
@@ -140,7 +140,7 @@ On 2026-08-23 the repo ticker showed `tokens:0` for a 1,815-second Claude worker
 An idle process and a high-spend overnight worker look identical. Parsing the whole transcript on every five-second refresh fixes the number but makes frame cost grow with files that reach tens of megabytes.
 
 ### Mitigation
-`scripts/heartbeat.sh` applies the `silent` flag only to families that stream their log; for claude, `over-budget` is the one stuck signal. For usage, record `working_dir` in `state/active-agents/<pid>.json`. Resolve Claude by its path slug and start time, and Codex by `session_meta.cwd` and start time. Sum Claude's four usage keys incrementally while persisting a byte offset and total in the active registry; use the latest Codex cumulative `total_token_usage` rather than summing it. Read at most 16 MiB per refresh, retry misses until the transcript appears, and distinguish `waiting` from `unavailable`.
+Dispatch Claude with `--output-format stream-json --verbose` and pass its stdout through `scripts/claude-token-log.sh`. The filter forwards assistant progress and ends with the result plus `Total tokens: N`. `scripts/register-agent.sh` records `log_streams: true` for that dispatch, and `scripts/heartbeat.sh` applies `silent` to Codex or an entry carrying that flag. Legacy Claude registrations remain exempt. For usage, record `working_dir` in `state/active-agents/<pid>.json`. Resolve Claude by its path slug and start time, and Codex by `session_meta.cwd` and start time. Sum Claude's four usage keys incrementally while persisting a byte offset and total in the active registry; use the latest Codex cumulative `total_token_usage` rather than summing it. Read at most 16 MiB per refresh, retry misses until the transcript appears, and distinguish `waiting` from `unavailable`.
 
 ## Headless gotcha 7: `claude -p` needs `--dangerously-skip-permissions`
 
@@ -148,7 +148,7 @@ An idle process and a high-spend overnight worker look identical. Parsing the wh
 `claude -p` acts autonomously only with `--dangerously-skip-permissions`; `--permission-mode bypassPermissions` combined with `-p` exits silently with an empty log.
 
 ### Failure mode if ignored
-A worker that looks dispatched but exits at once with a 0-byte log, indistinguishable at first glance from the SIGHUP death in gotcha 9 or the one-burst log in gotcha 6.
+A worker that looks dispatched but exits at once with a 0-byte log, indistinguishable at first glance from the SIGHUP death in gotcha 9 or a pre-streaming Claude registration from before gotcha 6 was fixed.
 
 ### Mitigation
 The spawn scripts pass `--dangerously-skip-permissions` on every headless claude dispatch. Check the flag before suspecting the harness.
@@ -188,7 +188,7 @@ Source project: autometta self-host on 2026-05-27. Claude workers dispatched via
 Codex workers use a direct `&` without a wrapping subshell and manage their own process group, so they are unaffected.
 
 ### Failure mode if ignored
-Claude workers silently exit with a 0-byte log. The heartbeat suppresses `silent` for the claude family (gotcha 6), so the agent ticker shows no alert. The stage either stalls at `worker_pid` polling or, if the heartbeat grace window expires first, transitions to `stuck`. The operator sees no error and no output.
+Claude workers silently exit with a 0-byte log. Streamed dispatches now receive the `silent` flag while alive, but an early exit still leaves the stage waiting for `worker_pid` polling or, if the heartbeat grace window expires first, transitioning to `stuck`. The operator sees no error and no output.
 
 ### Mitigation
 Call `disown "$pid"` immediately after capturing `$!` from the background job. This removes the job from bash's job table so it no longer receives SIGHUP when the shell exits:
@@ -204,7 +204,7 @@ Applied in `scripts/spawn-worker.sh`, `scripts/spawn-verifier.sh`, and `scripts/
 `disown` addresses shell job-control SIGHUP, but it is not the whole fix. launchd separately reaps the tick's entire process group when the `tick` job exits. The complementary mitigation is `AbandonProcessGroup` in the LaunchAgent plist (`templates/launchagent.plist.tpl`, commit `2cc42c2`), which tells launchd not to send the group that signal. Keep both: `disown` for the shell, `AbandonProcessGroup` for launchd.
 
 ### Verified
-Confirmed on 2026-05-29 with a real LaunchAgent dispatch (not a manual tick): a claude/Haiku worker spawned by the `RunAtLoad` tick survived the tick process exiting, ran to completion, and wrote its handoff envelope; the log stayed 0 bytes until the single burst at completion (gotcha 6), and a cross-family codex verifier returned PASS. Both fixes hold together; the unattended launchd loop is no longer a known blocker.
+Confirmed on 2026-05-29 with a real LaunchAgent dispatch (not a manual tick): a claude/Haiku worker spawned by the `RunAtLoad` tick survived the tick process exiting, ran to completion, and wrote its handoff envelope; under the output mode in use then, its log was empty until completion (gotcha 6), and a cross-family codex verifier returned PASS. Both fixes hold together; the unattended launchd loop is no longer a known blocker.
 
 ## Headless gotcha 10: a tick can destroy the gitignored state.yaml, and the state branch cannot back it up
 

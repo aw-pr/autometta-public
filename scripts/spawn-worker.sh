@@ -269,11 +269,11 @@ main() {
       fi
       ;;
     claude)
-      # JSON output + claude-token-log.sh restore the "Total tokens:" line
-      # budget_parse_tokens_from_log needs; text-mode `claude -p` prints no
-      # usage. stderr goes straight to the log so errors are never filtered.
+      # Stream JSON + claude-token-log.sh forward progress and restore the
+      # "Total tokens:" line budget_parse_tokens_from_log needs. stderr goes
+      # straight to the log so errors are never filtered.
       # shellcheck disable=SC2086
-      ( cd "$work_dir" && op-fetch $(claude_dispatch_auth_pairs "$auth_pairs") -- claude --model "$(claude_model_for_identity "$worker_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"} --dangerously-skip-permissions --output-format json -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
+      ( cd "$work_dir" && op-fetch $(claude_dispatch_auth_pairs "$auth_pairs") -- claude --model "$(claude_model_for_identity "$worker_identity")" ${AUTOMETTA_EFFORT_ARGV[@]+"${AUTOMETTA_EFFORT_ARGV[@]}"} ${AUTOMETTA_CLAUDE_MCP_ARGV[@]+"${AUTOMETTA_CLAUDE_MCP_ARGV[@]}"} --dangerously-skip-permissions --output-format stream-json --verbose -p "$prompt" </dev/null 2>"$log_path" | "$script_dir/claude-token-log.sh" >>"$log_path" ) 2>>"$log_path" &
       ;;
     *)
       log_msg "unsupported worker family for identity: ${worker_identity}"
@@ -296,8 +296,13 @@ main() {
   elif [[ "$budget_line" =~ ([0-9]+)[[:space:]]*(seconds?|secs?|s)([^[:alpha:]]|$) ]]; then
     budget_secs="${BASH_REMATCH[1]}"
   fi
-  "$script_dir/register-agent.sh" "$repo_root" "$pid" "worker" "$family" \
-    "$worker_identity" "$card_path" "$log_path" "$budget_secs" "$work_dir" >/dev/null 2>&1 || true
+  if [[ "$family" == "claude" ]]; then
+    AUTOMETTA_LOG_STREAMS=1 "$script_dir/register-agent.sh" "$repo_root" "$pid" "worker" "$family" \
+      "$worker_identity" "$card_path" "$log_path" "$budget_secs" "$work_dir" >/dev/null 2>&1 || true
+  else
+    "$script_dir/register-agent.sh" "$repo_root" "$pid" "worker" "$family" \
+      "$worker_identity" "$card_path" "$log_path" "$budget_secs" "$work_dir" >/dev/null 2>&1 || true
+  fi
 
   printf '%s\n' "$pid"
 }

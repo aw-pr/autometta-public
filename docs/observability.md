@@ -280,12 +280,12 @@ active-agents registry and writes `state/heartbeat.json` with one entry per
 agent, flagged for log-mtime staleness (default threshold 300 seconds;
 override with `AUTOMETTA_HEARTBEAT_STALL`), budget overrun and unusual live
 token spend. The
-`silent` flag is only applied to agents whose family streams its log; for
-the `claude` family, `claude -p` emits its entire log at completion and is
-legitimately silent for the whole run, so only `over-budget` is a stuck
-signal in that direction. This makes the registry symmetric across the
-worker / verifier pairing: codex-worker / claude-verifier and the reverse
-both get accurate stuck-detection without false positives. Dead
+`silent` flag applies to Codex entries and to any entry carrying
+`log_streams: true`. Claude CLI dispatches set that key because they use
+`--output-format stream-json --verbose`; a legacy Claude registration without
+the key stays exempt. This makes the registry symmetric across the worker /
+verifier pairing: codex-worker / claude-verifier and the reverse both get
+accurate stuck-detection without false positives. Dead
 processes are moved to `state/recent-agents/` with `outcome: exited`. The
 watchdog surfaces stalls and budget overruns; it never kills for those. The
 one thing it does kill is a runaway token outlier, described below.

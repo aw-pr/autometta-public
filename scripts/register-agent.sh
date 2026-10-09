@@ -29,6 +29,7 @@ card_path="$6"
 log_path="$7"
 budget_seconds="${8:-0}"
 working_dir="${9:-$repo_root}"
+log_streams="${AUTOMETTA_LOG_STREAMS:-}"
 
 if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
   printf 'refusing to register non-numeric pid: %s\n' "$pid" >&2
@@ -48,12 +49,12 @@ agent_id="${pid}-$(date +%s)"
 
 tmp="$(mktemp)"
 python3 - "$tmp" "$pid" "$role" "$family" "$identity" "$card_path" "$log_path" \
-  "$budget_seconds" "$started_at" "$agent_id" "$working_dir" <<'PY'
+  "$budget_seconds" "$started_at" "$agent_id" "$working_dir" "$log_streams" <<'PY'
 import json
 import sys
 
 (out, pid, role, family, identity, card_path, log_path,
- budget_seconds, started_at, agent_id, working_dir) = sys.argv[1:]
+ budget_seconds, started_at, agent_id, working_dir, log_streams) = sys.argv[1:]
 
 doc = {
     "agent_id": agent_id,
@@ -67,6 +68,8 @@ doc = {
     "started_at": started_at,
     "working_dir": working_dir,
 }
+if log_streams == "1":
+    doc["log_streams"] = True
 with open(out, "w", encoding="utf-8") as fh:
     json.dump(doc, fh, indent=2, sort_keys=True)
     fh.write("\n")

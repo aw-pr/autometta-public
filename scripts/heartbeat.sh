@@ -212,11 +212,8 @@ for name in sorted(os.listdir(active_dir)):
     if log_path and os.path.exists(log_path):
         try:
             mtime = int(os.path.getmtime(log_path))
-            # 'silent' is only meaningful for streaming families.
-            # claude -p emits its log at completion, so a Claude agent
-            # is legitimately silent for the entire run. Use over-budget
-            # as the only stuck signal for the claude family.
-            if family != "claude" and now - mtime > stall_seconds:
+            # 'silent' is only meaningful when this dispatch streams its log.
+            if (family == "codex" or doc.get("log_streams") is True) and now - mtime > stall_seconds:
                 flags.append("silent")
             doc["log_size"] = os.path.getsize(log_path)
             doc["log_mtime_age_seconds"] = now - mtime
