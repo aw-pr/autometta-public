@@ -1,6 +1,17 @@
 # Handover
 
-**Status (2026-10-09):** batch 145-147 landed; 148 (model-scoped reserve fix) in flight under a drain until 20:19 BST; next agent ends drain once 148 lands.
+**Status (2026-10-09):** batch 145-148 landed, drains closed; nothing queued. Fable window now holds only Fable seats (148, second attempt).
+
+## Recent activity (2026-10-09 card-148-landed)
+
+- 148 failed attempt 1 on a verifier-found regression: the worker gated the
+  Codex admission branch of `quota_spawn_permits` on `family == codex`,
+  dropping the Codex-verifier check for a Claude worker. Re-briefed
+  (`6c07cb9`) with a regression assertion outside the frozen block; attempt
+  1 pinned on `wip/148-a-model-window-holds-only-its-model-attempt-1`.
+- Attempt 2 passed 7/7 and landed as `6ec4b54`. Live check after landing,
+  no drain: Opus 5.5 admitted, Fable 5.1 held on `Weekly (Fable)` at 73%.
+- Second drain ended early. The fleet tick LaunchAgent stays loaded.
 
 ## Recent activity (2026-10-09 batch-145-147-landed)
 
