@@ -158,3 +158,26 @@ needs no network grant, but the worker cannot read the operator's live quota
 snapshot, which is why criterion 3 belongs to the verifier. `tick.sh` runs
 under `IFS=$'\n\t'`; keep any multi-token argument list in an array (gotcha
 12). macOS `date` has no `-d`; the smoke already falls back for both.
+
+## Re-brief after attempt 1 (2026-10-09)
+
+Attempt 1 passed criteria 1-6 and failed on one regression the verifier
+found. Its work is pinned at `d08063587b5a04736ba17d1736506f241a0ebf64` on
+`wip/148-a-model-window-holds-only-its-model-attempt-1`. Start from that
+commit (`git cherry-pick` or read it) rather than from scratch: the gate,
+the role-gate wiring and the doc paragraph were judged correct.
+
+The defect: `quota_spawn_permits` gained `[[ "$family" == codex ]] &&` in
+front of `quota_codex_card_policy`. That skips the Codex admission check for
+a manual spawn of a Claude worker whose card names a Codex subscription
+verifier, which `CLAUDE.md` documents ("This also checks a Codex verifier
+before admitting its Claude worker"). Leave that branch exactly as it is on
+`dev`; the model only feeds the Claude reserve check further down.
+
+Added constraint: no change to the Codex card-admission branch of
+`quota_spawn_permits` or `quota_gate_role_dispatch`.
+
+Added acceptance criterion 7: the regression block after
+`AUTOMETTA-CONTRACT-END` in `scripts/model-window-smoke.sh` passes. It was
+added by the orchestrator on re-brief, sits outside the frozen block (the
+digest is unchanged), passes on `dev` and fails on the attempt-1 commit.

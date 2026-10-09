@@ -146,4 +146,13 @@ printf 'PASS acceptance 5: the manual spawn gate names the worker model\n'
 
 # AUTOMETTA-CONTRACT-END
 
+# --- Regression guard added on re-brief after attempt 1: a manual spawn of a
+# Claude worker whose card names a Codex subscription verifier still checks
+# the Codex window before admitting the card (CLAUDE.md, manual dispatch).
+codex_spent="$(jq -c '.families.codex.windows[0].utilization = 100' <<<"$(reading 46 40)")"
+mixed_card="$(card_for mixed-worker "Claude Opus 5.5 <claude-opus-5-5@local>" "Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>")"
+rc=0; AUTOMETTA_QUOTA_TICK_JSON="$codex_spent" quota_spawn_permits "$repo" claude "$mixed_card" || rc=$?
+assert_eq 1 "$rc" "a Claude worker with a Codex verifier is still held on an exhausted Codex window"
+printf 'PASS regression: the Codex verifier check survives for a Claude worker\n'
+
 printf 'model-window-smoke: PASS\n'
