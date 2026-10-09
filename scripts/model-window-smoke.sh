@@ -59,15 +59,16 @@ fable_card="$(card_for fable-worker "Claude Fable 5.1 <claude-fable-5-1@local>" 
 
 # The shape quota-window.py printed for claude on 2026-10-09.
 reading() {
-  local weekly="$1" fable="$2"
-  jq -nc --argjson weekly "$weekly" --argjson fable "$fable" '
-    {read_at:null, families:{
-      claude:{family:"claude", status:"known", reason:null, source:"claude", fetched_at:null,
+  local weekly="$1" fable="$2" read_at
+  read_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  jq -nc --argjson weekly "$weekly" --argjson fable "$fable" --arg read_at "$read_at" '
+    {read_at:$read_at, families:{
+      claude:{family:"claude", status:"known", reason:null, source:"claude", fetched_at:$read_at,
         windows:[
           {key:"5-hour", label:"5-hour", utilization:8, resets_at:"2033-05-18T03:38:20Z"},
           {key:"weekly", label:"Weekly", utilization:$weekly, resets_at:"2033-05-20T00:00:00Z"},
           {key:"weekly-fable", label:"Weekly (Fable)", utilization:$fable, resets_at:"2033-05-21T00:00:00Z"}]},
-      codex:{family:"codex", status:"known", reason:null, source:"fixture", fetched_at:null,
+      codex:{family:"codex", status:"known", reason:null, source:"fixture", fetched_at:$read_at,
         windows:[
           {key:"primary", label:"5-hour", utilization:0, resets_at:"2033-05-18T03:38:20Z"},
           {key:"secondary", label:"Weekly", utilization:60, resets_at:"2033-05-22T00:00:00Z"}]}

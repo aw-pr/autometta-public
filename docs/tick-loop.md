@@ -509,7 +509,10 @@ finishes. Unset, zero, over 100 or non-numeric keeps the 100% default.
 to 20% with `action: hold`, so new Claude work normally stops at 80% used.
 Explicit zero or `action: off` disables that reserve; unknown Claude readings
 retain the existing fail-open behaviour. Scheduled reserve and curfew settings
-are unchanged. The template and `render-controller-seed.sh` retain those settings.
+are unchanged. A model-scoped window, keyed `<period>-<name>` such as
+`weekly-fable`, holds only seats whose model id has that name as a hyphen-delimited
+segment. An unnamed seat sees every window. The template and
+`render-controller-seed.sh` retain those settings.
 
 `AUTOMETTA_CODEX_QUOTA_POLICY=reserve` explicitly selects the previous Codex
 reserve behaviour, including its unknown-reading semantics. Historical contract

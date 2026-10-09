@@ -12,6 +12,11 @@ quota_window_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
 source "$quota_window_script_dir/budget.sh"
 
+if ! declare -F claude_model_for_identity >/dev/null; then
+  # shellcheck source=./models.sh
+  source "$quota_window_script_dir/models.sh"
+fi
+
 # quota_drain_ignore_reserve_active <repo-root>: succeed (0) when the drain
 # in force for this repo (if any) was opened with --ignore-reserve and has
 # not expired. Reuses budget_drain_active's expiry-and-scope handling
@@ -267,7 +272,7 @@ quota_gate_codex_reading() {
 #                               would otherwise halt the repo with a
 #                               dispatch-configuration-fault on a refusal.
 quota_spawn_permits() {
-  local repo_root="$1" family="$2" card_path="${3:-}"
+  local repo_root="$1" family="$2" card_path="${3:-}" model=""
   QUOTA_GATE_REASON=""
   if [[ "${AUTOMETTA_RESERVE_GATED:-}" == "1" ]]; then
     QUOTA_GATE_REASON="reserve already applied by the tick"
@@ -301,12 +306,17 @@ quota_spawn_permits() {
     return 0
   esac
   local mandate_path settings reserve action window reading
+  if [[ "$family" == claude && -n "$card_path" ]]; then
+    local worker_identity
+    worker_identity="$(sed -n 's/^- \*\*Worker:\*\* //p' "$card_path" | head -n1)"
+    model="$(claude_model_for_identity "$worker_identity")"
+  fi
   mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(autometta_controller_home)/phat-controller-mandate.yaml}"
   settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
   IFS=$'\t' read -r reserve action window <<<"$settings"
   [[ -n "$AUTOMETTA_QUOTA_TICK_JSON" ]] || quota_refresh_tick || true
   reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]' 2>/dev/null || printf '{}')"
-  if quota_gate_reading "$reading" "$reserve" "$action"; then
+  if quota_gate_reading "$reading" "$reserve" "$action" "$model"; then
     return 0
   fi
   QUOTA_GATE_REASON="${QUOTA_GATE_REASON} (${window:-default} schedule); resets $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
@@ -379,12 +389,12 @@ quota_schedule_permits_dispatch() {
   return 1
 }
 
-# quota_gate_reading <reading-json> <reserve-percent> <action>
+# quota_gate_reading <reading-json> <reserve-percent> <action> [model]
 # Returns 1 only when a known window is inside a non-zero hold reserve and has
 # a future reset. Unknown, zero and observe all fail open with an explicit
 # QUOTA_GATE_REASON. The caller owns budget_pause_until and logging.
 quota_gate_reading() {
-  local reading="$1" reserve="$2" action="$3" now
+  local reading="$1" reserve="$2" action="$3" model="${4:-}" now
   QUOTA_GATE_WINDOW=""; QUOTA_GATE_RESET=""; QUOTA_GATE_REASON=""
   if awk -v r="$reserve" 'BEGIN { exit !(r <= 0) }'; then
     QUOTA_GATE_REASON="reserve off"
@@ -398,8 +408,16 @@ quota_gate_reading() {
     return 0
   fi
   local binding
-  binding="$(printf '%s' "$reading" | jq -c --argjson reserve "$reserve" '
+  binding="$(printf '%s' "$reading" | jq -c --argjson reserve "$reserve" --arg model "$model" '
+    def scoped_model_name:
+      (.key // "") as $key
+      | if ($key | type) == "string" and ($key | test("^(weekly|5-hour)-.+$"))
+        then $key | sub("^(weekly|5-hour)-"; "")
+        else ""
+        end;
     [.windows[]? | select((.utilization | type) == "number")
+      | scoped_model_name as $scope
+      | select($model == "" or $scope == "" or ("-" + $model + "-" | contains("-" + $scope + "-")))
       | . + {remaining:(100 - .utilization)}
       | select(.remaining <= $reserve)]
     | sort_by(-.utilization) | .[0] // empty

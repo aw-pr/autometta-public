@@ -165,11 +165,11 @@ quota_log_tick_readings() {
 # back out even one level. The 3rd tab field is what actually survives.
 QUOTA_GATE_RESOLVED_WINDOW="default"
 
-# quota_gate_family_dispatch <repo> claude|codex <description>
+# quota_gate_family_dispatch <repo> claude|codex <description> [model]
 # Returns 1 only after recording a pause at the published reset. Zero covers
 # outside-reserve, reserve off, observe and every unknown reading.
 quota_gate_family_dispatch() {
-  local repo_root="$1" family="$2" what="$3"
+  local repo_root="$1" family="$2" what="$3" model="${4:-}"
   local settings reserve action window reading mandate_path curfew
   QUOTA_GATE_RESOLVED_WINDOW="default"
   case "$family" in claude|codex) ;; *)
@@ -191,7 +191,7 @@ quota_gate_family_dispatch() {
   log "quota ${what} (${family}): ${reserve}% reserve, ${action} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); curfew ${curfew:+on }${curfew:-off}"
   [[ -f "$mandate_path" ]] || log "quota ${what}: no controller mandate at ${mandate_path}; reserve off until autometta init-host installs one"
   reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
-  if quota_gate_reading "$reading" "$reserve" "$action"; then
+  if quota_gate_reading "$reading" "$reserve" "$action" "$model"; then
     if [[ "$QUOTA_GATE_REASON" == reading\ unknown:* ]]; then
       log "quota ${what} (${family}): ${QUOTA_GATE_REASON}; dispatch remains fail-open"
     elif [[ "$QUOTA_GATE_REASON" == *"inside reserve"* ]]; then
@@ -200,8 +200,8 @@ quota_gate_family_dispatch() {
     return 0
   fi
   budget_pause_until "$repo_root" "$QUOTA_GATE_RESET" \
-    "quota reserve: ${family} ${QUOTA_GATE_WINDOW}; resets at $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
-  log "quota ${what} (${family}): held in ${reserve}% reserve on ${QUOTA_GATE_WINDOW} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); paused until $(date -r "$QUOTA_GATE_RESET" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+    "quota reserve: ${family} ${QUOTA_GATE_WINDOW}${model:+ for ${model}}; resets at $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+  log "quota ${what} (${family}${model:+ model ${model}}): held in ${reserve}% reserve on ${QUOTA_GATE_WINDOW} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); paused until $(date -r "$QUOTA_GATE_RESET" '+%Y-%m-%d %H:%M %Z' 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
   return 1
 }
 
@@ -219,10 +219,13 @@ quota_gate_family_dispatch() {
 # this card.
 quota_gate_role_dispatch() {
   local repo_root="$1" state_yaml="$2" stage_id="$3" role="$4"
-  local identity family
+  local identity family model=""
   identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" --arg role "$role" \
     '.stages[] | select(.id == $id) | .[$role] // empty')"
   family="$(costlog_family_for_identity "$identity")"
+  if [[ "$family" == claude ]]; then
+    model="$(claude_model_for_identity "$identity")"
+  fi
   # The schedule stop, before the reserve and before any reading is
   # consulted: outside an explicitly armed curfew no new work starts, however
   # healthy the quota looks. Refusing here rather than pausing the repo is
@@ -267,7 +270,7 @@ quota_gate_role_dispatch() {
       return 0
     fi
   fi
-  quota_gate_family_dispatch "$repo_root" "$family" "${role} ${stage_id}"
+  quota_gate_family_dispatch "$repo_root" "$family" "${role} ${stage_id}" "$model"
 }
 
 # Per-repo advisory lock. mkdir is atomic on POSIX and works on macOS
