@@ -1,7 +1,39 @@
 # Handover
 
-**Status (2026-09-26):** Claude identities now dispatch by their weight-naming
-slug, not tier words; Opus tier moved to Claude Opus 5.5 fleet-wide.
+**Status (2026-10-09):** live progress batch 145-147 carded and committed,
+not queued; queue one card at a time per `stage-cards/PLAN.md` section
+"Live progress batch 145-147", 145 first.
+
+## Recent activity (2026-10-09 live-progress-batch-design)
+
+- Operator asked whether to run the repo through the SDKs for finer
+  progress monitoring. Finding: the Claude Agent SDK is the `claude` CLI's
+  stream-json in a Python wrapper, and both harness transcripts already
+  hold per-call, timestamped records that `transcript-tokens.py` reads every
+  5s and discards. Cards 23 and 98 had already tried SDK controller and
+  worker routes; both stopped at the sandbox. So: card the reader, not the
+  transport.
+- Carded and committed (`cards(145-147)`): 145 claude dispatches stream
+  their log (Terra/Opus 5.5), 146 the agents panel shows turns, last tool
+  and age (Sol/Fable 5.1), 147 the agent-sdk pin is current and guarded
+  (Opus 5.5/Terra). Each carries a frozen contract test authored here;
+  every block fails today at its first assertion and runs clean to the end
+  with assertions softened.
+- Drift found: `scripts/requirements-sdk.txt` pins `claude-agent-sdk==0.2.87`,
+  the brew `python3` (3.14) carries 0.1.81, PyPI is at 0.2.165, and nothing
+  in the dispatch path reads the pin. 147 fixes it.
+- Measured: a nested `claude -p --output-format stream-json --verbose`
+  works from inside a Claude Code session (nine lines, stderr empty); print
+  mode refuses stream-json without `--verbose`.
+- **Not done**: nothing queued, nothing dispatched. The minder queues 145,
+  then 146 only after 145 has landed on `dev`, then 147 the same way;
+  shared files mean a gate-released successor would cut from an older
+  `dev` and conflict.
+- **Watch**: once 145 lands, 146's Fable verifier is the first claude
+  dispatch whose log should grow mid-run; note the longest quiet gap
+  against the 300s `silent` threshold. If the Fable weekly window is past
+  the 80% reserve line when 146 comes up, swap its verifier to Opus 5.5
+  before queueing.
 
 ## Recent activity (2026-09-26 model-routing-by-identity-slug)
 
