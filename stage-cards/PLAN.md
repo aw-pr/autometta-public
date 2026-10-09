@@ -380,6 +380,28 @@ leaves that threshold alone on purpose. On a 145 FAIL, requeue through the
 the checkout is the live toolchain, so a half-landed flag change would hit
 the very next claude dispatch.
 
+## Model-scoped reserve card 148, designed 2026-10-09
+
+**Prepared, not queued.** Found live while running 145-147: the Claude
+reading carries a `Weekly (Fable)` window beside the family `Weekly`, and
+the reserve gate held 145's Opus 5.5 verifier on the Fable window (73%
+against a 30% reserve) while the family window stood at 46%. The repo
+paused until the Fable reset, and a watched `--ignore-reserve` drain was the
+only way past, which also lifted the hold on the window the reserve exists
+to protect.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [148](148-a-model-window-holds-only-its-model.md) | A model-scoped window holds only the seats that run that model; an unnamed seat still sees every window | Terra | Opus 5.5 | `scripts/model-window-smoke.sh` |
+
+`scripts/tick.sh` is not claimed by 145-147, so 148 has no file overlap
+with that batch, but queue it after 147 has landed so the run is not cut
+from a `dev` that is still moving under it. Planning allowance 4M tokens.
+
+```sh
+autometta add-stage . stage-cards/148-a-model-window-holds-only-its-model.md
+```
+
 ## Pass 5 - the fact ledger (graph engineering), designed 2026-08-31
 
 **Status, 2026-09-10:** every card in this table landed by 2026-09-01 (the queue cells below are as written on 2026-08-31). Batches 92-107 and 108-134 followed; `HANDOFF.md` and the dashboard carry the record. v1.0.0 was tagged from the tree that includes them.
