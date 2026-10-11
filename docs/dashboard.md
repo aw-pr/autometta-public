@@ -135,8 +135,25 @@ SDK verifiers write cumulative `live_input_tokens`, `live_output_tokens` and
 `live_updated_at` into their own `state/active-agents/<pid>.json` registry
 entry as usage arrives. The aggregator copies those fields to an in-flight
 agent's `live_usage` object in `data.json`; it omits that object when the
-registry has no SDK figure. The dashboard labels a present value `LIVE` and
-shows `n/a` for a CLI dispatch, rather than treating absence as zero.
+registry has no SDK figure. The dashboard labels a present value `LIVE`. For a
+CLI dispatch it instead uses the transcript total and the agent's `burn`
+object, or shows `waiting` / `n/a` when no count is available rather than
+treating absence as zero.
+
+`burn.bucket_seconds` starts at 60. Each item in `burn.points` carries the
+bucket start `t` and the cumulative `tokens`, cache-read `cached` and `turns`
+figures at the last usage record in that bucket. The reader retains Claude's
+series beside its transcript offset. Once a series would exceed 240 points it
+doubles the bucket width and keeps the last point in each wider bucket, so the
+last point still matches `stage_tokens`. The dashboard uses those points for a
+five-minute rate, cache-read share and a small cumulative sparkline.
+
+Claude Code can repeat one assistant message's usage on several transcript
+records, one per content block. Token totals and turns therefore count each
+distinct `message.id` once, including when records for one message straddle two
+incremental reads. Tool calls still count every `tool_use` block. Claude totals
+may consequently be lower than readings made before this deduplication was
+added.
 
 The agents table's `Activity` column reads `activity.turns`, `tool_calls`,
 `last_tool`, `last_detail` and `last_at`. The transcript reader derives the
@@ -147,13 +164,13 @@ No readable activity produces a blank cell, not a zero. The `--repo` path polls
 every five seconds; views using the fleet snapshot can be up to its 120-second
 interval behind.
 
-Latency is bounded by the SDK usage message, the registry's atomic rename, the
-next seam regeneration, and the page poll. `--watch` and `--serve` regenerate
-the dashboard every five seconds by default; the fleet snapshot job defaults
-to 120 seconds; the TUI reads the per-repo seam every five seconds. A missing
-or stale registry timestamp only weakens the display. Settled accounting stays
-in `state/cost-log.jsonl`, so live figures are never added to billing totals or
-counted again when the dispatch lands.
+Latency is bounded by the SDK usage message or transcript write, the registry's
+atomic rename, the next seam regeneration, and the page poll. `--watch` and
+`--serve` regenerate the dashboard every five seconds by default; the fleet
+snapshot job defaults to 120 seconds; the TUI reads the per-repo seam every
+five seconds. A missing or stale registry timestamp only weakens the display.
+Settled accounting stays in `state/cost-log.jsonl`: `burn` is a display figure
+and is never added to billing totals or counted again when the dispatch lands.
 
 `autometta attach /path/to/autometta` starts one background refresh job in the
 tmux session. Override its 120-second interval with

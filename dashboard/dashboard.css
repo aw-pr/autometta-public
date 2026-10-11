@@ -91,6 +91,29 @@ table.stages th, table.stages td {
 table.stages th { color: var(--muted); font-weight: 500; }
 table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
+.burn-cell {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  align-items: center;
+  gap: 0.1rem 0.55rem;
+  min-width: 9rem;
+  font-variant-numeric: tabular-nums;
+}
+.burn-total { grid-column: 1 / -1; }
+.burn-meta { color: var(--muted); font-size: 0.75rem; }
+.burn-spark {
+  grid-column: 1 / -1;
+  width: 6rem;
+  height: 1.5rem;
+  color: var(--accent);
+}
+.burn-spark polyline {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
 .status {
   display: inline-block;
   padding: .1rem .45rem;

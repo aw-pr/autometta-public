@@ -364,9 +364,11 @@ def transcript_tokens(path, family, reg):
                 if reg.get("transcript_path") != path:
                     reg["transcript_path"], reg["transcript_offset"], reg["transcript_tokens"] = path, 0, 0
                     reg["transcript_tokens_found"] = False
+                    reg["transcript_last_message_id"] = None
                 offset = min(int(reg.get("transcript_offset") or 0), size)
                 total = int(reg.get("transcript_tokens") or 0)
                 previously_found = bool(reg.get("transcript_tokens_found"))
+                last_message_id = reg.get("transcript_last_message_id")
                 fh.seek(offset); chunk = fh.read(16 * 1024 * 1024)
                 cut = chunk.rfind(b"\n")
                 if cut < 0:
@@ -383,7 +385,7 @@ def transcript_tokens(path, family, reg):
         return None, False
     found = False
     for line in data.splitlines():
-        if '"usage"' not in line and '"total_token_usage"' not in line:
+        if family == "codex" and '"total_token_usage"' not in line:
             continue
         try:
             doc = json.loads(line)
@@ -395,14 +397,20 @@ def transcript_tokens(path, family, reg):
             if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
                 total = max(total, usage["total_tokens"]); found = True
         else:
+            message = doc.get("message") or {}
+            message_id = message.get("id") if doc.get("type") == "assistant" else None
+            duplicate = bool(message_id) and message_id == last_message_id
             usage = (doc.get("message") or {}).get("usage") or doc.get("usage")
-            if isinstance(usage, dict):
+            if isinstance(usage, dict) and not duplicate:
                 values = [usage.get(k) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]
                 if any(isinstance(v, int) for v in values):
                     total += sum(v for v in values if isinstance(v, int)); found = True
+            if doc.get("type") == "assistant":
+                last_message_id = message_id
     if family == "claude":
         reg["transcript_tokens"] = total
         reg["transcript_tokens_found"] = found or previously_found
+        reg["transcript_last_message_id"] = last_message_id
         return (total if reg["transcript_tokens_found"] else None), reg.get("transcript_offset", 0) < size
     return (total if found else None), False
 

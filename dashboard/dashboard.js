@@ -69,6 +69,79 @@
     return parts.join(" · ");
   }
 
+  function compactTokens(value) {
+    var n = Number(value);
+    if (!isFinite(n)) return "-";
+    if (Math.abs(n) >= 1000000) {
+      return (n / 1000000).toFixed(Math.abs(n) % 1000000 ? 1 : 0).replace(/\.0$/, "") + "M";
+    }
+    if (Math.abs(n) >= 1000) {
+      return (n / 1000).toFixed(Math.abs(n) % 1000 ? 1 : 0).replace(/\.0$/, "") + "k";
+    }
+    return fmtInt(Math.round(n));
+  }
+
+  function burnSparkline(points) {
+    if (points.length < 2) return "";
+    var first = points[0];
+    var last = points[points.length - 1];
+    var span = Math.max(1, Number(last.t) - Number(first.t));
+    var values = points.map(function (point) { return Number(point.tokens); });
+    var low = Math.min.apply(null, values);
+    var high = Math.max.apply(null, values);
+    var range = Math.max(1, high - low);
+    var line = points.map(function (point) {
+      var x = 2 + ((Number(point.t) - Number(first.t)) / span) * 92;
+      var y = high === low ? 12 : 20 - ((Number(point.tokens) - low) / range) * 16;
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    return '<svg class="burn-spark" viewBox="0 0 96 24" aria-hidden="true" focusable="false">' +
+      '<polyline points="' + line + '"></polyline></svg>';
+  }
+
+  function burnCell(agent) {
+    var usage = agent.live_usage;
+    if (usage) {
+      var live = "LIVE " + fmtInt(Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0));
+      if (!usage.updated_at) live += " (stale)";
+      return live;
+    }
+    if (agent.stage_tokens_status === "waiting") return "waiting";
+    if (agent.stage_tokens_status !== "counted" || agent.stage_tokens == null) return "n/a";
+
+    var parts = ['<span class="burn-total">' + compactTokens(agent.stage_tokens) + " transcript</span>"];
+    var burn = agent.burn || {};
+    var points = (burn.points || []).filter(function (point) {
+      return point && isFinite(Number(point.t)) && isFinite(Number(point.tokens));
+    }).slice().sort(function (a, b) { return Number(a.t) - Number(b.t); });
+    if (points.length) {
+      var newest = points[points.length - 1];
+      if (points.length > 1) {
+        var cutoff = Number(newest.t) - 300;
+        var anchor = null;
+        for (var i = points.length - 2; i >= 0; i--) {
+          if (Number(points[i].t) <= cutoff) {
+            anchor = points[i];
+            break;
+          }
+        }
+        if (!anchor) anchor = points[0];
+        var minutes = (Number(newest.t) - Number(anchor.t)) / 60;
+        if (minutes > 0) {
+          parts.push('<span class="burn-meta">' +
+            compactTokens((Number(newest.tokens) - Number(anchor.tokens)) / minutes) + "/min</span>");
+        }
+      }
+      if (Number(newest.tokens) > 0 && isFinite(Number(newest.cached))) {
+        parts.push('<span class="burn-meta">' +
+          Math.round(Number(newest.cached) * 100 / Number(newest.tokens)) + "% cached</span>");
+      }
+      var sparkline = burnSparkline(points);
+      if (sparkline) parts.push(sparkline);
+    }
+    return { html: '<div class="burn-cell">' + parts.join("") + "</div>", cls: "burn" };
+  }
+
   // A page opened from file:// in a browser set to block site data throws on
   // the accessor itself, so every read and write is guarded and the page falls
   // back to the generated default.
@@ -487,14 +560,8 @@
       (r.agents || []).forEach(function (a) {
         var elapsed = fmtInt(a.elapsed_seconds || 0) + "s";
         if (a.budget_seconds) elapsed += " / " + fmtInt(a.budget_seconds) + "s";
-        var usage = a.live_usage;
-        var burn = "n/a";
-        if (usage) {
-          burn = "LIVE " + fmtInt(Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0));
-          if (!usage.updated_at) burn += " (stale)";
-        }
         rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-",
-          activityText(a.activity), burn, elapsed]);
+          activityText(a.activity), burnCell(a), elapsed]);
       });
       (r.queue || []).forEach(function (q) {
         rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "", "-", "-"]);

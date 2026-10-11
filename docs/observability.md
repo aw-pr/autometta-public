@@ -80,6 +80,17 @@ the agent registry, and returns them through `aggregate-dashboard.sh --repo` to
 the panel. Missing activity stays blank. The per-repo path refreshes every five
 seconds; a fleet dashboard can be up to the 120-second snapshot interval behind.
 
+The same per-repo seam gives each live agent a `burn` object. Its
+`bucket_seconds` starts at 60 and each `points` item records bucket-start `t`
+with cumulative `tokens`, cache-read `cached` and `turns`. The series keeps at
+most 240 points by doubling its bucket width and retaining the last point from
+each wider bucket. Claude token and turn totals count repeated transcript
+records with the same `message.id` once, including across incremental reads,
+while every `tool_use` block remains a call. This corrects earlier inflated
+Claude readings, so current totals can be lower than old observations. The
+series serves the live display only; settled accounting remains in
+`state/cost-log.jsonl`.
+
 It polls the same
 `aggregate-dashboard.sh --repo` seam as the repo ticker every five seconds,
 but does so on a background thread so input remains responsive during a read.
