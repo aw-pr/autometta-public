@@ -380,6 +380,20 @@ leaves that threshold alone on purpose. On a 145 FAIL, requeue through the
 the checkout is the live toolchain, so a half-landed flag change would hit
 the very next claude dispatch.
 
+## Cleanup batch 152-154, designed 2026-10-11
+
+**Queued 2026-10-11.** Loose ends from 149-151, operator asked for all of them.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [153](153-a-reader-never-sees-half-a-payload.md) | `attach-card-text.py` replaces the payload by rename | Sonnet 5.5 | Terra | `scripts/card-text-atomic-smoke.sh` |
+| [154](154-the-ticker-and-the-dashboard-read-one-way.md) | The ticker reads transcripts through the library | Terra | Opus 5.5 | `scripts/ticker-shared-reader-smoke.sh` |
+| [152](152-a-smoke-can-say-it-freezes-nothing.md) | An explicit opt-out marker for unfrozen smokes; 33 marked | Terra | Opus 5.5 | `scripts/contract-optout-smoke.sh` |
+
+Queue order 153, 154, 152. 153 and 154 have disjoint claims and alternate
+worker families, so worker 154 may overlap verifier 153. 152 is serial and
+last: its sweep touches 33 smoke files. Planning allowance 9M tokens.
+
 ## Run totals card 151, designed 2026-10-11
 
 **Queued 2026-10-11, gated on 150.** The operator asked for the run's totals
