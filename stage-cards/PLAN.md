@@ -380,6 +380,19 @@ leaves that threshold alone on purpose. On a 145 FAIL, requeue through the
 the checkout is the live toolchain, so a half-landed flag change would hit
 the very next claude dispatch.
 
+## Live stage figures card 150, designed 2026-10-11
+
+**Queued 2026-10-11.** After 149 landed the operator looked at the stages
+table, not the agents table, and saw an in-flight stage read 0 tokens beside
+an 8.15M transcript. The TUI run row already moved; its agents row and
+detail pane printed `n/a` for every CLI dispatch.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [150](150-the-table-ticks-while-it-burns.md) | In-flight stage figures add the live figure to the settled ones in the web stages table and every TUI pane | Sol | Opus 5.5 | `scripts/live-stage-tokens-smoke.sh` |
+
+Single card, queued under the drain opened for 149. Planning allowance 6M.
+
 ## Burn timeline card 149, designed 2026-10-11
 
 **Queued 2026-10-11.** The operator asked to watch an agent burn tokens in
