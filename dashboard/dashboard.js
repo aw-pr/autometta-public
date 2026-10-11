@@ -208,6 +208,19 @@
     return { worker: worker, verifier: verifier, total: total, logged: total > 0 };
   }
 
+  function liveAgentTokens(agent) {
+    if (agent.live_usage) {
+      var sdkTokens = Number(agent.live_usage.input_tokens || 0) +
+        Number(agent.live_usage.output_tokens || 0);
+      return isFinite(sdkTokens) ? sdkTokens : null;
+    }
+    if (agent.stage_tokens_status === "counted" && agent.stage_tokens != null) {
+      var transcriptTokens = Number(agent.stage_tokens);
+      return isFinite(transcriptTokens) ? transcriptTokens : null;
+    }
+    return null;
+  }
+
   function stageTokenCells(repo, stage) {
     var spend = stageSpend(repo, stage);
     var liveByRole = { worker: 0, verifier: 0 };
@@ -215,14 +228,8 @@
     (repo.agents || []).forEach(function (agent) {
       if (agent.stage_id !== stage.id ||
           !Object.prototype.hasOwnProperty.call(liveByRole, agent.role)) return;
-      var tokens = null;
-      if (agent.live_usage) {
-        tokens = Number(agent.live_usage.input_tokens || 0) +
-          Number(agent.live_usage.output_tokens || 0);
-      } else if (agent.stage_tokens_status === "counted" && agent.stage_tokens != null) {
-        tokens = Number(agent.stage_tokens);
-      }
-      if (tokens == null || !isFinite(tokens)) return;
+      var tokens = liveAgentTokens(agent);
+      if (tokens == null) return;
       liveByRole[agent.role] += tokens;
       hasLive[agent.role] = true;
     });
@@ -241,6 +248,44 @@
         cls: "num"
       };
     });
+  }
+
+  function runTotals(repo) {
+    var run = repo.current_run;
+    if (!run) return "";
+    var stages = run.stages || [];
+    var stageIds = Object.create(null);
+    var completed = 0;
+    stages.forEach(function (stage) {
+      stageIds[stage.id] = true;
+      if (stage.status === "completed") completed += 1;
+    });
+    var tokens = Number(run.tokens_total || 0);
+    var live = false;
+    (repo.agents || []).forEach(function (agent) {
+      if (!stageIds[agent.stage_id]) return;
+      var agentTokens = liveAgentTokens(agent);
+      if (agentTokens == null) return;
+      tokens += agentTokens;
+      live = true;
+    });
+    var cost = Number(run.cost_usd_est || 0);
+    if (!isFinite(cost)) cost = 0;
+    return '<div class="run-total' + (live ? " live" : "") + '">' +
+      '<span class="run-repo">' + esc(repo.name || "repo") + "</span>" +
+      '<span class="run-id">' + esc(run.id || "current run") + "</span>" +
+      '<span>' + completed + " of " + stages.length + " stages done</span>" +
+      '<span class="run-tokens">' + fmtInt(tokens) + " tokens</span>" +
+      '<span>$' + cost.toFixed(2) + " settled</span></div>";
+  }
+
+  function renderRunTotals(repos) {
+    var lines = [];
+    repos.forEach(function (repo) {
+      var line = runTotals(repo);
+      if (line) lines.push(line);
+    });
+    document.getElementById("run-totals").innerHTML = lines.join("");
   }
 
   // A stage that never completed still happened, and dating it by when it was
@@ -924,6 +969,7 @@
     renderFailures(data.spend || {}, names);
     renderSpend(data.spend || {}, names);
     renderQuota(repos);
+    renderRunTotals(repos);
     renderStagesTable(repos);
     drawReposChart(repos, stages);
     drawStagesChart(stages);

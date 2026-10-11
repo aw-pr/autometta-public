@@ -147,6 +147,11 @@ nothing. These sums are display only: the settled source, unavailable title
 and cost-log `*` mark are unchanged, and the charts continue to use settled
 figures only.
 
+The run totals strip above the Per stage table shows each visible repo's current
+run, completed-stage count, settled cost and token total. Tokens come from
+`current_run.tokens_total` plus live SDK usage or a counted transcript total for
+agents on that run; the live addition and its mark are display only.
+
 `burn.bucket_seconds` starts at 60. Each item in `burn.points` carries the
 bucket start `t` and the cumulative `tokens`, cache-read `cached` and `turns`
 figures at the last usage record in that bucket. The reader retains Claude's
