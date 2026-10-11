@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # claude-model-routing-smoke.sh — offline check that a Claude identity runs on
 # the weights its slug names, and that tier defaults serve only identities
 # without one. Exit 0 on all-pass, 1 on any assertion failure.

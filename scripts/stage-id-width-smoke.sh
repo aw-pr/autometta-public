@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # stage-id-width-smoke.sh: a stage id may carry more than two digits.
 # No auth, no network, no token spend.
 #

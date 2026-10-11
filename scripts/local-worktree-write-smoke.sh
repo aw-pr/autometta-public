@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 set -euo pipefail
 IFS=$'\n\t'
 

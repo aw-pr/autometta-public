@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # cost-log-smoke.sh — offline check of the cost-log producer.
 #
 # Exercises scripts/cost-log.sh end to end against synthetic logs in a

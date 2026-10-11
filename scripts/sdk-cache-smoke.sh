@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # Smoke test for verify-sdk.py prompt caching.
 #
 # Runs verify-sdk.py twice against stage 14 in quick succession. Asserts

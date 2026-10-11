@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # local-route-smoke.sh — offline check for the codex `local` auth route
 # (card 45): dispatch against Ollama-served local weights instead of the
 # subscription or api routes.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # advisor-order-smoke.sh — offline check of the advisor ordering guard (#66714).
 #
 # The Fable-as-advisor verifier requires the advisor to be no weaker than the

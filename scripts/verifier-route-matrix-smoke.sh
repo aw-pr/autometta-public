@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # verifier-route-matrix-smoke.sh: a surface and its credential are one route.
 # No auth, no network, no token spend.
 #

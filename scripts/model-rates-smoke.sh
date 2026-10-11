@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # model-rates-smoke.sh — offline check that cost estimates price the model an
 # identity actually runs on, falling back to its tier only for an unlisted
 # model, and that local weights stay free. Exit 0 on all-pass, 1 on failure.

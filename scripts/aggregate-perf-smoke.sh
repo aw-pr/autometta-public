@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # aggregate-perf-smoke.sh: the shape guard on scripts/aggregate-dashboard.sh.
 #
 # Two claims, both offline and both about shape rather than about this machine.

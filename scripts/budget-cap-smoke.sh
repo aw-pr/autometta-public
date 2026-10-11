@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # budget-cap-smoke.sh — offline check that a spend cap actually stops dispatch.
 #
 # The defect this guards (card 31): budget_check_caps was consulted exactly

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # state-writable-smoke.sh — offline check that a sandboxed codex role is told
 # the shared state dir is writable.
 #

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # requeue-reset-smoke.sh: offline proof that a re-queued stage carries no
 # counter from its prior attempt. No auth, no network, no token spend.
 #

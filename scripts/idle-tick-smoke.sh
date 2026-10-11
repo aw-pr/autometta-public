@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # idle-tick-smoke.sh — offline check that the tick budget bounds work, not
 # polling, and that --reset-halt actually recovers a capped repo.
 #

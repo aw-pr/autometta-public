@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # adjudicated-spend-smoke.sh: a stage the ledger landed is not reported as
 # lost work. No auth, no network, no token spend.
 #

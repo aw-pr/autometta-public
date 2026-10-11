@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # verifier-bake-off-route-smoke.sh — offline check of card 46's route
 # isolation: a cloud candidate's dispatch names ONLY its own provider's
 # env var, a local candidate never touches op-fetch at all, and every

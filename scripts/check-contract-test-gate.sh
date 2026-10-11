@@ -10,6 +10,10 @@ IFS=$'\n\t'
 #   ... assertions ...
 #   AUTOMETTA-CONTRACT-END
 #
+# A regression smoke that no stage card freezes instead declares:
+#
+#   AUTOMETTA-CONTRACT-NONE reason=<short reason>
+#
 # The matching stage card records the block digest on an "Assertions digest:"
 # line. The block and the card cannot move independently: a changed assertion
 # changes the digest, and a changed digest must be re-recorded in the card, or
@@ -27,6 +31,7 @@ IFS=$'\n\t'
 
 MARKER_BEGIN='AUTOMETTA-CONTRACT-BEGIN'
 MARKER_END='AUTOMETTA-CONTRACT-END'
+MARKER_NONE='AUTOMETTA-CONTRACT-NONE'
 
 warn() { printf 'contract-gate: %s\n' "$*" >&2; }
 die()  { warn "$*"; exit 1; }
@@ -125,7 +130,7 @@ cmd_print() {
 }
 
 cmd_gate() {
-  local mode="$1" changed untracked f card recomputed declared violations=0 declarations naming_card content
+  local mode="$1" changed untracked f card recomputed declared violations=0 declarations naming_card naming_cards content
 
   case "$mode" in
     staged)
@@ -167,11 +172,36 @@ EOF
   while IFS= read -r f; do
     [ -n "$f" ] || continue
 
-    naming_card="$(printf '%s\n' "$declarations" | awk -F'\t' -v f="$f" '$1 == f { print $2; exit }')"
+    naming_cards="$(printf '%s\n' "$declarations" | awk -F'\t' -v f="$f" '$1 == f { print $2 }')"
+    naming_card="$(printf '%s\n' "$naming_cards" | awk 'NF { print; exit }')"
     case "$f" in
       scripts/*-smoke.sh) ;;
       *) [ -n "$naming_card" ] || continue ;;
     esac
+
+    if "$content" "$f" | grep -q "$MARKER_NONE"; then
+      if "$content" "$f" | grep -q "$MARKER_BEGIN"; then
+        warn "$f: cannot carry both $MARKER_NONE and $MARKER_BEGIN markers"
+        violations=$((violations + 1)); continue
+      fi
+
+      if ! "$content" "$f" | grep -Eq "^[[:space:]]*#[[:space:]]*$MARKER_NONE[[:space:]]+reason=[^[:space:]]"; then
+        warn "$f: $MARKER_NONE marker needs a reason=<text>"
+        violations=$((violations + 1)); continue
+      fi
+
+      while IFS= read -r card; do
+        [ -n "$card" ] || continue
+        declared="$("$content" "$card" | declared_digest || true)"
+        if [ -n "$declared" ]; then
+          warn "$f: $MARKER_NONE contradicts $card, which declares $declared"
+          violations=$((violations + 1)); break
+        fi
+      done <<EOF
+$naming_cards
+EOF
+      continue
+    fi
 
     if "$content" "$f" | grep -q "$MARKER_BEGIN"; then
       card="$("$content" "$f" | card_path_from_marker)"
