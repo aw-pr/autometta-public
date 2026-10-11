@@ -113,3 +113,26 @@ changed deliverables, the exact smoke commands and their results, and any
 criterion you could not satisfy with why. Do not self-verify or land your
 own branch. The verifier writes `state/verifiers/152-a-smoke-can-say-it-freezes-nothing.json` under the
 existing verifier contract, giving a criterion-by-criterion verdict.
+
+## Re-brief after attempt 1 (2026-10-11)
+
+Attempt 1 passed criteria 1, 3, 4 and 5 and failed criterion 2:
+`check-contract-test-gate.sh --worktree` refused `scripts/state-writable-smoke.sh`,
+because card 101's Test file line named it beside `effort-flags-smoke.sh`
+with one digest that belongs only to the latter. That was a defect in card
+101's metadata, not in the worker's gate, and the orchestrator has corrected
+card 101 on `dev`. With that correction, attempt 1's tree passes the gate
+and the frozen smoke (checked by the orchestrator).
+
+Attempt 1 is pinned at `a7e2b1bdcc0624737220487f4bf6de06a9125ace` on
+`wip/152-a-smoke-can-say-it-freezes-nothing-attempt-1`. Start from it
+(`git cherry-pick a7e2b1bdcc0624737220487f4bf6de06a9125ace`) rather than
+from scratch. Then run, and report in the envelope, every acceptance
+command you can run in your sandbox, `scripts/check-contract-test-gate.sh
+--worktree` first: attempt 1's envelope said its smoke commands were not
+run.
+
+Cards 97, 99 and 32 name `budget-cap-smoke.sh`, `verifier-route-matrix-smoke.sh`
+and `cost-log-smoke.sh` with prose or placeholder digests. None of those
+files has ever carried a frozen block, so the opt-out describes them
+truthfully; leave them swept.
