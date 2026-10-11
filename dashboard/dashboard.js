@@ -208,6 +208,41 @@
     return { worker: worker, verifier: verifier, total: total, logged: total > 0 };
   }
 
+  function stageTokenCells(repo, stage) {
+    var spend = stageSpend(repo, stage);
+    var liveByRole = { worker: 0, verifier: 0 };
+    var hasLive = { worker: false, verifier: false };
+    (repo.agents || []).forEach(function (agent) {
+      if (agent.stage_id !== stage.id ||
+          !Object.prototype.hasOwnProperty.call(liveByRole, agent.role)) return;
+      var tokens = null;
+      if (agent.live_usage) {
+        tokens = Number(agent.live_usage.input_tokens || 0) +
+          Number(agent.live_usage.output_tokens || 0);
+      } else if (agent.stage_tokens_status === "counted" && agent.stage_tokens != null) {
+        tokens = Number(agent.stage_tokens);
+      }
+      if (tokens == null || !isFinite(tokens)) return;
+      liveByRole[agent.role] += tokens;
+      hasLive[agent.role] = true;
+    });
+    var liveTotal = liveByRole.worker + liveByRole.verifier;
+    var mark = spend.logged ? "*" : "";
+    var spendTitle = spend.unavailable
+      ? ' title="' + esc((repo.spend || {}).state_error) + '"' : "";
+    return ["worker", "verifier", "total"].map(function (role) {
+      var live = role === "total" ? hasLive.worker || hasLive.verifier : hasLive[role];
+      var extra = role === "total" ? liveTotal : liveByRole[role];
+      var value = spend[role];
+      if (live) value = Number(value || 0) + extra;
+      return {
+        html: '<span' + (live ? ' class="live"' : "") + spendTitle + ">" +
+          fmtInt(value) + mark + "</span>",
+        cls: "num"
+      };
+    });
+  }
+
   // A stage that never completed still happened, and dating it by when it was
   // dispatched is what puts a stalled run on the per-day chart at all.
   function stageWhen(stage) {
@@ -677,14 +712,7 @@
     repos.forEach(function (r) { byName[r.name] = r; });
     var cells = rows.map(function (row) {
       var s = row.stage;
-      var spend = stageSpend(byName[row.repo] || {}, s);
-      // A figure recovered from the cost log is marked, because it is a
-      // different measurement from one the stage recorded on completion.
-      var mark = spend.logged ? "*" : "";
-      // fmtInt already renders null as "-"; the title says why it is a dash
-      // rather than leaving the reader to guess at a missing number.
-      var spendTitle = spend.unavailable
-        ? ' title="' + esc(byName[row.repo].spend.state_error) + '"' : "";
+      var tokenCells = stageTokenCells(byName[row.repo] || {}, s);
       var cardPath = s.card || ("stage-cards/" + s.id + ".md");
       // The same answer the TUI's detail pane gives: the card is the prompt the
       // worker was handed, so "why did it do that" is usually read from it
@@ -699,9 +727,9 @@
         { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
         shortIdentity(s.worker),
         shortIdentity(s.verifier),
-        { html: '<span' + spendTitle + ">" + fmtInt(spend.worker) + mark + "</span>", cls: "num" },
-        { html: '<span' + spendTitle + ">" + fmtInt(spend.verifier) + mark + "</span>", cls: "num" },
-        { html: '<span' + spendTitle + ">" + fmtInt(spend.total) + mark + "</span>", cls: "num" },
+        tokenCells[0],
+        tokenCells[1],
+        tokenCells[2],
         s.started_at || "",
         s.completed_at || ""
       ] };

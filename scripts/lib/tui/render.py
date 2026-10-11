@@ -179,21 +179,38 @@ def relative_age(stamp, now):
     return short_secs(max(0, now - epoch)) if epoch is not None else "?"
 
 
+def agent_live_tokens(agent):
+    live_usage = agent.get("live_usage")
+    if isinstance(live_usage, dict):
+        return (int(live_usage.get("input_tokens") or 0)
+                + int(live_usage.get("output_tokens") or 0))
+    if (agent.get("stage_tokens_status") == "counted"
+            and agent.get("stage_tokens") is not None):
+        return int(agent["stage_tokens"])
+    if agent.get("stage_tokens") is None and agent.get("live_total_tokens") is not None:
+        return int(agent["live_total_tokens"])
+    return None
+
+
 def stage_total(payload, stage_id):
-    for agent in payload.get("agents") or []:
-        if agent.get("stage_id") == stage_id:
-            value = agent.get("live_total_tokens")
-            if value is None:
-                value = agent.get("stage_tokens")
-            if value is not None:
-                return int(value)
+    settled = None
     for row in (payload.get("spend") or {}).get("by_stage") or []:
         if row.get("stage_id") == stage_id:
-            return int(row.get("tokens") or 0)
-    for stage in payload.get("stages") or []:
-        if stage.get("id") == stage_id:
-            return int(stage.get("tokens") or 0)
-    return 0
+            settled = int(row.get("tokens") or 0)
+            break
+    if settled is None:
+        for stage in payload.get("stages") or []:
+            if stage.get("id") == stage_id:
+                settled = int(stage.get("tokens") or 0)
+                break
+    live = 0
+    for agent in payload.get("agents") or []:
+        if agent.get("stage_id") != stage_id:
+            continue
+        tokens = agent_live_tokens(agent)
+        if tokens is not None:
+            live += tokens
+    return (settled or 0) + live
 
 
 def current_run(payload):
@@ -983,7 +1000,8 @@ def agent_lines(state, inner_width=None):
                 " stale" if not live_usage.get("updated_at") else "",
             )
         else:
-            burn = "n/a"
+            live_tokens = agent_live_tokens(agent)
+            burn = tick_tokens(live_tokens) if live_tokens is not None else "n/a"
         activity = agent.get("activity")
         if isinstance(activity, dict) and inner_width:
             base = "● %s %s %s %s %s/%s" % (
@@ -1073,6 +1091,33 @@ def sparkline_and_rate(state, stage_id):
     bars = "▁▂▃▄▅▆▇█"
     peak = max(deltas) or 1
     spark = "".join(bars[min(7, int(value * 7 / peak))] for value in deltas[-8:])
+    return spark, rate
+
+
+def burn_series_sparkline_and_rate(agent):
+    raw_points = (agent.get("burn") or {}).get("points") or []
+    points = []
+    for point in raw_points:
+        try:
+            points.append((float(point["t"]), int(point["tokens"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    points.sort(key=lambda point: point[0])
+    if len(points) < 2:
+        return None
+    deltas = [max(0, after[1] - before[1])
+              for before, after in zip(points, points[1:])]
+    bars = "▁▂▃▄▅▆▇█"
+    peak = max(deltas) or 1
+    spark = "".join(bars[min(7, int(value * 7 / peak))] for value in deltas[-8:])
+    newest = points[-1]
+    cutoff = newest[0] - 300
+    anchor = next(
+        (point for point in reversed(points[:-1]) if point[0] <= cutoff),
+        points[0],
+    )
+    minutes = (newest[0] - anchor[0]) / 60
+    rate = int(round((newest[1] - anchor[1]) / minutes)) if minutes > 0 else 0
     return spark, rate
 
 
@@ -1183,8 +1228,16 @@ def detail_lines(state, inner_width, inner_height=None):
             " stale" if not live_usage.get("updated_at") else "",
         )
     else:
-        live_text = "n/a"
-    spark, rate = sparkline_and_rate(state, stage.get("id"))
+        live_tokens = agent_live_tokens(agent)
+        live_text = ("%s transcript" % tick_tokens(live_tokens)
+                     if live_tokens is not None else "n/a")
+    burn_series = burn_series_sparkline_and_rate(agent)
+    if burn_series is None:
+        spark, rate = sparkline_and_rate(state, stage.get("id"))
+        burn_label = "burn last 8 polls"
+    else:
+        spark, rate = burn_series
+        burn_label = "burn this run"
     lines = [
         content_line("%s %s  %s" % (glyph, stage.get("id"), status), [(0, 1, ACTIVE if glyph == "▶" else NORMAL)]),
         content_line(""),
@@ -1218,11 +1271,9 @@ def detail_lines(state, inner_width, inner_height=None):
             tick_tokens(usage.get("output_tokens", 0)), usage.get("cost_usd_est", 0) or 0)),
         content_line("live      %s" % live_text,
                      [(10, 10 + len(live_text), ACTIVE)] if live_text != "n/a" else [(10, 13, DIM)]),
-        # The burn rate stays on short_tokens. It is a per-minute figure in the
-        # low thousands, so it never reaches the millions this change is about,
-        # and 14.4K/min carries a decimal that 14k/min would floor away --
-        # on the one number here whose movement is the point.
-        content_line("%s  burn last 8 polls (%s/min)" % (spark, short_tokens(rate))),
+        # short_tokens keeps either burn source compact enough for the detail
+        # pane while retaining the decimal that makes small changes legible.
+        content_line("%s  %s (%s/min)" % (spark, burn_label, short_tokens(rate))),
     ])
     lines = wrap_content_lines(lines, inner_width)
     capacity = None if inner_height is None else max(0, inner_height - len(lines))

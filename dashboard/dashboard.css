@@ -90,6 +90,13 @@ table.stages th, table.stages td {
 }
 table.stages th { color: var(--muted); font-weight: 500; }
 table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.stages td.num .live { color: var(--accent); font-weight: 600; }
+table.stages td.num .live::after {
+  content: " live";
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
 
 .burn-cell {
   display: grid;

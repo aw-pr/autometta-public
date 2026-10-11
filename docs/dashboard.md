@@ -135,10 +135,17 @@ SDK verifiers write cumulative `live_input_tokens`, `live_output_tokens` and
 `live_updated_at` into their own `state/active-agents/<pid>.json` registry
 entry as usage arrives. The aggregator copies those fields to an in-flight
 agent's `live_usage` object in `data.json`; it omits that object when the
-registry has no SDK figure. The dashboard labels a present value `LIVE`. For a
-CLI dispatch it instead uses the transcript total and the agent's `burn`
+registry has no SDK figure. The agents table labels a present value `LIVE`.
+For a CLI dispatch it instead uses the transcript total and the agent's `burn`
 object, or shows `waiting` / `n/a` when no count is available rather than
 treating absence as zero.
+
+While a stage is in flight, its stages-table role column adds that live SDK or
+transcript figure to the settled figure, and the total column does the same.
+Both cells carry a `live` label. A role without a figure adds and marks
+nothing. These sums are display only: the settled source, unavailable title
+and cost-log `*` mark are unchanged, and the charts continue to use settled
+figures only.
 
 `burn.bucket_seconds` starts at 60. Each item in `burn.points` carries the
 bucket start `t` and the cumulative `tokens`, cache-read `cached` and `turns`
@@ -169,8 +176,9 @@ atomic rename, the next seam regeneration, and the page poll. `--watch` and
 `--serve` regenerate the dashboard every five seconds by default; the fleet
 snapshot job defaults to 120 seconds; the TUI reads the per-repo seam every
 five seconds. A missing or stale registry timestamp only weakens the display.
-Settled accounting stays in `state/cost-log.jsonl`: `burn` is a display figure
-and is never added to billing totals or counted again when the dispatch lands.
+Settled accounting stays in `state/cost-log.jsonl`: live figures and `burn` are
+display only and are never added to billing totals or counted again when the
+dispatch lands.
 
 `autometta attach /path/to/autometta` starts one background refresh job in the
 tmux session. Override its 120-second interval with

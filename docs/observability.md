@@ -72,6 +72,14 @@ The `[3] Agents` panel shows live agents followed by the queued next stages.
 Queued rows come from the aggregate payload's `queue` field and are display-only;
 the cursor remains confined to live agents.
 
+The TUI polls the same `aggregate-dashboard.sh --repo` seam as the repo ticker
+every five seconds, but does so on a background thread so input remains
+responsive during a read. The footer clock and adjacent pulse advance once per
+second between those polls. They prove that the TUI renderer is alive, not that
+the tick loop is running or that its data is fresh. A still pulse means the TUI
+process itself is wedged; tick health remains visible through the dashboard's
+state and freshness readings.
+
 For each readable live transcript, the panel also shows `activity.turns`, the
 latest tool, its age and `last_detail`; the dashboard also includes
 `activity.tool_calls`. `scripts/lib/transcript-tokens.py` derives those fields
@@ -91,14 +99,13 @@ Claude readings, so current totals can be lower than old observations. The
 series serves the live display only; settled accounting remains in
 `state/cost-log.jsonl`.
 
-It polls the same
-`aggregate-dashboard.sh --repo` seam as the repo ticker every five seconds,
-but does so on a background thread so input remains responsive during a read.
-The footer clock and adjacent pulse advance once per second between those
-polls. They prove that the TUI renderer is alive, not that the tick loop is
-running or that its data is fresh. A still pulse means the TUI process itself
-is wedged; tick health remains visible through the dashboard's state and
-freshness readings.
+The run row adds the live SDK or counted transcript figure to its settled stage
+total. The agents row shows that figure, the detail pane names a transcript
+figure on its `live` line, and a transcript `burn` series replaces the local
+eight-poll history with `burn this run`. SDK figures retain the `LIVE` label.
+These figures refresh with the poll and are display only; they do not change
+the cost log, billing totals or state.
+
 Card 74 replaced per-row process forks and repeated file scans in that seam,
 taking the measured per-repo read from 37 seconds to under one second; a
 five-second poll now represents a fresh snapshot rather than a queue of stale
