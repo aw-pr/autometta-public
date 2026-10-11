@@ -380,6 +380,18 @@ leaves that threshold alone on purpose. On a 145 FAIL, requeue through the
 the checkout is the live toolchain, so a half-landed flag change would hit
 the very next claude dispatch.
 
+## Run totals card 151, designed 2026-10-11
+
+**Queued 2026-10-11, gated on 150.** The operator asked for the run's totals
+at the top of the Per stage table, ticking like the rows. The TUI status
+panel already carries them; the web page had none.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [151](151-the-run-totals-tick-above-the-table.md) | A run-totals line above the stages table: settled plus live tokens, settled cost, stages done | Sol | Opus 5.5 | `scripts/run-totals-smoke.sh` |
+
+Gated on 150 because both edit `dashboard.js`. Planning allowance 4M.
+
 ## Live stage figures card 150, designed 2026-10-11
 
 **Queued 2026-10-11.** After 149 landed the operator looked at the stages
