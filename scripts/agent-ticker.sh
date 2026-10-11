@@ -297,9 +297,9 @@ PY
   if [[ -f "$heartbeat_path" ]]; then
     python3 - "$heartbeat_path" "$active_dir" \
       "${AUTOMETTA_CLAUDE_PROJECTS:-$HOME/.claude/projects}" \
-      "${AUTOMETTA_CODEX_SESSIONS:-$HOME/.codex/sessions}" <<'PY' || true
-import calendar, glob, json, os, re, sys
-from datetime import datetime, timezone
+      "${AUTOMETTA_CODEX_SESSIONS:-$HOME/.codex/sessions}" \
+      "$script_dir/lib/transcript-tokens.py" <<'PY' || true
+import importlib.util, json, os, re, sys
 try:
     with open(sys.argv[1]) as fh:
         rep = json.load(fh)
@@ -307,13 +307,12 @@ except Exception:
     print("  (heartbeat.json unreadable)")
     sys.exit(0)
 entries = rep.get("entries", [])
-active_dir, claude_root, codex_root = sys.argv[2:]
-
-def epoch(ts):
-    try:
-        return calendar.timegm(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").timetuple())
-    except Exception:
-        return 0
+active_dir, claude_root, codex_root, transcript_library = sys.argv[2:]
+spec = importlib.util.spec_from_file_location("transcript_tokens", transcript_library)
+if spec is None or spec.loader is None:
+    raise RuntimeError("cannot load transcript reader")
+reader = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(reader)
 
 def registry(entry):
     path = os.path.join(active_dir, "%s.json" % entry.get("pid"))
@@ -321,107 +320,6 @@ def registry(entry):
         with open(path) as fh: return json.load(fh), path
     except Exception:
         return {}, path
-
-def transcript(entry, reg):
-    cached = reg.get("transcript_path")
-    if cached and os.path.isfile(cached):
-        return cached
-    cwd = reg.get("working_dir")
-    if not cwd:
-        return None
-    started = epoch(reg.get("started_at") or "")
-    family = entry.get("family")
-    candidates = []
-    if family == "claude":
-        slug = re.sub(r"[^A-Za-z0-9]", "-", cwd)
-        candidates = glob.glob(os.path.join(claude_root, slug, "*.jsonl"))
-    elif family == "codex":
-        paths = glob.glob(os.path.join(codex_root, "*", "*", "*", "rollout-*.jsonl"))
-        paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-        for path in paths[:200]:
-            try:
-                if os.path.getmtime(path) < started - 120:
-                    continue
-                with open(path, errors="replace") as fh:
-                    meta = json.loads(fh.readline()).get("payload") or {}
-                if meta.get("cwd") == cwd:
-                    candidates.append(path)
-            except Exception:
-                pass
-    candidates = [p for p in candidates if os.path.getmtime(p) >= started - 120]
-    if candidates:
-        reg["transcript_path"] = max(candidates, key=os.path.getmtime)
-        return reg["transcript_path"]
-    return None
-
-def transcript_tokens(path, family, reg):
-    if not path:
-        return None
-    try:
-        with open(path, "rb") as fh:
-            fh.seek(0, 2); size = fh.tell()
-            if family == "claude":
-                if reg.get("transcript_path") != path:
-                    reg["transcript_path"], reg["transcript_offset"], reg["transcript_tokens"] = path, 0, 0
-                    reg["transcript_tokens_found"] = False
-                    reg["transcript_last_message_id"] = None
-                offset = min(int(reg.get("transcript_offset") or 0), size)
-                total = int(reg.get("transcript_tokens") or 0)
-                previously_found = bool(reg.get("transcript_tokens_found"))
-                last_message_id = reg.get("transcript_last_message_id")
-                fh.seek(offset); chunk = fh.read(16 * 1024 * 1024)
-                cut = chunk.rfind(b"\n")
-                if cut < 0:
-                    return (total if previously_found else None), offset < size
-                consumed = chunk[:cut + 1]
-                data = consumed.decode("utf-8", "replace")
-                reg["transcript_offset"] = offset + len(consumed)
-            else:
-                fh.seek(max(0, size - 16 * 1024 * 1024))
-                data = fh.read().decode("utf-8", "replace")
-                if size > 16 * 1024 * 1024: data = data.split("\n", 1)[-1]
-                total = 0
-    except OSError:
-        return None, False
-    found = False
-    for line in data.splitlines():
-        if family == "codex" and '"total_token_usage"' not in line:
-            continue
-        try:
-            doc = json.loads(line)
-        except ValueError:
-            continue
-        if family == "codex":
-            info = doc.get("payload") or doc
-            usage = info.get("total_token_usage") or (info.get("info") or {}).get("total_token_usage")
-            if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
-                total = max(total, usage["total_tokens"]); found = True
-        else:
-            message = doc.get("message") or {}
-            message_id = message.get("id") if doc.get("type") == "assistant" else None
-            duplicate = bool(message_id) and message_id == last_message_id
-            usage = (doc.get("message") or {}).get("usage") or doc.get("usage")
-            if isinstance(usage, dict) and not duplicate:
-                values = [usage.get(k) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]
-                if any(isinstance(v, int) for v in values):
-                    total += sum(v for v in values if isinstance(v, int)); found = True
-            if doc.get("type") == "assistant":
-                last_message_id = message_id
-    if family == "claude":
-        reg["transcript_tokens"] = total
-        reg["transcript_tokens_found"] = found or previously_found
-        reg["transcript_last_message_id"] = last_message_id
-        return (total if reg["transcript_tokens_found"] else None), reg.get("transcript_offset", 0) < size
-    return (total if found else None), False
-
-def save_registry(path, reg):
-    try:
-        tmp = path + ".ticker-tmp"
-        with open(tmp, "w") as fh:
-            json.dump(reg, fh, indent=2, sort_keys=True); fh.write("\n")
-        os.replace(tmp, path)
-    except OSError:
-        pass
 
 def log_tokens(path):
     try:
@@ -438,9 +336,16 @@ else:
     for e in entries:
         flags = ",".join(e.get("flags", [])) or "fresh"
         reg, reg_path = registry(e)
-        path = transcript(e, reg)
-        running_tokens, catching_up = transcript_tokens(path, e.get("family"), reg) if path else (None, False)
-        if path: save_registry(reg_path, reg)
+        agent = dict(e, working_dir=reg.get("working_dir"), started_at=reg.get("started_at"))
+        path = reader.resolve_transcript(agent, reg, claude_root, codex_root)
+        running_tokens, _, _ = reader.transcript_metrics(path, e.get("family"), reg) if path else (None, None, None)
+        catching_up = False
+        if path and e.get("family") == "claude":
+            try:
+                catching_up = int(reg.get("transcript_offset") or 0) < os.path.getsize(path)
+            except OSError:
+                pass
+        if path: reader.save_registry(reg_path, reg)
         if running_tokens is None:
             running_tokens = log_tokens(e.get("log_path", ""))
         elapsed = int(e.get("elapsed_seconds") or 0)

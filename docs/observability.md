@@ -87,6 +87,7 @@ from the transcript bytes it already reads, caches incremental Claude counts in
 the agent registry, and returns them through `aggregate-dashboard.sh --repo` to
 the panel. Missing activity stays blank. The per-repo path refreshes every five
 seconds; a fleet dashboard can be up to the 120-second snapshot interval behind.
+The ticker and dashboard share that one transcript reader and one registry state.
 
 The same per-repo seam gives each live agent a `burn` object. Its
 `bucket_seconds` starts at 60 and each `points` item records bucket-start `t`
