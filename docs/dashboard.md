@@ -74,6 +74,10 @@ The dashboard files live at `~/.autometta/dashboard/`:
 - `dashboard.css` - dark theme
 - `vendor/chart.min.js` - Chart.js 4.4.0, vendored at install time
 
+Both the aggregator and `scripts/attach-card-text.py` replace `data.json` and
+`data.js` by rename, so a reader sees the old payload or the new one, never
+part of either.
+
 No external network access happens at render time. Chart.js is fetched
 once at install time (`scripts/install-homebrew-local.sh`) with a pinned
 SHA256 hash; a mismatch fails the install loudly.
