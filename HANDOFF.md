@@ -1,6 +1,15 @@
 # Handover
 
-**Status (2026-10-12 18:30 BST):** 155 and 156 landed first time; 157 re-briefed and 158 queued, both on Codex seats (Terra worker, Sol verifier) because the Claude session limit is spent. Next session: a Codex orchestrator picks up the open items below.
+> **Status (2026-10-12):** 157 and 158 passed, landed and are pushed; card-review and oracle are registered and installed. Next: review emergence-lab cards 126 and 127 before queueing.
+
+## Recent activity (2026-10-12 oai-overage-completion)
+
+- With the Claude session exhausted, the approved same-family pair completed the serial run: Codex GPT-5.6 Terra wrote and GPT-5.6 Sol verified. The re-brief and frozen acceptance criteria were unchanged.
+- 157 passed all seven criteria and landed as `9d7b268`; it adds the read-only `scripts/card-lint.sh` and documents strict pre-queue linting.
+- 158 passed all four criteria and landed as `758d0ff`; it confines failed-work preservation to physical paths inside the run worktree, preventing the prior system-disk walk.
+- Both commits are pushed to `origin/dev`; `autometta status --repo .` is idle with no pause or failure.
+- The local OAI guard is measured in credits, not pounds: its 450-credit stop is approximately £20. It reported an account-wide 218.52-credit delta from its 10 October baseline, unchanged during this run. Treat this telemetry as an estimate, not an invoice.
+- `skills/autometta-oracle/` and `skills/autometta-card-review/` are committed in Autometta and distributed through mcp-hub to the Claude Code and Codex skill directories.
 
 ## Recent activity (2026-10-12 card-quality-batch)
 
@@ -30,23 +39,14 @@ before queueing, a baseline run of every acceptance command.
 
 Open items for the next session (any family):
 
-1. Mind 158 then 157 to landing (`autometta status --repo .`). Never put an
-   absolute path in backticks in a card's Deliverables until 158 lands.
-2. After 157 lands: commit `skills/autometta-oracle/` and
-   `skills/autometta-card-review/` (untracked drafts, written for this
-   batch), symlink each into `../mcp-hub/skills/`, add both to
-   `../mcp-hub/registry/control-plane.json` beside `autometta-run-design`
-   (platforms claude_code and codex), run `scripts/sync-all-platforms.sh`
-   in mcp-hub, and confirm both appear under `~/.claude/skills` and
-   `~/.agents/skills`.
-3. Before 09:00 BST: run the card-review procedure and
+1. Before 09:00 BST: run the card-review procedure and
    `scripts/card-lint.sh --strict` on emergence-lab cards 126 and 127. Both
    lack the Open decisions line and a Contract test section; 127's input
    `docs/audits/126-logistic-mandelbrot-look-pack.md` exists only once 126
    lands, so 127 is not queued before then. Check the gate's exit-2 message
    is unchanged before `autometta refresh-repo` on emergence-lab: 126's
    criterion 1 depends on it.
-4. Follow-ups, not carded: wire card-lint into `add-stage.sh` once it has
+2. Follow-ups, not carded: wire card-lint into `add-stage.sh` once it has
    run clean on a batch; `dependency-graph-smoke.sh` errors on this machine
    for want of the jsonschema module (on dev too).
 
