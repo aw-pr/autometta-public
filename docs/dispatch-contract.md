@@ -210,6 +210,16 @@ The gate distinguishes three states for a staged file, not two. A file no card n
 
 A regression smoke that no stage card freezes may instead declare `AUTOMETTA-CONTRACT-NONE reason=<text>` on a comment line of its own. This opt-out is for regression suites, not a test a card relies on as its contract: the gate rejects a file that carries both markers, omits the reason, or is named by a card with a real `sha256:` assertions digest.
 
+### Card lint
+
+`scripts/card-lint.sh` reads stage cards without changing them and checks for
+unfilled placeholders, unresolved decisions, unexplained same-family pairings,
+missing budgets or required headings, missing inputs, unclaimed deliverables,
+absolute home-directory paths, and invalid contract-test declarations. Its
+default mode warns and exits successfully; `--strict` refuses any card with a
+finding. Run a new card through `scripts/card-lint.sh --strict <card>` before
+passing it to `scripts/add-stage.sh`.
+
 ### When a contract test is not warranted
 
 Not every stage earns one. A pure-prose stage with no structural acceptance, a throwaway spike, or an exploratory card can state its acceptance in prose alone and leave the card's Contract test section as "None". The cost is real: authoring frozen assertions up front slows card creation, so spend it on durable behaviour, not on stages you expect to discard.
