@@ -63,15 +63,17 @@ Do not read anything else unless you need to; keep your context lean.
    - The repo root is `git -C <card's directory> rev-parse --show-toplevel`,
      or the directory the lint was started from when the card is not in a
      repository. The card's
-     repo-relative path is computed on physical paths: on macOS `/var` is
-     a symlink to `/private/var` and git reports the latter.
+     repo-relative path is computed on physical paths: on macOS the
+     temporary directory sits behind a symlink, and git reports the
+     resolved path.
    - A section is the text under a `## ` heading, matched by prefix, so
      `## Inputs (read these in your own context)` is Inputs. Prose means
      card text outside fenced code blocks (between lines starting with
      three backticks) with inline code spans removed.
-   - A path token is a backticked token that contains `/`, does not start
-     with `/` or `~`, contains no space, `*`, `<`, `>`, `$` or `(`, and
-     ends with a file extension or `/`; a trailing `:N` or `:N-M` line
+   - A path token is a backticked token that contains a slash, does not
+     start with a slash or a tilde, contains no space, asterisk, angle
+     bracket, dollar sign or opening bracket, and ends with a file
+     extension or a slash; a trailing `:N` or `:N-M` line
      reference is dropped first. A name with no slash, such as
      `AGENTS.md`, is never checked: that is deliberate, because the looser
      rule fired on good cards.
@@ -94,9 +96,9 @@ Do not read anything else unless you need to; keep your context lean.
      - `inputs`: a path token in Inputs does not exist under the repo root.
      - `claims`: Path claims is declared and a numbered Deliverables item
        whose leading backticked token is a path token names a path that is
-       neither a claimed path nor under one. Paths under `state/` and the
-       card's own path are exempt.
-     - `absolute-path`: a line contains `/Users` or `/home` immediately
+       neither a claimed path nor under one. Paths under the state directory
+       and the card's own path are exempt.
+     - `absolute-path`: a line contains /Users or /home immediately
        followed by a slash, code spans included: a backticked absolute
        path is the commonest form of the leak.
      - `contract-test`: Test file names a file (not `None`) and the file
