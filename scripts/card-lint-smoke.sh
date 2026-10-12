@@ -167,6 +167,29 @@ variant 25-samefamily-ok \
   '- **Pairing rationale:** cross-family fixture.' '- **Pairing rationale:** same-family: a mechanical rename, accepted.'
 "$lint" --strict "$repo/stage-cards/25-samefamily-ok.md" >/dev/null \
   || fail "157: a same-family pairing that says so is refused"
+# Re-brief 1: metadata values wrap, a Contract test section may say None
+# without a Test file line, code spans can use double backticks, and an
+# unreadable card is a usage error, not a crash.
+variant 35-wrapped-rationale \
+  '- **Verifier:** Claude Sonnet 5.5 <claude-sonnet-5-5@local>' '- **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>' \
+  '- **Pairing rationale:** cross-family fixture.' '- **Pairing rationale:** a mechanical rename, so a\n  same-family pairing is accepted here.'
+"$lint" --strict "$repo/stage-cards/35-wrapped-rationale.md" >/dev/null \
+  || fail "157: a same-family rationale wrapped onto a second line is not read"
+variant 36-no-test-line '- **Test file:** None' 'None' '- **Assertions digest:** None' ''
+"$lint" --strict "$repo/stage-cards/36-no-test-line.md" >/dev/null \
+  || fail "157: a Contract test section that says None without a Test file line is refused"
+variant 37-double-tick 'Fixture.' 'Write ``state/<<stage-id>>.json`` here.'
+"$lint" --strict "$repo/stage-cards/37-double-tick.md" >/dev/null \
+  || fail "157: a placeholder inside a double-backtick code span is reported"
+printf '# Stage card 38\n\377\376\n' >"$repo/stage-cards/38-unreadable.md"
+set +e
+"$lint" "$repo/stage-cards/38-unreadable.md" >"$tmp/unreadable.out" 2>&1
+unreadable_rc=$?
+set -e
+[[ "$unreadable_rc" == 2 ]] || fail "157: an unreadable card should exit 2, got $unreadable_rc"
+if grep -q Traceback "$tmp/unreadable.out"; then
+  fail "157: an unreadable card produces a traceback"
+fi
 variant 26-missing-input '- `AGENTS.md`' '- `AGENTS.md`\n- `scripts/not-there.sh`'
 expect_only 26-missing-input inputs
 variant 27-unclaimed \

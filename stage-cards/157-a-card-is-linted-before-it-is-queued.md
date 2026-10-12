@@ -4,18 +4,19 @@
 
 - **Authored:** 2026-10-12
 - **Orchestrator:** Claude Opus 5.5 <claude-opus-5-5@local>
-- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
-- **Verifier:** Claude Opus 5.5 <claude-opus-5-5@local>
+- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>
+- **Verifier:** GPT-5.6 Sol <gpt-5-6-sol@local>
 - **Base branch:** dev
 - **Run branch:** autometta/157-a-card-is-linted-before-it-is-queued
 - **Worker effort:** high
 - **Verifier effort:** high
 - **Verifier panel:** false
 - **Path claims:** scripts/card-lint.sh, docs/dispatch-contract.md
-- **Pairing rationale:** the hardest card in the batch: a parser whose
-  whole value is precision, since a lint that cries wolf gets waved
-  through. Sol writes it; Opus reads it as an adversary, in the other
-  family. The worker family alternates with 156's Claude worker.
+- **Pairing rationale:** same-family by operator decision on 2026-10-12:
+  the Claude session limit is spent, so both seats run on the Codex
+  subscription. The oracle was authored and proven by Claude, so the spec
+  side keeps its cross-family independence. Attempt 1 was Sol worker and
+  Opus verifier.
 - **Open decisions:** none
 
 ## Surfacing concern
@@ -165,7 +166,7 @@ run worktree, offline.
 ## Contract test
 
 - **Test file:** scripts/card-lint-smoke.sh
-- **Assertions digest:** `sha256:872dfd6a2c2f6ec2e847d1f5a0a125786e3e531940a6fa1cb45d4e481c3aadc4`
+- **Assertions digest:** `sha256:b6d3cfde3cab2fed1bf4df98674e6fa43821a75a16589882f05cb9c955b52ef1`
 - **Oracle proof:** fails today at its first assertion, because the script
   does not exist. A throwaway reference in a detached scratch worktree,
   then removed, passed every assertion after two fixes the worker will
@@ -203,3 +204,43 @@ existing verifier contract, giving a criterion-by-criterion verdict.
 Codex: workspace-write is all this card needs; the smoke is offline and
 builds its fixture repository under `mktemp -d`. Run every command in the
 foreground.
+
+## Re-brief 1 (2026-10-12, after attempt 1's verifier FAIL)
+
+Attempt 1 (`wip/157-a-card-is-linted-before-it-is-queued-attempt-1`,
+047567c) built a lint that passed criteria 1 to 6. Criterion 7 failed: the
+Card lint subsection was inserted inside "The gate", so the gate's
+three-states and opt-out paragraphs render under the wrong heading. The
+verifier also found four precision defects; (a) is a card defect, since
+this card never said metadata values wrap.
+
+**Restore.** Start from attempt 1:
+`git checkout 047567c -- scripts/card-lint.sh docs/dispatch-contract.md`
+in the run worktree. Name those two files only: a whole-tree checkout would
+rewind this card.
+
+**Amendments** (they extend Deliverable 1 and the criteria; everything
+else stands):
+
+1. Move the Card lint text out of "The gate" to a `### Card lint`
+   subsection just before "When a contract test is not warranted", and
+   leave every paragraph of "The gate" under its own heading.
+2. A metadata value continues on following lines that start with
+   whitespace, up to the next line that does not; every metadata read
+   (Pairing rationale, Open decisions, Path claims and the rest) uses the
+   joined value.
+3. With no Test file line, `contract-test` does not fire; the `headings`
+   check already covers a missing section.
+4. Code spans opened by a run of backticks close at the next run of the
+   same length, so a double-backtick span is removed whole.
+5. A card that cannot be read or decoded as UTF-8 exits 2 with a one-line
+   message naming the card, never a traceback.
+
+The frozen smoke now carries fixtures for amendments 2 to 5; its new
+digest is recorded above. Re-brief oracle proof: it fails on dev at its
+first assertion, and on attempt 1's preserved lint at the wrapped-rationale
+fixture; a throwaway reference with the four fixes passed every assertion.
+
+**Budget for this attempt.** Worker 20 minutes (kill at 30); verifier 20
+minutes. The verifier may re-judge criteria 1 to 6 from fresh runs rather
+than re-derive them.
