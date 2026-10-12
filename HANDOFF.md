@@ -1,6 +1,54 @@
 # Handover
 
-**Status (2026-10-09):** batch 145-148 landed, drains closed; nothing queued. Fable window now holds only Fable seats (148, second attempt).
+**Status (2026-10-12 18:30 BST):** 155 and 156 landed first time; 157 re-briefed and 158 queued, both on Codex seats (Terra worker, Sol verifier) because the Claude session limit is spent. Next session: a Codex orchestrator picks up the open items below.
+
+## Recent activity (2026-10-12 card-quality-batch)
+
+Analysis (Anthropic's AI-native SDLC playbook against this repo) found that
+55% of failed attempts with a known cause traced to the card. This batch
+builds the card-quality tooling and was itself authored with it: oracles
+proven red on dev and green against a throwaway reference, Codex cold reads
+before queueing, a baseline run of every acceptance command.
+
+- 155 `autometta first-attempts <repo>` landed (2eaa4cb): 71 of 109 stages
+  clean on attempt 1 (65%), 14 of 16 since card 135 (88%); emergence-lab 54
+  of 91 (59%).
+- 156 template and checklist fields landed (8ae6cf2): Open decisions,
+  Surfacing concern, Oracle proof, Spend basis; a filled-in template now
+  queues (its comment examples used to parse as Gate and Depends on lines).
+- 157 card-lint failed attempt 1 (doc placement plus four precision defects
+  the Opus verifier found); re-briefed in 5307101 with new fixtures, attempt
+  1 pinned on `wip/157-a-card-is-linted-before-it-is-queued-attempt-1`.
+- Incident: 157's FAIL preserve walked the system disk because
+  `card_deliverable_paths` reads every backticked slash token in a card's
+  Deliverables, and the card quoted absolute paths. Ticks were stopped and
+  the subscriber disabled briefly; `git add` refused every outside path, so
+  nothing was staged. Card text reworded (7d0b3b9); 158 fixes the tick.
+- Emergence-lab card 126 re-brief: its restore step rewound the card itself;
+  fixed in emergence-lab 81bcf8b31. Emergence-lab is paused until
+  2026-10-13 09:00 BST for this upgrade.
+
+Open items for the next session (any family):
+
+1. Mind 158 then 157 to landing (`autometta status --repo .`). Never put an
+   absolute path in backticks in a card's Deliverables until 158 lands.
+2. After 157 lands: commit `skills/autometta-oracle/` and
+   `skills/autometta-card-review/` (untracked drafts, written for this
+   batch), symlink each into `../mcp-hub/skills/`, add both to
+   `../mcp-hub/registry/control-plane.json` beside `autometta-run-design`
+   (platforms claude_code and codex), run `scripts/sync-all-platforms.sh`
+   in mcp-hub, and confirm both appear under `~/.claude/skills` and
+   `~/.agents/skills`.
+3. Before 09:00 BST: run the card-review procedure and
+   `scripts/card-lint.sh --strict` on emergence-lab cards 126 and 127. Both
+   lack the Open decisions line and a Contract test section; 127's input
+   `docs/audits/126-logistic-mandelbrot-look-pack.md` exists only once 126
+   lands, so 127 is not queued before then. Check the gate's exit-2 message
+   is unchanged before `autometta refresh-repo` on emergence-lab: 126's
+   criterion 1 depends on it.
+4. Follow-ups, not carded: wire card-lint into `add-stage.sh` once it has
+   run clean on a batch; `dependency-graph-smoke.sh` errors on this machine
+   for want of the jsonschema module (on dev too).
 
 ## Recent activity (2026-10-09 card-148-landed)
 
