@@ -56,6 +56,7 @@ Usage:
   autometta dashboard [--repo <repo-path>] [--open] [--watch] [--serve]
                       [--interval <secs>] [--port <port>]
   autometta failures (<repo-path> | --fleet) [--json]
+  autometta first-attempts <repo-path> [--json] [--since <n>]
   autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]
   autometta uninstall-launchagent <repo-path>
@@ -253,6 +254,18 @@ case "$command_name" in
       exit 1
     fi
     run_script failures-history.sh "$@"
+    ;;
+  first-attempts)
+    if [[ $# -lt 1 ]]; then
+      printf 'usage: autometta first-attempts <repo-path> [--json] [--since <n>]\n' >&2
+      exit 2
+    fi
+    first_attempt_script="$self_root/scripts/first-attempt-history.sh"
+    if [[ ! -x "$first_attempt_script" ]]; then
+      printf 'MISSING %s\n' "$first_attempt_script" >&2
+      exit 1
+    fi
+    "$first_attempt_script" "$@"
     ;;
   panel)
     if [[ $# -lt 1 ]]; then

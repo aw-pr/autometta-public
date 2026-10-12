@@ -44,6 +44,14 @@ Print the current controller status:
 autometta status
 ```
 
+### First-attempt history
+
+`scripts/first-attempt-history.sh <repo>` and `autometta first-attempts <repo>`
+list landed stages and the first-attempt clean rate. A stage is clean only when
+its history has no failed WIP attempt, no `## Re-brief` section in its card and
+no phat-controller re-brief commit. The command reads git history and cards
+only, so its rate also covers eras before `state/cost-log.jsonl`.
+
 ### What an operator now has
 
 - **`autometta status`** is the quickest fleet snapshot when one command and no persistent screen is enough.
