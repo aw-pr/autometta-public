@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # claude-chrome-smoke.sh — offline check that a Claude dispatch gets --chrome
 # only when the card declares Requires GUI AND the repo manifest sets
 # dispatch.claude.chrome: true, and that such a dispatch drops the

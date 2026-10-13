@@ -1,5 +1,7 @@
 # Design: sweep stage
 
+**Status: design only, not built.** `scripts/spawn-sweep.sh` and `scripts/spawn-sweep-synthesis.sh` named below do not exist; `spawn-worker.sh` has no sweep path. The decision record is `memory/decision-sweep-stage.md`.
+
 A sweep stage dispatches N parallel workers onto N scratch worktrees, each exploring a different approach to the same problem. A synthesis agent then reads all N outputs and produces a single decision document. The result is a prose decision, not a code commit.
 
 ## Problem statement

@@ -1,3 +1,10 @@
+---
+name: decision-sdk-verifier-prototype
+description: Prototype the Claude Agent SDK verifier in Python (scripts/verify-sdk.py) before changing spawn-verifier.sh; claude -p stays the production path.
+metadata:
+  type: project
+---
+
 # Decision
 
 Use a Python Claude Agent SDK prototype for verifier output before changing `scripts/spawn-verifier.sh`.

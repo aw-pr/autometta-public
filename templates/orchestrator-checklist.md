@@ -46,6 +46,8 @@ for the pilot this backports.
 - [ ] Each deliverable has enough description that the worker could produce it without asking a follow-up question.
 - [ ] Every file the implementation must plausibly touch is in the Deliverables list, not just Inputs. Walk the data path end to end (e.g. a new shader uniform needs the CPU-side struct and the per-frame population, not just the shader). A correct worker will refuse the stage rather than edit an input-only file, burning a dispatch on a card fix.
 - [ ] The "Constraints" section lists hard rules the worker must not violate (language, naming, placeholder syntax, etc.).
+- [ ] **Open decisions.** The card's Open decisions line reads `none`; every answer lives in the card section it belongs to, not in chat.
+- [ ] **Claims closure.** For every symbol, field or rule the card changes, grep its consumers and read them. Each file the worker must touch is a Deliverable inside Path claims.
 
 ## 2. Acceptance criteria
 
@@ -53,6 +55,9 @@ for the pilot this backports.
 - [ ] The criteria together cover every deliverable.
 - [ ] At least one criterion is a machine-checkable structural test (file exists, no forbidden string, round-trip fidelity, etc.).
 - [ ] The acceptance command (or set of checks) is stated or clearly implied, the verifier should not have to invent its own test surface.
+- [ ] **Seat and command.** Each criterion names the seat that judges it and the command that produces its evidence. Confirm that seat can run the command: network, GUI, writes outside the worktree, waiting on a background batch.
+- [ ] **Baseline run.** Run every acceptance command on the clean base and record red or green beside the criterion. A criterion already red on the base, or one that forbids what the tool does by design, is a card defect.
+- [ ] **Oracle proof.** The contract test fails today at a named assertion and passed a throwaway reference built in a detached scratch worktree that is then removed. Record both on the card's Oracle proof line.
 
 ## 3. Scope boundaries
 

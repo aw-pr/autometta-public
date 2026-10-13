@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # verify-sdk-schema-path-smoke.sh: the SDK verifier finds its schema from a
 # foreign cwd. No auth, no network, no token spend.
 #

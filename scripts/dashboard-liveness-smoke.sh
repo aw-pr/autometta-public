@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # dashboard-liveness-smoke.sh: the web dashboard must not call itself live
 # when it cannot reach its server. No auth, no network, no token spend.
 #

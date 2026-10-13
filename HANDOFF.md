@@ -1,6 +1,54 @@
 # Handover
 
-**Status (2026-10-09):** batch 145-148 landed, drains closed; nothing queued. Fable window now holds only Fable seats (148, second attempt).
+> **Status (2026-10-12):** 157 and 158 passed, landed and are pushed; card-review and oracle are registered and installed. Next: review emergence-lab cards 126 and 127 before queueing.
+
+## Recent activity (2026-10-12 oai-overage-completion)
+
+- With the Claude session exhausted, the approved same-family pair completed the serial run: Codex GPT-5.6 Terra wrote and GPT-5.6 Sol verified. The re-brief and frozen acceptance criteria were unchanged.
+- 157 passed all seven criteria and landed as `9d7b268`; it adds the read-only `scripts/card-lint.sh` and documents strict pre-queue linting.
+- 158 passed all four criteria and landed as `758d0ff`; it confines failed-work preservation to physical paths inside the run worktree, preventing the prior system-disk walk.
+- Both commits are pushed to `origin/dev`; `autometta status --repo .` is idle with no pause or failure.
+- The local OAI guard is measured in credits, not pounds: its 450-credit stop is approximately £20. It reported an account-wide 218.52-credit delta from its 10 October baseline, unchanged during this run. Treat this telemetry as an estimate, not an invoice.
+- `skills/autometta-oracle/` and `skills/autometta-card-review/` are committed in Autometta and distributed through mcp-hub to the Claude Code and Codex skill directories.
+
+## Recent activity (2026-10-12 card-quality-batch)
+
+Analysis (Anthropic's AI-native SDLC playbook against this repo) found that
+55% of failed attempts with a known cause traced to the card. This batch
+builds the card-quality tooling and was itself authored with it: oracles
+proven red on dev and green against a throwaway reference, Codex cold reads
+before queueing, a baseline run of every acceptance command.
+
+- 155 `autometta first-attempts <repo>` landed (2eaa4cb): 71 of 109 stages
+  clean on attempt 1 (65%), 14 of 16 since card 135 (88%); emergence-lab 54
+  of 91 (59%).
+- 156 template and checklist fields landed (8ae6cf2): Open decisions,
+  Surfacing concern, Oracle proof, Spend basis; a filled-in template now
+  queues (its comment examples used to parse as Gate and Depends on lines).
+- 157 card-lint failed attempt 1 (doc placement plus four precision defects
+  the Opus verifier found); re-briefed in 5307101 with new fixtures, attempt
+  1 pinned on `wip/157-a-card-is-linted-before-it-is-queued-attempt-1`.
+- Incident: 157's FAIL preserve walked the system disk because
+  `card_deliverable_paths` reads every backticked slash token in a card's
+  Deliverables, and the card quoted absolute paths. Ticks were stopped and
+  the subscriber disabled briefly; `git add` refused every outside path, so
+  nothing was staged. Card text reworded (7d0b3b9); 158 fixes the tick.
+- Emergence-lab card 126 re-brief: its restore step rewound the card itself;
+  fixed in emergence-lab 81bcf8b31. Emergence-lab is paused until
+  2026-10-13 09:00 BST for this upgrade.
+
+Open items for the next session (any family):
+
+1. Before 09:00 BST: run the card-review procedure and
+   `scripts/card-lint.sh --strict` on emergence-lab cards 126 and 127. Both
+   lack the Open decisions line and a Contract test section; 127's input
+   `docs/audits/126-logistic-mandelbrot-look-pack.md` exists only once 126
+   lands, so 127 is not queued before then. Check the gate's exit-2 message
+   is unchanged before `autometta refresh-repo` on emergence-lab: 126's
+   criterion 1 depends on it.
+2. Follow-ups, not carded: wire card-lint into `add-stage.sh` once it has
+   run clean on a batch; `dependency-graph-smoke.sh` errors on this machine
+   for want of the jsonschema module (on dev too).
 
 ## Recent activity (2026-10-09 card-148-landed)
 
@@ -90,8 +138,8 @@
   identity's `<claude-...@local>` slug, which is the API model id; tier
   words only serve identities that carry no slug. `AUTOMETTA_MODEL_OPUS`
   default is now `claude-opus-5-5`. Cards naming "Claude Opus 5" keep
-  running `claude-opus-5` until re-carded as "Claude Opus 5.5" — deliberate,
-  since attribution must match the weights that actually ran. Committed
+  running `claude-opus-5` until re-carded as "Claude Opus 5.5". This is
+  deliberate, since attribution must match the weights that actually ran. Committed
   `9cdee02`.
 - `scripts/rates.sh` gained `rate_for_model` (per-model USD/1M, mirrors
   `mcp-hub/config/models.json` pricing); `cost-log.sh` now prices the model
@@ -104,8 +152,8 @@
   still pass.
 - **Deferred**: `rate_for_model` is a hand mirror of the registry pricing,
   not yet wired into mcp-hub's `pricing-check` MIRRORS list. Pre-existing
-  smoke failures — `effort-flags`, `local-route`, `phat-controller` (stale
-  or undated codex quota reading), `pipeline-pair` — are identical on the
+  smoke failures (`effort-flags`, `local-route`, `phat-controller` with a
+  stale or undated codex quota reading, `pipeline-pair`) are identical on the
   clean tree before this session and were not investigated.
 - **Open questions**: re-card queued Opus 5 stages as Claude Opus 5.5 the
   next time a run is designed?
@@ -132,7 +180,7 @@
   Nothing was run with `--apply`; the `publish` branch is untouched.
 - Fleet sync ran: agentic-rag-kimble, bench-marks, emergence-lab and
   explainer-batch pushed clean. research-sweeper committed (`47ad5c9`) but
-  its `dev` push was held on an ASK verdict — a GitHub Actions workflow
+  its `dev` push was held on an ASK verdict: a GitHub Actions workflow
   watches `dev` there, so that push waits on a human yes.
 - **Deferred**: the new mcp-hub test `tests/test-publish-sync.sh` is not
   wired into any CI or quality-check runner (matches the existing test
@@ -140,7 +188,9 @@
   dashes outside the sections touched this session.
 - **Open questions**: is this repo's configured privatefile
   (`memory/project-publish-topology-linear-not-orphan.md`), which is
-  tracked on neither `dev` nor `publish`, still wanted; should the 9
+  tracked on neither `dev` nor `publish` (the file exists on no branch; its
+  dangling `memory/INDEX.md` pointer was removed 2026-10-12), still wanted;
+  should the 9
   pending `dev` commits be published now (a plain fast-forward per the dry
   run) and PR #4 updated?
 
@@ -160,27 +210,27 @@
   `com.autometta.tick.emergence-viewer` now loaded) and refreshed
   `496c7cc` -> `7f9e6a4`, both commits pushed.
 - Docs proposal filed: `docs/proposals/external-dependencies.md` (a
-  `dependencies/` directory plan, candidate cards 138-141) — waits on three
+  `dependencies/` directory plan, candidate cards 138-141); it waits on three
   operator decisions (extract the Claude quota publisher from the private
   vibe-menuapp; how `op-fetch`/`agent-whoami` reach a fresh machine given
   `mcp-hub` is private; whether subscriber repos carry the directory,
   recommend no).
 - Two later commits by Codex GPT-5.6 Terra (`261bc32`, `9c2d0b0`,
   2026-09-20) layered a Codex admission-policy change on top of card 137 and
-  already hold the status line above this section — left as-is, not
+  already hold the status line above this section; left as-is, not
   overwritten.
 - **Deferred**: stale disabled registry entry
   `~/.autometta/subscribers/emergence-viewer-deep-zoom.yaml` (points at a
   directory that no longer exists, retire it); six pre-existing red smokes on
   clean `dev` (state-branch, state-schema, ticker-fit, tick-cost,
-  verify-sdk-schema-path, sdk-cache — not caused by this session);
+  verify-sdk-schema-path, sdk-cache; not caused by this session);
   `scripts/state-writable-smoke.sh` is named by card 101 as a contract test
   but has no `AUTOMETTA-CONTRACT` block, so the gate will trip the first time
   it is edited.
 - **Open questions**: is untracked `scripts/publish-sync.sh` (predates this
   session, untouched) meant to be committed or deleted; the 2026-09-19 Codex
   100% burn came from interactive `codex-tui`/Codex Desktop sessions, not the
-  loop, so the reserve protects dispatch only — is that the intended
+  loop, so the reserve protects dispatch only; is that the intended
   boundary?
 
 ## Previous status (2026-09-20)

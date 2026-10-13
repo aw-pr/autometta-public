@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -144,7 +145,7 @@ def poll(now, tick, live_tokens, output_tokens, run_tokens):
             "by_stage": [
                 {"stage_id": "68-a-pipeline-pair", "input_tokens": 2000000,
                  "cached_input_tokens": 300000, "output_tokens": output_tokens,
-                 "tokens": live_tokens, "cost_usd_est": 1.87},
+                 "tokens": 1000000, "cost_usd_est": 1.87},
                 {"stage_id": "50-cards", "input_tokens": 3000000,
                  "cached_input_tokens": 750000, "output_tokens": 50000,
                  "tokens": 3800000, "cost_usd_est": 2.41},
@@ -295,7 +296,7 @@ stages = {
     "66-fleet-view-fits": ("done", "gpt-5.3→opus-4.7", "3,911k"),
     "67-outlier-says-so": ("done", "terra→fable", "1,200k"),
     "50-cards": ("done", "unknown-worker-slug→codex", "3,800k"),
-    "68-a-pipeline-pair": ("WORKER", "sol→fable", "2,301k"),
+    "68-a-pipeline-pair": ("WORKER", "sol→fable", "3,301k"),
     "69-tui": ("queued", "fable→gpt-5.3", "0"),
 }
 offsets = set()

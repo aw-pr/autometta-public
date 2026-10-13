@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # cap-resolution-smoke.sh — offline check that the token cap is resolved from
 # the host down, never fails open, and that a drain expires by itself.
 #

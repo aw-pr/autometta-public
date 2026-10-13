@@ -34,7 +34,7 @@ metadata:
 - `decision-*.md`, `feedback-*.md`, `project-*.md`: the memory entries themselves.
 - `facts.jsonl`: the append-only facts ledger, one JSON line per landed stage, written by `tick.sh` on PASS and read by the verifier first (`docs/fact-ledger.md`).
 - `adopters/`: one subdirectory per subscriber repo for learnings that belong to that adopter rather than to Autometta.
-- `retro-grade-template.md`: the template `autometta retro-grade` fills in for a batch retrospective.
+- `retro-grade-template.md`: the template `autometta retro-grade` fills in for a batch retrospective. It is a template, not a memory entry, so it carries no frontmatter and has no INDEX.md line.
 
 ## Index
 

@@ -102,10 +102,13 @@ Do not read anything else unless you need to; keep your context lean.
 
 ## Contract test
 
-- **Test file:** scripts/effort-flags-smoke.sh, scripts/state-writable-smoke.sh
+- **Test file:** scripts/effort-flags-smoke.sh
 - **Assertions digest:** `sha256:93f1c60e3add4883e7f0c9ef5d3454988d3864f7324a78370a21e54894933ee7` (effort-flags-smoke.sh, frozen
   2026-09-19 by card 137 when the smoke first needed an edit; the block
   covers the dispatched-argv assertions)
+- **Regression suite, not frozen:** scripts/state-writable-smoke.sh, which
+  this card also changed; corrected 2026-10-11 so the Test file line names
+  only the file the digest belongs to.
 - **Assertions in prose:** the codex verifier passes `-c` and
   `model_reasoning_effort=high` as separate argv elements, and `--add-dir` and
   the state dir as separate argv elements.

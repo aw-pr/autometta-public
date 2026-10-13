@@ -44,6 +44,14 @@ Print the current controller status:
 autometta status
 ```
 
+### First-attempt history
+
+`scripts/first-attempt-history.sh <repo>` and `autometta first-attempts <repo>`
+list landed stages and the first-attempt clean rate. A stage is clean only when
+its history has no failed WIP attempt, no `## Re-brief` section in its card and
+no phat-controller re-brief commit. The command reads git history and cards
+only, so its rate also covers eras before `state/cost-log.jsonl`.
+
 ### What an operator now has
 
 - **`autometta status`** is the quickest fleet snapshot when one command and no persistent screen is enough.
@@ -72,6 +80,14 @@ The `[3] Agents` panel shows live agents followed by the queued next stages.
 Queued rows come from the aggregate payload's `queue` field and are display-only;
 the cursor remains confined to live agents.
 
+The TUI polls the same `aggregate-dashboard.sh --repo` seam as the repo ticker
+every five seconds, but does so on a background thread so input remains
+responsive during a read. The footer clock and adjacent pulse advance once per
+second between those polls. They prove that the TUI renderer is alive, not that
+the tick loop is running or that its data is fresh. A still pulse means the TUI
+process itself is wedged; tick health remains visible through the dashboard's
+state and freshness readings.
+
 For each readable live transcript, the panel also shows `activity.turns`, the
 latest tool, its age and `last_detail`; the dashboard also includes
 `activity.tool_calls`. `scripts/lib/transcript-tokens.py` derives those fields
@@ -79,15 +95,26 @@ from the transcript bytes it already reads, caches incremental Claude counts in
 the agent registry, and returns them through `aggregate-dashboard.sh --repo` to
 the panel. Missing activity stays blank. The per-repo path refreshes every five
 seconds; a fleet dashboard can be up to the 120-second snapshot interval behind.
+The ticker and dashboard share that one transcript reader and one registry state.
 
-It polls the same
-`aggregate-dashboard.sh --repo` seam as the repo ticker every five seconds,
-but does so on a background thread so input remains responsive during a read.
-The footer clock and adjacent pulse advance once per second between those
-polls. They prove that the TUI renderer is alive, not that the tick loop is
-running or that its data is fresh. A still pulse means the TUI process itself
-is wedged; tick health remains visible through the dashboard's state and
-freshness readings.
+The same per-repo seam gives each live agent a `burn` object. Its
+`bucket_seconds` starts at 60 and each `points` item records bucket-start `t`
+with cumulative `tokens`, cache-read `cached` and `turns`. The series keeps at
+most 240 points by doubling its bucket width and retaining the last point from
+each wider bucket. Claude token and turn totals count repeated transcript
+records with the same `message.id` once, including across incremental reads,
+while every `tool_use` block remains a call. This corrects earlier inflated
+Claude readings, so current totals can be lower than old observations. The
+series serves the live display only; settled accounting remains in
+`state/cost-log.jsonl`.
+
+The run row adds the live SDK or counted transcript figure to its settled stage
+total. The agents row shows that figure, the detail pane names a transcript
+figure on its `live` line, and a transcript `burn` series replaces the local
+eight-poll history with `burn this run`. SDK figures retain the `LIVE` label.
+These figures refresh with the poll and are display only; they do not change
+the cost log, billing totals or state.
+
 Card 74 replaced per-row process forks and repeated file scans in that seam,
 taking the measured per-repo read from 37 seconds to under one second; a
 five-second poll now represents a fresh snapshot rather than a queue of stale

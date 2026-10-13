@@ -69,6 +69,79 @@
     return parts.join(" · ");
   }
 
+  function compactTokens(value) {
+    var n = Number(value);
+    if (!isFinite(n)) return "-";
+    if (Math.abs(n) >= 1000000) {
+      return (n / 1000000).toFixed(Math.abs(n) % 1000000 ? 1 : 0).replace(/\.0$/, "") + "M";
+    }
+    if (Math.abs(n) >= 1000) {
+      return (n / 1000).toFixed(Math.abs(n) % 1000 ? 1 : 0).replace(/\.0$/, "") + "k";
+    }
+    return fmtInt(Math.round(n));
+  }
+
+  function burnSparkline(points) {
+    if (points.length < 2) return "";
+    var first = points[0];
+    var last = points[points.length - 1];
+    var span = Math.max(1, Number(last.t) - Number(first.t));
+    var values = points.map(function (point) { return Number(point.tokens); });
+    var low = Math.min.apply(null, values);
+    var high = Math.max.apply(null, values);
+    var range = Math.max(1, high - low);
+    var line = points.map(function (point) {
+      var x = 2 + ((Number(point.t) - Number(first.t)) / span) * 92;
+      var y = high === low ? 12 : 20 - ((Number(point.tokens) - low) / range) * 16;
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    return '<svg class="burn-spark" viewBox="0 0 96 24" aria-hidden="true" focusable="false">' +
+      '<polyline points="' + line + '"></polyline></svg>';
+  }
+
+  function burnCell(agent) {
+    var usage = agent.live_usage;
+    if (usage) {
+      var live = "LIVE " + fmtInt(Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0));
+      if (!usage.updated_at) live += " (stale)";
+      return live;
+    }
+    if (agent.stage_tokens_status === "waiting") return "waiting";
+    if (agent.stage_tokens_status !== "counted" || agent.stage_tokens == null) return "n/a";
+
+    var parts = ['<span class="burn-total">' + compactTokens(agent.stage_tokens) + " transcript</span>"];
+    var burn = agent.burn || {};
+    var points = (burn.points || []).filter(function (point) {
+      return point && isFinite(Number(point.t)) && isFinite(Number(point.tokens));
+    }).slice().sort(function (a, b) { return Number(a.t) - Number(b.t); });
+    if (points.length) {
+      var newest = points[points.length - 1];
+      if (points.length > 1) {
+        var cutoff = Number(newest.t) - 300;
+        var anchor = null;
+        for (var i = points.length - 2; i >= 0; i--) {
+          if (Number(points[i].t) <= cutoff) {
+            anchor = points[i];
+            break;
+          }
+        }
+        if (!anchor) anchor = points[0];
+        var minutes = (Number(newest.t) - Number(anchor.t)) / 60;
+        if (minutes > 0) {
+          parts.push('<span class="burn-meta">' +
+            compactTokens((Number(newest.tokens) - Number(anchor.tokens)) / minutes) + "/min</span>");
+        }
+      }
+      if (Number(newest.tokens) > 0 && isFinite(Number(newest.cached))) {
+        parts.push('<span class="burn-meta">' +
+          Math.round(Number(newest.cached) * 100 / Number(newest.tokens)) + "% cached</span>");
+      }
+      var sparkline = burnSparkline(points);
+      if (sparkline) parts.push(sparkline);
+    }
+    return { html: '<div class="burn-cell">' + parts.join("") + "</div>", cls: "burn" };
+  }
+
   // A page opened from file:// in a browser set to block site data throws on
   // the accessor itself, so every read and write is guarded and the page falls
   // back to the generated default.
@@ -133,6 +206,86 @@
     });
     total = logged || worker + verifier;
     return { worker: worker, verifier: verifier, total: total, logged: total > 0 };
+  }
+
+  function liveAgentTokens(agent) {
+    if (agent.live_usage) {
+      var sdkTokens = Number(agent.live_usage.input_tokens || 0) +
+        Number(agent.live_usage.output_tokens || 0);
+      return isFinite(sdkTokens) ? sdkTokens : null;
+    }
+    if (agent.stage_tokens_status === "counted" && agent.stage_tokens != null) {
+      var transcriptTokens = Number(agent.stage_tokens);
+      return isFinite(transcriptTokens) ? transcriptTokens : null;
+    }
+    return null;
+  }
+
+  function stageTokenCells(repo, stage) {
+    var spend = stageSpend(repo, stage);
+    var liveByRole = { worker: 0, verifier: 0 };
+    var hasLive = { worker: false, verifier: false };
+    (repo.agents || []).forEach(function (agent) {
+      if (agent.stage_id !== stage.id ||
+          !Object.prototype.hasOwnProperty.call(liveByRole, agent.role)) return;
+      var tokens = liveAgentTokens(agent);
+      if (tokens == null) return;
+      liveByRole[agent.role] += tokens;
+      hasLive[agent.role] = true;
+    });
+    var liveTotal = liveByRole.worker + liveByRole.verifier;
+    var mark = spend.logged ? "*" : "";
+    var spendTitle = spend.unavailable
+      ? ' title="' + esc((repo.spend || {}).state_error) + '"' : "";
+    return ["worker", "verifier", "total"].map(function (role) {
+      var live = role === "total" ? hasLive.worker || hasLive.verifier : hasLive[role];
+      var extra = role === "total" ? liveTotal : liveByRole[role];
+      var value = spend[role];
+      if (live) value = Number(value || 0) + extra;
+      return {
+        html: '<span' + (live ? ' class="live"' : "") + spendTitle + ">" +
+          fmtInt(value) + mark + "</span>",
+        cls: "num"
+      };
+    });
+  }
+
+  function runTotals(repo) {
+    var run = repo.current_run;
+    if (!run) return "";
+    var stages = run.stages || [];
+    var stageIds = Object.create(null);
+    var completed = 0;
+    stages.forEach(function (stage) {
+      stageIds[stage.id] = true;
+      if (stage.status === "completed") completed += 1;
+    });
+    var tokens = Number(run.tokens_total || 0);
+    var live = false;
+    (repo.agents || []).forEach(function (agent) {
+      if (!stageIds[agent.stage_id]) return;
+      var agentTokens = liveAgentTokens(agent);
+      if (agentTokens == null) return;
+      tokens += agentTokens;
+      live = true;
+    });
+    var cost = Number(run.cost_usd_est || 0);
+    if (!isFinite(cost)) cost = 0;
+    return '<div class="run-total' + (live ? " live" : "") + '">' +
+      '<span class="run-repo">' + esc(repo.name || "repo") + "</span>" +
+      '<span class="run-id">' + esc(run.id || "current run") + "</span>" +
+      '<span>' + completed + " of " + stages.length + " stages done</span>" +
+      '<span class="run-tokens">' + fmtInt(tokens) + " tokens</span>" +
+      '<span>$' + cost.toFixed(2) + " settled</span></div>";
+  }
+
+  function renderRunTotals(repos) {
+    var lines = [];
+    repos.forEach(function (repo) {
+      var line = runTotals(repo);
+      if (line) lines.push(line);
+    });
+    document.getElementById("run-totals").innerHTML = lines.join("");
   }
 
   // A stage that never completed still happened, and dating it by when it was
@@ -487,14 +640,8 @@
       (r.agents || []).forEach(function (a) {
         var elapsed = fmtInt(a.elapsed_seconds || 0) + "s";
         if (a.budget_seconds) elapsed += " / " + fmtInt(a.budget_seconds) + "s";
-        var usage = a.live_usage;
-        var burn = "n/a";
-        if (usage) {
-          burn = "LIVE " + fmtInt(Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0));
-          if (!usage.updated_at) burn += " (stale)";
-        }
         rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-",
-          activityText(a.activity), burn, elapsed]);
+          activityText(a.activity), burnCell(a), elapsed]);
       });
       (r.queue || []).forEach(function (q) {
         rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "", "-", "-"]);
@@ -610,14 +757,7 @@
     repos.forEach(function (r) { byName[r.name] = r; });
     var cells = rows.map(function (row) {
       var s = row.stage;
-      var spend = stageSpend(byName[row.repo] || {}, s);
-      // A figure recovered from the cost log is marked, because it is a
-      // different measurement from one the stage recorded on completion.
-      var mark = spend.logged ? "*" : "";
-      // fmtInt already renders null as "-"; the title says why it is a dash
-      // rather than leaving the reader to guess at a missing number.
-      var spendTitle = spend.unavailable
-        ? ' title="' + esc(byName[row.repo].spend.state_error) + '"' : "";
+      var tokenCells = stageTokenCells(byName[row.repo] || {}, s);
       var cardPath = s.card || ("stage-cards/" + s.id + ".md");
       // The same answer the TUI's detail pane gives: the card is the prompt the
       // worker was handed, so "why did it do that" is usually read from it
@@ -632,9 +772,9 @@
         { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
         shortIdentity(s.worker),
         shortIdentity(s.verifier),
-        { html: '<span' + spendTitle + ">" + fmtInt(spend.worker) + mark + "</span>", cls: "num" },
-        { html: '<span' + spendTitle + ">" + fmtInt(spend.verifier) + mark + "</span>", cls: "num" },
-        { html: '<span' + spendTitle + ">" + fmtInt(spend.total) + mark + "</span>", cls: "num" },
+        tokenCells[0],
+        tokenCells[1],
+        tokenCells[2],
         s.started_at || "",
         s.completed_at || ""
       ] };
@@ -829,6 +969,7 @@
     renderFailures(data.spend || {}, names);
     renderSpend(data.spend || {}, names);
     renderQuota(repos);
+    renderRunTotals(repos);
     renderStagesTable(repos);
     drawReposChart(repos, stages);
     drawStagesChart(stages);

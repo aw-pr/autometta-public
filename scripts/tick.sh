@@ -2013,10 +2013,46 @@ card_deliverable_paths() {
       *) continue ;;
     esac
     case "$tok" in
+      /*|~*) continue ;;
+    esac
+    case "/$tok/" in
+      */../*) continue ;;
+    esac
+    case "$tok" in
       *[[:space:]]*|*'<'*|*'>'*|*'*'*|*'|'*) continue ;;
     esac
     printf '%s\n' "$tok"
   done
+}
+
+# card_deliverable_physical_path: print a card-named path only when resolving
+# it with symlinks followed leaves it inside the run worktree.  readlink has
+# no portable realpath equivalent on the macOS bash route, so resolve a final
+# symlink here after pwd -P has resolved every directory component.
+card_deliverable_physical_path() {
+  local work_dir="$1" rel_path="$2"
+  local work_phys candidate parent leaf link
+  [[ -d "$work_dir" && -n "$rel_path" && -e "$work_dir/$rel_path" ]] || return 1
+  work_phys="$(cd -P "$work_dir" 2>/dev/null && pwd -P)" || return 1
+  candidate="$work_dir/$rel_path"
+
+  while :; do
+    parent="$(dirname "$candidate")"
+    leaf="$(basename "$candidate")"
+    parent="$(cd -P "$parent" 2>/dev/null && pwd -P)" || return 1
+    candidate="$parent/$leaf"
+    [[ -L "$candidate" ]] || break
+    link="$(readlink "$candidate")" || return 1
+    case "$link" in
+      /*) candidate="$link" ;;
+      *) candidate="$parent/$link" ;;
+    esac
+  done
+
+  case "$candidate" in
+    "$work_phys"/*) printf '%s\n' "$candidate" ;;
+    *) return 1 ;;
+  esac
 }
 
 # card_deliverables_exist: true if any card-named deliverable path has
@@ -2028,10 +2064,12 @@ card_deliverable_paths() {
 # committed, so re-running preserve on an already-preserved stage is a
 # no-op rather than a redundant attempt-N+1 commit.
 card_deliverables_exist() {
-  local work_dir="$1" card_path="$2" rel_path
+  local work_dir="$1" card_path="$2" rel_path physical_path work_phys
+  work_phys="$(cd -P "$work_dir" 2>/dev/null && pwd -P)" || return 1
   while IFS= read -r rel_path; do
     [[ -n "$rel_path" ]] || continue
-    [[ -e "$work_dir/$rel_path" ]] || continue
+    physical_path="$(card_deliverable_physical_path "$work_dir" "$rel_path")" || continue
+    rel_path="${physical_path#"$work_phys/"}"
     [[ -n "$(git -C "$work_dir" status --porcelain --ignored=matching -- "$rel_path" 2>/dev/null)" ]] && return 0
   done < <(card_deliverable_paths "$card_path")
   return 1
@@ -2051,11 +2089,17 @@ force_add_card_deliverables() {
   local repo_root="$1" stage_id="$2" reason_label="$3" card_path="$4"
   local max_mb="${AUTOMETTA_PRESERVE_MAX_MB:-50}"
   local max_bytes=$((max_mb * 1024 * 1024))
-  local rel_path
+  local work_dir rel_path physical_path safe_path
+  work_dir="$(pwd -P)" || return 1
   while IFS= read -r rel_path; do
     [[ -n "$rel_path" ]] || continue
     [[ -e "$rel_path" ]] || continue
-    if [[ -d "$rel_path" ]]; then
+    physical_path="$(card_deliverable_physical_path "$work_dir" "$rel_path")" || {
+      log "stage ${stage_id} ${reason_label}: skipping deliverable ${rel_path} outside run worktree"
+      continue
+    }
+    safe_path="${physical_path#"$work_dir/"}"
+    if [[ -d "$safe_path" ]]; then
       local f size
       while IFS= read -r -d '' f; do
         size="$(file_size_bytes "$f")"
@@ -2064,13 +2108,13 @@ force_add_card_deliverables() {
           continue
         fi
         git add -f -- "$f" 2>/dev/null || true
-      done < <(find "$rel_path" -type f -print0 2>/dev/null)
+      done < <(find "$safe_path" -type f -print0 2>/dev/null)
     else
-      size="$(file_size_bytes "$rel_path")"
+      size="$(file_size_bytes "$safe_path")"
       if (( size > max_bytes )); then
-        log "stage ${stage_id} ${reason_label}: skipping oversized deliverable ${rel_path} (${size} bytes > ${max_mb}MB limit)"
+        log "stage ${stage_id} ${reason_label}: skipping oversized deliverable ${safe_path} (${size} bytes > ${max_mb}MB limit)"
       else
-        git add -f -- "$rel_path" 2>/dev/null || true
+        git add -f -- "$safe_path" 2>/dev/null || true
       fi
     fi
   done < <(card_deliverable_paths "$card_path")

@@ -167,7 +167,7 @@ This closes the gap a requirements document leaves open. A prose doc and the cod
 
 Three roles touch the contract test, and no role both writes the assertions and satisfies them:
 
-- **Orchestrator authors and records the assertions (step 1).** They are written from the card's intent before any implementation exists, and their digest is recorded on the card before it is queued. `scripts/add-stage.sh` refuses a card that names a test file without a `sha256:` assertions digest. A card with no contract test remains valid. This queue-time check would have caught cards 113, 114 and 124 in the 108-124 batch; card 124 landed with a worker-authored test. The worker does not author its own oracle, so the test cannot be tautological: it asserts what the card intended, not what the code happens to do.
+- **Orchestrator authors and records the assertions (step 1).** They are written from the card's intent before any implementation exists, and their digest is recorded on the card before it is queued. `scripts/add-stage.sh` refuses a card that names a test file without a `sha256:` assertions digest. A card with no contract test remains valid. This queue-time check would have caught cards 113, 114 and 124 in the 108-124 batch; card 124 landed with a worker-authored test. The worker does not author its own oracle, so the test cannot be tautological: it asserts what the card intended, not what the code happens to do. Before queueing, the orchestrator also proves the block red on the base and green against a throwaway reference, and records that on the card's `Oracle proof` line.
 - **Worker satisfies the assertions (step 3), without editing them.** The worker may add fixtures, imports, and scaffolding around the frozen block, but the assertion lines between the markers are read-only to it. A worker that believes an assertion is wrong surfaces a blocker (worker prompt step 6) rather than editing the assertion to suit its implementation.
 - **Verifier runs the assertions and guards the freeze (steps 4-5).** The acceptance command is the contract test. The verifier also checks that the frozen block was not weakened: it recomputes the block digest and compares it to the digest the card declares. A changed assertion whose new digest is not recorded in the card is an automatic FAIL, independent of whether the other criteria pass.
 
@@ -207,6 +207,18 @@ The gate fires only on assertion changes, never on scaffolding. A worker that re
 To regenerate the digest after a deliberate assertion change, run `scripts/check-contract-test-gate.sh print <test-file>` and paste the result into the card's `Assertions digest` line, in the same commit as the assertion change. The gate then sees a matching digest and a card that moved with the test, and passes.
 
 The gate distinguishes three states for a staged file, not two. A file no card names as its contract test is genuinely not the gate's business and is skipped. A file a card names as its contract test but that carries no `AUTOMETTA-CONTRACT-BEGIN`/`AUTOMETTA-CONTRACT-END` block is a violation, not a skip: absent and broken are different, and a gate that treats "nothing to check" as "nothing wrong" fails open, which is worse than no gate at all, because a passing gate is read as evidence. A marked file is recomputed and compared to its card's declared digest as described above. Consequently, a card whose `Assertions digest` line is prose rather than a real `sha256:` digest does not satisfy the contract-test requirement, and a card naming a test that carries no marker block will not dispatch clean: the worker prompt calls for the frozen block to exist and the card to record its real digest before the stage is considered done.
+
+A regression smoke that no stage card freezes may instead declare `AUTOMETTA-CONTRACT-NONE reason=<text>` on a comment line of its own. This opt-out is for regression suites, not a test a card relies on as its contract: the gate rejects a file that carries both markers, omits the reason, or is named by a card with a real `sha256:` assertions digest.
+
+### Card lint
+
+`scripts/card-lint.sh` reads stage cards without changing them and checks for
+unfilled placeholders, unresolved decisions, unexplained same-family pairings,
+missing budgets or required headings, missing inputs, unclaimed deliverables,
+absolute home-directory paths, and invalid contract-test declarations. Its
+default mode warns and exits successfully; `--strict` refuses any card with a
+finding. Run a new card through `scripts/card-lint.sh --strict <card>` before
+passing it to `scripts/add-stage.sh`.
 
 ### When a contract test is not warranted
 
@@ -449,6 +461,13 @@ the commit at `wip/<stage>-attempt-<n>`, and records that ref and SHA as
 `wip_branch` and `wip_commit` in the stage record. A clean worktree has
 nothing to preserve. A preservation error is loud but non-fatal: the tick
 leaves the worktree standing and completes the FAIL transition.
+
+A preserve stays inside its run worktree. The tick force-adds the paths a
+card's Deliverables section names so that ignored deliverables are kept,
+but it resolves each one to a physical path first and skips, with a log
+line, any that lands outside the worktree: a card quoting an absolute path
+or a bare slash in that section no longer sends the preserve walking the
+disk (`docs/lessons.md` gotcha 21).
 
 Before re-dispatch, amend the card with the prior FAIL evidence and cite the
 stage record's `wip_commit` in the re-brief. `scripts/requeue-stage.sh` removes

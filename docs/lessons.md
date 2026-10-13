@@ -570,3 +570,11 @@ The general rule: a CLI working-directory flag is only a default when the
 agent can choose a directory per tool call. Tell the agent which checkout owns
 repository-relative work, especially when its card is deliberately stored
 elsewhere.
+
+## Headless gotcha 21: preserve follows card prose
+
+The tick reads backticked paths in a card's Deliverables section when it
+preserves a failed attempt. On 2026-10-12, card 157 quoted system paths and a
+bare slash as prose, so the preserve attempted to walk them. It now rejects
+unsafe tokens and follows symlinks before preserving, so a preserve remains
+inside its run worktree.

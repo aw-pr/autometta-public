@@ -380,6 +380,67 @@ leaves that threshold alone on purpose. On a 145 FAIL, requeue through the
 the checkout is the live toolchain, so a half-landed flag change would hit
 the very next claude dispatch.
 
+## Cleanup batch 152-154, designed 2026-10-11
+
+**Queued 2026-10-11.** Loose ends from 149-151, operator asked for all of them.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [153](153-a-reader-never-sees-half-a-payload.md) | `attach-card-text.py` replaces the payload by rename | Sonnet 5.5 | Terra | `scripts/card-text-atomic-smoke.sh` |
+| [154](154-the-ticker-and-the-dashboard-read-one-way.md) | The ticker reads transcripts through the library | Terra | Opus 5.5 | `scripts/ticker-shared-reader-smoke.sh` |
+| [152](152-a-smoke-can-say-it-freezes-nothing.md) | An explicit opt-out marker for unfrozen smokes; 33 marked | Terra | Opus 5.5 | `scripts/contract-optout-smoke.sh` |
+
+Queue order 153, 154, 152. 153 and 154 have disjoint claims and alternate
+worker families, so worker 154 may overlap verifier 153. 152 is serial and
+last: its sweep touches 33 smoke files. Planning allowance 9M tokens.
+
+## Run totals card 151, designed 2026-10-11
+
+**Queued 2026-10-11, gated on 150.** The operator asked for the run's totals
+at the top of the Per stage table, ticking like the rows. The TUI status
+panel already carries them; the web page had none.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [151](151-the-run-totals-tick-above-the-table.md) | A run-totals line above the stages table: settled plus live tokens, settled cost, stages done | Sol | Opus 5.5 | `scripts/run-totals-smoke.sh` |
+
+Gated on 150 because both edit `dashboard.js`. Planning allowance 4M.
+
+## Live stage figures card 150, designed 2026-10-11
+
+**Queued 2026-10-11.** After 149 landed the operator looked at the stages
+table, not the agents table, and saw an in-flight stage read 0 tokens beside
+an 8.15M transcript. The TUI run row already moved; its agents row and
+detail pane printed `n/a` for every CLI dispatch.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [150](150-the-table-ticks-while-it-burns.md) | In-flight stage figures add the live figure to the settled ones in the web stages table and every TUI pane | Sol | Opus 5.5 | `scripts/live-stage-tokens-smoke.sh` |
+
+Single card, queued under the drain opened for 149. Planning allowance 6M.
+
+## Burn timeline card 149, designed 2026-10-11
+
+**Queued 2026-10-11.** The operator asked to watch an agent burn tokens in
+the browser. Card 91 drew live burn only for the SDK route, and card 146
+added what the agent is doing but left `Live burn` reading `n/a` for every
+CLI dispatch. Designing this card found the Claude transcript reader
+counting each split message once per record (16.9M reported against 9.7M
+for the 123b worker), so the card fixes the count before it draws it.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [149](149-the-dashboard-draws-the-burn.md) | Each live agent carries a bounded burn series; the dashboard shows total, rate, cache share and a sparkline for CLI dispatches | Sol | Opus 5.5 | `scripts/agent-burn-smoke.sh` |
+
+Single card, serial by nature: nothing else is queued in this repo. Planning
+allowance 6M tokens. Claude Weekly stood at 79% and Weekly (Fable) at 89%
+on queueing, resetting 2026-10-11 23:59 UTC, so the reserve may hold the
+Opus verifier until then; that is the gate working, not a stall.
+
+```sh
+autometta add-stage . stage-cards/149-the-dashboard-draws-the-burn.md
+```
+
 ## Model-scoped reserve card 148, designed 2026-10-09
 
 **Prepared, not queued.** Found live while running 145-147: the Claude

@@ -27,8 +27,8 @@ Dispatch happens in an ephemeral worktree cut from the base branch (`git worktre
 Optional dispatch gate. Omit the Gate line for an ungated stage. These are the
 only accepted forms; a prerequisite always uses its full stage id:
 
-- **Gate:** stage-completed: 58-the-controller-decides-the-scripts-are-its-verbs
-- **Gate:** queue-empty
+    - **Gate:** stage-completed: 58-the-controller-decides-the-scripts-are-its-verbs
+    - **Gate:** queue-empty
 
 The first waits for the named stage to read completed. The second waits until
 no other stage is pending or in_progress. An unmet gate does not prevent the
@@ -38,18 +38,28 @@ For an explicit landed-code prerequisite graph, use `Depends on` instead of a
 Gate. List full stage IDs in queue order. Dependency cards must use serial
 dispatch and cannot also declare a Gate or Path claims:
 
-- **Depends on:** 21-backend, 22-frontend
-- **Dispatch:** serial
+    - **Depends on:** 21-backend, 22-frontend
+    - **Dispatch:** serial
 
 Required dispatch metadata. Every card must choose exactly how it dispatches:
 declare Path claims for pairing eligibility, or declare serial dispatch. Use
 comma-separated repo-relative file or directory paths; add-stage refuses
 absolute paths, dot segments and empty entries at queue time:
 
-- **Path claims:** scripts/report.sh, docs/report.md
-- **Dispatch:** serial
+    - **Path claims:** scripts/report.sh, docs/report.md
+    - **Dispatch:** serial
 -->
 - **Pairing rationale:** <<why-this-worker-verifier-pair>>
+<!--
+A card is not queued until Open decisions reads `none`. Every design question the card has not settled is listed here as a numbered open question; each answer is written into the card section it belongs to (Objective, Constraints, Acceptance criteria), never left in chat. `scripts/card-lint.sh --strict` enforces this. `scripts/add-stage.sh` does not read the line. -->
+- **Open decisions:** <<none-or-numbered-open-questions>>
+
+## Surfacing concern
+
+<!--
+Why this card exists and the evidence for it: a commit, a file:line, an incident. -->
+
+<<why-this-card-exists-and-the-evidence>>
 
 ## Objective
 
@@ -78,6 +88,9 @@ All files listed here must be created or modified. Paths are relative to repo ro
 
 The verifier will check each of these. Failure of any one is a failure of the stage.
 
+<!--
+Each criterion names the seat that judges it and the command that produces its evidence. Every acceptance command has been run once on the clean base, and its result (red or green) is recorded beside the criterion. -->
+
 <<numbered-list-of-acceptance-criteria>>
 
 ## Contract test
@@ -87,6 +100,9 @@ Optional but recommended for any stage with executable acceptance. Before dispat
 
 - **Test file:** <<contract-test-path-or-None>>
 - **Assertions digest:** <<sha256-of-frozen-block-or-None>>
+<!--
+Oracle proof: which assertion fails today on the base and why, and that a throwaway reference passed every assertion, or why that step was skipped. -->
+- **Oracle proof:** <<fails-today-at-and-reference-result>>
 
 ## Out of scope
 
@@ -96,6 +112,7 @@ Optional but recommended for any stage with executable acceptance. Before dispat
 
 - **Worker wall-clock:** <<worker-wall-clock-budget>>
 - **Verifier wall-clock:** <<verifier-wall-clock-budget>>
+- **Spend basis:** <<spend-basis>>
 
 ## Dispatch envelope
 

@@ -74,6 +74,10 @@ The dashboard files live at `~/.autometta/dashboard/`:
 - `dashboard.css` - dark theme
 - `vendor/chart.min.js` - Chart.js 4.4.0, vendored at install time
 
+Both the aggregator and `scripts/attach-card-text.py` replace `data.json` and
+`data.js` by rename, so a reader sees the old payload or the new one, never
+part of either.
+
 No external network access happens at render time. Chart.js is fetched
 once at install time (`scripts/install-homebrew-local.sh`) with a pinned
 SHA256 hash; a mismatch fails the install loudly.
@@ -135,8 +139,37 @@ SDK verifiers write cumulative `live_input_tokens`, `live_output_tokens` and
 `live_updated_at` into their own `state/active-agents/<pid>.json` registry
 entry as usage arrives. The aggregator copies those fields to an in-flight
 agent's `live_usage` object in `data.json`; it omits that object when the
-registry has no SDK figure. The dashboard labels a present value `LIVE` and
-shows `n/a` for a CLI dispatch, rather than treating absence as zero.
+registry has no SDK figure. The agents table labels a present value `LIVE`.
+For a CLI dispatch it instead uses the transcript total and the agent's `burn`
+object, or shows `waiting` / `n/a` when no count is available rather than
+treating absence as zero.
+
+While a stage is in flight, its stages-table role column adds that live SDK or
+transcript figure to the settled figure, and the total column does the same.
+Both cells carry a `live` label. A role without a figure adds and marks
+nothing. These sums are display only: the settled source, unavailable title
+and cost-log `*` mark are unchanged, and the charts continue to use settled
+figures only.
+
+The run totals strip above the Per stage table shows each visible repo's current
+run, completed-stage count, settled cost and token total. Tokens come from
+`current_run.tokens_total` plus live SDK usage or a counted transcript total for
+agents on that run; the live addition and its mark are display only.
+
+`burn.bucket_seconds` starts at 60. Each item in `burn.points` carries the
+bucket start `t` and the cumulative `tokens`, cache-read `cached` and `turns`
+figures at the last usage record in that bucket. The reader retains Claude's
+series beside its transcript offset. Once a series would exceed 240 points it
+doubles the bucket width and keeps the last point in each wider bucket, so the
+last point still matches `stage_tokens`. The dashboard uses those points for a
+five-minute rate, cache-read share and a small cumulative sparkline.
+
+Claude Code can repeat one assistant message's usage on several transcript
+records, one per content block. Token totals and turns therefore count each
+distinct `message.id` once, including when records for one message straddle two
+incremental reads. Tool calls still count every `tool_use` block. Claude totals
+may consequently be lower than readings made before this deduplication was
+added.
 
 The agents table's `Activity` column reads `activity.turns`, `tool_calls`,
 `last_tool`, `last_detail` and `last_at`. The transcript reader derives the
@@ -147,13 +180,14 @@ No readable activity produces a blank cell, not a zero. The `--repo` path polls
 every five seconds; views using the fleet snapshot can be up to its 120-second
 interval behind.
 
-Latency is bounded by the SDK usage message, the registry's atomic rename, the
-next seam regeneration, and the page poll. `--watch` and `--serve` regenerate
-the dashboard every five seconds by default; the fleet snapshot job defaults
-to 120 seconds; the TUI reads the per-repo seam every five seconds. A missing
-or stale registry timestamp only weakens the display. Settled accounting stays
-in `state/cost-log.jsonl`, so live figures are never added to billing totals or
-counted again when the dispatch lands.
+Latency is bounded by the SDK usage message or transcript write, the registry's
+atomic rename, the next seam regeneration, and the page poll. `--watch` and
+`--serve` regenerate the dashboard every five seconds by default; the fleet
+snapshot job defaults to 120 seconds; the TUI reads the per-repo seam every
+five seconds. A missing or stale registry timestamp only weakens the display.
+Settled accounting stays in `state/cost-log.jsonl`: live figures and `burn` are
+display only and are never added to billing totals or counted again when the
+dispatch lands.
 
 `autometta attach /path/to/autometta` starts one background refresh job in the
 tmux session. Override its 120-second interval with
