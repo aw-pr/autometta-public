@@ -138,8 +138,8 @@ Open items for the next session (any family):
   identity's `<claude-...@local>` slug, which is the API model id; tier
   words only serve identities that carry no slug. `AUTOMETTA_MODEL_OPUS`
   default is now `claude-opus-5-5`. Cards naming "Claude Opus 5" keep
-  running `claude-opus-5` until re-carded as "Claude Opus 5.5" — deliberate,
-  since attribution must match the weights that actually ran. Committed
+  running `claude-opus-5` until re-carded as "Claude Opus 5.5". This is
+  deliberate, since attribution must match the weights that actually ran. Committed
   `9cdee02`.
 - `scripts/rates.sh` gained `rate_for_model` (per-model USD/1M, mirrors
   `mcp-hub/config/models.json` pricing); `cost-log.sh` now prices the model
@@ -152,8 +152,8 @@ Open items for the next session (any family):
   still pass.
 - **Deferred**: `rate_for_model` is a hand mirror of the registry pricing,
   not yet wired into mcp-hub's `pricing-check` MIRRORS list. Pre-existing
-  smoke failures — `effort-flags`, `local-route`, `phat-controller` (stale
-  or undated codex quota reading), `pipeline-pair` — are identical on the
+  smoke failures (`effort-flags`, `local-route`, `phat-controller` with a
+  stale or undated codex quota reading, `pipeline-pair`) are identical on the
   clean tree before this session and were not investigated.
 - **Open questions**: re-card queued Opus 5 stages as Claude Opus 5.5 the
   next time a run is designed?
@@ -180,7 +180,7 @@ Open items for the next session (any family):
   Nothing was run with `--apply`; the `publish` branch is untouched.
 - Fleet sync ran: agentic-rag-kimble, bench-marks, emergence-lab and
   explainer-batch pushed clean. research-sweeper committed (`47ad5c9`) but
-  its `dev` push was held on an ASK verdict — a GitHub Actions workflow
+  its `dev` push was held on an ASK verdict: a GitHub Actions workflow
   watches `dev` there, so that push waits on a human yes.
 - **Deferred**: the new mcp-hub test `tests/test-publish-sync.sh` is not
   wired into any CI or quality-check runner (matches the existing test
@@ -188,7 +188,9 @@ Open items for the next session (any family):
   dashes outside the sections touched this session.
 - **Open questions**: is this repo's configured privatefile
   (`memory/project-publish-topology-linear-not-orphan.md`), which is
-  tracked on neither `dev` nor `publish`, still wanted; should the 9
+  tracked on neither `dev` nor `publish` (the file exists on no branch; its
+  dangling `memory/INDEX.md` pointer was removed 2026-10-12), still wanted;
+  should the 9
   pending `dev` commits be published now (a plain fast-forward per the dry
   run) and PR #4 updated?
 
@@ -208,27 +210,27 @@ Open items for the next session (any family):
   `com.autometta.tick.emergence-viewer` now loaded) and refreshed
   `496c7cc` -> `7f9e6a4`, both commits pushed.
 - Docs proposal filed: `docs/proposals/external-dependencies.md` (a
-  `dependencies/` directory plan, candidate cards 138-141) — waits on three
+  `dependencies/` directory plan, candidate cards 138-141); it waits on three
   operator decisions (extract the Claude quota publisher from the private
   vibe-menuapp; how `op-fetch`/`agent-whoami` reach a fresh machine given
   `mcp-hub` is private; whether subscriber repos carry the directory,
   recommend no).
 - Two later commits by Codex GPT-5.6 Terra (`261bc32`, `9c2d0b0`,
   2026-09-20) layered a Codex admission-policy change on top of card 137 and
-  already hold the status line above this section — left as-is, not
+  already hold the status line above this section; left as-is, not
   overwritten.
 - **Deferred**: stale disabled registry entry
   `~/.autometta/subscribers/emergence-viewer-deep-zoom.yaml` (points at a
   directory that no longer exists, retire it); six pre-existing red smokes on
   clean `dev` (state-branch, state-schema, ticker-fit, tick-cost,
-  verify-sdk-schema-path, sdk-cache — not caused by this session);
+  verify-sdk-schema-path, sdk-cache; not caused by this session);
   `scripts/state-writable-smoke.sh` is named by card 101 as a contract test
   but has no `AUTOMETTA-CONTRACT` block, so the gate will trip the first time
   it is edited.
 - **Open questions**: is untracked `scripts/publish-sync.sh` (predates this
   session, untouched) meant to be committed or deleted; the 2026-09-19 Codex
   100% burn came from interactive `codex-tui`/Codex Desktop sessions, not the
-  loop, so the reserve protects dispatch only — is that the intended
+  loop, so the reserve protects dispatch only; is that the intended
   boundary?
 
 ## Previous status (2026-09-20)
