@@ -462,6 +462,13 @@ the commit at `wip/<stage>-attempt-<n>`, and records that ref and SHA as
 nothing to preserve. A preservation error is loud but non-fatal: the tick
 leaves the worktree standing and completes the FAIL transition.
 
+A preserve stays inside its run worktree. The tick force-adds the paths a
+card's Deliverables section names so that ignored deliverables are kept,
+but it resolves each one to a physical path first and skips, with a log
+line, any that lands outside the worktree: a card quoting an absolute path
+or a bare slash in that section no longer sends the preserve walking the
+disk (`docs/lessons.md` gotcha 21).
+
 Before re-dispatch, amend the card with the prior FAIL evidence and cite the
 stage record's `wip_commit` in the re-brief. `scripts/requeue-stage.sh` removes
 the ephemeral worktree and `autometta/<stage>` branch, prints the preserved
