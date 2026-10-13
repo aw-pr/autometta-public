@@ -14,7 +14,7 @@ State and memory that agents need across sessions live **in the repo**, not in a
 
 ## What this repo is
 
-Autometta is a **pattern library**, not a runtime. v1.0.0: the contract, the loop and the operator surfaces are stable and in daily use; still one human, one machine. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-requeue`, `autometta-run-design`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
+Autometta is a **pattern library**, not a runtime. v1.1.0: the contract, the loop and the operator surfaces are stable and in daily use; still one human, one machine. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-run-design`, `autometta-card-review`, `autometta-oracle`, `autometta-requeue`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
 
 The repo extracts patterns from two prior projects (`fractals-from-the-90s` dispatch contract; `agentic-rag-kimble` pass 28-29 autonomous loop) and packages them for solo single-machine multi-agent CLI work. See `README.md` for the pitch and `docs/philosophy.md` for the long-form scope.
 
@@ -72,6 +72,8 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 - `skills/agent-orchestrator/` - canonical home. Loaded into `~/.claude/skills/agent-orchestrator` via the `mcp-hub` symlink chain. Edits here are the source of truth for every consumer.
 - `skills/autometta-setup/` - adopt the dispatch contract and the tick loop in another repo.
 - `skills/autometta-run-design/` - design a run before anything is queued: cards, pairings, gates, spend.
+- `skills/autometta-card-review/` - interview the operator and review one card before it is queued: seat check, baseline run, cold read, `card-lint.sh --strict`.
+- `skills/autometta-oracle/` - author a card's frozen contract test, proven red on the base branch and green against a reference, and record its digest.
 - `skills/autometta-requeue/` - re-queue a stage safely after a FAIL, a dead agent or a stale run worktree.
 - `skills/phat-controller/` - the scheduled queue minder's brief.
 

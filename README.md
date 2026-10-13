@@ -2,7 +2,7 @@
 
 **Token-maxing is the gateway drug to AI psychosis. Autometta is a lightweight YOLO pattern library for headless agent orchestration on a single machine without constant human oversight. Worker agents code against requirement cards, verified by cross-family agents: Codex verifies Claude, and vice versa.**
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Version](https://img.shields.io/badge/version-v1.0.0-blue) ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green) ![Version](https://img.shields.io/badge/version-v1.1.0-blue) ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey)
 
 ## At a glance
 
@@ -10,7 +10,7 @@
 - **Who it is for.** A solo developer with both CLIs installed who wants implementer plus verifier, or a few parallel workers on independent stages, sometimes interactively and sometimes overnight, without taking a framework dependency.
 - **How it works.** A stage card is the worker's prompt. The worker codes inside a sandbox and returns an envelope. A verifier from the other model family runs the acceptance criteria outside that sandbox. Green lands as a commit; red re-briefs or halts. A cron tick drives the loop; a budget file is the only safety.
 - **The bets.** Git is the state store. The sandbox is the role boundary. Worker and verifier are different model families. Cron plus tick beats a daemon. A bounded spend file beats retries.
-- **Where it stands.** v1.0.0. Both layers are shipped and have been self-hosted through 109 stages on this repo and run daily across a seven-repo fleet. Single operator, one machine, macOS first with Linux via cron.
+- **Where it stands.** v1.1.0. Both layers are shipped and have been self-hosted through 128 stages on this repo and run daily across a seven-repo fleet. Single operator, one machine, macOS first with Linux via cron.
 
 Jump to: [why](#why-this-exists) · [status](#status) · [which layer do I want](#decision-tree---which-layer-do-i-want) · [first dispatch in five minutes](#your-first-dispatch-five-minutes) · [billing routes](#billing-routes-three-tiers) · [feature status](#feature-status) · [reading order](#reading-order)
 
@@ -55,9 +55,9 @@ Anthropic's Managed Agents (June 2026) has since shipped the hosted equivalent o
 
 ## Status
 
-v1.0.0, tagged 2026-09-10. Pass 1 (the dispatch contract) and pass 2 (the autonomous loop) are both shipped, including the unattended macOS launchd path (verified 2026-05-29; `docs/lessons.md` gotcha 9).
+v1.1.0, tagged 2026-10-09 (v1.0.0 on 2026-09-10). Pass 1 (the dispatch contract) and pass 2 (the autonomous loop) are both shipped, including the unattended macOS launchd path (verified 2026-05-29; `docs/lessons.md` gotcha 9).
 
-The loop has built this repo with itself: 109 self-host stages have landed through the tick, cards 0 to 134, each one worker-authored, cross-family verified and committed with the `Autometta-*` role trailers. It runs daily across a seven-repo fleet. The first live one-shot product run turned a single creative brief into a five-stage simulation in about 4.5 hours; see the [Logistic Mandelbrot case study](./docs/case-study-logistic-mandelbrot.md).
+The loop has built this repo with itself: 128 self-host stages have landed through the tick, cards 0 to 158, each one worker-authored, cross-family verified and committed with the `Autometta-*` role trailers. It runs daily across a seven-repo fleet. The first live one-shot product run turned a single creative brief into a five-stage simulation in about 4.5 hours; see the [Logistic Mandelbrot case study](./docs/case-study-logistic-mandelbrot.md).
 
 1.0 means the contract, the loop and the operator surfaces are stable and in daily use. It does not mean teams or production: this is still one human, one machine, one OAuth session per family. The one formal cross-lane benchmark (BENCH-005, a multi-stage Swift refactor) escalated at the budget in both lanes without going green; see [examples/benchmarks/bench-005/](./examples/benchmarks/bench-005/) for the lane summaries and the cross-family asymmetry. A green benchmark on a non-trivial external backlog is still open.
 
@@ -142,6 +142,7 @@ The market then moved, mostly towards the same choices.
 | 2026-06 | Loop kept; the reasons recorded in prior-art.md                                                               | Anthropic Managed Agents: hosted cron and credential vaults                                      |
 | 2026-08 | v0.2.0 operator instrumentation; graph assessment; pass 5 designed, queued and landed                         | Karpathy's lecture and its playbook name the pattern; vendor SDKs confirmed on subscription auth |
 | 2026-09 | v1.0.0: fact ledger, SDK transport matrix, gate integrity, fault handling; 109 self-host stages, seven-repo fleet | Codex CLI 0.149 narrows the free local route to the gpt-oss family                               |
+| 2026-10 | v1.1.0: model-scoped reserve, live progress in the agents panel, dependency evidence; card-quality tooling (first-attempt rate, card lint, card-review and oracle skills) followed | Sonnet tier moves to Sonnet 5.5; GPT-6 Astra selectable per card; Codex admission judged below full subscription usage |
 
 Three experiments closed against adoption on the way. A resident SDK controller (card 23) lost to cron plus tick; a worker SDK route (card 98) was tried and parked; the herdr multiplexer (card 87) was retired on 2026-08-31 because the SDK transport covered the need it was probing. Both postmortems are under `docs/experiments/`. Cloud-hosted orchestration (card 27) is designed and not queued. The bets from the first paragraph are unchanged; the passes since have been about making the loop remember what it learned and refuse to lie about what it checked.
 
@@ -162,7 +163,7 @@ autometta/
 │   ├── dispatch-contract.md  # pass 1 - the contract
 │   ├── dispatch-envelope.md  # the worker's completion signal
 │   ├── verification.md       # pass 1 - the gate model
-│   ├── lessons.md            # hard-won failure modes (headless gotchas 1-20)
+│   ├── lessons.md            # hard-won failure modes (headless gotchas 1-21)
 │   ├── tick-loop.md          # pass 2 - the autonomous loop design and operating record
 │   ├── setup.md              # pass 2 - operator setup guide, auth routes in section 7
 │   ├── runbook.md            # cold-start and daily operator path
@@ -179,11 +180,13 @@ autometta/
 │   ├── observability.md      # status, tickers, tmux viewer, heartbeat
 │   ├── dashboard.md          # the cost dashboard
 │   ├── remote-monitoring.md  # hosted health checks
+│   ├── scheduled-routines.md # registering the hosted monitoring routines
 │   ├── machine-dependencies.md
 │   ├── prior-art.md          # what was adopted and what was ignored
 │   ├── graph-engineering.md  # where autometta stands against the graph playbook
 │   ├── PUBLISH-WORKFLOW.md   # private dev / public publish branch model and gate
 │   ├── design/ experiments/ incidents/ runs/   # designs, postmortems, dated records
+│   ├── UAT/                  # operator feedback on the dashboard and TUI
 │   └── images/
 ├── templates/
 │   ├── stage-card.md         # one card per dispatch
@@ -205,6 +208,8 @@ autometta/
 │   ├── agent-orchestrator/   # canonical home (mcp-hub copy is a symlink back)
 │   ├── autometta-setup/      # adopt the dispatch contract and the loop in another repo
 │   ├── autometta-run-design/ # design a run: cards, pairings, gates, spend
+│   ├── autometta-card-review/# review one card before it is queued: interview, seat check, cold read, lint
+│   ├── autometta-oracle/     # author a card's frozen contract test and record its digest
 │   ├── autometta-requeue/    # re-queue a stage safely after a FAIL or a dead agent
 │   └── phat-controller/      # the queue minder's brief
 ├── tests/                    # contract-gate and drain smokes, SDK experiment fixtures
@@ -299,12 +304,15 @@ Full surface, including the op-refs file layout, the sibling `CODEX_HOME` requir
 
 | Feature                                                    | Status       | Notes                                                                                                                                                   |
 | ---------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dispatch contract (pass 1)                                 | shipped      | Self-hosted through 109 stages on this repo.                                                                                                            |
+| Dispatch contract (pass 1)                                 | shipped      | Self-hosted through 128 stages on this repo.                                                                                                            |
 | Autonomous loop (pass 2)                                   | shipped      | Unattended macOS launchd path verified 2026-05-29 (gotcha 9 fix). Linux via cron.                                                                       |
 | Pipeline pairs                                             | shipped      | Adjacent stages with disjoint path claims overlap; landing stays ordered. A card pairs unless it says serial.                                            |
 | phat-controller (queue minder)                             | shipped      | Scheduled pass that re-briefs, re-queues, drains and escalates; keeps a journal and takes messages.                                                     |
 | Stage dependency graph                                     | shipped      | `Depends on` names the stages a card builds on; the tick dispatches it only once their commits are on its base. `autometta graph` shows readiness and blockers, read-only. Legacy gates keep their status-only meaning. See [docs/dependency-graph.md](./docs/dependency-graph.md). |
 | Contract-test gate                                         | shipped      | A card names its oracle and a frozen digest; `add-stage.sh` refuses a card without one; the verifier runs the gate against the tree it is shown.        |
+| Card-quality tooling                                       | shipped      | `autometta-card-review` and `autometta-oracle` skills; `autometta first-attempts <repo>` reports the first-attempt clean rate per run.                   |
+| Card lint                                                  | standalone   | `scripts/card-lint.sh --strict <card>` before `add-stage.sh`; run it by hand or through card-review, `add-stage.sh` does not call it yet.                |
+| Failed-work preservation                                   | shipped      | FAIL and stall pin the attempt at `wip/<stage>-attempt-<n>`; a preserve stays inside its run worktree (card 158, gotcha 21).                            |
 | Fact ledger (pass 5)                                       | shipped      | `memory/facts.jsonl`, schema and lint, backfilled from trailers, appended at landing, read by the verifier.                                              |
 | Worker dispatch envelope                                   | shipped      | Sole worker completion signal; `partial` goes to the verifier with the deferred criteria as a checklist.                                                |
 | Agent observability                                        | shipped      | Registry, heartbeat with token-outlier kill, tickers, watch primitive.                                                                                  |
@@ -330,6 +338,7 @@ Full surface, including the op-refs file layout, the sibling `CODEX_HOME` requir
 | v0.1.0  | 2026-05-29 | First tagged release: dispatch contract, tick loop and unattended launchd path.                                                                                                                                    |
 | v0.2.0  | 2026-08-27 | Operator instrumentation: TUI, pipeline pairs, `run_id`, stale-build warning, dashboard seam speedup, and the bake-off completed across eight candidates.                                                          |
 | v1.0.0  | 2026-09-10 | Fact ledger; SDK verifier route on both families with the subscription route guard; the card carries its own oracle and the gate stops lying about its inputs; network preflight and dead-API stalls; drains replace rather than stack; workers no longer inherit the operator's MCP servers; 109 self-host stages landed. |
+| v1.1.0  | 2026-10-09 | Model-scoped reserve (a Fable hold no longer blocks an Opus seat); live progress (Claude dispatches stream their log, the agents panel shows turns and last tool); dependency evidence (`Depends on`, `autometta graph`); Codex admission below full usage; the Sonnet tier moves to Sonnet 5.5 and GPT-6 Astra is selectable per card. |
 
 ## Licence
 
