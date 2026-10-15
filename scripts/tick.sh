@@ -108,6 +108,63 @@ claude_api_error_stall_count() {
   fi
 }
 
+# The most recent system wake in epoch seconds, or nothing where the platform
+# does not report one.
+system_wake_epoch() {
+  sysctl -n kern.waketime 2>/dev/null | sed -n 's/^{ sec = \([0-9][0-9]*\),.*/\1/p' || true
+}
+
+# Print how long a registered streaming dispatch has gone without writing its
+# log or its newest Claude transcript. A wake later than both restarts the
+# count, because a sleeping Mac suspends the agent with it. An unregistered
+# agent, or one that does not stream its log, prints nothing: that is neutral,
+# not silence.
+dispatch_silence_seconds() {
+  local repo_root="$1" pid="$2"
+  local now_epoch="${3:-$(date -u +%s)}"
+  local wake_epoch="${4-$(system_wake_epoch)}"
+  local registry="$repo_root/state/active-agents/${pid}.json"
+  local projects_dir="${AUTOMETTA_CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+  local log_path work_dir candidate mtime newest=-1
+  local -a candidates=()
+
+  [[ -f "$registry" ]] || return 0
+  jq -e '.log_streams == true' "$registry" >/dev/null 2>&1 || return 0
+  log_path="$(jq -r '.log_path // empty' "$registry" 2>/dev/null || true)"
+  work_dir="$(jq -r '.working_dir // empty' "$registry" 2>/dev/null || true)"
+  [[ -z "$log_path" ]] || candidates+=("$log_path")
+  if [[ -n "$work_dir" ]]; then
+    for candidate in "$projects_dir/${work_dir//\//-}"/*.jsonl; do
+      candidates+=("$candidate")
+    done
+  fi
+  for candidate in "${candidates[@]+"${candidates[@]}"}"; do
+    [[ -f "$candidate" ]] || continue
+    mtime="$(stat -f '%m' "$candidate" 2>/dev/null || stat -c '%Y' "$candidate" 2>/dev/null || printf '0')"
+    if (( mtime > newest )); then
+      newest="$mtime"
+    fi
+  done
+  (( newest >= 0 )) || return 0
+  if [[ "$wake_epoch" =~ ^[0-9]+$ ]] && (( wake_epoch > newest )); then
+    newest="$wake_epoch"
+  fi
+  if (( now_epoch > newest )); then
+    printf '%s\n' "$((now_epoch - newest))"
+  else
+    printf '0\n'
+  fi
+}
+
+# Silence beyond this many seconds kills a streaming dispatch; 0 turns the
+# check off. The default is twice the Claude Bash tool's ten-minute cap, so no
+# single tool call can reach it.
+dispatch_silence_limit_seconds() {
+  local limit="${AUTOMETTA_SILENCE_KILL_SECONDS:-1200}"
+  [[ "$limit" =~ ^[0-9]+$ ]] || limit=1200
+  printf '%s\n' "$limit"
+}
+
 # Terminate a recorded wrapper and every descendant. Descendants are captured
 # before TERM so reparenting cannot leave the agent itself behind. KILL is the
 # bounded fallback for anything still alive after the grace period.
@@ -3502,6 +3559,27 @@ _process_repo_locked() {
       return 0
     fi
 
+    local silence_limit silence_seconds=""
+    silence_limit="$(dispatch_silence_limit_seconds)"
+    if [[ "$worker_returned" != "true" ]] && (( silence_limit > 0 )) \
+       && [[ -n "${worker_pid:-}" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+      silence_seconds="$(dispatch_silence_seconds "$repo_root" "$worker_pid")"
+    fi
+    if [[ -n "$silence_seconds" ]] && (( silence_seconds > silence_limit )); then
+      terminate_process_tree "$worker_pid"
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
+        --arg id "$current_stage"
+      preserve_failed_work "$repo_root" "$state_yaml" "$current_stage" "" \
+        "worker silent for ${silence_seconds}s (limit ${silence_limit}s)" "stalled" || true
+      pipeline_after_member_failure "$state_yaml" "$current_stage"
+      budget_record_failure "$repo_root"
+      log "stage ${current_stage} stalled: worker ${worker_pid} silent for ${silence_seconds}s, no log or transcript write (limit ${silence_limit}s)"
+      budget_increment_tick "$repo_root" work
+      commit_state_branch "$repo_root"
+      return 0
+    fi
+
     if [[ -n "$started_at" && "$worker_returned" != "true" ]]; then
       local card_path budget_seconds grace_seconds stall_threshold started_epoch now_epoch elapsed wall_elapsed
       card_path="$(stage_card_for_id "$repo_root" "$current_stage" "$manifest_path")"
@@ -3714,6 +3792,23 @@ _process_repo_locked() {
       fi
 
       if [[ -n "${verifier_pid:-}" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
+        local verifier_silence_limit verifier_silence_seconds=""
+        verifier_silence_limit="$(dispatch_silence_limit_seconds)"
+        if (( verifier_silence_limit > 0 )); then
+          verifier_silence_seconds="$(dispatch_silence_seconds "$repo_root" "$verifier_pid")"
+        fi
+        if [[ -n "$verifier_silence_seconds" ]] && (( verifier_silence_seconds > verifier_silence_limit )); then
+          terminate_process_tree "$verifier_pid"
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
+            --arg id "$current_stage"
+          pipeline_after_member_failure "$state_yaml" "$current_stage"
+          budget_record_failure "$repo_root"
+          log "verifier for stage ${current_stage} stalled: verifier ${verifier_pid} silent for ${verifier_silence_seconds}s, no log or transcript write (limit ${verifier_silence_limit}s)"
+          budget_increment_tick "$repo_root" work
+          commit_state_branch "$repo_root"
+          return 0
+        fi
         local verifier_started_at verifier_budget_seconds verifier_grace_seconds
         local verifier_threshold verifier_started_epoch verifier_now_epoch verifier_elapsed verifier_paused_elapsed
         verifier_started_at="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
