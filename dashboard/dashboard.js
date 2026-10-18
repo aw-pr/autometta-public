@@ -107,6 +107,10 @@
       return live;
     }
     if (agent.stage_tokens_status === "waiting") return "waiting";
+    if ((agent.stage_tokens_status !== "counted" || agent.stage_tokens == null) &&
+        agent.live_total_tokens != null) {
+      return '<span class="burn-total">' + compactTokens(agent.live_total_tokens) + " heartbeat</span>";
+    }
     if (agent.stage_tokens_status !== "counted" || agent.stage_tokens == null) return "n/a";
 
     var parts = ['<span class="burn-total">' + compactTokens(agent.stage_tokens) + " transcript</span>"];
@@ -217,6 +221,13 @@
     if (agent.stage_tokens_status === "counted" && agent.stage_tokens != null) {
       var transcriptTokens = Number(agent.stage_tokens);
       return isFinite(transcriptTokens) ? transcriptTokens : null;
+    }
+    // The fleet page never reads transcripts (too costly across every repo
+    // each cycle), so stage_tokens is absent there. The heartbeat's figure is
+    // a tick behind at worst, but without it a running stage read as zero.
+    if (agent.live_total_tokens != null) {
+      var heartbeatTokens = Number(agent.live_total_tokens);
+      return isFinite(heartbeatTokens) ? heartbeatTokens : null;
     }
     return null;
   }
@@ -707,7 +718,7 @@
         var elapsed = fmtInt(a.elapsed_seconds || 0) + "s";
         if (a.budget_seconds) elapsed += " / " + fmtInt(a.budget_seconds) + "s";
         rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-",
-          activityText(a.activity), burnCell(a), elapsed]);
+          activityText(a.activity), { html: burnCell(a) }, elapsed]);
       });
       (r.queue || []).forEach(function (q) {
         rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "", "-", "-"]);
