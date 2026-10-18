@@ -221,6 +221,71 @@
     return null;
   }
 
+  // The predicted figure sits in brackets after the actual one, so a queued
+  // stage reads "0 (~1.2M)" and a finished one shows how far it strayed.
+  function estimateSuffix(estimate, role) {
+    if (!estimate || estimate[role] == null) return "";
+    var basis = estimate.basis === "model"
+      ? "median of this model's past dispatches in this repo"
+      : "no history for this model here: median across models in the role";
+    return ' <span class="est" title="predicted: ' + esc(basis) + '">(~' +
+      compactTokens(estimate[role]) + ")</span>";
+  }
+
+  // One rate per model across the visible repos and both roles, weighted by
+  // dispatch count. The heat compares cost per minute rather than tokens per
+  // minute: a pricier model can spend fewer tokens and still drain the window
+  // faster.
+  function modelBurnRates(repos) {
+    var acc = Object.create(null);
+    repos.forEach(function (repo) {
+      ((repo.spend || {}).model_rates || []).forEach(function (row) {
+        var a = acc[row.identity] || (acc[row.identity] =
+          { identity: row.identity, samples: 0, tokens: 0, tokenWeight: 0, cost: 0, costWeight: 0, medianTokens: 0 });
+        var n = Number(row.samples || 0);
+        a.samples += n;
+        a.medianTokens += Number(row.median_tokens || 0) * n;
+        if (row.tokens_per_min != null) { a.tokens += Number(row.tokens_per_min) * n; a.tokenWeight += n; }
+        if (row.cost_usd_per_min != null) { a.cost += Number(row.cost_usd_per_min) * n; a.costWeight += n; }
+      });
+    });
+    var rates = Object.keys(acc).map(function (k) {
+      var a = acc[k];
+      return {
+        identity: a.identity, samples: a.samples,
+        median_tokens: a.samples ? a.medianTokens / a.samples : null,
+        tokens_per_min: a.tokenWeight ? a.tokens / a.tokenWeight : null,
+        cost_usd_per_min: a.costWeight ? a.cost / a.costWeight : null
+      };
+    });
+    var costs = rates.map(function (r) { return r.cost_usd_per_min; })
+      .filter(function (c) { return c != null; }).sort(function (a, b) { return a - b; });
+    var mid = costs.length ? costs[Math.floor(costs.length / 2)] : null;
+    var byIdentity = Object.create(null);
+    rates.forEach(function (r) {
+      r.relative = (mid && r.cost_usd_per_min != null) ? r.cost_usd_per_min / mid : null;
+      r.heat = r.relative == null ? "" : r.relative >= 1.5 ? "hot" : r.relative <= 0.67 ? "cool" : "warm";
+      byIdentity[r.identity] = r;
+    });
+    return { list: rates, byIdentity: byIdentity };
+  }
+
+  function burnBadge(rate) {
+    if (!rate || rate.tokens_per_min == null) return "";
+    var title = shortIdentity(rate.identity) + ": " + fmtInt(Math.round(rate.tokens_per_min)) +
+      " tokens/min" + (rate.cost_usd_per_min != null
+        ? ", ~$" + rate.cost_usd_per_min.toFixed(2) + "/min" : "") +
+      (rate.relative != null ? ", " + rate.relative.toFixed(1) + "x the median model's cost burn" : "") +
+      " (" + rate.samples + " dispatches)";
+    return ' <span class="burn-rate ' + esc(rate.heat) + '" title="' + esc(title) + '">' +
+      compactTokens(rate.tokens_per_min) + "/min</span>";
+  }
+
+  function identityCell(identity, rates) {
+    if (!identity) return shortIdentity(identity);
+    return { html: esc(shortIdentity(identity)) + burnBadge(rates.byIdentity[identity]) };
+  }
+
   function stageTokenCells(repo, stage) {
     var spend = stageSpend(repo, stage);
     var liveByRole = { worker: 0, verifier: 0 };
@@ -235,6 +300,7 @@
     });
     var liveTotal = liveByRole.worker + liveByRole.verifier;
     var mark = spend.logged ? "*" : "";
+    var estimate = stage.estimate || null;
     var spendTitle = spend.unavailable
       ? ' title="' + esc((repo.spend || {}).state_error) + '"' : "";
     return ["worker", "verifier", "total"].map(function (role) {
@@ -244,7 +310,7 @@
       if (live) value = Number(value || 0) + extra;
       return {
         html: '<span' + (live ? ' class="live"' : "") + spendTitle + ">" +
-          fmtInt(value) + mark + "</span>",
+          fmtInt(value) + mark + "</span>" + estimateSuffix(estimate, role),
         cls: "num"
       };
     });
@@ -755,6 +821,7 @@
     state.stageRowOrder = rows.map(function (row) { return stageKey(row.repo, row.stage.id); });
     var byName = Object.create(null);
     repos.forEach(function (r) { byName[r.name] = r; });
+    var rates = modelBurnRates(repos);
     var cells = rows.map(function (row) {
       var s = row.stage;
       var tokenCells = stageTokenCells(byName[row.repo] || {}, s);
@@ -770,8 +837,8 @@
         row.repo,
         { html: '<span class="caret">\u25b8</span> ' + esc(s.id) },
         { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
-        shortIdentity(s.worker),
-        shortIdentity(s.verifier),
+        identityCell(s.worker, rates),
+        identityCell(s.verifier, rates),
         tokenCells[0],
         tokenCells[1],
         tokenCells[2],
@@ -781,7 +848,7 @@
     });
     renderPagedTable("stages-table-wrap",
       ["Repo", "Stage", "Status", "Worker", "Verifier",
-       "Worker tok", "Verifier tok", "Total tok", "Queued", "Completed"],
+       "Worker tok (est)", "Verifier tok (est)", "Total tok (est)", "Queued", "Completed"],
       cells, "stages", null);
   }
 
@@ -900,6 +967,24 @@
     });
   }
 
+  function renderBurnTable(repos) {
+    var rates = modelBurnRates(repos).list.sort(function (a, b) {
+      return (b.cost_usd_per_min || 0) - (a.cost_usd_per_min || 0);
+    });
+    var rows = rates.map(function (r) {
+      return [
+        { html: esc(shortIdentity(r.identity)) + burnBadge(r) },
+        { html: fmtInt(r.samples), cls: "num" },
+        { html: compactTokens(r.median_tokens), cls: "num" },
+        { html: r.tokens_per_min == null ? "-" : compactTokens(r.tokens_per_min), cls: "num" },
+        { html: r.cost_usd_per_min == null ? "-" : "$" + r.cost_usd_per_min.toFixed(2), cls: "num" },
+        { html: r.relative == null ? "-" : r.relative.toFixed(1) + "x", cls: "num" }
+      ];
+    });
+    renderSimpleTable("burn-table-wrap",
+      ["Model", "Dispatches", "Median tok/dispatch", "Tok/min", "Cost/min", "vs median"], rows);
+  }
+
   function drawDaysChart(stages) {
     var totals = Object.create(null);
     stages.forEach(function (row) {
@@ -971,6 +1056,7 @@
     renderQuota(repos);
     renderRunTotals(repos);
     renderStagesTable(repos);
+    renderBurnTable(repos);
     drawReposChart(repos, stages);
     drawStagesChart(stages);
     drawModelsChart(stages);

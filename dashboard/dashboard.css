@@ -120,6 +120,19 @@ table.stages th, table.stages td {
 table.stages th { color: var(--muted); font-weight: 500; }
 table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.stages td.num .live { color: var(--accent); font-weight: 600; }
+table.stages .est { color: var(--muted); font-size: 0.8rem; }
+#panel-models .panel-note { margin-top: 2.5rem; }
+.burn-rate {
+  font-size: 0.72rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.burn-rate.hot { color: var(--fail); border-color: var(--fail); }
+.burn-rate.warm { color: var(--stall); border-color: var(--stall); }
+.burn-rate.cool { color: var(--accent); border-color: var(--accent); }
 table.stages td.num .live::after {
   content: " live";
   color: var(--muted);
