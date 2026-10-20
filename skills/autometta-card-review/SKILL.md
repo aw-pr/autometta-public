@@ -96,7 +96,10 @@ placeholders, an open decision, a same-family pairing with no rationale,
 missing budget lines or headings, Inputs that do not exist, deliverables
 outside Path claims, absolute home paths, and a contract test that is
 missing, names another card, carries a NONE marker or does not match its
-digest. Then `scripts/add-stage.sh <<repo>> <<card>>`.
+digest. Lint does not check effort. Before queueing, confirm that any
+`xhigh` or `max` worker or verifier effort quotes the operator's request in
+the pairing rationale, and otherwise lower it per the effort rule in
+autometta-run-design section 2. Then `scripts/add-stage.sh <<repo>> <<card>>`.
 
 ## Done when
 

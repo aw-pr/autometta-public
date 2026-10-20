@@ -39,6 +39,18 @@ pipeline overlap class (section 4) safe against quota contention.
 Route the open-ended brief to the stronger tier and the mechanical sweep to
 the cheaper one; record the reasoning in the card's pairing rationale.
 
+**Effort tops out at `high` unless the operator asks for more.** Set
+`xhigh` or `max` only when the operator has asked for it on this card, and
+quote the request in the pairing rationale. Default worker effort is `high`
+for a fresh design or an open-ended brief, `medium` for a re-brief or
+narrow fix, and `low` or omitted for a mechanical sweep. Verifiers default
+to `high`. Effort multiplies thinking tokens on every turn of a long run,
+and it does not buy consistency: explainer-batch's design card 16 failed
+three times at Fable xhigh on narrow contradictions the cross-family
+verifier caught. A card that failed for lack of reasoning depth, not for
+inconsistency, is the case to raise effort, and only with the operator's
+yes. The same opt-in applies to the T0 models (Fable, Astra).
+
 ## 3. Gates
 
 Draw the dependency DAG before ordering the list. Any stage that reads what
