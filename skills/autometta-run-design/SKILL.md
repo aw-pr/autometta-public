@@ -50,7 +50,16 @@ and it does not buy consistency: explainer-batch's design card 16 failed
 three times at Fable xhigh on narrow contradictions the cross-family
 verifier caught. A card that failed for lack of reasoning depth, not for
 inconsistency, is the case to raise effort, and only with the operator's
-yes. The same opt-in applies to the T0 models (Fable, Astra).
+yes.
+
+**Place Fable and Astra by role, not by price.** They are the right worker
+for high-complexity work and UI work, where they land in fewer attempts
+and so cost fewer tokens overall; choose them there without hesitation. They
+cost most in a role that does not need them, above all as verifier:
+checking criteria is a reading task, and a cheaper cross-family verifier
+gets there sooner. `card-lint` prints a `frontier-tier` NOTE (never an
+error) for either pin; answer it in the pairing rationale by saying why the
+role needs the tier.
 
 ## 3. Gates
 

@@ -202,6 +202,9 @@ def read_card(argument):
         sys.exit(2)
 
 
+notes = {}
+
+
 def lint_card(argument):
     card_path = os.path.realpath(argument)
     root = repository_root(card_path)
@@ -239,6 +242,19 @@ def lint_card(argument):
         if effort in ("xhigh", "max") and not (metadata_value(lines, "Effort approved") or "").strip():
             findings.append(("effort", f"lower {role} effort to high, or add '- **Effort approved:** <the operator's request>'"))
             break
+
+    # Advisory only: the frontier tier lands high-complexity and UI work in
+    # fewer attempts, and costs most when it is in a role that does not need it.
+    for role in ("Worker", "Verifier"):
+        identity = metadata_value(lines, role) or ""
+        if re.search(r"fable|astra", identity, flags=re.IGNORECASE):
+            if role == "Worker":
+                advice = (f"{identity} is the Worker; confirm the card is high-complexity or UI work "
+                          "where the frontier tier lands in fewer attempts, and keep it if so")
+            else:
+                advice = (f"{identity} is the Verifier; checking criteria is a reading task where a cheaper "
+                          "cross-family model usually gets there sooner, unless judging this card needs the frontier tier")
+            notes.setdefault(argument, []).append(("frontier-tier", advice))
 
     if metadata_value(lines, "Worker wall-clock") is None:
         findings.append(("budget", "add a '- **Worker wall-clock:** <duration>' line under Budget"))
@@ -308,6 +324,8 @@ any_findings = False
 level = "ERROR" if strict else "WARN"
 for card_argument in card_arguments:
     card_findings = lint_card(card_argument)
+    for check, message in notes.get(card_argument, []):
+        print(f"card-lint: NOTE {card_argument}: {check}: {message}")
     if not card_findings:
         print(f"card-lint: OK {card_argument}")
         continue

@@ -243,4 +243,19 @@ variant 42-high '- **Open decisions:** none' '- **Open decisions:** none\n- **Wo
 "$lint" --strict "$repo/stage-cards/42-high.md" >/dev/null \
   || fail "effort: a high-effort card is refused"
 
+variant 43-fable-worker \
+  '- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>' '- **Worker:** GPT-6 Astra <gpt-6-astra@local>' \
+  '- **Verifier:** Claude Sonnet 5.5 <claude-sonnet-5-5@local>' '- **Verifier:** Claude Fable 5.1 <claude-fable-5-1@local>'
+frontier_out="$("$lint" --strict "$repo/stage-cards/43-fable-worker.md")" \
+  || fail "frontier-tier: a Fable or Astra pin fails --strict; it must only advise"
+printf '%s\n' "$frontier_out" | grep -q 'NOTE .*frontier-tier: GPT-6 Astra .* is the Worker' \
+  || fail "frontier-tier: an Astra worker carries no note: $frontier_out"
+printf '%s\n' "$frontier_out" | grep -q 'NOTE .*frontier-tier: Claude Fable .* is the Verifier' \
+  || fail "frontier-tier: a Fable verifier carries no note: $frontier_out"
+printf '%s\n' "$frontier_out" | grep -Eq '^card-lint: OK ' \
+  || fail "frontier-tier: a card with only notes is not reported OK: $frontier_out"
+if "$lint" --strict "$repo/stage-cards/42-high.md" | grep -q NOTE; then
+  fail "frontier-tier: a card with no frontier pin carries a note"
+fi
+
 printf 'PASS: card-lint finds each card-defect class once, and only when it is there\n'

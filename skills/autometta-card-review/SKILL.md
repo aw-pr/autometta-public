@@ -97,7 +97,11 @@ missing budget lines or headings, Inputs that do not exist, deliverables
 outside Path claims, absolute home paths, and a contract test that is
 missing, names another card, carries a NONE marker or does not match its
 digest, and xhigh or max effort with no `Effort approved` line (lower it
-per autometta-run-design section 2 unless the operator asked). Then `scripts/add-stage.sh <<repo>> <<card>>`.
+per autometta-run-design section 2 unless the operator asked). A `frontier-tier` NOTE does not block: confirm the
+pairing rationale says why the role needs Fable or Astra (high complexity
+or UI work as worker; a judgement-heavy verification as verifier). Keep the
+pin when it does; do not trade it down by default. Then
+`scripts/add-stage.sh <<repo>> <<card>>`.
 
 ## Done when
 
