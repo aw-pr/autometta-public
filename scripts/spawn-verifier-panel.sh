@@ -10,7 +10,7 @@
 # Fixed panel composition for v1:
 #   panel-0: Claude Opus 5   via SDK (scripts/verify-sdk.py --model claude-opus-5)
 #   panel-1: Claude Sonnet 5.5 via SDK (scripts/verify-sdk.py --model claude-sonnet-5-5)
-#   panel-2: GPT-5.6 Sol      via codex exec
+#   panel-2: current GPT Sol via codex exec (models.sh default)
 #
 # Requires: auth.claude.mode: api (ANTHROPIC_API_KEY must be in claude auth_pairs).
 # A panellist crash (no artefact returned) counts as no-vote.
@@ -28,7 +28,7 @@ source "$script_dir/models.sh"
 
 PANELLIST_OPUS="Claude Opus 5 <claude-opus-5@local>"
 PANELLIST_SONNET="Claude Sonnet 5.5 <claude-sonnet-5-5@local>"
-PANELLIST_CODEX="GPT-5.6 Sol <gpt-5-6-sol@local>"
+PANELLIST_CODEX="$(AGENT_WHOAMI= agent-whoami --model "$AUTOMETTA_MODEL_CODEX")"
 
 QUORUM_REQUIRED=2
 POLL_INTERVAL=10

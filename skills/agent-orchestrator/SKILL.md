@@ -59,12 +59,19 @@ Concrete model names attached to the tiers above for paired or comparative work.
 
 | Tier | Anthropic | OpenAI | Google |
 |------|-----------|--------|--------|
-| **T0 - Frontier-above-Opus (dispatched, opt-in)** | Claude Fable (current) | none | none |
+| **T0 - Frontier-above-Opus (dispatched, opt-in)** | Claude Fable (current) | GPT Astra (current) | none |
 | **T0/T1 - Frontier** | Claude Opus (current) | GPT Sol (current) | Gemini Pro (current) |
-| **T2/T3 - Workhorse** | Claude Sonnet (current) | GPT Terra (current) | Gemini Pro / Flash |
+| **T2/T3 - Workhorse** | Claude Sonnet (current) | GPT Sol (current), medium or low effort | Gemini Pro / Flash |
 | **T4 - Light** | Claude Haiku (current) | GPT Luna (current) | Gemini Flash |
 
 When dispatching paired multi-family work (comparative reviews, A/B benchmarks, independence-checking lanes), the tier governs which row of the table you pull from on each side. Solo execution can pick a tier-appropriate model from any single family - only paired or comparative work has to lock the row.
+
+For new OpenAI roles use `gpt-6.1-sol` for Sol, `gpt-6-luna` for Luna,
+and opt in to `gpt-6-astra` for Astra. Resolve the author string through
+`agent-whoami --model <id>` before writing a card. GPT-6.1 Sol supports
+`low`, `medium`, `high`, `xhigh` and `max` effort; use Luna for work needing
+`none`. Older cards keep their explicit model pins until the operator re-briefs
+them. Autometta's generic Codex fallback is GPT-6.1 Sol.
 
 ### Heuristics
 

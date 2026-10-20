@@ -12,7 +12,7 @@ from typing import Any
 
 
 REQUIREMENTS = "scripts/requirements-sdk.txt"
-DEFAULT_MODEL = "gpt-5.6-terra"
+DEFAULT_MODEL = "gpt-6.1-sol"
 VERIFIER_IDENTITY = "Codex SDK verifier <openai-codex@local>"
 
 
