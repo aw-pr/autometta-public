@@ -140,3 +140,15 @@ yq -i '.window_reserve.codex_admit_percent = "ninety"' "$AUTOMETTA_HOME/phat-con
 set_reading "$(reading 95)"
 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'invalid ceiling did not fall back to 100'
 printf 'PASS mandate codex_admit_percent lowers the admission ceiling; invalid value keeps 100\n'
+
+# Supplemental regression: codex_admit_percent: off admits a new card however
+# spent, or however stale, the reading is.
+yq -i '.window_reserve.codex_admit_percent = "off"' "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+for pair in '100 30' '105 30' '50 100'; do
+  set_reading "$(reading "${pair%% *}" "${pair#* }")"
+  quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail "ceiling off held $pair"
+  quota_spawn_permits "$repo" codex "$repo/docs/stages/02-next.md" || fail "manual ceiling off held $pair"
+done
+set_reading "$(reading 100 | jq -c '.fetched_at = "2001-01-01T00:00:00Z"')"
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'ceiling off held a stale reading'
+printf 'PASS mandate codex_admit_percent off admits exhausted and stale readings\n'

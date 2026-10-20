@@ -231,6 +231,9 @@ def read_codex() -> dict[str, Any]:
 
 def codex_admission(reading: Any) -> dict[str, Any]:
     result = {"allowed": False, "reason": "Codex quota reading unavailable", "window": "", "reset": None}
+    if codex_admission_off():
+        return {**result, "allowed": True,
+                "reason": "Codex admission ceiling off by operator; new cards may run into reserve credits"}
     if not isinstance(reading, dict) or reading.get("status") != "known":
         return result
     now = now_epoch()
@@ -254,6 +257,12 @@ def codex_admission(reading: Any) -> dict[str, Any]:
             return {**result, "reason": f"Codex {window['label']} {state} ({window['utilization']:g}% used)",
                     "window": window["label"], "reset": int(reset)}
     return {**result, "allowed": True, "reason": f"Codex quota below {ceiling:g}%; current card may finish in overage"}
+
+
+def codex_admission_off() -> bool:
+    """`off` is the operator's explicit decision to spend past the subscription
+    window into reserve credits, so no reading, stale or exhausted, holds a card."""
+    return os.environ.get("AUTOMETTA_CODEX_ADMIT_PERCENT", "").strip().lower() == "off"
 
 
 def codex_admit_percent() -> float:
