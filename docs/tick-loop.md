@@ -503,7 +503,13 @@ The serial viewer run admits one card at a time.
 `window_reserve.codex_admit_percent` in the controller mandate lowers that
 ceiling: at 90, no new Codex card starts once either Codex window is 90% used,
 and the tick keeps re-reading until the window resets. An admitted card still
-finishes. Unset, zero, over 100 or non-numeric keeps the 100% default.
+finishes. Unset, zero, over 100 or non-numeric keeps the 100% default. `off`
+admits a card whatever the reading says. `pace` caps the weekly window at the
+share of the week already gone plus one day's share (`pace+N` sets N points of
+headroom instead), so a week cannot be spent in a day: two days in, a new card
+starts only below about 43%. Pacing leaves any five-hour window at 100%. A Pro
+account reports the weekly window alone, which is a complete reading; a reading
+with no weekly window is still incomplete and holds.
 
 **Claude retains the provider-window reserve.** `window_reserve.percent` defaults
 to 20% with `action: hold`, so new Claude work normally stops at 80% used.
