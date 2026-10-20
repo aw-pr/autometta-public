@@ -105,9 +105,13 @@ for agent_path in "$active_dir"/*.json; do
   mv "${tmp_usage}.next" "$tmp_usage"
 done
 
+# The live Codex weekly reading, for the run cap register-agent.sh stamped
+# on each Codex dispatch. Read once per heartbeat, never per agent.
+codex_reading="$(python3 "$script_dir/quota-window.py" codex 2>/dev/null || printf '{}')"
+
 python3 - "$active_dir" "$recent_dir" "$tmp_report" "$stall_seconds" \
   "$cost_log_path" "$tmp_usage" "$outlier_window" "$outlier_min_samples" \
-  "$outlier_multiple" "$outlier_kill_multiple" <<'PY'
+  "$outlier_multiple" "$outlier_kill_multiple" "$codex_reading" <<'PY'
 import json
 import os
 import signal
@@ -119,7 +123,28 @@ import time
 (
     active_dir, recent_dir, out_path, stall_str, cost_log_path, usage_path,
     window_str, min_samples_str, multiple_str, kill_multiple_str,
+    codex_reading_str,
 ) = sys.argv[1:]
+
+try:
+    codex_reading = json.loads(codex_reading_str)
+except ValueError:
+    codex_reading = {}
+codex_weekly = next(
+    (w for w in (codex_reading.get("windows") or []) if isinstance(w, dict) and w.get("label") == "Weekly"),
+    None,
+) if isinstance(codex_reading, dict) and codex_reading.get("status") == "known" else None
+
+
+def terminate(pid):
+    """Children first, then the wrapper, so the model process does not outlive
+    the script that owns it. Returns the error, or None once signalled."""
+    try:
+        subprocess.run(["pkill", "-TERM", "-P", str(pid)], check=False)
+        os.kill(int(pid), signal.SIGTERM)
+    except (OSError, ValueError) as error:
+        return error
+    return None
 
 try:
     stall_seconds = int(stall_str)
@@ -273,12 +298,9 @@ for name in sorted(os.listdir(active_dir)):
             # left standing, so the work survives for the reaper to preserve;
             # what stops is the spending. Children first, then the wrapper, so
             # the model process does not outlive the script that owns it.
-            killed = False
-            try:
-                subprocess.run(["pkill", "-TERM", "-P", str(pid)], check=False)
-                os.kill(int(pid), signal.SIGTERM)
-                killed = True
-            except (OSError, ValueError) as error:
+            error = terminate(pid)
+            killed = error is None
+            if not killed:
                 print(
                     "WARNING: token outlier: %s %s pid=%s at %.1fx could not be "
                     "terminated (%s); it is still running"
@@ -304,6 +326,44 @@ for name in sorted(os.listdir(active_dir)):
                 % (stage, role, pid, live_total, baseline, multiple,
                    kill_multiple)
             )
+
+    # The run cap is account-wide: the weekly window has no per-dispatch
+    # split, so concurrent Codex runs share one slot allowance between them.
+    quota_start = doc.get("quota_start")
+    if (
+        alive
+        and family == "codex"
+        and isinstance(quota_start, dict)
+        and codex_weekly is not None
+        and codex_weekly.get("resets_at") == quota_start.get("week_resets_at")
+        and isinstance(quota_start.get("used"), (int, float))
+        and isinstance(quota_start.get("run_cap_percent"), (int, float))
+        and quota_start["run_cap_percent"] > 0
+        and isinstance(codex_weekly.get("utilization"), (int, float))
+    ):
+        spent = codex_weekly["utilization"] - quota_start["used"]
+        doc["quota_run_spent_percent"] = round(spent, 2)
+        if spent >= quota_start["run_cap_percent"]:
+            stage = doc.get("stage_id") or os.path.basename(
+                doc.get("card_path") or "unknown"
+            ).rsplit(".", 1)[0]
+            error = terminate(pid)
+            if error is None:
+                flags.append("quota-run-cap-killed")
+                doc["outcome"] = "killed-quota-run-cap"
+                doc["quota_run_cap_killed_at"] = "%dZ" % now
+                print(
+                    "KILLED: quota run cap: %s %s pid=%s moved the Codex weekly "
+                    "window %.1f%% (cap %.1f%%, from %.1f%%); work left in the "
+                    "run worktree"
+                    % (stage, role, pid, spent, quota_start["run_cap_percent"],
+                       quota_start["used"])
+                )
+            else:
+                print(
+                    "WARNING: quota run cap: %s %s pid=%s could not be "
+                    "terminated (%s); it is still running" % (stage, role, pid, error)
+                )
 
     doc["alive"] = alive
     doc["flags"] = flags

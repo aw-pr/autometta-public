@@ -526,9 +526,15 @@ its worker or verifier names is ahead of pace; the verifier of an admitted card
 is never held, and no repo is paused. `action: observe` logs without holding,
 and `AUTOMETTA_IGNORE_PACE=1` bypasses the gate.
 
-`codex_admit_percent: pace` remains as a coarser, stateless alternative; with
-`window_reserve.pace` on, leave `codex_admit_percent` at 100 rather than
-stacking the two.
+**Codex run cap.** Admission cannot stop a card that is already running, and a
+plan with no session limit has nothing else to stop a runaway. With pace on,
+`register-agent.sh` stamps each Codex dispatch with the weekly reading at
+start and a cap of `run_cap_slots` slot allowances (default 1, 0 for no cap).
+`heartbeat.sh` kills the dispatch once the weekly window has risen by that much,
+leaving its work in the run worktree. The window is account-wide, so
+concurrent Codex dispatches share one allowance. `codex_admit_percent: pace`
+remains as a coarser, stateless alternative; with `window_reserve.pace` on,
+leave `codex_admit_percent` at 100 rather than stacking the two.
 
 **Claude retains the provider-window reserve.** `window_reserve.percent` defaults
 to 20% with `action: hold`, so new Claude work normally stops at 80% used.

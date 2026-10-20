@@ -4,7 +4,8 @@ set -euo pipefail
 IFS=$'\n\t'
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fixture="$(mktemp -d)"
-trap 'rm -rf "$fixture"' EXIT
+sleeper=""
+trap '[[ -z "$sleeper" ]] || kill "$sleeper" 2>/dev/null || true; rm -rf "$fixture"' EXIT
 export AUTOMETTA_HOME="$fixture/controller"
 export AUTOMETTA_CODEX_SESSIONS="$fixture/sessions"
 export AI_QUOTA_DIR="$fixture/quota"
@@ -106,3 +107,28 @@ yq -i '.window_reserve.pace.families = ["codex"]' "$AUTOMETTA_HOME/phat-controll
 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'unpaced family held the card'
 [[ "$(jq -r '.paused_until' "$repo/state/budget.json")" == null ]] || fail 'pace hold paused the repo'
 printf 'PASS a new card is held while a family it names is ahead of pace; its verifier and active work are not\n'
+
+# Run cap: the heartbeat kills a Codex dispatch once it has moved the weekly
+# window by a slot allowance since it started.
+rm -f "$AUTOMETTA_HOME/quota-pace.json"
+rollout() {
+  printf '{"timestamp":"2033-05-18T03:33:20Z","payload":{"rate_limits":{"secondary":{"used_percent":%s,"window_minutes":10080,"resets_at":%s}}}}\n' \
+    "$1" "$week_reset" > "$AUTOMETTA_CODEX_SESSIONS/rollout-fixture.jsonl"
+}
+rollout 5
+sleep 300 &
+sleeper=$!
+disown "$sleeper"
+agent="$("$script_dir/register-agent.sh" "$repo" "$sleeper" worker codex "GPT-6 Astra" "$repo/docs/stages/02-next.md" "$repo/state/logs/02-next-worker.log")"
+jq -e '.quota_start.used == 5 and .quota_start.run_cap_percent == 7.31' "$agent" >/dev/null \
+  || fail "registration did not stamp the run cap: $(jq -c '.quota_start' "$agent")"
+rollout 12
+"$script_dir/heartbeat.sh" "$repo" >/dev/null
+kill -0 "$sleeper" 2>/dev/null || fail 'run under its cap was killed'
+rollout 12.4
+output="$("$script_dir/heartbeat.sh" "$repo")"
+[[ "$output" == *"KILLED: quota run cap"* ]] || fail "run past its cap was not reported killed: $output"
+for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$sleeper" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$sleeper" 2>/dev/null; then fail 'run past its cap is still alive'; fi
+sleeper=""
+printf 'PASS a Codex run is killed once it has moved the weekly window by its slot allowance\n'

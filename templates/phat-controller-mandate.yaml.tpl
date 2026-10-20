@@ -77,6 +77,19 @@ window_reserve:
   percent:   # empty = default 20; 0 = off
   action:    # empty = default hold; hold | observe | off
   codex_admit_percent:   # empty = 100; no new Codex card at or past this % used
+  # pace spreads each family's weekly window over the days left. The week is
+  # cut into slot_hours slots; a slot may spend the remaining headroom over
+  # the slots left, so a family that ran ahead holds new cards until the
+  # calendar catches up. A new card is held while any subscription family it
+  # names is ahead; an admitted card's verifier always runs. run_cap_slots
+  # kills a Codex dispatch once the weekly window has risen that many slot
+  # allowances since it started (0 = no kill): a plan with no session limit
+  # has nothing else to stop a runaway. AUTOMETTA_IGNORE_PACE=1 bypasses.
+  # pace:
+  #   action: hold         # hold | observe | off
+  #   slot_hours: 12
+  #   families: [codex, claude]
+  #   run_cap_slots: 1
   # overnight:
   #   start:
   #   end:
