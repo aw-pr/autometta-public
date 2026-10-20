@@ -231,4 +231,16 @@ printf '%s\n' "$both" | grep -Eq '^card-lint: OK .*/20-good\.md$' \
 [[ "$missing_rc" == 2 ]] || fail "157: a card that does not exist should exit 2, got $missing_rc"
 # AUTOMETTA-CONTRACT-END
 
+variant 39-xhigh '- **Open decisions:** none' '- **Open decisions:** none\n- **Worker effort:** xhigh'
+expect_only 39-xhigh effort
+variant 40-max-verifier '- **Open decisions:** none' '- **Open decisions:** none\n- **Verifier effort:** max'
+expect_only 40-max-verifier effort
+variant 41-xhigh-approved '- **Open decisions:** none' \
+  '- **Open decisions:** none\n- **Worker effort:** xhigh\n- **Effort approved:** operator, 2026-10-20: "run this one at xhigh"'
+"$lint" --strict "$repo/stage-cards/41-xhigh-approved.md" >/dev/null \
+  || fail "effort: an xhigh card carrying the operator's approval is refused"
+variant 42-high '- **Open decisions:** none' '- **Open decisions:** none\n- **Worker effort:** high'
+"$lint" --strict "$repo/stage-cards/42-high.md" >/dev/null \
+  || fail "effort: a high-effort card is refused"
+
 printf 'PASS: card-lint finds each card-defect class once, and only when it is there\n'

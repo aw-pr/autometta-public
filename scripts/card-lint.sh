@@ -232,6 +232,14 @@ def lint_card(argument):
     ):
         findings.append(("pairing", "add 'same-family' to Pairing rationale or choose a verifier from another family"))
 
+    # xhigh and max multiply thinking tokens on every turn of a long run and
+    # burned weekly quota on cards nobody had asked to run that hard.
+    for role in ("Worker", "Verifier"):
+        effort = (metadata_value(lines, f"{role} effort") or "").strip().lower()
+        if effort in ("xhigh", "max") and not (metadata_value(lines, "Effort approved") or "").strip():
+            findings.append(("effort", f"lower {role} effort to high, or add '- **Effort approved:** <the operator's request>'"))
+            break
+
     if metadata_value(lines, "Worker wall-clock") is None:
         findings.append(("budget", "add a '- **Worker wall-clock:** <duration>' line under Budget"))
     elif metadata_value(lines, "Verifier wall-clock") is None:

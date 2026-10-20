@@ -41,7 +41,8 @@ the cheaper one; record the reasoning in the card's pairing rationale.
 
 **Effort tops out at `high` unless the operator asks for more.** Set
 `xhigh` or `max` only when the operator has asked for it on this card, and
-quote the request in the pairing rationale. Default worker effort is `high`
+quote the request on a `- **Effort approved:**` metadata line;
+`card-lint --strict` refuses xhigh or max without one. Default worker effort is `high`
 for a fresh design or an open-ended brief, `medium` for a re-brief or
 narrow fix, and `low` or omitted for a mechanical sweep. Verifiers default
 to `high`. Effort multiplies thinking tokens on every turn of a long run,
