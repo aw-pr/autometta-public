@@ -511,20 +511,23 @@ starts only below about 43%. Pacing leaves any five-hour window at 100%. A Pro
 account reports the weekly window alone, which is a complete reading; a reading
 with no weekly window is still incomplete and holds.
 
-**Weekly pace for both families.** `window_reserve.pace` spreads each family's
-weekly window evenly over what is left of its week, so neither provider is
-spent ahead of the other. The week is cut into `slot_hours` slots (12 by
-default, 14 a week). A slot's ceiling is its base plus the remaining headroom
+**Weekly pace for selected families.** `window_reserve.pace` spreads each
+listed family's weekly window evenly over what is left of its week. The week
+is cut into `slot_hours` slots (12 by default, 14 a week). A slot's ceiling is
+its base plus the remaining headroom
 divided by the slots left; the base is the first reading the host saw in the
 slot, never above the straight pace line, and is kept in
 `$AUTOMETTA_HOME/quota-pace.json`. A family that ran ahead therefore holds new
 cards until the calendar catches up, and one that fell behind catches up only
 a slot's share at a time. A stale reading still counts, because weekly use only
 rises until reset; an unknown reading or a passed reset fails open. The tick
-and a manual `spawn-worker.sh` hold a new card while any subscription family
-its worker or verifier names is ahead of pace; the verifier of an admitted card
-is never held, and no repo is paused. `action: observe` logs without holding,
-and `AUTOMETTA_IGNORE_PACE=1` bypasses the gate.
+and a manual `spawn-worker.sh` hold a new card while any listed subscription
+family its worker or verifier names is ahead of pace; the verifier of an
+admitted card is never held, and no repo is paused. `action: observe` logs
+without holding, and `AUTOMETTA_IGNORE_PACE=1` bypasses the gate. A Codex plan
+with only a weekly window should normally list only `codex` here. Claude's
+short session is protected by the reserve below rather than inferred from its
+weekly consumption rate.
 
 **Codex run cap.** Admission cannot stop a card that is already running, and a
 plan with no session limit has nothing else to stop a runaway. With pace on,
@@ -538,6 +541,12 @@ leave `codex_admit_percent` at 100 rather than stacking the two.
 
 **Claude retains the provider-window reserve.** `window_reserve.percent` defaults
 to 20% with `action: hold`, so new Claude work normally stops at 80% used.
+`claude_window: 5-hour` narrows that rule to the Claude session window; without
+it, every reported Claude window remains eligible as before. Admission checks
+Claude before starting any new card that names a subscription Claude worker or
+verifier, so a Codex worker cannot commit the queue to a Claude verifier after
+the session line has already been crossed.
+
 Explicit zero or `action: off` disables that reserve; unknown Claude readings
 retain the existing fail-open behaviour. Scheduled reserve and curfew settings
 are unchanged. A model-scoped window, keyed `<period>-<name>` such as

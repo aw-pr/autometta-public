@@ -227,7 +227,7 @@ QUOTA_GATE_RESOLVED_WINDOW="default"
 # outside-reserve, reserve off, observe and every unknown reading.
 quota_gate_family_dispatch() {
   local repo_root="$1" family="$2" what="$3" model="${4:-}"
-  local settings reserve action window reading mandate_path curfew
+  local settings reserve action window reading mandate_path curfew reserve_window
   QUOTA_GATE_RESOLVED_WINDOW="default"
   case "$family" in claude|codex) ;; *)
     log "quota ${what}: family unknown; dispatch remains fail-open"
@@ -243,12 +243,13 @@ quota_gate_family_dispatch() {
   fi
   settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
   IFS=$'\t' read -r reserve action window <<<"$settings"
+  reserve_window="$(quota_reserve_window_for_family "$family")"
   QUOTA_GATE_RESOLVED_WINDOW="${window:-default}"
   curfew="$(quota_schedule_curfew_window "$mandate_path" || true)"
   log "quota ${what} (${family}): ${reserve}% reserve, ${action} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); curfew ${curfew:+on }${curfew:-off}"
   [[ -f "$mandate_path" ]] || log "quota ${what}: no controller mandate at ${mandate_path}; reserve off until autometta init-host installs one"
   reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
-  if quota_gate_reading "$reading" "$reserve" "$action" "$model"; then
+  if quota_gate_reading "$reading" "$reserve" "$action" "$model" "$reserve_window"; then
     if [[ "$QUOTA_GATE_REASON" == reading\ unknown:* ]]; then
       log "quota ${what} (${family}): ${QUOTA_GATE_REASON}; dispatch remains fail-open"
     elif [[ "$QUOTA_GATE_REASON" == *"inside reserve"* ]]; then
@@ -308,6 +309,18 @@ quota_gate_role_dispatch() {
       return 1
     fi
     [[ -z "$QUOTA_GATE_REASON" ]] || log "quota pace ${role} ${stage_id}: ${QUOTA_GATE_REASON}"
+    if [[ "$family" != claude ]] \
+       && { quota_family_role_uses_subscription "$repo_root" claude "$pace_worker" worker \
+         || quota_family_role_uses_subscription "$repo_root" claude "$pace_verifier" verifier; }; then
+      local claude_identity claude_model
+      if [[ "$(agent_family_for_identity "$pace_worker")" == claude ]]; then
+        claude_identity="$pace_worker"
+      else
+        claude_identity="$pace_verifier"
+      fi
+      claude_model="$(claude_model_for_identity "$claude_identity")"
+      quota_gate_family_dispatch "$repo_root" claude "card ${stage_id}" "$claude_model" || return 1
+    fi
   fi
   if quota_codex_card_policy; then
     local worker_id verifier_id uses_codex=false

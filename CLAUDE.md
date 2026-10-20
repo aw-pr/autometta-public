@@ -142,12 +142,15 @@ A manual dispatch through `scripts/spawn-worker.sh` uses the same quota admissio
 as the tick. Codex subscription cards may start below 100% in every fresh usage
 window (a Pro plan reports the weekly one alone); the active card may finish in
 overage, then further cards wait. With `window_reserve.pace` on, a new card also
-waits while either family it names is ahead of its weekly pace (half-day slots,
-remaining headroom over the slots left), and the heartbeat kills a Codex run
-that moves the weekly window by more than one slot's allowance;
-`AUTOMETTA_IGNORE_PACE=1` bypasses the gate. This
+waits while any listed family it names is ahead of its weekly pace (half-day
+slots, remaining headroom over the slots left), and the heartbeat kills a
+Codex run that moves the weekly window by more than one slot's allowance;
+`AUTOMETTA_IGNORE_PACE=1` bypasses the gate. A weekly-only Codex plan normally
+lists `codex`; Claude's five-hour session uses the reserve below. This
 also checks a Codex verifier before admitting its Claude worker. Missing/stale
-Codex quota holds new cards. Claude keeps its configured reserve (20% by default).
+Codex quota holds new cards. Claude keeps its configured reserve (20% by default);
+`claude_window: 5-hour` makes it session-only and checks a new card whose worker
+or verifier uses the Claude subscription.
 `AUTOMETTA_CODEX_QUOTA_POLICY=reserve` explicitly selects the legacy Codex policy;
 `AUTOMETTA_IGNORE_RESERVE=1` bypasses only that reserve, not the default cutoff.
 See `docs/tick-loop.md` for completion, freshness and concurrent-use limits.

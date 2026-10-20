@@ -182,6 +182,9 @@ editing the checkout does not update it; until you refresh deliberately, run
    `window_reserve.percent: 0` to switch it off. If the controller
    mandate's `window_reserve.overnight` is declared, its percentage applies
    inside that window and the top-level percentage applies outside it.
+   Set `window_reserve.claude_window: 5-hour` when this reserve is specifically
+   for Claude's session rather than its weekly allowance. A new card is checked
+   when either its worker or verifier uses the Claude subscription.
    Set `window_reserve.overnight.stop_outside: true` to stop new workers
    outside the window regardless of quota; this curfew defaults off.
    An overnight percentage of zero allows spending freely inside it. A stage

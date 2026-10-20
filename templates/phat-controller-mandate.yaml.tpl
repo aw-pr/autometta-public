@@ -44,18 +44,17 @@ spend_authority:
 # card 124, unchanged. When overnight IS declared, quota_reserve_settings
 # (scripts/quota-window.sh) resolves the reserve for the current moment
 # instead of returning this static pair: overnight.percent applies inside
-# the window, percent/action apply outside it. overnight.percent: 0 is the
-# operator's declared "spend the session down on purpose" answer for that
-# window; it is not the same zero as a top-level percent: 0, which means
-# the reserve is off everywhere, all the time.
+# the window, percent/action apply outside it. A lower overnight percentage
+# spends more of the session while retaining the stated headroom.
 #
 #   window_reserve:
 #     percent: 20
 #     action: hold
+#     claude_window: 5-hour
 #     overnight:
 #       start: "22:00"
-#       end: "01:00"
-#       percent: 0
+#       end: "09:00"
+#       percent: 10
 #       stop_outside: false
 #     timezone: local
 #
@@ -64,9 +63,9 @@ spend_authority:
 # overnight.start/end are read in the clock named by `timezone`. Only
 # "local" is supported today: the window describes when the operator is
 # asleep, and a person's sleep does not move with UTC. Across a DST change
-# the wall-clock boundaries ("22:00", "01:00") do not shift, but the
+# the wall-clock boundaries ("22:00", "09:00") do not shift, but the
 # window's actual duration does -- the two transition nights a year give a
-# nominal 3-hour window either 2 or 4 real hours. Accepted, not fixed: see
+# nominal 11-hour window either 10 or 12 real hours. Accepted, not fixed: see
 # docs/tick-loop.md.
 #
 # A window whose end is earlier than its start (as above) crosses midnight
@@ -76,19 +75,21 @@ spend_authority:
 window_reserve:
   percent:   # empty = default 20; 0 = off
   action:    # empty = default hold; hold | observe | off
+  claude_window:   # empty = every Claude window; 5-hour = session only
   codex_admit_percent:   # empty = 100; no new Codex card at or past this % used
-  # pace spreads each family's weekly window over the days left. The week is
-  # cut into slot_hours slots; a slot may spend the remaining headroom over
-  # the slots left, so a family that ran ahead holds new cards until the
-  # calendar catches up. A new card is held while any subscription family it
-  # names is ahead; an admitted card's verifier always runs. run_cap_slots
+  # pace spreads each selected family's weekly window over the days left.
+  # The week is cut into slot_hours slots; a slot may spend the remaining
+  # headroom over the slots left, so a family that ran ahead holds new cards
+  # until the calendar catches up. A new card is held while any listed
+  # subscription family it names is ahead; an admitted card's verifier always
+  # runs. run_cap_slots
   # kills a Codex dispatch once the weekly window has risen that many slot
   # allowances since it started (0 = no kill): a plan with no session limit
   # has nothing else to stop a runaway. AUTOMETTA_IGNORE_PACE=1 bypasses.
   # pace:
   #   action: hold         # hold | observe | off
   #   slot_hours: 12
-  #   families: [codex, claude]
+  #   families: [codex]
   #   run_cap_slots: 1
   # overnight:
   #   start:
