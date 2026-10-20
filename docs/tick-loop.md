@@ -511,6 +511,25 @@ starts only below about 43%. Pacing leaves any five-hour window at 100%. A Pro
 account reports the weekly window alone, which is a complete reading; a reading
 with no weekly window is still incomplete and holds.
 
+**Weekly pace for both families.** `window_reserve.pace` spreads each family's
+weekly window evenly over what is left of its week, so neither provider is
+spent ahead of the other. The week is cut into `slot_hours` slots (12 by
+default, 14 a week). A slot's ceiling is its base plus the remaining headroom
+divided by the slots left; the base is the first reading the host saw in the
+slot, never above the straight pace line, and is kept in
+`$AUTOMETTA_HOME/quota-pace.json`. A family that ran ahead therefore holds new
+cards until the calendar catches up, and one that fell behind catches up only
+a slot's share at a time. A stale reading still counts, because weekly use only
+rises until reset; an unknown reading or a passed reset fails open. The tick
+and a manual `spawn-worker.sh` hold a new card while any subscription family
+its worker or verifier names is ahead of pace; the verifier of an admitted card
+is never held, and no repo is paused. `action: observe` logs without holding,
+and `AUTOMETTA_IGNORE_PACE=1` bypasses the gate.
+
+`codex_admit_percent: pace` remains as a coarser, stateless alternative; with
+`window_reserve.pace` on, leave `codex_admit_percent` at 100 rather than
+stacking the two.
+
 **Claude retains the provider-window reserve.** `window_reserve.percent` defaults
 to 20% with `action: hold`, so new Claude work normally stops at 80% used.
 Explicit zero or `action: off` disables that reserve; unknown Claude readings

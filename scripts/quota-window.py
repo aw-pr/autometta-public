@@ -311,9 +311,6 @@ def codex_admit_percent() -> float:
     return value if 0 < value <= 100 else 100.0
 
 
-WEEK_SECONDS = 7 * 86400
-
-
 def pace_action() -> str:
     value = os.environ.get("AUTOMETTA_PACE_ACTION", "").strip().lower()
     return value if value in {"hold", "observe"} else "off"
@@ -333,7 +330,7 @@ def weekly_window(reading: Any) -> dict[str, Any] | None:
     if not isinstance(reading, dict) or reading.get("status") != "known":
         return None
     windows = sanitise_windows(reading.get("windows"), allow_overage=True) or []
-    return next((window for window in windows if window["label"] == "Weekly"), None)
+    return next((window for window in windows if is_weekly(window)), None)
 
 
 def pace_state_path() -> Path | None:

@@ -300,6 +300,14 @@ quota_gate_role_dispatch() {
       log "schedule stop ${role} ${stage_id} (${family}): ${QUOTA_SCHEDULE_STOP_REASON}; ${reserve}% reserve, ${action} (${window:-default} schedule); curfew ${curfew:+on }${curfew:-off}; no new dispatch this tick"
       return 1
     fi
+    local pace_worker pace_verifier
+    pace_worker="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .worker // empty')"
+    pace_verifier="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .verifier // empty')"
+    if ! quota_card_pace_permits "$repo_root" "$pace_worker" "$pace_verifier"; then
+      log "quota pace ${role} ${stage_id}: ${QUOTA_GATE_REASON}; no new card, active work may finish"
+      return 1
+    fi
+    [[ -z "$QUOTA_GATE_REASON" ]] || log "quota pace ${role} ${stage_id}: ${QUOTA_GATE_REASON}"
   fi
   if quota_codex_card_policy; then
     local worker_id verifier_id uses_codex=false

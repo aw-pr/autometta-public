@@ -233,6 +233,65 @@ quota_codex_role_uses_subscription() {
   [[ "$mode" == subscription ]]
 }
 
+quota_family_role_uses_subscription() {
+  local repo_root="$1" family="$2" identity="$3" role="$4" mode
+  [[ -n "$identity" && "$(agent_family_for_identity "$identity")" == "$family" ]] || return 1
+  mode="$(REPO_ROOT="$repo_root" "$quota_window_script_dir/auth-route.sh" "$family" --print-mode --role "$role" 2>/dev/null)" || return 0
+  [[ "$mode" == subscription ]]
+}
+
+# quota_pace_mandate <key> <default>: one window_reserve.pace field.
+quota_pace_mandate() {
+  local mandate_path value
+  mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(autometta_controller_home)/phat-controller-mandate.yaml}"
+  [[ -f "$mandate_path" ]] && command -v yq >/dev/null 2>&1 || { printf '%s\n' "$2"; return 0; }
+  value="$(yq -r ".window_reserve.pace.$1 // \"\"" "$mandate_path" 2>/dev/null || true)"
+  printf '%s\n' "${value:-$2}"
+}
+
+# quota_pace_reading <family>: the pace verdict JSON for this family against
+# the tick's reading. Pace is off unless the mandate declares a pace block
+# whose families list names this family.
+quota_pace_reading() {
+  local family="$1" action reading
+  action="$(quota_pace_mandate action off)"
+  if [[ "${AUTOMETTA_IGNORE_PACE:-}" == "1" ]] \
+     || ! quota_pace_mandate 'families[]' '' | grep -qx "$family"; then
+    action=off
+  fi
+  [[ -n "$AUTOMETTA_QUOTA_TICK_JSON" ]] || quota_refresh_tick || true
+  reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family] // {}' 2>/dev/null || printf '{}')"
+  printf '%s' "$reading" | AUTOMETTA_PACE_ACTION="$action" \
+    AUTOMETTA_PACE_SLOT_HOURS="$(quota_pace_mandate slot_hours 12)" \
+    AUTOMETTA_PACE_STATE="$(autometta_controller_home)/quota-pace.json" \
+    python3 "$quota_window_script_dir/quota-window.py" pace "$family"
+}
+
+# quota_card_pace_permits <repo-root> <worker-identity> <verifier-identity>
+#
+# A new card spends from every family it names, so it starts only when each
+# subscription family it uses is under its weekly pace ceiling. Only a new
+# card is held: an admitted card's verifier always runs. Returns 1 with
+# QUOTA_GATE_REASON naming the family that is ahead of pace.
+quota_card_pace_permits() {
+  local repo_root="$1" worker_id="$2" verifier_id="$3" family verdict reason
+  QUOTA_GATE_REASON=""
+  for family in codex claude; do
+    quota_family_role_uses_subscription "$repo_root" "$family" "$worker_id" worker \
+      || quota_family_role_uses_subscription "$repo_root" "$family" "$verifier_id" verifier \
+      || continue
+    verdict="$(quota_pace_reading "$family" 2>/dev/null || true)"
+    [[ -n "$verdict" && "$(printf '%s' "$verdict" | jq -r '.action')" != off ]] || continue
+    reason="$(printf '%s' "$verdict" | jq -r '.reason')"
+    if [[ "$(printf '%s' "$verdict" | jq -r '.allowed')" != true ]]; then
+      QUOTA_GATE_REASON="$reason"
+      return 1
+    fi
+    QUOTA_GATE_REASON="${QUOTA_GATE_REASON:+$QUOTA_GATE_REASON; }$reason"
+  done
+  return 0
+}
+
 # quota_codex_admit_percent: window_reserve.codex_admit_percent from the
 # controller mandate, the used percentage at which no new Codex card starts.
 # Empty when unset, so the reader keeps its 100% default.
@@ -277,6 +336,12 @@ quota_spawn_permits() {
   if [[ "${AUTOMETTA_RESERVE_GATED:-}" == "1" ]]; then
     QUOTA_GATE_REASON="reserve already applied by the tick"
     return 0
+  fi
+  if [[ -n "$card_path" ]]; then
+    local pace_worker pace_verifier
+    pace_worker="$(sed -n 's/^- \*\*Worker:\*\* //p' "$card_path" | head -n1)"
+    pace_verifier="$(sed -n 's/^- \*\*Verifier:\*\* //p' "$card_path" | head -n1)"
+    quota_card_pace_permits "$repo_root" "$pace_worker" "$pace_verifier" || return 1
   fi
   if quota_codex_card_policy; then
     local worker_id verifier_id uses_codex=false
