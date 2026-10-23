@@ -338,7 +338,9 @@ The tick terminates the recorded worker wrapper and every descendant with TERM, 
 3. Increments `consecutive_failures`.
 4. Exits.
 
-The next tick respects `consecutive_failure_cap` and halts the loop if exceeded; otherwise the operator (human, on next session) decides whether to retry, re-brief, or abandon.
+The next tick respects `consecutive_failure_cap` and halts the loop if exceeded.
+
+**Automatic retry.** After the budget, halt and pause checks, the tick retries a `stalled` worker once if its pid is absent or dead and neither `state/envelopes/<id>.json` nor `state/handoffs/<id>.json` exists. An empty stall marker qualifies; `dispatch_configuration_fault:*`, `run_worktree_failed`, `dispatch_base_tip_unresolved` and `card_missing` do not. It first calls `preserve_failed_work`, aborting on preservation failure, then `requeue-stage.sh --keep-budget` and records `auto_retries: 1` (absent means 0). This leaves budget and failure counters untouched; the pending stage still passes every ordinary dispatch gate, including quota reserve and schedule stop. An operator requeue resets `auto_retries` to 0. A second death, worker FAIL, verifier failure, deterministic fault or halt stays in its alert status and goes to the escalation folder for a decision.
 
 **Verifier stall.** The same wall-clock rule and process-tree termination apply. A verifier process that has not written its output file within its declared budget plus grace is terminated before the stage is marked stalled. The transcript API-error rule applies only to Claude workers.
 

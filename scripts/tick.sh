@@ -2284,11 +2284,17 @@ preserve_failed_work() {
     force_add_card_deliverables "$repo_root" "$stage_id" "$reason_label" "$card_path"
     git diff --cached --quiet && exit 3
     git commit --author="$worker_identity" \
-      -m "wip(${stage_id}): attempt ${attempt}, ${reason_label}: ${reason}" >/dev/null
+      -m "wip(${stage_id}): attempt ${attempt}, ${reason_label}: ${reason}" >/dev/null || exit 1
   ) || commit_rc=$?
   if (( commit_rc != 0 )); then
     cp -p "$index_backup" "$index_path" 2>/dev/null || true
     rm -f "$index_backup"
+    # A prior stall may already have committed every deliverable, including
+    # ignored ones that still make card_deliverables_exist return true.
+    if (( commit_rc == 3 )); then
+      log "stage ${stage_id} ${reason_label}: no new work to preserve"
+      return 0
+    fi
     log "stage ${stage_id} ${reason_label}: git commit preservation failed (exit ${commit_rc}); worktree left standing"
     return 1
   fi
@@ -2312,6 +2318,46 @@ preserve_failed_work() {
     return 1
   fi
   log "stage ${stage_id} ${reason_label}: preserved attempt ${attempt} as ${commit_sha} on ${wip_branch}"
+  return 0
+}
+
+auto_retry_dead_workers() {
+  local repo_root="$1" state_yaml="$2"
+  local stage stage_id worker_pid marker reason wip_commit
+  if [[ -f "$repo_root/state/budget.json" ]] \
+      && ! jq -e '.halted != true' "$repo_root/state/budget.json" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  while IFS= read -r stage; do
+    stage_id="$(printf '%s' "$stage" | jq -r '.id')"
+    validate_stage_id "$stage_id" || continue
+    [[ ! -f "$repo_root/state/envelopes/$stage_id.json" \
+       && ! -f "$repo_root/state/handoffs/$stage_id.json" ]] || continue
+    worker_pid="$(printf '%s' "$stage" | jq -r '.worker_pid // empty')"
+    if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+      continue
+    fi
+    marker="$(printf '%s' "$stage" | jq -r '.stall_marker // empty')"
+    case "$marker" in
+      dispatch_configuration_fault:*|run_worktree_failed|dispatch_base_tip_unresolved|card_missing) continue ;;
+    esac
+    reason="${marker:-worker ended without a usable envelope}"
+    if ! preserve_failed_work "$repo_root" "$state_yaml" "$stage_id" "" "$reason" "stalled"; then
+      log "stage ${stage_id} automatic retry skipped: preservation failed (${reason})"
+      continue
+    fi
+    wip_commit="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+      '.stages[] | select(.id == $id) | .wip_commit // empty')"
+    if ! "$script_dir/requeue-stage.sh" --keep-budget "$repo_root" "$stage_id"; then
+      log "stage ${stage_id} automatic retry failed: requeue refused (${reason}); preserved commit ${wip_commit:-none}"
+      continue
+    fi
+    state_apply_json "$state_yaml" \
+      '(.stages[] | select(.id == $id)).auto_retries = 1' --arg id "$stage_id" || return 1
+    log "stage ${stage_id} automatic retry 1: ${reason}; preserved commit ${wip_commit:-none (clean worktree)}"
+  done < <(state_json "$state_yaml" | jq -c \
+    '.stages[] | select(.status == "stalled" and (.auto_retries // 0) == 0)')
   return 0
 }
 
@@ -3443,6 +3489,8 @@ _process_repo_locked() {
       return 1
       ;;
   esac
+
+  auto_retry_dead_workers "$repo_root" "$state_yaml"
 
   # Work versus idle polling (card 37). A tick charges clock_ticks_used only
   # when it supervises a stage in flight or dispatches a queued one; a tick

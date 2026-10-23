@@ -204,6 +204,12 @@
             "default": 0,
             "description": "Count of times `tick.sh --repair` has requeued this stage from stalled/failed back to pending. Capped at AUTOMETTA_REPAIR_ATTEMPT_CAP (default 2): a stage that stalls twice after repair stays down for the operator. Absent or missing is treated as 0."
           },
+          "auto_retries": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Automatic dead-worker retries recorded by tick.sh after requeue. Absent means 0; one retry is allowed until requeue-stage.sh resets the count for an operator requeue."
+          },
           "worker_tokens": {
             "type": "integer",
             "minimum": 0,
