@@ -174,17 +174,15 @@ frontier verifier (`api` or `subscription`) for judgement-heavy criteria; the
 cloud free tier (Groq, OpenRouter) is measured but not yet a selectable
 dispatch mode, only reachable via `scripts/verifier-bake-off.sh` directly.
 
-### Optional: set the host's reserve and spend bounds in the mandate
+### Optional: set the host's reserve in the mandate
 
 There is no controller agent to install. The tick preserves stranded work, resumes a passing envelope and retries a dead worker once; anything it cannot decide becomes an escalation for the operator's orchestration chat (`autometta-escalations`). Design and history: `docs/proposals/controller-retired.md`.
 
-What remains host-level is one file, `$AUTOMETTA_HOME/phat-controller-mandate.yaml`, which `autometta init-host` installs from `templates/phat-controller-mandate.yaml.tpl`. The tick reads its provider-window reserve, curfew and spend-authority fields. Ask the operator before editing it, and do not pick answers for them:
+What remains host-level is one file, `$AUTOMETTA_HOME/phat-controller-mandate.yaml`, which `autometta init-host` installs from `templates/phat-controller-mandate.yaml.tpl`. The tick reads its provider-window reserve and curfew fields. Ask the operator before editing it, and do not pick answers for them:
 
 > How much of each provider window should remain unspent? Give a percentage, where zero turns the feature off, and choose `hold` (pause until that window resets) or `observe` (surface it but continue).
 
-> Do you want a hard token ceiling or an expiry on this host's spend? Both are optional.
-
-Then edit the fields by hand (`window_reserve.percent`, `window_reserve.action`, `spend_authority.token_ceiling`, `spend_authority.expires_at`). An empty reserve is not off: the loop holds a 20% reserve until an explicit answer says otherwise.
+Then edit the fields by hand (`window_reserve.percent`, `window_reserve.action`). An empty reserve is not off: the loop holds a 20% reserve until an explicit answer says otherwise.
 
 A machine that still has the retired phat-controller LaunchAgent installed runs `autometta uninstall-launchagent-phat-controller` once; it is safe when nothing is installed.
 

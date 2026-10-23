@@ -5,25 +5,15 @@
 # controller home starts from.
 #
 # WHAT LIVES HERE. Numbers a script must act on without asking anyone: the
-# quota reserve, curfew and spend-authority fields the tick reads
+# quota reserve and curfew fields the tick reads
 # (quota_gate_family_dispatch in scripts/tick.sh) and the escalation
 # thresholds the phat-controller.sh verbs read. There is no controller agent
 # and nothing renders this file: edit the fields by hand. Every field is
 # optional, and a missing one takes the default stated beside it.
 #
-# The spend authority is whatever bound you decide a run may spend. Fill the
-# two fields below directly, or leave them empty to rely on each repo's own
-# budget.json caps.
-#
 # Budget figures (token caps, wall-clock caps, drain state) live in each
 # repo's state/budget.json and the controller's host defaults (card 47); this
 # file never restates them.
-
-# Edited by hand. Empty means the only hard stops are each repo's own
-# budget.json caps.
-spend_authority:
-  token_ceiling:
-  expires_at:
 
 # Claude reserve, and Codex only with AUTOMETTA_CODEX_QUOTA_POLICY=reserve.
 # Default Codex subscription admission instead uses fresh quota below 100%;

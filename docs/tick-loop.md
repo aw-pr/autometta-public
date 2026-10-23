@@ -497,7 +497,7 @@ that chat, and the tick, call; it is not a role and nothing schedules it.
 **The mandate file stays, for the tick.** `templates/phat-controller-mandate.yaml.tpl`
 is copied by `scripts/init-host.sh` to
 `$AUTOMETTA_HOME/phat-controller-mandate.yaml` (gitignored, operator-owned).
-The tick reads its provider-window reserve, curfew and spend-authority fields
+The tick reads its provider-window reserve and curfew fields
 (`quota_gate_family_dispatch`); the verbs read the attempt cap, the
 repeat-without-progress cap and which repos `picture --all` covers (empty
 means every enabled subscriber). The operator edits every field by hand;
@@ -506,14 +506,9 @@ controller passes (cadence, dispatch identity, reporting voice, transcript
 retention) are gone, and a mandate that still carries them is read as before
 with those keys ignored. Budget figures are never restated here: they live in
 each repo's `state/budget.json` and the controller's host defaults (card 47).
+The per-repo `budget.json` caps and a drain are the hard spend stops.
 The `AUTOMETTA_WARDEN_MANDATE` env var and a `warden-mandate.yaml` already in
 the controller home are honoured for one release.
-
-**There is no default spend authority.** `spend_authority.token_ceiling` and
-`expires_at` ship empty: the right level varies by run, by hour and by day, so
-a committed default would be wrong most of the time it was used, and wrong
-expensively. Empty means the only hard stops are each repo's own
-`budget.json` caps.
 
 **Codex subscription admission uses the full quota window by default.** A new
 card may start while fresh five-hour and weekly utilisation are both below

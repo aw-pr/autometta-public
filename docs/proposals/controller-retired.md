@@ -11,7 +11,7 @@ prompt, context seed, inbox, outbox, transcripts and LaunchAgent are removed.
 Orchestration is two roles: the tick runs, and escalations go to the operator's
 orchestration chat. The deterministic verbs in `scripts/phat-controller.sh`
 stay as tools that chat calls; the mandate file stays because the tick reads
-its quota reserve, curfew and spend-authority fields.
+its quota reserve and curfew fields.
 
 ## Evidence
 
@@ -38,13 +38,15 @@ The autonomous phat-controller cost more than it saved.
 | Retry a worker that died without an envelope | The tick preserves the attempt and requeues once; a second ending escalates (card 161) |
 | Preserve stranded work, re-brief, requeue, resume a passing envelope, merge an awaiting integration, clear a stale pause, queue a card, run the offline smokes, push | The same verbs in `scripts/phat-controller.sh`, called by the chat or an operator; the append-only card guard, the tick lock and `git-push-check` still bind them |
 | Propose a card amendment | `propose-amendment`, appended and committed, never applied; only the operator turns it into a criterion |
-| Stop at an exhausted spend authority | Unchanged for the tick: `spend_authority` and `window_reserve` in the mandate, read by `quota_gate_family_dispatch`, now edited by hand (nothing renders them), alongside each repo's `budget.json` caps |
+| Stop at an exhausted spend authority | Each repo's `budget.json` caps and drains are the hard spend stops |
 | Read operator messages and answer them (inbox, outbox) | The conversation itself; the TUI messages page is removed |
 | Keep a transcript of each pass | The decision journal (`state/phat-controller-journal.jsonl`) still records every mutating verb; escalation files carry the evidence links |
 | Run on a schedule | Nothing. The tick is the only scheduled process |
 
 ## Consequences
 
+- `spend_authority` was removed because only the retired pass read it. A mandate
+  still carrying it is read with the key ignored.
 - Removed: `pass`, `inbox`, `inbox-reply`, `inbox-refuse`,
   `transcript-for-decision` and `prune-transcripts` verbs, `--print-seed`, the
   `controller-seed` and `install-launchagent-phat-controller` subcommands,

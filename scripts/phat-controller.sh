@@ -108,8 +108,8 @@ log() {
 # --- The mandate manifest ---------------------------------------------------
 #
 # Escalation thresholds and the repo list for `picture --all`. The tick reads
-# the quota reserve, curfew and spend-authority fields from the same file; the
-# operator edits them by hand.
+# the quota reserve and curfew fields from the same file; the operator edits
+# them by hand.
 
 pc_mandate_ensure() {
   if [[ -f "$pc_mandate_path" ]]; then
