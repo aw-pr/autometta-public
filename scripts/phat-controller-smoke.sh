@@ -1293,6 +1293,7 @@ commit_state_branch() { :; }
 guard_run_worktree_state_before_dispatch() { return 0; }
 quota_gate_role_dispatch() { return 0; }
 budget_gate_dispatch() { return 0; }
+network_preflight_ok() { return 0; }
 spawn_verifier_for_stage() { touch "$2/state/verifier-dispatched"; }
 
 _process_repo_locked "$rtv_repo" >/dev/null 2>&1
