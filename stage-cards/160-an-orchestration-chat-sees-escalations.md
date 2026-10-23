@@ -8,8 +8,8 @@
 - **Verifier:** GPT-6.1 Sol <gpt-6-1-sol@local>
 - **Base branch:** dev
 - **Run branch:** autometta/160-an-orchestration-chat-sees-escalations
-- **Worker effort:** high
-- **Verifier effort:** high
+- **Worker effort:** medium
+- **Verifier effort:** medium
 - **Verifier panel:** false
 - **Gate:** stage-completed: 159-escalations-reach-the-operator
 - **Dispatch:** serial
@@ -87,3 +87,16 @@ Write `state/envelopes/160-an-orchestration-chat-sees-escalations.json` using `s
 ## Family-specific notes
 
 None
+
+## Re-brief
+
+**Attempt 1 (2026-10-23), verifier FAIL, criterion 5 only.** Criteria 1 to 4 passed. Criterion 5 failed because `scripts/phat-controller-smoke.sh` was red in the Codex verifier's sandbox on dev as well: its resume-to-verifier tick case did not stub the network preflight, and `dig api.anthropic.com` fails without network. That is fixed on dev in `75fd123`; the attempt's own work was not at fault (the orchestrator reproduced the red under `codex sandbox` on dev, and the preserved attempt passes every smoke there after the fix).
+
+**Attempt 2 is a repair, not a rebuild.** Attempt 1 is preserved at `0766e5a855d6c0228bd85f11537d939f62d0a22d` on `wip/160-an-orchestration-chat-sees-escalations-attempt-1`.
+
+1. Restore every attempt-1 file except the phat-controller smoke: `git checkout 0766e5a855d6c0228bd85f11537d939f62d0a22d -- docs/tick-loop.md scripts/hooks/session-start-escalations.sh scripts/init-host.sh scripts/install-escalation-hook.sh skills/autometta-escalations/SKILL.md skills/phat-controller/SKILL.md`.
+2. Apply attempt 1's criterion-10 edit on top of dev's smoke, which now carries the stub: `git diff 4fd02a3 0766e5a855d6c0228bd85f11537d939f62d0a22d -- scripts/phat-controller-smoke.sh | git apply`. Both changes must be present: the `network_preflight_ok` stub and the removed `skill_body` assertions.
+3. Deliverable 1 clarification (from the verifier's additional finding): a pending file with no parseable frontmatter is still listed, with placeholders, because it is still pending work; it must never fail the hook or write to stderr. Attempt 1's behaviour already does this; keep it.
+4. Run criteria 1, 2, 4 and 5 once and record the results in the envelope. Do not change anything else.
+
+**Pairing for the repair:** Sonnet 5.5 worker and GPT-6.1 Sol verifier, both at medium effort, cross-family as before. The verifier re-runs criterion 5 in full and checks criteria 1 to 4 against the diff from `0766e5a855d6c0228bd85f11537d939f62d0a22d`. Its earlier PASS verdicts stand unless the diff leaves the files above.
