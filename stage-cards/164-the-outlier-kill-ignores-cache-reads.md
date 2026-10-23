@@ -14,7 +14,7 @@
 - **Dispatch:** serial
 - **Pairing rationale:** a narrow change to the heartbeat's live-usage loop and embedded python, smoke-testable offline: Sol writes it on the Codex window (operator is biasing to OpenAI this week) and Sonnet verifies cross-family, the pairing that landed 161 and 162a on attempt 1. The heartbeat runs on every fleet tick, so it dispatches serially.
 - **Open decisions:** none
-- **Cold read:** pending; run a Codex read-only cold read before queueing (`autometta-card-review` section 3).
+- **Cold read:** done 2026-10-23, GPT-6.1 Sol read-only; every item is answered below or in the frozen test.
 
 ## Surfacing concern
 
@@ -26,7 +26,7 @@ For the 2026-10-23 promo-flow production run the operator removed the cache-coun
 
 ## Objective
 
-The heartbeat's token-outlier warning and kill judge a live dispatch by its uncached tokens (input plus output) against the role median of uncached tokens from the cost log, so cache reads alone never warn or kill a dispatch.
+The heartbeat's token-outlier warning and kill judge a live dispatch by its uncached tokens (input plus output) against the role median of uncached tokens from the cost log, so cache reads alone never warn or kill a dispatch below the total-tokens backstop.
 
 ## Inputs (read these in your own context)
 
@@ -40,10 +40,10 @@ Do not read anything else unless you need to; keep your context lean.
 
 ## Deliverables
 
-1. `scripts/heartbeat.sh`: the live usage map carries uncached tokens (input plus output) per pid alongside the total; the baseline is the median of `input_tokens + output_tokens` over the same recent window of `recorded` rows per role; the warning and kill multiples apply to the uncached pair. Rows without the split (`total_only`) are excluded from the uncached baseline. The heartbeat report records both numbers per entry (`live_uncached_tokens`, `baseline_median_uncached_tokens`) and which measure fired as `token_outlier.measure` (`uncached` or `total`). Where a role has fewer than `AUTOMETTA_OUTLIER_MIN_SAMPLES` rows with the split, judgement falls back to today's total measure at the existing warning and kill multiples, so an older cost log keeps its protection.
+1. `scripts/heartbeat.sh`: the live usage map carries uncached tokens (input plus output) per pid alongside the total; the baseline is the median of `input_tokens + output_tokens` over the same recent window of `recorded` rows per role; the warning and kill multiples apply to the uncached pair. Rows without integer `input_tokens` and `output_tokens` are excluded from the uncached baseline whatever their `usage_status`; filter first, then take the last `AUTOMETTA_OUTLIER_BASELINE_WINDOW` rows. The heartbeat report records both numbers per entry (`live_uncached_tokens`, `baseline_median_uncached_tokens`) and which measure fired as `token_outlier.measure` (`uncached` or `total`). Where a role has fewer than `AUTOMETTA_OUTLIER_MIN_SAMPLES` rows with the split, judgement falls back to today's total measure at the existing warning and kill multiples, so an older cost log keeps its protection. An uncached median of zero counts as no baseline and falls back the same way. When the uncached kill and the backstop both fire, `measure` is `uncached`.
 2. A total-tokens backstop (operator decision 2026-10-23): the existing total measure (input plus cached plus output against the role median of `total_tokens`) stays as a second, independent kill at `AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE`, default 40, 0 disables, so a dispatch that loops on cache reads alone is still stopped. Either measure reaching its kill multiple kills the dispatch. Documented beside `AUTOMETTA_OUTLIER_KILL_MULTIPLE`.
-3. A new offline smoke, `scripts/outlier-uncached-smoke.sh`, plus any updates the existing `outlier-warning-smoke.sh` needs to stay green.
-4. `docs/observability.md` and `docs/cost-log.md` describe the uncached measure, the backstop and the variables.
+3. The frozen smoke `scripts/outlier-uncached-smoke.sh` passes; `outlier-warning-smoke.sh` gains no new failure (criterion 2). Do not edit either.
+4. `docs/observability.md` and `docs/cost-log.md` describe the uncached measure, the backstop and the variables, and the stale prose is corrected: the `scripts/heartbeat.sh` header ("It never kills") and `docs/cost-log.md` ("The comparison is an observation only") both predate the kill.
 
 ## Constraints
 
@@ -57,15 +57,15 @@ Do not read anything else unless you need to; keep your context lean.
 The verifier will check each of these. Failure of any one is a failure of the stage.
 
 1. **Worker and verifier:** `scripts/outlier-uncached-smoke.sh` exits 0. Its frozen cases: card 162's attempt (236,156 input, 13,438,000 cached, 50,419 output against ten rows with an uncached median of 71,000 and a total median of 840,000) is neither warned nor killed and its report carries the uncached figures; a 16x-uncached dispatch with little cache is killed with `measure: uncached`; `AUTOMETTA_OUTLIER_KILL_MULTIPLE=0` still disables that kill and keeps the warning; the docs name the new variable and the uncached measure; budget accounting is untouched. Base: red, first at the card 162 replay (killed at 16.3x total).
-2. **Worker and verifier:** `scripts/outlier-warning-smoke.sh` shows no new failure. Base on 2026-10-23: three pre-existing FAILs (`warning fires during the live third dispatch`, `the watchdog takes no action and the agent remains alive`, both because its 25x fixture predates the 15x kill; and `tick routes heartbeat warning text through its existing logger`). The same three and no others are acceptable; fixing them is out of scope.
-3. **Worker and verifier:** the same smoke asserts the backstop and the fallback: a 4.2x-uncached, 41x-total dispatch is killed with `measure: total`; with `AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE=0` it is not; with no split rows in the cost log a 16x-total dispatch is still killed. Base: the disabled-backstop case is red (killed at 41x total).
+2. **Worker and verifier:** `scripts/outlier-warning-smoke.sh` shows no new failure. Base on 2026-10-23: three pre-existing FAILs (`warning fires during the live third dispatch`, `the watchdog takes no action and the agent remains alive`, both because its 25x fixture predates the 15x kill; and `tick routes heartbeat warning text through its existing logger`). Because the second kills its fixture, the script then dies at its final `wait` under `set -e` (exit 143) before printing a summary. The same three FAILs and exit 143, and nothing new, are acceptable; fixing them is out of scope.
+3. **Worker and verifier:** `scripts/outlier-uncached-smoke.sh` also asserts the backstop and the fallback: a 4.2x-uncached, 41x-total dispatch is killed with `measure: total`; with `AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE=0` it is not; with no split rows, and with four split rows (one under the minimum), a 16x-total dispatch is still killed; `docs/cost-log.md` names the backstop variable. Base: the disabled-backstop case is red (killed at 41x total).
 4. **Verifier:** `bash -n scripts/heartbeat.sh` and `shellcheck` on the changed scripts report nothing new.
 
 ## Contract test
 
 - **Test file:** scripts/outlier-uncached-smoke.sh
-- **Assertions digest:** sha256:0012fefd5911ed48e5d9db7e8635c9482b97ebe164154afeeb002b120395ae9c
-- **Oracle proof:** red on `dev` at `49516b5`: the card 162 replay is killed (`multiple=16.3x exceeded kill threshold 15.0x`). A throwaway reference in a detached worktree (uncached map and median beside the total ones, measure selection with total fallback, 40x backstop, one docs line) passed every assertion and left `outlier-warning-smoke.sh` at its three base failures; it was removed and not committed. Traps for the worker: a kill does not move the entry to `state/recent-agents/` until the next heartbeat pass, so the smoke reads `token_outlier.measure` from `state/heartbeat.json`; Codex transcripts report `input_tokens` inclusive of cache and `budget_parse_codex_tokens_from_transcript` already returns it exclusive, so do not subtract twice.
+- **Assertions digest:** sha256:1b0b5b85fe8b69b6f34c870515850ba00e4c953ab40a0dad4a3a86e196e6d27f
+- **Oracle proof:** red on `dev` at `49516b5`: the card 162 replay is killed (`multiple=16.3x exceeded kill threshold 15.0x`). A throwaway reference in a detached worktree (uncached map and median beside the total ones, measure selection with total fallback, 40x backstop, one line in each doc), re-run after the cold-read additions, passed every assertion and left `outlier-warning-smoke.sh` at its three base failures; it was removed and not committed. Traps for the worker: a kill does not move the entry to `state/recent-agents/` until the next heartbeat pass, so the smoke reads `token_outlier.measure` from `state/heartbeat.json`; Codex transcripts report `input_tokens` inclusive of cache and `budget_parse_codex_tokens_from_transcript` already returns it exclusive, so do not subtract twice.
 
 ## Out of scope
 

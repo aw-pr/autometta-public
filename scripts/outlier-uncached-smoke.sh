@@ -57,6 +57,12 @@ total_only_rows() {
   done
 }
 
+# Four split rows, one short of the default minimum, then six without the split.
+few_split_rows() {
+  split_rows | head -n 4
+  total_only_rows | head -n 6
+}
+
 # make_case <name> <rows-fn> <uncached-input> <cached> <output>
 # The transcript's input_tokens includes the cached share, as Codex reports it.
 make_case() {
@@ -134,11 +140,19 @@ out="$("$script_dir/heartbeat.sh" "$fixture/total-fallback" 2>&1)" || true
 sleep 1
 alive "$pid" && fail "without split rows a 16x total dispatch was not killed (output: $out)"
 
-# 7. The documentation names both variables.
+# 7. Fewer split rows than the minimum also falls back to the total measure.
+make_case few-split few_split_rows 236156 13438000 50419; pid="$case_pid"
+out="$("$script_dir/heartbeat.sh" "$fixture/few-split" 2>&1)" || true
+sleep 1
+alive "$pid" && fail "with four split rows a 16x total dispatch was not killed (output: $out)"
+
+# 8. The documentation names both variables.
 grep -q 'AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE' "$script_dir/../docs/observability.md" \
   || fail "docs/observability.md does not document AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE"
 grep -qi 'uncached' "$script_dir/../docs/observability.md" \
   || fail "docs/observability.md does not describe the uncached measure"
+grep -q 'AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE' "$script_dir/../docs/cost-log.md" \
+  || fail "docs/cost-log.md does not document the total backstop"
 
 # AUTOMETTA-CONTRACT-END
 
