@@ -14,6 +14,7 @@
 - **Dispatch:** serial
 - **Pairing rationale:** a bounded shell change with smoke-testable behaviour, so a mid tier on each side: Sol writes it on the Codex window, Sonnet verifies cross-family on the Claude window. It touches `scripts/tick.sh`, which is load-bearing, so it dispatches serially (run-design section 4). First in the run because cards 160 to 162 report through it (instrumentation first, run-design section 1).
 - **Open decisions:** none
+- **Cold read:** Codex (GPT-6.1 Sol, read-only) 2026-10-23; its two questions (controller escalation versus halt episode, shellcheck severity) are answered in Constraints and criterion 4.
 
 ## Surfacing concern
 
@@ -39,12 +40,12 @@ Do not read anything else unless you need to; keep your context lean.
 
 1. `scripts/escalations.sh`, sourceable and executable:
    - `escalations_dir` prints `${AUTOMETTA_ESCALATIONS:-$AUTOMETTA_HOME/escalations}`.
-   - `escalation_write <repo> <stage-id-or-empty> <kind> <summary> [detail-file]` writes `pending/<UTC stamp>-<repo basename>-<stage or run>-<kind>.md` with YAML frontmatter (`repo`, `stage`, `kind`, `created`) and a body of the summary, then the detail. The body includes, when present, the worker envelope's `status` and `notes`, the verifier artefact path, and the paths of `state/uat/<stage>/` and the stage's worker and verifier logs. It sends a desktop notification through `osascript` unless `AUTOMETTA_NOTIFY=0`, and a notification failure never fails the write.
-   - `escalations_scan <repo>` compares the repo's current alert-status stages and halt state against a ledger at `<repo>/state/escalated-episodes.json` (gitignored) and calls `escalation_write` once for each episode not yet in the ledger, then records it.
-   - CLI: `escalations.sh list` (pending, oldest first, one line each), `escalations.sh show <id>`, `escalations.sh ack <id> [note]` (moves the file to `processed/`, appending the note and an `acked` timestamp).
-2. `scripts/tick.sh` calls `escalations_scan` once per repo per tick, after the repo's stage work and before the tick exits, including on a tick that returns early because the repo is halted.
+   - `escalation_write <repo> <stage-id-or-empty> <kind> <summary> [detail-file]` writes `pending/<UTC stamp>-<repo basename>-<stage or run>-<kind>.md` with YAML frontmatter (`repo`, `stage`, `kind`, `created`) and a body of the summary, then the detail. The stamp is `date -u +%Y%m%dT%H%M%SZ`; `repo` is the repo root path as given; the stage part is the literal `run` when the stage is empty. A write never overwrites an existing file: a second write in the same second gets a numeric suffix (`...-<kind>-2.md`). An escalation's id is its file name without `.md`. The body includes, when present, the worker envelope's `status` and `notes`, the verifier artefact path, and the paths of `state/uat/<stage>/` and the stage's worker and verifier logs. It sends a desktop notification through `osascript` unless `AUTOMETTA_NOTIFY=0`, and a notification failure never fails the write.
+   - `escalations_scan <repo>` compares the repo's current alert-status stages and halt state against a ledger at `<repo>/state/escalated-episodes.json` (gitignored) and calls `escalation_write` once for each episode not yet in the ledger, then records it. For a stage episode the kind is the stage status (`failed`, `verifier_failed`, `stalled`); for a halt it is `halted`, with an empty stage, and the summary names the `halt_reason`.
+   - CLI: `escalations.sh list` (pending, oldest first, one line each, the line containing the id), `escalations.sh show <id>`, `escalations.sh ack <id> [note]` (moves the file to `processed/`, appending the note and an `acked` timestamp; an unknown id exits non-zero).
+2. `scripts/tick.sh` calls `escalations_scan` once per repo per tick, in `process_repo` after `_process_repo_locked` returns, whichever path it returned by (normal, halted early return or error). The scan never changes `process_repo`'s return code, and a scan failure (for example an unwritable escalations folder) never fails the tick or leaves its lock behind.
 3. `pc_escalate_blocking` and `pc_escalate_nonblocking` also call `escalation_write`, with kind `controller-blocking` / `controller-nonblocking`.
-4. `.gitignore` entry for `state/escalated-episodes.json` if the repo pattern needs one (subscriber `state/` ignores may already cover it; state which).
+4. No `.gitignore` change: `state/**` (`.gitignore` line 22) already covers `state/escalated-episodes.json`, checked 2026-10-23 with `git check-ignore -v`.
 5. `scripts/escalations-smoke.sh`, run against a temporary repo fixture and `AUTOMETTA_ESCALATIONS` temp dir with `AUTOMETTA_NOTIFY=0`.
 6. `docs/tick-loop.md`: a short "Escalations" section naming the folder, the episode rule, the CLI and the `AUTOMETTA_NOTIFY` switch.
 
@@ -52,6 +53,7 @@ Do not read anything else unless you need to; keep your context lean.
 
 - No agent is dispatched by anything this card adds. The scan is pure shell plus `yq`/`jq`.
 - Exactly one file per episode: a second scan of an unchanged repo writes nothing; a requeued stage that fails again (new `started_at`) writes a new one.
+- A controller escalation and a scan episode are separate: `pc_escalate_blocking` writes a `controller-blocking` file and halts the repo, and the next scan writes a `halted` file for that halt. Both are intended; the controller is retired in card 162.
 - The scan never changes `state/state.yaml` or `state/budget.json`.
 - Portable to macOS bash 3.2 only if the rest of `scripts/` already is; follow the existing scripts' shebang and idiom.
 - No absolute home paths in committed files.
@@ -60,16 +62,16 @@ Do not read anything else unless you need to; keep your context lean.
 
 The verifier will check each of these. Failure of any one is a failure of the stage.
 
-1. **Smoke, worker and verifier:** `scripts/escalations-smoke.sh` exits 0 and asserts: a `failed` stage yields one pending file containing the envelope notes; a second scan yields no new file; a new `started_at` yields a second file; a halted repo yields one `halted` file; `ack` moves a file to `processed/`; `AUTOMETTA_NOTIFY=0` sends nothing. Base: red (script absent).
-2. **Tick wiring, verifier:** reading `scripts/tick.sh` shows the scan is reached on both the normal path and the halted early-return path; `bash -n scripts/tick.sh` passes.
-3. **No regression, worker and verifier:** the existing smokes that source `tick.sh` or `phat-controller.sh` still pass: `scripts/phat-controller-smoke.sh`, `scripts/budget-cap-smoke.sh`, `scripts/state-branch-smoke.sh`. Base: green.
-4. **Lint, worker:** `shellcheck scripts/escalations.sh scripts/escalations-smoke.sh` reports no errors.
+1. **Smoke, worker and verifier:** `scripts/escalations-smoke.sh` exits 0 and asserts: a `failed` stage yields one pending file containing the envelope notes; a second scan yields no new file; a new `started_at`, `verifier_attempts` or `stall_marker` yields a new file; a halted repo yields one `halted` file; `ack` moves a file to `processed/`; `AUTOMETTA_NOTIFY=0` sends nothing, a failing notification fails nothing; the two controller escalation functions write files. The smoke is frozen: do not edit it. Base: red (script absent).
+2. **Tick wiring, worker and verifier:** the smoke drives `process_repo` with its side effects stubbed and asserts the scan runs on the halted early-return path and the error path, the return code is unchanged and an unwritable folder fails nothing; `bash -n scripts/tick.sh` passes.
+3. **No regression, worker and verifier:** the existing smokes that source `tick.sh` or `phat-controller.sh` still pass: `scripts/phat-controller-smoke.sh`, `scripts/budget-cap-smoke.sh`, `scripts/state-branch-smoke.sh`. Base: green (state-branch-smoke was red on dev until `1cc7742` fixed its fixture on 2026-10-23).
+4. **Lint, worker:** `shellcheck -S warning scripts/escalations.sh scripts/escalations-smoke.sh` exits 0. Info-level findings (SC1091 on sourced files, SC2329 on the smoke's stubs) are expected and do not count. Base: the smoke alone exits 0.
 
 ## Contract test
 
 - **Test file:** `scripts/escalations-smoke.sh`
-- **Assertions digest:** to be recorded before queueing
-- **Oracle proof:** pending: the orchestrating chat authors the frozen block with `autometta-oracle`, proves it red on dev and green on a reference, and records the digest here before queueing.
+- **Assertions digest:** `sha256:4e4cf8dd98b0e9c58e9810de3e1c2a3803181ba4274c91f1677c0cd3f89442d1`
+- **Oracle proof:** fails on dev at its first assertion (`scripts/escalations.sh is missing`). A throwaway reference (about 80 lines of shell plus one line each in `tick.sh` and the two controller functions) passed every assertion and left criteria 3's smokes green; mutating the reference (dropping the tick call, letting the scan's status leak into `rc`, dropping the controller write, ignoring `AUTOMETTA_NOTIFY`, overwriting on collision) each tripped its own assertion. Traps the reference met: the fixture repo path is physical (`pwd -P`), because macOS `mktemp -d` lives under `/var`; `tick.sh` is sourced by `phat-controller.sh`, so sourcing `escalations.sh` from `tick.sh` reaches both.
 
 ## Out of scope
 
