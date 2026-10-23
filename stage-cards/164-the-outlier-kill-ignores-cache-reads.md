@@ -13,7 +13,7 @@
 - **Verifier panel:** false
 - **Dispatch:** serial
 - **Pairing rationale:** a narrow change to the heartbeat's live-usage loop and embedded python, smoke-testable offline: Sol writes it on the Codex window (operator is biasing to OpenAI this week) and Sonnet verifies cross-family, the pairing that landed 161 and 162a on attempt 1. The heartbeat runs on every fleet tick, so it dispatches serially.
-- **Open decisions:** 1. Does a total-tokens backstop stay, so a dispatch that loops on cache reads alone is still stopped? Recommended: yes, keep the current total measure as a second kill at a higher multiple (40x, the value the fleet LaunchAgent already sets), configurable through its own variable.
+- **Open decisions:** none
 - **Cold read:** pending; run a Codex read-only cold read before queueing (`autometta-card-review` section 3).
 
 ## Surfacing concern
@@ -41,7 +41,7 @@ Do not read anything else unless you need to; keep your context lean.
 ## Deliverables
 
 1. `scripts/heartbeat.sh`: the live usage map carries uncached tokens (input plus output) per pid alongside the total; the baseline is the median of `input_tokens + output_tokens` over the same recent window of `recorded` rows per role; the warning and kill multiples apply to the uncached pair. Rows without the split (`total_only`) are excluded from the uncached baseline. The heartbeat report records both numbers (`live_uncached_tokens`, `baseline_median_uncached_tokens`) and which measure fired.
-2. The backstop chosen under open decision 1, with its own environment variable, documented beside `AUTOMETTA_OUTLIER_KILL_MULTIPLE`.
+2. A total-tokens backstop (operator decision 2026-10-23): the existing total measure (input plus cached plus output against the role median of `total_tokens`) stays as a second, independent kill at `AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE`, default 40, 0 disables, so a dispatch that loops on cache reads alone is still stopped. Either measure reaching its kill multiple kills the dispatch. Documented beside `AUTOMETTA_OUTLIER_KILL_MULTIPLE`.
 3. A new offline smoke, `scripts/outlier-uncached-smoke.sh`, plus any updates the existing `outlier-warning-smoke.sh` needs to stay green.
 4. `docs/observability.md` and `docs/cost-log.md` describe the uncached measure, the backstop and the variables.
 
@@ -58,18 +58,19 @@ The verifier will check each of these. Failure of any one is a failure of the st
 
 1. **Worker and verifier:** `scripts/outlier-uncached-smoke.sh` exits 0. It replays card 162's attempt (live 236,156 input, 13,438,000 cached, 50,419 output against a baseline of ten rows whose uncached median is about 70K and total median about 0.84M) and asserts no kill and no warning; and replays a dispatch whose uncached tokens reach 15x the uncached median with little cache and asserts the kill. Red on the clean base (the first case is killed).
 2. **Worker and verifier:** `scripts/outlier-warning-smoke.sh` keeps its current result on the base (it is red there for an unrelated pre-existing reason; record its base output and show no new failure).
-3. **Verifier:** the backstop from open decision 1 behaves as decided, shown by a case in the new smoke.
+3. **Worker and verifier:** the new smoke also asserts the backstop: a dispatch with uncached tokens under 15x but total tokens at 40x the total median is killed, and with `AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE=0` the same dispatch is not.
 4. **Verifier:** `bash -n scripts/heartbeat.sh` and `shellcheck` on the changed scripts report nothing new.
 
 ## Contract test
 
-- **Test file:** pending; `scripts/outlier-uncached-smoke.sh` frozen through `autometta-oracle` once open decision 1 is answered.
+- **Test file:** pending; `scripts/outlier-uncached-smoke.sh`, to be frozen through `autometta-oracle`.
 - **Assertions digest:** pending
 - **Oracle proof:** pending
 
 ## Out of scope
 
 - Per-card token allowances.
+- The fleet LaunchAgent's `AUTOMETTA_OUTLIER_KILL_MULTIPLE=40`, set by hand as a workaround for the cache-heavy measure. Once this lands it would mean 40x uncached; the operator resets it to the default afterwards, outside this card.
 - The quota window reserve and curfew.
 - Card 163's durable kill record (`state/kills/<stage>.json`); this card only changes what triggers a kill.
 
