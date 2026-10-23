@@ -19,6 +19,8 @@ source "$script_dir/subscribers.sh"
 source "$script_dir/resolve-root.sh"
 # shellcheck source=./vendor-set.sh
 source "$script_dir/vendor-set.sh"
+# shellcheck source=./escalations.sh
+source "$script_dir/escalations.sh"
 
 controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
@@ -3093,6 +3095,8 @@ process_repo() {
   local rc=0
   _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
   profile_lap "$profile_repo" "dispatch"
+
+  escalations_scan "$repo_root" || true
 
   # Runs after the tick's own dispatch decision, not before: a stage that
   # goes pending -> in_progress in this same tick must already be reflected

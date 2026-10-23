@@ -544,6 +544,7 @@ pc_escalate_blocking() {
     "$reason" "blocking: the queue must not carry on past this" "halt the repo until an operator clears it")"
   log "ESCALATION (blocking): ${reason}"
   budget_halt "$repo_root" "controller-escalation"
+  escalation_write "$repo_root" "" controller-blocking "$reason" >/dev/null || true
   pc_journal_outcome "$repo_root" "$decision_id" escalated "repo halted"
 }
 
@@ -553,6 +554,7 @@ pc_escalate_nonblocking() {
   decision_id="$(pc_journal_decision "$repo_root" escalate "$stage_id" \
     "$reason" "non-blocking: needs a human eventually, not now" "record and carry on with other work")"
   log "ESCALATION (non-blocking, carrying on): ${reason}"
+  escalation_write "$repo_root" "$stage_id" controller-nonblocking "$reason" >/dev/null || true
   pc_journal_outcome "$repo_root" "$decision_id" escalated "recorded, queue not blocked"
 }
 

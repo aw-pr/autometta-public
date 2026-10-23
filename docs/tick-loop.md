@@ -360,6 +360,27 @@ The quota reader's `unknown (snapshot stale)` had the same root cause on the nig
 
 **Repo subscriber stall.** If a repo's tick consistently stalls, the controller-level `log/tick-YYYY-MM-DD.log` will show repeated stall markers. The operator is responsible for disabling the subscriber file. The controller does not auto-unsubscribe; that decision belongs to the human.
 
+### Escalations
+
+After each repo transition, including a halted return or error, the tick scans
+for `failed`, `verifier_failed` and `stalled` stages and repo halts. Each episode
+writes one Markdown file under `$AUTOMETTA_HOME/escalations/pending/`
+(override with `AUTOMETTA_ESCALATIONS`). A stage episode is the tuple of its
+id, status, `started_at`, `verifier_attempts` and `stall_marker`; a halt episode
+is its `halt_reason` and `halted_at`. The gitignored
+`state/escalated-episodes.json` ledger prevents unchanged episodes being
+reported again, including after acknowledgement. The scan leaves queue and
+budget state untouched, and a failed escalation write never fails the tick.
+
+Use `scripts/escalations.sh list` to list pending ids oldest first,
+`scripts/escalations.sh show <id>` to read one, and
+`scripts/escalations.sh ack <id> [note]` to append a note and acknowledgement
+timestamp and move it to `processed/`. Writes also send a desktop notification;
+set `AUTOMETTA_NOTIFY=0` to disable it. Notification failures leave the file
+available. Controller escalations write separate `controller-blocking` or
+`controller-nonblocking` files; a blocking escalation's halt is also reported
+by the next scan.
+
 ## (h) Interaction with the pass-1 dispatch contract
 
 The tick loop does not replace the dispatch contract; it *instantiates* the dispatch contract once per dispatched worker. Every tick that spawns a worker:
@@ -764,8 +785,8 @@ nothing further until an operator clears it. It is correct only when carrying
 on makes things worse: the same failure repeated past the mandate's
 `same_remediation_without_progress_cap`, a spend authority exhausted, a
 provider asking for payment. A *non-blocking* escalation is a loud log line
-plus a journal entry, and the queue carries on. No second alert channel
-exists to drift from the first.
+plus a journal entry, and the queue carries on. Both also write a shared
+escalation file and desktop notification (see "Escalations" above).
 
 `git-push-check` returning `ASK` is the case that forces the split, and its
 three verdicts read directly as a human-presence protocol: `PUSH` act, `ASK`
