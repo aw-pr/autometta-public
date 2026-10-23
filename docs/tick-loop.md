@@ -381,6 +381,21 @@ available. Controller escalations write separate `controller-blocking` or
 `controller-nonblocking` files; a blocking escalation's halt is also reported
 by the next scan.
 
+Escalations reach the operator's chat in two ways. The SessionStart hook
+`scripts/hooks/session-start-escalations.sh` prints the pending ones (count,
+up to ten lines oldest first, then `+N more`) when a Claude Code session opens
+anywhere under a subscriber repo or the autometta repo, filtered to the current
+repo when the working directory is inside a subscriber. It prints nothing when
+none are pending and never fails the session. `scripts/install-escalation-hook.sh`
+adds it to `~/.claude/settings.json` (`--check` reports `installed` or
+`missing`; `--settings <path>` targets another file), and `scripts/init-host.sh`
+runs that check and prints the install command when the hook is missing.
+
+The `autometta-escalations` skill is the orchestration-chat playbook for
+working them: list, read the evidence, classify, propose a decision, act
+through `autometta-oracle`, `autometta-requeue` and `autometta-card-review`,
+then ack. It replaces the phat-controller skill's autonomous role.
+
 ## (h) Interaction with the pass-1 dispatch contract
 
 The tick loop does not replace the dispatch contract; it *instantiates* the dispatch contract once per dispatched worker. Every tick that spawns a worker:

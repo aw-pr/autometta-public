@@ -832,24 +832,13 @@ printf 'PASS an unconfigured job dispatches nothing\n'
 
 # ---------------------------------------------------------------------------
 printf '== criterion 10: the skill and the seed do not restate each other ==\n'
-skill_body="$(cat "$autometta_root/skills/phat-controller/SKILL.md")"
 seed_tpl_body="$(cat "$autometta_root/templates/phat-controller-seed.md.tpl")"
-assert_contains "$skill_body" "Which fact lives where" "the skill carries the ownership table"
-for owned in "Persona, mandate" "The five prohibitions" "Spend authority for this job" \
-             "Paths, families and their auth modes" "Thresholds and cadence" \
-             "What the verbs do" "The current state of the queue" "How to decide"; do
-  assert_contains "$skill_body" "$owned" "the ownership table names: ${owned}"
-done
-# The seed owns the prohibitions; the skill must not carry a second copy.
+# The seed owns the prohibitions.
 assert_contains "$seed_tpl_body" "Forbidden, without exception:" "the seed owns the negative list"
-assert_not_contains "$skill_body" "Forbidden, without exception:" "the skill does not restate the negative list"
-assert_not_contains "$skill_body" "Verifying its own dispatches. Cross-family" "the skill does not restate a prohibition verbatim"
 # The mandate owns thresholds; the seed must not restate a number.
 assert_not_contains "$seed_tpl_body" "attempt_cap" "the seed does not restate a mandate threshold"
 assert_not_contains "$seed_tpl_body" "pass_interval_minutes" "the seed does not restate the cadence"
-# The seed owns the repo facts; the skill must not name a path or an auth mode.
-assert_not_contains "$skill_body" "/Users/" "the skill carries no machine path"
-printf 'PASS each fact has one owner, and the table says which\n'
+printf 'PASS the seed owns the negative list and restates no mandate threshold\n'
 
 # ---------------------------------------------------------------------------
 # Card 61: the controller keeps a record and takes messages. Everything below
