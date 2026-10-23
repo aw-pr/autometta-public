@@ -23,9 +23,13 @@ The repo extracts patterns from two prior projects (`fractals-from-the-90s` disp
 1. **Dispatch contract (pass 1 - shipped):** the contract between an orchestrator and one worker for one unit of work. Stage card -> worker prompt -> sandbox boundary -> acceptance command -> verifier handoff. Human drives the orchestrator session. Deliverables live in `docs/` and `templates/`.
 2. **Autonomous tick loop (pass 2 - shipped):** cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, exits. Two adjacent stages with declared, disjoint path claims may run as a pipeline pair, while verification and landing remain ordered. Budget file is the only safety. The loop layer **sits on top of** the dispatch contract - never modify the loop in ways that bypass it. Runtime in `scripts/`, schemas in `schemas/`, per-repo state in `state/`. See `docs/tick-loop.md` for the design and `docs/setup.md` for the operator flow.
 
-The operational roles are the human or interactive orchestrator, the worker,
-the verifier, and **phat-controller**, the scheduled queue minder. The tick
-loop is the mechanism phat-controller supervises, not an agent role.
+The operational roles are the tick (deterministic, including the mechanical
+recovery that used to need an agent) and the operator's orchestration chat,
+plus the worker and the verifier it dispatches. Anything the tick cannot decide
+becomes an escalation in the escalations folder for the chat to work
+(`skills/autometta-escalations`). The scheduled controller agent is retired
+(`docs/proposals/controller-retired.md`); `scripts/phat-controller.sh` remains
+as a set of verbs, not a role.
 
 Pass 2 also ships **agent observability**: a per-agent liveness registry at `state/active-agents/<pid>.json`, a heartbeat watchdog at `scripts/heartbeat.sh` that surfaces stalls / over-budget conditions to `state/heartbeat.json`, a full-window repo ticker (`scripts/repo-ticker.sh`), the `autometta tui` run/history/messages view, and a polling primitive (`scripts/watch-agent.sh`) that any orchestrator-led manual dispatch can block on to catch silent agent deaths. See `docs/observability.md`. Spend is instrumented separately: `tick.sh` appends one cost-log line per dispatched role to `state/cost-log.jsonl` (per-tier `cost_usd_est` from `scripts/rates.sh`, `cached_input_tokens` vs `input_tokens`, `cache_hit_rate`). Schema and the prompt-caching notes are in `docs/cost-log.md`.
 
@@ -76,7 +80,8 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 - `skills/autometta-card-review/` - interview the operator and review one card before it is queued: seat check, baseline run, cold read, `card-lint.sh --strict`.
 - `skills/autometta-oracle/` - author a card's frozen contract test, proven red on the base branch and green against a reference, and record its digest.
 - `skills/autometta-requeue/` - re-queue a stage safely after a FAIL, a dead agent or a stale run worktree.
-- `skills/phat-controller/` - the scheduled queue minder's brief.
+- `skills/autometta-escalations/` - work the operator's pending escalations from an orchestration chat.
+- `skills/phat-controller/` - a pointer: the role is retired, work the queue through `autometta-escalations`.
 
 ## Auth routes: subscription vs API key (agents: read this before any dispatch)
 

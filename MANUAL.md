@@ -94,7 +94,7 @@ Catches silent agent deaths in both manual and loop dispatches.
 - **Dashboard.** A static HTML dashboard regenerated from subscriber state.
   `scripts/dashboard.sh`, `scripts/aggregate-dashboard.sh`. See
   `docs/dashboard.md`.
-- **Terminal UI.** A live run, history and controller-message view over the
+- **Terminal UI.** A live run and history view over the
   same per-repo dashboard aggregate. Run `autometta tui [repo-path]`; see
   section 6.
 - **Publish workflow.** A private `dev` line and a clean public `publish`
@@ -125,8 +125,7 @@ to one backing script.
 | `autometta tui [repo-path]` | Open the full-screen terminal UI for one repo, defaulting to the current directory. It polls the shared per-repo dashboard aggregate every five seconds. |
 | `autometta detach [repo-path\|--all]` | Remove one tmux viewer, defaulting to the current repo, or tear down every `autometta-*` viewer with `--all`. Other tmux sessions are never touched. |
 | `autometta tick [--repair\|--reset-halt [--reset-tokens]]` | Run one tick across subscribers: read state, dispatch one worker and/or verifier, write next state, snapshot state onto `autometta/state`, sweep retention and stale run worktrees, exit. A declared pipeline pair may dispatch worker N+1 while verifier N is live, but landing remains ordered and overlap escalates. It never changes the branch checked out in a subscriber's own checkout. `--reset-halt` clears the halt flag and the counters that cause a halt (`clock_ticks_used`, `idle_ticks_used`, `consecutive_failures`); add `--reset-tokens` to clear `tokens_spent` and `wall_clock_elapsed_seconds` too. `--repair` requeues every stalled or failed stage across all enabled subscribers, via the same reset `scripts/requeue-stage.sh` performs by hand; it leaves `in_progress` and `verifier_failed` alone, refuses a stage whose card no longer resolves (`stall_marker: card_missing`), skips a repo still over a spend cap, and stops at `repair_attempts` 2 per stage (`AUTOMETTA_REPAIR_ATTEMPT_CAP`). |
-| `autometta phat-controller <verb> [args]` | Run a queue-minder verb. `pass` dispatches one controller pass; the remaining verbs inspect, preserve, rebrief, requeue, integrate, message, journal or escalate work under the controller's guards; `resume-to-verifier <repo> <stage-id> [--accept-partial]` sends a returned worker envelope on to its verifier without a fresh worker dispatch (the flag admits a `partial` envelope). `autometta warden ...` is the deprecated one-release alias. |
-| `autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]` | Render the phat-controller context seed and mirror its machine-readable spend authority into the mandate. Refuses to write without explicit spend authority. |
+| `autometta phat-controller <verb> [args]` | Run a queue-minder verb. The verbs inspect, preserve, rebrief, requeue, integrate, journal or escalate work under the guards in `scripts/phat-controller.sh`; `resume-to-verifier <repo> <stage-id> [--accept-partial]` sends a returned worker envelope on to its verifier without a fresh worker dispatch (the flag admits a `partial` envelope). There is no controller agent: the tick does the mechanical recovery and escalations go to the operator's orchestration chat (`docs/proposals/controller-retired.md`). `autometta warden ...` is the deprecated alias. |
 | `autometta drain start [--cap N\|--lift] [--hours H] [--repo PATH] [--reason TEXT]`, `autometta drain status`, `autometta drain end` | Start, inspect or end a bounded, self-expiring host-level drain that temporarily raises the effective token cap without editing repo budgets. |
 | `autometta check-deps` | Verify required tooling is present: bash 3.2+, jq, git, codex, claude, python3, yq, agent-whoami, op-fetch and op are required; tmux is optional (attach viewer). Also refuses credential-bearing symlinks in the checkout. |
 | `autometta check-build` | Compare the installed build with the source checkout file by file and report which root the loaded fleet tick runs. |
@@ -135,8 +134,7 @@ to one backing script.
 | `autometta retro-grade [--last N] [--dry-run]` | Build and optionally submit an Anthropic Message Batch that re-runs the current verifier rubric over recent completed stages. |
 | `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
 | `autometta uninstall-launchagent <repo-path>` | macOS: remove the per-repo LaunchAgent. |
-| `autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--window-reserve-percent N] [--window-reserve-action hold\|observe]` | macOS: install the singleton phat-controller LaunchAgent with explicit spend authority and provider-window policy. |
-| `autometta uninstall-launchagent-phat-controller` | macOS: unload and remove the phat-controller LaunchAgent. |
+| `autometta uninstall-launchagent-phat-controller` | macOS: unload and remove the retired phat-controller LaunchAgent. Safe to run when none is installed. |
 | `autometta install-homebrew-local [--dry-run]` | Render and install the local Homebrew tap from the working tree. Rerun after every `git pull` of this repo. |
 | `autometta auth status` | Per-family table: mode (`subscription`, `api`, or codex-only `local`), provenance (env, manifest, default), and ref status. Also prints which `op-refs.local.sh` was loaded, whether `op-fetch` is on PATH, and the sibling `CODEX_HOME` state. No token spend. |
 | `autometta auth check <codex\|claude>` | Probe one family without spending a token. `subscription` reports no-key-fetch; `api` resolves the ref via `op-fetch --print` and, for codex, checks the sibling `CODEX_HOME`; codex `local` runs the Ollama server/model preflight. Each route returns `PASS`, `FAIL`, or the explicit subscription result. |
@@ -264,7 +262,7 @@ tick writes `halted: true` with one of these canonical `halt_reason` values:
   attempting its role (bad command, credentials or run worktree state
   symlink); the stage carries `dispatch_configuration_fault:<role>`.
 - `controller-escalation` - a pipeline pair needs a human (rebase conflict,
-  overlap or missing input) or phat-controller escalated; the tail stage's
+  overlap or missing input) or `phat-controller.sh escalate --blocking` was called; the tail stage's
   `stall_marker` says why.
 
 A window reset that clears a cap halt is recorded in the breach history as
@@ -445,16 +443,14 @@ without further coupling.
 
 ### Terminal UI
 
-`autometta tui [repo-path]` opens three pages over one repo. **Run** shows the
-current run, live agents, escalations, spend and card detail. **History** shows
-completed card outcomes and the fourteen-day spend view. **Messages** joins
-the phat-controller decision journal to its inbox and outbox, and can queue an
-operator message for the next controller pass.
+`autometta tui [repo-path]` opens two pages over one repo. **Run** shows the
+current run, live agents, escalations (with the pending count from
+`scripts/escalations.sh list`), spend and card detail. **History** shows
+completed card outcomes and the fourteen-day spend view.
 
 Use `[` and `]` to change page, `j`/`k` or the arrow keys to move, and Enter to
-pin a card or start a message. On the run page, `1` to `4` select a panel and
-Tab cycles them. `m` opens message composition from any page, Esc cancels it,
-and `q` quits when no message is being composed.
+pin a card. On the run page, `1` to `4` select a panel and Tab cycles them.
+`q` quits.
 
 The TUI polls `scripts/aggregate-dashboard.sh --repo <path>` asynchronously
 every five seconds, so a slow read never freezes keyboard input and every

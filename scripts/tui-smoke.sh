@@ -226,6 +226,11 @@ assert_equals "$(jq -r '.current_run.tokens_total' <<<"$aggregate")" "12401200" 
 assert_equals "$(jq -r '.current_run.cost_usd_est' <<<"$aggregate")" "9.12" \
   "aggregate did not scope current-run cost"
 
+export AUTOMETTA_ESCALATIONS="$fixture/escalations"
+mkdir -p "$AUTOMETTA_ESCALATIONS/pending"
+printf 'one\n' > "$AUTOMETTA_ESCALATIONS/pending/20260901T010000Z-repo-stage-a-verifier_failed.md"
+printf 'two\n' > "$AUTOMETTA_ESCALATIONS/pending/20260901T020000Z-repo-stage-b-halted.md"
+
 capture() {
   local width="$1" height="$2" keys="${3:-}" ansi="${4:-false}" fixture_polls="${5:-$polls}"
   LC_ALL=C.UTF-8 TERM=xterm-256color AUTOMETTA_TUI_CAPTURE=true \
@@ -245,10 +250,12 @@ legacy_count="$(jq -r '.polls[-1] |
 assert_equals "$legacy_count" "45 of 47" "fixture no longer reproduces the pre-fix all-stage count"
 
 for frame in "$frame80" "$frame119" "$frame160"; do
-  for panel in '[0]─Card detail' '[1]─Status' '[2]─This run' '[3]─Agents' '[4]─Escalations & inbox'; do
+  for panel in '[0]─Card detail' '[1]─Status' '[2]─This run' '[3]─Agents' '[4]─Escalations' ' pending'; do
     assert_contains "$frame" "$panel" "missing panel $panel"
   done
-  assert_contains "$frame" '[r]un [h]istory [m]essages' "missing page tabs"
+  assert_contains "$frame" '[r]un [h]istory' "missing page tabs"
+  assert_not_contains "$frame" '[m]essages' "the retired messages tab is still advertised"
+  assert_contains "$frame" '2 pending' "escalations panel does not show the pending count from escalations.sh list"
   assert_contains "$frame" 'This run  5 of 7' "current-run count is not scoped to seven cards"
   assert_not_contains "$frame" '01-historic-stage-01' "historic stage leaked onto the run page"
   assert_contains "$frame" "$long_id" "long stage id was truncated or hidden"
@@ -463,10 +470,10 @@ assert_contains "$frame119" 'stage-cards/68-a-pipeline-pair.md' "initial detail 
 assert_contains "$after" 'stage-cards/69-tui.md' "enter did not repopulate card detail"
 
 history="$(capture 119 40 ']')"
-messages="$(capture 119 40 '],]')"
-returned="$(capture 119 40 '2,j,ENTER,],],]')"
+wrapped="$(capture 119 40 '],]')"
+returned="$(capture 119 40 '2,j,ENTER,],]')"
 assert_contains "$history" '01-historic-stage-01' "historic cards are absent from the history page"
-assert_contains "$messages" 'no controller record yet' "fresh messages page state missing"
+assert_contains "$wrapped" 'stage-cards/68-a-pipeline-pair.md' "two pages: ] twice returns to the run page"
 assert_contains "$returned" 'stage-cards/69-tui.md' "page round-trip disturbed run-page state"
 
 history_last_keys=']'

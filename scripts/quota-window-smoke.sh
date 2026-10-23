@@ -139,20 +139,12 @@ assert_contains "$tick_log" "snapshot stale" "stale unknown logged"
 printf 'PASS reserve zero and unknown reading preserve the pre-existing dispatch path\n'
 printf 'PASS all three Claude failure cases are logged and add no cost-log row\n'
 
-# Setup refuses a spend-only answer, then records the explicit reserve in both
-# the rendered seed and its machine-readable mandate.
-seed="$fixture/rendered-seed.md"
-reserve_missing_rc=0
-"$script_dir/render-controller-seed.sh" --spend-authority 'Fixture authority' \
-  --repo "$repo" --out "$seed" >/dev/null 2>&1 || reserve_missing_rc=$?
-assert_eq 2 "$reserve_missing_rc" "setup refuses missing reserve answer"
-[[ ! -e "$seed" ]] || fail "setup wrote a seed without the reserve answer"
-"$script_dir/render-controller-seed.sh" --spend-authority 'Fixture authority' \
-  --window-reserve-percent 12 --window-reserve-action hold \
-  --repo "$repo" --out "$seed" >/dev/null
-assert_contains "$(cat "$seed")" 'Leave 12% of each reported provider window unspent' "rendered reserve"
+# The operator edits the reserve into the mandate by hand; the tick reads it
+# back as the same percentage and action, with no controller field present.
+yq -i '.window_reserve.percent = 12 | .window_reserve.action = "hold"' "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
 assert_eq 12 "$(yq -r '.window_reserve.percent' "$AUTOMETTA_HOME/phat-controller-mandate.yaml")" "mandate reserve"
-printf 'PASS setup run rendered seed with the answered 12%% hold reserve; no answer rendered nothing\n'
+assert_eq "12	hold" "$(quota_reserve_settings "$AUTOMETTA_HOME/phat-controller-mandate.yaml" | cut -f1,2)" "tick reads the hand-edited 12% hold reserve"
+printf 'PASS hand-edited mandate carries the 12%% hold reserve the tick reads\n'
 
 # The exact once-per-tick value is what both displays consume.
 quota_refresh_tick
@@ -194,7 +186,7 @@ if rg -n 'SECRET_DO_NOT_COPY|access_token|Authorization' \
 fi
 printf 'PASS runtime grep: no usage endpoint, Keychain command or credential propagation\n'
 
-for file in quota-window.sh quota-window-smoke.sh tick.sh agent-ticker.sh aggregate-dashboard.sh render-controller-seed.sh install-launchagent-phat-controller.sh; do
+for file in quota-window.sh quota-window-smoke.sh tick.sh agent-ticker.sh aggregate-dashboard.sh; do
   bash -n "$script_dir/$file"
 done
 PYTHONPYCACHEPREFIX="$fixture/pycache" python3 -m py_compile "$script_dir/quota-window.py"

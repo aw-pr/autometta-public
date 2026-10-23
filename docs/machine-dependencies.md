@@ -45,7 +45,7 @@ grep -rnoE 'HOME[a-zA-Z_/.~]*|~/[A-Za-z0-9._/-]+' scripts/ bin/ templates/
 | `codex` (Codex CLI) | vendor installer | fail-closed, named, via the `for cmd in ...` loop in `check-deps.sh` | yes, `check-deps` |
 | `claude` (Claude Code CLI) | vendor installer | fail-closed, named, via the `for cmd in ...` loop in `check-deps.sh` | yes, `check-deps` |
 | `agent-whoami` | operator's own script, symlinked onto `PATH` from mcp-hub | fail-closed, named, via its own named check in `check-deps.sh`; `facts-backfill.sh` falls back to an env var instead | yes, `check-deps` |
-| `op-fetch` | operator's own script, typically `~/Scripts/op-fetch` | fail-closed, named, via its own named check in `check-deps.sh`; every spawn (`main` in `spawn-worker.sh` and `spawn-verifier.sh`, `pc_pass` in `phat-controller.sh`) checks for it again | yes, `check-deps` |
+| `op-fetch` | operator's own script, typically `~/Scripts/op-fetch` | fail-closed, named, via its own named check in `check-deps.sh`; every spawn (`main` in `spawn-worker.sh` and `spawn-verifier.sh`) checks for it again | yes, `check-deps` |
 | `op` (1Password CLI) | vendor installer | fail-closed, named, via its own named check in `check-deps.sh` | yes, `check-deps` |
 | `tmux` | Homebrew formula | warns and continues; `report_orphans` and the viewer creation in `attach.sh` degrade to no live viewer | yes, `check-deps` (warn only) |
 | `git-push-check` | operator's own script, symlinked from mcp-hub | silent refusal to push, logged but non-fatal: `pc_push` in `phat-controller.sh` journals a refusal and returns 3 if absent | **no** |
@@ -57,7 +57,7 @@ grep -rnoE 'HOME[a-zA-Z_/.~]*|~/[A-Za-z0-9._/-]+' scripts/ bin/ templates/
 | `launchctl` / `plutil` | ship with macOS | silent degradation: `label_is_loaded` in `check-installed-build.sh` and the LaunchAgent check in `health-check.sh` skip the LaunchAgent liveness check | no |
 | XDG op-refs file (`~/.config/autometta/op-refs.local.sh`) | operator-authored, from `templates/op-refs.local.sh.tpl` | fail-closed, named: `auth.sh` and `auth-route.sh` report `placeholder` and refuse to dispatch (`cmd_check` in `auth.sh`) | yes, `auth check` |
 | 1Password service-account env (`~/.config/op/service-account.env` or `$OP_SERVICE_ACCOUNT_ENV`) | operator-provisioned 1Password vault | fail-closed only indirectly: `op-fetch` itself refuses, this repo just reports whatever `op-fetch --print` returns (`cmd_check` in `auth.sh`) | partial, `auth check` (via `op-fetch --print`) |
-| Sibling `CODEX_HOME` (`~/.codex-api-only`) | operator-provisioned via `codex login --with-api-key` | fail-closed, named: `cmd_check` in `auth.sh`, `spawn-worker.sh` and `pc_pass` in `phat-controller.sh` all refuse codex-api dispatch without it | yes, `auth check codex` |
+| Sibling `CODEX_HOME` (`~/.codex-api-only`) | operator-provisioned via `codex login --with-api-key` | fail-closed, named: `cmd_check` in `auth.sh`, and `spawn-worker.sh` both refuse codex-api dispatch without it | yes, `auth check codex` |
 | LaunchAgent plists (`~/Library/LaunchAgents/*.plist`) | rendered from `templates/launchagent.plist.tpl` by `install-launchagent.sh` | silent degradation: no automated tick ever runs, `tick_jobs` in `health-check.sh` and the launchd-dirs walk in `check-installed-build.sh` are the only surfacing points and neither runs unprompted | partial, `health-check.sh` (manual invocation only) |
 
 ## Gaps

@@ -168,7 +168,7 @@ autometta/
 │   ├── setup.md              # pass 2 - operator setup guide, auth routes in section 7
 │   ├── runbook.md            # cold-start and daily operator path
 │   ├── dependency-graph.md   # stage prerequisites, `autometta graph`, migration from gates
-│   ├── phat-controller.md    # the scheduled queue minder
+│   ├── phat-controller.md    # pointer: the scheduled queue minder is retired
 │   ├── budget.md             # caps, drains and the quota window
 │   ├── cost-log.md           # per-role spend records and prompt caching
 │   ├── fact-ledger.md        # pass 5 - the typed fact ledger
@@ -193,7 +193,7 @@ autometta/
 │   ├── worker-prompt.md      # the prompt the worker reads
 │   ├── verifier-prompt.md    # the prompt the verifier reads
 │   ├── orchestrator-checklist.md
-│   └── phat-controller-*     # the queue minder's prompt, mandate and seed
+│   └── phat-controller-mandate.yaml.tpl  # the host mandate the tick reads
 ├── scripts/                  # pass 2 runtime and operator surfaces: tick, dispatch, pipeline pairs,
 │                             #   controller, observability, TUI, dashboard, fact ledger, build and
 │                             #   vendor checks, setup, refresh, launchd, retention, publish guards,
@@ -211,7 +211,7 @@ autometta/
 │   ├── autometta-card-review/# review one card before it is queued: interview, seat check, cold read, lint
 │   ├── autometta-oracle/     # author a card's frozen contract test and record its digest
 │   ├── autometta-requeue/    # re-queue a stage safely after a FAIL or a dead agent
-│   └── phat-controller/      # the queue minder's brief
+│   └── phat-controller/      # pointer: the role is retired, see autometta-escalations
 ├── tests/                    # contract-gate and drain smokes, SDK experiment fixtures
 └── examples/
     ├── fractals-stage-cards/ # older cards from another project, kept for cross-project shape
@@ -307,7 +307,7 @@ Full surface, including the op-refs file layout, the sibling `CODEX_HOME` requir
 | Dispatch contract (pass 1)                                 | shipped      | Self-hosted through 128 stages on this repo.                                                                                                            |
 | Autonomous loop (pass 2)                                   | shipped      | Unattended macOS launchd path verified 2026-05-29 (gotcha 9 fix). Linux via cron.                                                                       |
 | Pipeline pairs                                             | shipped      | Adjacent stages with disjoint path claims overlap; landing stays ordered. A card pairs unless it says serial.                                            |
-| phat-controller (queue minder)                             | shipped      | Scheduled pass that re-briefs, re-queues, drains and escalates; keeps a journal and takes messages.                                                     |
+| phat-controller (queue minder)                             | retired      | Agent pass removed (card 162); the tick retries and escalates, the operator's chat works escalations, and the deterministic verbs remain.             |
 | Stage dependency graph                                     | shipped      | `Depends on` names the stages a card builds on; the tick dispatches it only once their commits are on its base. `autometta graph` shows readiness and blockers, read-only. Legacy gates keep their status-only meaning. See [docs/dependency-graph.md](./docs/dependency-graph.md). |
 | Contract-test gate                                         | shipped      | A card names its oracle and a frozen digest; `add-stage.sh` refuses a card without one; the verifier runs the gate against the tree it is shown.        |
 | Card-quality tooling                                       | shipped      | `autometta-card-review` and `autometta-oracle` skills; `autometta first-attempts <repo>` reports the first-attempt clean rate per run.                   |
@@ -316,7 +316,7 @@ Full surface, including the op-refs file layout, the sibling `CODEX_HOME` requir
 | Fact ledger (pass 5)                                       | shipped      | `memory/facts.jsonl`, schema and lint, backfilled from trailers, appended at landing, read by the verifier.                                              |
 | Worker dispatch envelope                                   | shipped      | Sole worker completion signal; `partial` goes to the verifier with the deferred criteria as a checklist.                                                |
 | Agent observability                                        | shipped      | Registry, heartbeat with token-outlier kill, tickers, watch primitive.                                                                                  |
-| Terminal UI                                                | shipped      | `autometta tui`: live run, history and controller-message pages, token burn while it burns.                                                             |
+| Terminal UI                                                | shipped      | `autometta tui`: live run and history pages, escalation count, token burn while it burns.                                                             |
 | Cost dashboard                                             | shipped      | `autometta dashboard`: fleet or per-repo, liveness pulse, one time zone, card click-through.                                                            |
 | Auth routing (subscription / API / local)                  | shipped      | `op-fetch`, fail-closed, per-family toggle.                                                                                                             |
 | SDK verifier route + prompt caching                        | shipped      | Both families. Default where its preconditions hold; subscription OAuth on the raw Claude API SDK is guarded to the CLI; `agent-sdk` is opt-in.         |

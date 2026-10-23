@@ -2,6 +2,8 @@
 
 This is the load-bearing document for Autometta pass 1. It describes the protocol by which an orchestrator dispatches one unit of work to one worker, with one verifier checking the result, and the orchestrator integrating. Everything else in pass 1 (the templates, the examples, the self-host plan) is an instance of this contract.
 
+Two roles operate it: the tick, which dispatches, verifies, lands and does the mechanical recovery, and the operator's orchestration chat, which writes cards and works the escalations the tick leaves in the escalations folder. There is no scheduled controller agent (`docs/proposals/controller-retired.md`); "the orchestrator" in this document is that chat, or the tick acting for it.
+
 The contract is family-agnostic. The same shape works for a Claude Code worker, a Codex CLI worker, or any future CLI worker. Where a step is genuinely family-specific, it is called out under a family-specific notes heading rather than hard-coded into the protocol.
 
 ## Contract version
@@ -140,7 +142,7 @@ rather than honoured.
 
 The orchestrator identity is read from the stage card's `Orchestrator` metadata line (it is fixed at card-authoring time); the worker and verifier come from `state.yaml`. Query one role with `git log --format='%(trailers:key=Autometta-Worker,valueonly)'` (the `Autometta-*` trailers hold the unannotated identity, so they group cleanly), and join against `state/cost-log.jsonl` for cost and token context per role. The autonomous loop emits these automatically (`scripts/tick.sh`); a manual orchestrator commit should pass the same trailer block.
 
-**phat-controller commits carry the same shape.** The queue minder writes commits of its own (a card re-brief, a merge of an already-verified run branch), and they follow the rule the same way: the author is the model driving that controller pass, resolved once per run by `agent-whoami`, and the role travels in `Autometta-Controller` plus a plain `Co-Authored-By`. Attributing them to the role itself was the earlier behaviour and it was wrong in one specific way: the author field is `git shortlog`'s grouping key, so `Phat Controller <phat-controller@local>` appeared as a contributor that is neither a person nor a model, and the model that actually did the work went unrecorded in git. The journal is unaffected either way; its `actor` field has always been the role, which is correct there. Where `agent-whoami` cannot name the model the author falls back to the role, which is no worse than the behaviour it replaced, and the `Co-Authored-By` line is dropped so a commit is not co-authored with itself. Query it with `git log --format='%(trailers:key=Autometta-Controller,valueonly)'`.
+**phat-controller verb commits carry the same shape.** The `scripts/phat-controller.sh` verbs write commits of their own (a card re-brief, a merge of an already-verified run branch), and they follow the rule the same way: the author is the model asserted for the call through `AUTOMETTA_CONTROLLER_IDENTITY` (or `AGENT_WHOAMI`), and the role travels in `Autometta-Controller` plus a plain `Co-Authored-By`. Attributing them to the role itself was the earlier behaviour and it was wrong in one specific way: the author field is `git shortlog`'s grouping key, so `Phat Controller <phat-controller@local>` appeared as a contributor that is neither a person nor a model, and the model that actually did the work went unrecorded in git. The journal is unaffected either way; its `actor` field has always been the role, which is correct there. Where `agent-whoami` cannot name the model the author falls back to the role, which is no worse than the behaviour it replaced, and the `Co-Authored-By` line is dropped so a commit is not co-authored with itself. Query it with `git log --format='%(trailers:key=Autometta-Controller,valueonly)'`.
 
 **The orchestrator commits, not the worker.** The worker leaves a dirty working tree as its deliverable; the verifier evaluates that dirty tree and writes its artefact; the orchestrator reads the artefact's `overall` field and acts:
 
@@ -272,7 +274,7 @@ The dispatch contract is for one stage. Anything that spans stages is out of sco
 The autonomous tick loop is layered on this contract:
 
 - `autometta tick`: one cron-safe pass-2 tick.
-- `autometta phat-controller`: one cron-safe queue-minding pass that performs at most one of a closed set of remediations; see `docs/tick-loop.md` section (k).
+- `autometta phat-controller <verb>`: the deterministic queue verbs an operator's chat calls, each performing exactly the operation it names; see `docs/tick-loop.md` section (k).
 - `state/state.yaml`: per-repo queue state.
 - `state/budget.json`: per-repo budget and halt state.
 - `schemas/`: JSON schemas for the state and budget files.
@@ -389,9 +391,9 @@ and nothing else overwrites a pre-existing reason on subsequent ticks:
   was not on PATH.
 - `invalid-stage-id`: `current_stage` (or a referenced stage id) failed
   the id-format validator.
-- `controller-escalation` - phat-controller raised a blocking escalation: a
-  repeated failure past the mandate's cap, a spend authority exhausted, or an
-  unexpected provider-payment signal. It requires operator review.
+- `controller-escalation` - `phat-controller.sh escalate --blocking` (or a
+  verb that hit the mandate's repeat cap) raised a blocking escalation. It
+  requires operator review.
   `warden-escalation` is the same reason under its card-54 name and may
   appear in a ledger written before card 58.
 - `state-corrupt`: the top-of-tick integrity guard found `state.yaml`
@@ -475,33 +477,29 @@ the ephemeral worktree and `autometta/<stage>` branch, prints the preserved
 SHA, and leaves every `wip/` ref standing. Those refs are per-attempt and are
 not garbage-collected automatically.
 
-phat-controller (`scripts/phat-controller.sh`, `docs/tick-loop.md` section
-(k)) performs this re-brief-and-requeue step unattended. It is an agent
-seeded at configure time, not a script choosing from a list: it reads the
-verifier artefact and the `wip_commit` diff, decides whether the FAIL is a
-work defect or a card defect, and either appends a re-brief and requeues, or
-appends a `PROPOSED-AMENDMENT` block and requeues nothing. Only an operator
-or an interactive orchestrator turns a proposal into an actual criterion
-change.
+The operator's orchestration chat performs this re-brief-and-requeue step
+(`scripts/phat-controller.sh`, `docs/tick-loop.md` section (k); the tick itself
+retries a dead worker once). It reads the verifier artefact and the
+`wip_commit` diff, decides with the operator whether the FAIL is a work defect
+or a card defect, and either appends a re-brief and requeues, or appends a
+`PROPOSED-AMENDMENT` block and requeues nothing. Only an operator turns a
+proposal into an actual criterion change.
 
-The same role covers the case where there is no verifier artefact at all: a
-stage that went `stalled` because its worker exited without a dispatch
-envelope still has its work preserved (`phat-controller.sh preserve`), its
-stall marker recorded, and a re-brief citing the preserved commit before it
-is requeued.
+The same applies where there is no verifier artefact at all: a stage that went
+`stalled` because its worker exited without a dispatch envelope still has its
+work preserved (`phat-controller.sh preserve`), its stall marker recorded, and
+a re-brief citing the preserved commit before it is requeued.
 
-Its authority is bounded by a short negative list rather than an action
+The verbs are bounded by a short negative list rather than an action
 enumeration, because the recoverable actions do not need enumerating and the
-unrecoverable ones are few. The governing distinction is that it may change
+unrecoverable ones are few. The governing distinction is that they may change
 **what is recorded and where**, never **what was asked for or whether it was
 met**. Forbidden without exception: editing a card's acceptance criteria,
-objective or specification; verifying its own dispatches; rewriting history,
-pushing non-fast-forward, or moving a publish branch outward; lifting its own
+objective or specification; verifying one's own dispatches; rewriting history,
+pushing non-fast-forward, or moving a publish branch outward; lifting one's own
 spend caps; resolving a merge conflict. The list is owned by
-`docs/proposals/orchestrator-role-review.md` and carried verbatim into every
-rendered seed. An interactive orchestrator may step outside it only while the
-operator is in the conversation and explicitly authorises it; a scheduled
-pass never may.
+`docs/proposals/orchestrator-role-review.md`. The operator may step outside it
+only in the conversation and by explicitly authorising it.
 
 Two of the five are enforced mechanically. Re-briefs and proposed amendments
 go through an append-only guard that restores the card and refuses if the

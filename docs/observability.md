@@ -56,25 +56,24 @@ only, so its rate also covers eras before `state/cost-log.jsonl`.
 
 - **`autometta status`** is the quickest fleet snapshot when one command and no persistent screen is enough.
 - **The tickers** open through `autometta attach <repo>` and suit a passive watch of one repo, its controller log, or the fleet page.
-- **`autometta tui <repo>`** is the detailed live view for the current run, card history and a conversation with phat-controller.
+- **`autometta tui <repo>`** is the detailed live view for the current run, card history and pending escalations.
 - **`autometta failures <repo>`** (or `--fleet`) is the reach-for surface when the question is what failed, how often and what it cost.
 - **The HTML dashboard** from `autometta dashboard --open` is the broad fleet and trend view when a browser is more useful than a terminal.
-- **The controller inbox** is the asynchronous instruction path when phat-controller should consider something on its next pass without an attached session; the TUI messages page is its operator-facing writer.
+- **The escalations folder** is how the tick reaches the operator without an attached session: `scripts/escalations.sh list` and the SessionStart hook show what is pending (see `docs/tick-loop.md`, "Escalations").
 
 The HTML dashboard renders both times in its header in the browser's local
 timezone, so its generation time and freshness clock can be compared directly.
 The aggregator still writes `generated_at` to `data.json` as a UTC ISO stamp;
 hover over the generation time in the header to see that full UTC value.
 
-The TUI has run, history and messages pages. On the run page the number row
-focuses a panel, matching the `[0]`-`[4]` labels the boxes carry; on the other
-two, where no numbered panels are drawn, it switches page as the footer's tab
+The TUI has run and history pages. On the run page the number row
+focuses a panel, matching the `[0]`-`[4]` labels the boxes carry; on the
+history page, where no numbered panels are drawn, it switches page as the footer's tab
 strip says, and escape returns to the run page from anywhere. Focus `0` is the
 card detail pane, which carries the stage card under the metadata and scrolls
 with `j`/`k`; `o` pages that card read-only in a tmux window, and `O` opens it in
-the desktop's default viewer, which can usually write to it. Enter on an
-escalation opens the controller composer already carrying the stage and the
-reason it stopped.
+the desktop's default viewer, which can usually write to it. The escalations
+panel title carries the pending count from `scripts/escalations.sh list`.
 
 The `[3] Agents` panel shows live agents followed by the queued next stages.
 Queued rows come from the aggregate payload's `queue` field and are display-only;
@@ -118,9 +117,7 @@ the cost log, billing totals or state.
 Card 74 replaced per-row process forks and repeated file scans in that seam,
 taking the measured per-repo read from 37 seconds to under one second; a
 five-second poll now represents a fresh snapshot rather than a queue of stale
-ones. Its messages page is the narrow exception to the read-only display
-model: it writes only an operator message to the controller inbox, then reads
-the journal and outbox back from the filesystem.
+ones. The display is read-only.
 
 `autometta init <repo>` creates the tmux viewer automatically when `tmux` is
 available. Each `autometta tick` also re-ensures the viewer per repo it

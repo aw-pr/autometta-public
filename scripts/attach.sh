@@ -285,7 +285,7 @@ ticker_cmd="cd $autometta_root_q && scripts/repo-ticker.sh $repo_path_q"
 # Window 0 in every session is the TUI (card 70+). It is the only view that
 # answers "what is happening right now" in one page: run queue with the model
 # pair per stage, live agents with their budget burn, card detail, escalations
-# and the controller inbox. The ticker pages it landed in front of are still
+# and the pending escalation count. The ticker pages it landed in front of are still
 # one keystroke away, they are just no longer what you arrive at. An operator
 # reaching a session over ssh or from a phone wants the live page first, not a
 # table they then have to navigate away from.
