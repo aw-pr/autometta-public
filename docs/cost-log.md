@@ -193,39 +193,57 @@ jq -r 'select(.role=="verifier") | "\(.stage_id) hit=\(.cache_hit_rate)"' state/
 
 ### Live outlier baseline
 
-The heartbeat uses the last ten comparable rows for each role and takes their
-median `total_tokens`. Worker and verifier rows never share a baseline. A row
-is comparable only when `usage_status` is `recorded` or `total_only` and
-`total_tokens` is a non-negative integer. Unknown usage and null totals are
-excluded rather than converted to zero.
+The heartbeat judges live uncached tokens (`input_tokens + output_tokens`)
+against the role's median uncached tokens, excluding cache reads. It filters
+for `usage_status: recorded` rows with non-negative integer input and output
+counts, then takes the last ten eligible rows per role. Missing, null,
+boolean or fractional split values are excluded regardless of usage status.
+Worker and verifier rows never share a baseline.
 
-At least five comparable rows are required. Two or three observations are too
-easy to mistake for a stable local norm, so a new repo remains silent until it
-has five. Once the baseline exists, a live dispatch at ten times the median is
-flagged by `scripts/heartbeat.sh`. Both values are deliberately conservative
-defaults and can be adjusted with `AUTOMETTA_OUTLIER_BASELINE_WINDOW`,
-`AUTOMETTA_OUTLIER_MIN_SAMPLES` and `AUTOMETTA_OUTLIER_MULTIPLE`.
+At least five eligible split rows and a positive uncached median are required.
+Otherwise judgement falls back to total tokens at the same warning and kill
+multiples. The separate total baseline takes the last ten `recorded` or
+`total_only` rows with non-negative integer `total_tokens`, requiring at least
+five rows and a positive median. Unknown usage and null totals are excluded
+rather than converted to zero.
 
-This command shows the same per-role, last-ten median against a repo's real
-ledger:
+`AUTOMETTA_OUTLIER_BASELINE_WINDOW` (default 10) and
+`AUTOMETTA_OUTLIER_MIN_SAMPLES` (default 5) configure both baselines.
+`AUTOMETTA_OUTLIER_MULTIPLE` (default 10) sets the warning multiple and
+`AUTOMETTA_OUTLIER_KILL_MULTIPLE` (default 15, `0` disables this kill) sets
+the kill multiple for uncached tokens or the total fallback.
+`AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE` (default 40, `0` disables) adds an
+independent total-tokens kill backstop for cache-heavy loops. Either kill
+threshold can terminate a dispatch. Both kill variables must be `0` for
+observe-only behaviour.
+
+This command shows the default per-role uncached baseline against a repo's
+real ledger:
 
 ```sh
 jq -s '
   map(select(
-    (.usage_status == "recorded" or .usage_status == "total_only") and
-    (.total_tokens | type) == "number"
-  ))
+    .usage_status == "recorded" and
+    ([.input_tokens, .output_tokens] | all(.[];
+      type == "number" and . >= 0 and . == floor))
+  ) | . + {uncached_tokens: (.input_tokens + .output_tokens)})
   | group_by(.role)
-  | map(.[-10:] | sort_by(.total_tokens) |
+  | map(.[-10:] | sort_by(.uncached_tokens) |
       {role: .[0].role, comparable_rows: length,
-       median_tokens: (if length % 2 == 1 then .[length / 2 | floor].total_tokens
-         else ((.[length / 2 - 1].total_tokens + .[length / 2].total_tokens) / 2)
+       median_uncached_tokens: (if length < 5 then null
+         elif length % 2 == 1 then .[length / 2 | floor].uncached_tokens
+         else ((.[length / 2 - 1].uncached_tokens + .[length / 2].uncached_tokens) / 2)
          end)})
 ' state/cost-log.jsonl
 ```
 
-The comparison is an observation only. It does not alter the budget, stop the
-agent or refuse another dispatch.
+The heartbeat report carries `live_uncached_tokens` and
+`baseline_median_uncached_tokens` alongside the total figures.
+`token_outlier.measure` records `uncached` or `total`; uncached wins when
+both kill thresholds fire. Kills terminate children before the wrapper and
+leave the worktree standing, with `outcome: killed-token-outlier`. This changes
+only the outlier judgement. Budget accounting, cost-log rows and repo token
+caps still count every token, including cache reads.
 
 ## Verifying the producer
 

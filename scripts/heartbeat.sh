@@ -6,7 +6,7 @@ IFS=$'\n\t'
 # staleness, and budget overrun. Surface findings to state/heartbeat.json.
 # Move dead entries to state/recent-agents/ with outcome=exited.
 #
-# This is a watchdog, not a gate. It never kills, retries, or escalates.
+# This watchdog kills token outliers; it never retries or escalates.
 # Exit is always 0 so it cannot break a tick.
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,12 +56,11 @@ stall_seconds="${AUTOMETTA_HEARTBEAT_STALL:-${PHAT_CONTROLLER_HEARTBEAT_STALL:-3
 outlier_window="${AUTOMETTA_OUTLIER_BASELINE_WINDOW:-10}"
 outlier_min_samples="${AUTOMETTA_OUTLIER_MIN_SAMPLES:-5}"
 outlier_multiple="${AUTOMETTA_OUTLIER_MULTIPLE:-10}"
-# The warning multiple observes; this one acts. Set above the largest spend a
-# legitimate stage has ever recorded -- 19,502,742 against a 1.64M median, or
-# 11.9x -- so a long-but-honest stage is never killed for being slow. Stage 73
-# reached 22.2x on 2026-09-02 and ran for 41 minutes past its warning because
-# nothing was listening. 0 disables the kill and restores observe-only.
+# Warning and kill multiples use uncached tokens, falling back to total tokens
+# when the role has no usable uncached baseline. Each kill can be disabled with 0.
 outlier_kill_multiple="${AUTOMETTA_OUTLIER_KILL_MULTIPLE:-15}"
+# Independent backstop for loops dominated by cache reads.
+outlier_total_kill_multiple="${AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE:-40}"
 
 mkdir -p "$active_dir" "$recent_dir"
 
@@ -100,8 +99,9 @@ for agent_path in "$active_dir"/*.json; do
     continue
   fi
   live_total=$((live_input + live_cached + live_output))
-  jq --argjson pid "$pid" --argjson total "$live_total" \
-    '. + [{pid:$pid,total_tokens:$total}]' "$tmp_usage" > "${tmp_usage}.next"
+  live_uncached=$((live_input + live_output))
+  jq --argjson pid "$pid" --argjson total "$live_total" --argjson uncached "$live_uncached" \
+    '. + [{pid:$pid,total_tokens:$total,uncached_tokens:$uncached}]' "$tmp_usage" > "${tmp_usage}.next"
   mv "${tmp_usage}.next" "$tmp_usage"
 done
 
@@ -111,7 +111,7 @@ codex_reading="$(python3 "$script_dir/quota-window.py" codex 2>/dev/null || prin
 
 python3 - "$active_dir" "$recent_dir" "$tmp_report" "$stall_seconds" \
   "$cost_log_path" "$tmp_usage" "$outlier_window" "$outlier_min_samples" \
-  "$outlier_multiple" "$outlier_kill_multiple" "$codex_reading" <<'PY'
+  "$outlier_multiple" "$outlier_kill_multiple" "$outlier_total_kill_multiple" "$codex_reading" <<'PY'
 import json
 import os
 import signal
@@ -123,7 +123,7 @@ import time
 (
     active_dir, recent_dir, out_path, stall_str, cost_log_path, usage_path,
     window_str, min_samples_str, multiple_str, kill_multiple_str,
-    codex_reading_str,
+    total_kill_multiple_str, codex_reading_str,
 ) = sys.argv[1:]
 
 try:
@@ -166,9 +166,19 @@ try:
     kill_multiple = max(0.0, float(kill_multiple_str))
 except ValueError:
     kill_multiple = 15.0
+try:
+    total_kill_multiple = max(0.0, float(total_kill_multiple_str))
+except ValueError:
+    total_kill_multiple = 40.0
 now = int(time.time())
 
+
+def valid_tokens(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 comparable_by_role = {}
+uncached_by_role = {}
 try:
     with open(cost_log_path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -179,34 +189,44 @@ try:
             role = row.get("role")
             total = row.get("total_tokens")
             status = row.get("usage_status")
-            if (
-                not isinstance(role, str)
-                or status not in ("recorded", "total_only")
-                or not isinstance(total, int)
-                or isinstance(total, bool)
-                or total < 0
-            ):
+            if not isinstance(role, str):
                 continue
-            comparable_by_role.setdefault(role, []).append(total)
+            if (
+                status in ("recorded", "total_only")
+                and valid_tokens(total)
+            ):
+                comparable_by_role.setdefault(role, []).append(total)
+            input_tokens = row.get("input_tokens")
+            output_tokens = row.get("output_tokens")
+            if (
+                status == "recorded"
+                and valid_tokens(input_tokens)
+                and valid_tokens(output_tokens)
+            ):
+                uncached_by_role.setdefault(role, []).append(input_tokens + output_tokens)
 except OSError:
     pass
 
 baselines = {}
-for role, all_totals in comparable_by_role.items():
-    totals = all_totals[-baseline_window:]
+for role in comparable_by_role.keys() | uncached_by_role.keys():
+    totals = comparable_by_role.get(role, [])[-baseline_window:]
+    uncached = uncached_by_role.get(role, [])[-baseline_window:]
     baseline = statistics.median(totals) if len(totals) >= min_samples else None
     baselines[role] = {
         "comparable_rows": len(totals),
         "median_tokens": baseline,
+        "comparable_uncached_rows": len(uncached),
+        "median_uncached_tokens": statistics.median(uncached) if len(uncached) >= min_samples else None,
     }
 
 try:
     with open(usage_path, "r", encoding="utf-8") as fh:
         live_usage = {
-            row["pid"]: row["total_tokens"]
+            row["pid"]: row
             for row in json.load(fh)
             if isinstance(row.get("pid"), int)
-            and isinstance(row.get("total_tokens"), int)
+            and valid_tokens(row.get("total_tokens"))
+            and valid_tokens(row.get("uncached_tokens"))
         }
 except (OSError, ValueError):
     live_usage = {}
@@ -262,38 +282,64 @@ for name in sorted(os.listdir(active_dir)):
     if isinstance(budget, int) and budget > 0 and elapsed is not None and elapsed > budget:
         flags.append("over-budget")
 
-    live_total = live_usage.get(pid)
+    usage = live_usage.get(pid) or {}
+    live_total = usage.get("total_tokens")
+    live_uncached = usage.get("uncached_tokens")
     role = doc.get("role") or "unknown"
     baseline_info = baselines.get(role) or {
         "comparable_rows": 0,
         "median_tokens": None,
+        "comparable_uncached_rows": 0,
+        "median_uncached_tokens": None,
     }
     baseline = baseline_info["median_tokens"]
+    uncached_baseline = baseline_info["median_uncached_tokens"]
     if live_total is not None:
         doc["live_total_tokens"] = live_total
+        doc["live_uncached_tokens"] = live_uncached
+    doc["baseline_median_uncached_tokens"] = uncached_baseline
     if baseline is not None:
         doc["baseline_median_tokens"] = baseline
         doc["baseline_sample_size"] = baseline_info["comparable_rows"]
-    if (
-        alive
-        and live_total is not None
-        and isinstance(baseline, (int, float))
-        and baseline > 0
-        and live_total >= baseline * warning_multiple
-    ):
-        multiple = live_total / baseline
+    total_ratio = (
+        live_total / baseline
+        if live_total is not None and baseline is not None and baseline > 0 else None
+    )
+    uncached_ratio = (
+        live_uncached / uncached_baseline
+        if live_uncached is not None and uncached_baseline is not None and uncached_baseline > 0 else None
+    )
+    measure = "uncached" if uncached_ratio is not None else "total"
+    multiple = uncached_ratio if measure == "uncached" else total_ratio
+    primary_kill = multiple is not None and kill_multiple > 0 and multiple >= kill_multiple
+    backstop_kill = (
+        total_ratio is not None and total_kill_multiple > 0 and total_ratio >= total_kill_multiple
+    )
+    warns = multiple is not None and multiple >= warning_multiple
+    selected_kill_multiple = kill_multiple
+    if backstop_kill and not primary_kill:
+        measure = "total"
+        multiple = total_ratio
+        selected_kill_multiple = total_kill_multiple
+    if alive and (warns or primary_kill or backstop_kill):
+        measured_live = live_uncached if measure == "uncached" else live_total
+        measured_baseline = uncached_baseline if measure == "uncached" else baseline
         flags.append("token-outlier")
         doc["token_outlier"] = {
             "baseline_median_tokens": baseline,
             "baseline_sample_size": baseline_info["comparable_rows"],
             "live_total_tokens": live_total,
+            "live_uncached_tokens": live_uncached,
+            "baseline_median_uncached_tokens": uncached_baseline,
+            "baseline_uncached_sample_size": baseline_info["comparable_uncached_rows"],
+            "measure": measure,
             "multiple": round(multiple, 1),
             "role": role,
         }
         stage = doc.get("stage_id") or os.path.basename(
             doc.get("card_path") or "unknown"
         ).rsplit(".", 1)[0]
-        if kill_multiple > 0 and multiple >= kill_multiple:
+        if primary_kill or backstop_kill:
             # Terminate the dispatch rather than narrate it. The worktree is
             # left standing, so the work survives for the reaper to preserve;
             # what stops is the spending. Children first, then the wrapper, so
@@ -309,22 +355,22 @@ for name in sorted(os.listdir(active_dir)):
             if killed:
                 flags.append("token-outlier-killed")
                 doc["token_outlier"]["killed_at"] = "%dZ" % now
-                doc["token_outlier"]["kill_multiple"] = kill_multiple
+                doc["token_outlier"]["kill_multiple"] = selected_kill_multiple
                 doc["outcome"] = "killed-token-outlier"
                 print(
-                    "KILLED: token outlier: %s %s pid=%s live_tokens=%d "
+                    "KILLED: token outlier: %s %s pid=%s measure=%s live_tokens=%d "
                     "baseline_median=%s multiple=%.1fx exceeded kill threshold "
                     "%.1fx; work left in the run worktree"
-                    % (stage, role, pid, live_total, baseline, multiple,
-                       kill_multiple)
+                    % (stage, role, pid, measure, measured_live, measured_baseline, multiple,
+                       selected_kill_multiple)
                 )
         else:
             print(
-                "WARNING: token outlier: %s %s pid=%s live_tokens=%d "
-                "baseline_median=%s multiple=%.1fx; below the %.1fx kill "
-                "threshold, agent remains running"
-                % (stage, role, pid, live_total, baseline, multiple,
-                   kill_multiple)
+                "WARNING: token outlier: %s %s pid=%s measure=%s live_tokens=%d "
+                "baseline_median=%s multiple=%.1fx; kill threshold=%.1fx "
+                "(0 disables), agent remains running"
+                % (stage, role, pid, measure, measured_live, measured_baseline, multiple,
+                   selected_kill_multiple)
             )
 
     # The run cap is account-wide: the weekly window has no per-dispatch
@@ -400,6 +446,7 @@ report = {
         "minimum_comparable_rows": min_samples,
         "warning_multiple": warning_multiple,
         "kill_multiple": kill_multiple,
+        "total_kill_multiple": total_kill_multiple,
     },
     "baselines": baselines,
     "active_count": len(entries),

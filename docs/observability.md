@@ -323,25 +323,40 @@ watchdog surfaces stalls and budget overruns; it never kills for those. The
 one thing it does kill is a runaway token outlier, described below.
 
 For token spend, the heartbeat reads the running family transcript once at
-the heartbeat cadence. It compares the live total with the median of the last
-ten comparable cost-log rows for the same role. At least five rows are needed
-and the default warning point is ten times the median
-(`AUTOMETTA_OUTLIER_MULTIPLE`). `usage_status: unknown` and null totals do not
-enter the baseline. The report carries the baseline, sample size, live figure
-and multiple, while the warning is written to the controller tick log and
-shown in the repo ticker's `ESCALATIONS` section. The warning does not change
-state-machine status, budget state or process liveness.
+the heartbeat cadence. It compares live uncached tokens (fresh input plus
+output, excluding cache reads) with the same role's median uncached tokens.
+The baseline takes the last ten `recorded` cost-log rows with non-negative
+integer `input_tokens` and `output_tokens`, filtering before taking the
+window. Worker and verifier baselines are separate. At least five split rows
+and a positive median are needed; otherwise judgement falls back to the total
+measure (input plus cached input plus output). Its baseline uses `recorded`
+or `total_only` rows with non-negative integer `total_tokens`.
 
-Above a second, higher multiple the heartbeat acts rather than narrates:
-`AUTOMETTA_OUTLIER_KILL_MULTIPLE` (default 15, `0` disables the kill and
-restores observe-only) sends SIGTERM to the dispatch's children and then to
-the wrapper itself, flags the entry `token-outlier-killed`, records
-`killed_at` and `kill_multiple` under `token_outlier`, and moves the entry to
-`state/recent-agents/` with `outcome: killed-token-outlier`. The run
-worktree is left standing so the work survives for the reaper to preserve;
-what stops is the spending. The default sits above the largest spend an
-honest stage has recorded (11.9x its median), after stage 73 ran 41 minutes
-past its warning at 22.2x on 2026-09-02 because nothing was listening.
+`AUTOMETTA_OUTLIER_BASELINE_WINDOW` (default 10) and
+`AUTOMETTA_OUTLIER_MIN_SAMPLES` (default 5) configure both baselines.
+`AUTOMETTA_OUTLIER_MULTIPLE` (default 10) sets the warning multiple.
+`AUTOMETTA_OUTLIER_KILL_MULTIPLE` (default 15, `0` disables this kill) sets
+the kill multiple for the uncached measure or its total fallback.
+`AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE` (default 40, `0` disables) is an
+independent total-tokens backstop, so a loop dominated by cache reads is still
+stopped. Either kill threshold reaching its multiple terminates the dispatch,
+even when the warning threshold is higher. Set both kill variables to `0` for
+observe-only behaviour.
+
+The report retains `live_total_tokens` and `baseline_median_tokens` and adds
+`live_uncached_tokens` and `baseline_median_uncached_tokens` per entry.
+`token_outlier.measure` names the triggering measure (`uncached` or `total`);
+uncached takes precedence if both kills fire. The outlier record carries both
+figures, sample sizes and the selected multiple. Warnings go to the controller
+tick log and the repo ticker's `ESCALATIONS` section. A warning alone does not
+change state-machine status, budget state or process liveness. Budget caps
+and cost-log accounting continue to count all tokens, including cache reads.
+
+A kill sends SIGTERM to the dispatch's children and then its wrapper, flags
+the entry `token-outlier-killed`, and records `killed_at`, `kill_multiple` and
+`outcome: killed-token-outlier` in the report. The next heartbeat moves the
+dead entry to `state/recent-agents/`. The run worktree is left standing so the
+work survives for the reaper to preserve.
 
 The heartbeat surface answers the "is this stuck?" question that
 `state.yaml` does not: `state.yaml` reflects the FSM, the heartbeat
