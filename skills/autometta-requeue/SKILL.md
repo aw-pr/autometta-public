@@ -78,7 +78,43 @@ After running it:
   (keep the canonical template headings intact) and reference the committed
   WIP SHA.
 - Do not hand-edit `state/state.yaml` or `state/budget.json` for this. The
-  script is the sanctioned path and preserves fields it does not manage.
+  script is the sanctioned path and preserves fields it does not manage. The
+  one exception is a repair's pairing, below.
+
+## Before re-queuing a verifier FAIL: repair, do not rerun
+
+A FAIL does not mean the next attempt repeats the whole card. Triage first,
+from the verifier JSON:
+
+1. **Count what passed.** If every criterion passed except a narrow defect
+   (one behaviour, one surface), and the fix has a small blast radius (a
+   handful of files, no layout, engine or schema change), the next attempt
+   is a **repair**. Otherwise it is a normal re-brief.
+2. **Repair re-brief.** Restore the preserved `wip_commit` deliverables,
+   name the defect with the verifier's reproduction steps, and scope the
+   fix to the files it needs. The worker reproduces the defect before and
+   after the fix, runs the cheap criteria (types, lint, unit, build,
+   contract) once, and runs only the regression specs near the changed
+   path. Do not recapture visual evidence the previous verifier passed.
+3. **Downgrade the pairing.** The repair worker is a mid tier at medium
+   effort (Sonnet 5.5, or GPT-6.1 Sol), never the frontier tier the card
+   needed for the build. The verifier is a mid tier at medium effort,
+   scoped to the defect plus the cheap criteria: earlier PASS verdicts
+   stand unless the diff against the `wip_commit` leaves the named files,
+   in which case the full criterion runs. A same-family pairing is
+   acceptable for a repair when the previous cross-family verifier already
+   passed the judgement-heavy criteria; say so in the Pairing rationale.
+4. **Change the stage record's pairing too.** The tick dispatches the
+   `worker` and `verifier` recorded in `state/state.yaml`, not the card's
+   Metadata. Under `state/.tick.lock`, set both with `yq` before running
+   `requeue-stage.sh` (the one sanctioned hand edit of that file).
+5. **Ask the operator** only when the defect is not narrow, the fix touches
+   shared code, or the previous attempt overran its budget by more than
+   double.
+
+Card 28 (promo-flow, 2026-10-21) is the precedent: attempt 1 cost about 60M
+(Fable 45M, Astra 15M) and failed only a same-route cmd-K navigation case;
+the repair was Sonnet plus Opus at medium, about 10M.
 
 ## Related unhalt-only case
 
