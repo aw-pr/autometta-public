@@ -8,8 +8,8 @@
 - **Verifier:** GPT-6.1 Sol <gpt-6-1-sol@local>
 - **Base branch:** dev
 - **Run branch:** autometta/162-the-controller-is-retired
-- **Worker effort:** high
-- **Verifier effort:** high
+- **Worker effort:** medium
+- **Verifier effort:** medium
 - **Verifier panel:** false
 - **Gate:** stage-completed: 161-the-tick-retries-a-dead-worker-once
 - **Dispatch:** serial
@@ -96,3 +96,19 @@ Write `state/envelopes/162-the-controller-is-retired.json` using `schemas/envelo
 ## Family-specific notes
 
 None
+
+## Re-brief
+
+**Attempt 1 (2026-10-23), killed, work preserved.** The heartbeat killed the worker as a token outlier (13.5M live tokens, mostly cache reads of a 200K context, against a 0.84M median; kill at 15x). It wrote no envelope. Its work is preserved at `fa61fca36eef79906f5bda76349570e148d13806` on `wip/162-the-controller-is-retired-attempt-1`, and the orchestrator checked it: criterion 1's grep prints nothing, criteria 2, 3, 4 and 6 pass (all ten named smokes green, `bash -n bin/autometta` clean, the uninstall script exits 0 twice against a fixture HOME), and the card-138a digest it re-recorded matches its test.
+
+**One defect.** `docs/dispatch-contract.md` lost about 370 lines unrelated to the controller. These sections exist on dev and are absent from the attempt: "Which token cap binds: host default, repo override, drain", "Budget window auto-reset", "Drain mode: the deliberate overnight run", "Token accounting", "Which autometta runs: root resolution" (with "The rule", "Telling the truth about it", "The dirty-checkout exposure", "Checking the split"), and "Pushing a release to the subscribers" (with "The vendored set", "The stamp" and its code block, "The two commands", "What a refresh refuses").
+
+**Orchestrator authorisation (frozen block).** Deliverable 9 sent the worker into `scripts/quota-window-smoke.sh` without saying its renderer cases sit inside card 138a's frozen block. That was a card defect. The orchestrator authorises attempt 1's edit to that block (the hand-edited mandate replaces the deleted renderer, and a new assertion checks the tick reads the value back) and the re-recorded 138a digest `sha256:bec1c224309a319a6bca1b534c30e595383976561a00c32792c64962cabb6700`. The verifier should check the edit stays this narrow, not reject it for touching a frozen block.
+
+**Attempt 2 is a repair.**
+
+1. Restore attempt 1 in full from the fresh run worktree with a patch, so files attempt 1 deleted are deleted again and this card is not rewound: `git diff d7449bd fa61fca36eef79906f5bda76349570e148d13806 -- . ':!stage-cards/162-the-controller-is-retired.md' | git apply --index` (`d7449bd` is attempt 1's base; checked by the orchestrator to apply cleanly on dev).
+2. In `docs/dispatch-contract.md`, restore every section listed above verbatim from dev (`git show d7449bd:docs/dispatch-contract.md`), keeping attempt 1's controller-wording edits elsewhere in the file. Check: `comm -23 <(git show d7449bd:docs/dispatch-contract.md | grep -E '^#{1,4} ' | sort -u) <(grep -E '^#{1,4} ' docs/dispatch-contract.md | sort -u)` prints nothing.
+3. Re-run criterion 1's grep and the criterion 3 smokes once, and write the envelope. Change nothing else. Keep the context small: do not re-read files you are not changing.
+
+**Pairing for the repair:** Sonnet 5.5 worker and GPT-6.1 Sol verifier, both at medium effort, cross-family as before. The verifier runs the heading check above, criterion 1, criterion 5 on the docs, and the smokes, and checks that the diff from `fa61fca36eef79906f5bda76349570e148d13806` touches only `docs/dispatch-contract.md`.
