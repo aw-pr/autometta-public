@@ -55,14 +55,18 @@ to newest first. Sorts are remembered per table and survive polls and reloads.
 Sorting applies before paging, uses actual numbers rather than token estimates,
 and keeps unavailable figures last and totals rows pinned.
 
-Per stage has two orders, remembered per viewer. The default, newest first,
-interleaves the fleet by each stage's last movement (completed, else started),
-so page one is what just happened anywhere; queued cards follow in dispatch
-order, then terminal stages that never ran. By repo groups the rows and orders
-each group by queue position rather than by timestamp, since a stage waiting to
-run has none: still-queued cards first (the last-queued card leads), then
-everything with a clock on it newest first, which puts the in-flight stage
-directly under the queue, then the undated remainder at the bottom.
+Per stage has two orders, remembered per viewer. Matching queued cards always
+lead, including when a column sort is active. Without a column sort, the
+last-queued card leads each repo's queue, so newly added cards are visible before
+they have a start time. Queue membership comes from the actual dispatch queue;
+an undated terminal stage is not treated as queued. Column sorts apply within
+the queued and remaining sets separately.
+
+The default, newest first, follows the queued cards with the fleet's dated
+stages by last movement (completed, else started), then terminal stages that
+never ran. By repo groups each set by repo, with dated stages newest first
+within each repo. The Started column reports dispatch start time; it remains
+blank until a queued card runs.
 
 The stage chart follows the same order, newest card first, and a runs slider
 beside the range control scopes it to the most recent N runs (remembered per

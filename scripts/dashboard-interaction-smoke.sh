@@ -28,6 +28,13 @@ const source = fs.readFileSync(process.env.AUTOMETTA_DASHBOARD_JS, 'utf8');
 vm.runInContext(source.slice(0, source.lastIndexOf('  var first =')) + `
   window.test = { state, charts, draw, chartCommon, stageTokenCells,
     stageRowsByRecency, tableHtml, bindSorters, sortControls, initialiseRepoSelection, saveRepoSelection, visibleRepos };
+  window.test.captureStages = function (repos) {
+    var table = renderPagedTable, order = renderStageOrder, captured;
+    renderPagedTable = function (id, headers, rows) { captured = {headers, rows}; };
+    renderStageOrder = function () {};
+    try { renderStagesTable(repos); } finally { renderPagedTable = table; renderStageOrder = order; }
+    return captured;
+  };
   for (var name of ["sortRows", "sortsFor", "changeSort", "clearSort", "setTableHtml"]) {
     window.test[name] = eval("typeof " + name) === "function" ? eval(name) : null;
   }
@@ -89,6 +96,33 @@ const recent = api.stageRowsByRecency([
   {name: 'b', stages: [{id: 'new', started_at: '2026-10-24'}]}
 ]);
 assert.equal(recent[0].stage.id, 'new', 'default newest first spans repos');
+
+const queueFixture = [{name: 'promo-flow', queue: [
+  {stage_id: '39-map'}, {stage_id: '40-list'}, {stage_id: '41-spread'}
+], stages: [
+  {id: '38-engine', status: 'in_progress', started_at: '2026-10-24'},
+  {id: '39-map', status: 'pending', started_at: '2026-01-01'},
+  {id: '40-list', status: 'pending'},
+  {id: '41-spread', status: 'pending'},
+  {id: 'old-failure', status: 'failed'}
+]}];
+const queuedFirst = api.stageRowsByRecency(queueFixture);
+assert.equal(queuedFirst.slice(0, 3).map(row => row.stage.id).join(','), '41-spread,40-list,39-map',
+  'queued cards lead newest first, including a retry carrying an old start date');
+const pinnedRows = queuedFirst.map(row => ({pinned: Boolean(row.queuePos), cells: [row.stage.started_at || '', row.stage.id]}));
+for (const dir of ['asc', 'desc']) {
+  const sorted = api.sortRows(pinnedRows, [{col: 0, dir}]);
+  assert.equal(sorted.slice(0, 3).every(row => row.pinned), true,
+    'queued cards stay ahead of dated cards in either sort direction');
+  assert.equal(sorted.at(-1).cells[1], 'old-failure', 'undated terminal cards are not queued');
+}
+assert.equal(api.sortRows(pinnedRows.slice().reverse(), [])[0].pinned, true,
+  'queue pinning also applies without a custom column sort');
+const renderedStages = api.captureStages(queueFixture);
+assert.equal(api.sortRows(renderedStages.rows, [{col: 6, dir: 'desc'}]).slice(0, 3)
+  .map(row => row.key).join(','), 'promo-flow/39-map,promo-flow/41-spread,promo-flow/40-list',
+  'the actual stage renderer pins all queued rows before applying date sorts');
+assert.equal(renderedStages.headers[6], 'Started', 'the timestamp is labelled as start time');
 
 const numeric = api.stageTokenCells({}, {tokens: 20, worker_tokens: 20, estimate: {worker: 9000000}})[0];
 assert.equal(api.sortRows([[numeric], [{html: '100', sort: 100}]], [{col: 0, dir: 'asc'}])[0][0], numeric,

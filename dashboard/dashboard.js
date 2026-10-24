@@ -883,8 +883,9 @@
   }
 
   function sortRows(rows, sorts) {
-    if (!sorts.length) return rows;
+    if (!sorts.length && !rows.some(function (row) { return row.pinned; })) return rows;
     return rows.slice().sort(function (a, b) {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
       for (var i = 0; i < sorts.length; i++) {
         var s = sorts[i], av = sortValue(rowCells(a)[s.col]), bv = sortValue(rowCells(b)[s.col]);
         // Unknown figures stay last in either direction.
@@ -1256,8 +1257,8 @@
   function stageRowsByRepo(repos) {
     var rows = [];
     repos.forEach(function (r) {
-      var group = r.stages.map(function (s) { return { repo: r.name, stage: s }; });
       var queuePos = queuePositions(r);
+      var group = r.stages.map(function (s) { return { repo: r.name, stage: s, queuePos: queuePos[s.id] }; });
       function band(s) { return queuePos[s.id] ? 0 : (s.started_at || s.completed_at) ? 1 : 2; }
       group.sort(function (a, b) {
         var ab = band(a.stage), bb = band(b.stage);
@@ -1273,17 +1274,16 @@
     return rows;
   }
 
-  // Fleet-wide, by last movement, so page one is what just happened anywhere.
-  // Stages with no clock on them follow: the queued ones in the order they
-  // will run, then terminal stages that never ran.
+  // Queued cards lead newest first; the rest follow by last movement, then
+  // terminal stages that never ran. A retry may still carry an old timestamp.
   function stageRowsByRecency(repos) {
     var dated = [], queued = [], undated = [];
     repos.forEach(function (r) {
       var queuePos = queuePositions(r);
       r.stages.forEach(function (s) {
         var row = { repo: r.name, stage: s, queuePos: queuePos[s.id] };
-        if (stageActivity(s)) dated.push(row);
-        else if (row.queuePos) queued.push(row);
+        if (row.queuePos) queued.push(row);
+        else if (stageActivity(s)) dated.push(row);
         else undated.push(row);
       });
     });
@@ -1291,8 +1291,8 @@
       var at = stageActivity(a.stage), bt = stageActivity(b.stage);
       return at < bt ? 1 : at > bt ? -1 : 0;
     });
-    queued.sort(function (a, b) { return a.queuePos - b.queuePos; });
-    return dated.concat(queued, undated);
+    queued.sort(function (a, b) { return b.queuePos - a.queuePos; });
+    return queued.concat(dated, undated);
   }
 
   function renderStagesTable(repos) {
@@ -1311,7 +1311,7 @@
         '<div class="card-path">' + esc(cardPath) + "</div>" +
         stageUsageDetails(byName[row.repo] || {}, s) +
         '<pre class="card-text">' + esc(s.card_text || "card not read") + "</pre>";
-      return { cls: row.groupStart ? "group-start" : "", expand: expand,
+      return { cls: row.groupStart ? "group-start" : "", expand: expand, pinned: !!row.queuePos,
                key: stageKey(row.repo, s.id), cells: [
         row.repo,
         { html: '<span class="caret">\u25b8</span> ' + esc(s.id), sort: s.id },
@@ -1325,7 +1325,7 @@
     });
     renderPagedTable("stages-table-wrap",
       ["Repo", "Stage", "Status", "Worker", "Verifier",
-       "Total tokens", "Queued", "Completed"],
+       "Total tokens", "Started", "Completed"],
       cells, "stages", null);
   }
 
