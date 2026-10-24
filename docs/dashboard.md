@@ -47,6 +47,14 @@ shows when each filled column contains its text, ignoring case. Filters apply
 before paging, survive a poll, and never hide a pinned totals row. Opening a
 card from the chart clears the Per stage filters if they hide it.
 
+Every table has clickable column headings. Click to sort ascending, click again
+for descending, then again to remove that column. Shift-click adds or changes
+a secondary sort without replacing the earlier columns. Arrows and priority
+numbers show the order; Clear sort removes the chain and restores Per stage
+to newest first. Sorts are remembered per table and survive polls and reloads.
+Sorting applies before paging, uses actual numbers rather than token estimates,
+and keeps unavailable figures last and totals rows pinned.
+
 Per stage has two orders, remembered per viewer. The default, newest first,
 interleaves the fleet by each stage's last movement (completed, else started),
 so page one is what just happened anywhere; queued cards follow in dispatch
@@ -123,8 +131,11 @@ The page polls for new data every five seconds and re-renders only when
 and no repaint. A freshness marker sits beside the generated-at stamp: green
 while reads are landing, amber once three consecutive reads have failed, which
 is what distinguishes a dashboard nobody is regenerating from a genuinely quiet
-fleet. Open expander rows are held in renderer state rather than in the DOM, so
-a poll does not close a stage card mid-read.
+fleet. Open expander rows and their internal scroll positions survive refreshes.
+When a card is visible, a poll keeps it on the current page and at the same
+reading position even if its sorted position changes. Unchanged tables retain
+their DOM; charts retain their instances, skip unchanged data and update without
+animation, so a refresh does not replay every graph.
 
 Polling needs something to poll. The page re-reading a file no one is
 rewriting is the default arrangement and stays a snapshot; `--watch` is the

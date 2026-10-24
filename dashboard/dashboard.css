@@ -118,6 +118,40 @@ table.stages th, table.stages td {
   vertical-align: top;
 }
 table.stages th { color: var(--muted); font-weight: 500; }
+.sort-header {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .4rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sort-header:hover, th[aria-sort] .sort-header { color: var(--accent); }
+.sort-indicator { font-size: .7rem; white-space: nowrap; }
+.sort-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem .8rem;
+  margin: .6rem 0;
+  color: var(--muted);
+  font-size: .78rem;
+}
+.sort-summary { color: var(--accent); }
+.sort-controls button {
+  background: #21262d;
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .15rem .5rem;
+  font: inherit;
+  cursor: pointer;
+}
+.sort-controls button:disabled { opacity: .4; cursor: default; }
 table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.stages td.num .live { color: var(--accent); font-weight: 600; }
 table.stages .est { color: var(--muted); font-size: 0.8rem; }

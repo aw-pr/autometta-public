@@ -33,6 +33,7 @@
     // Per-table column filters, table key -> column index -> text. Held here
     // for the same reason as `expanded`: a poll must not wipe a search.
     filters: Object.create(null),
+    sorts: Object.create(null),
     // Row keys in the order the paged table last drew them, after filtering.
     rowOrder: Object.create(null),
     stageOrder: null,
@@ -40,6 +41,7 @@
     pollFailures: 0
   };
   var charts = Object.create(null);
+  var chartSignatures = Object.create(null);
 
   function fmtInt(n) {
     if (n == null) return "-";
@@ -300,7 +302,7 @@
 
   function identityCell(identity, rates) {
     if (!identity) return shortIdentity(identity);
-    return { html: esc(shortIdentity(identity)) + burnBadge(rates.byIdentity[identity]) };
+    return { html: esc(shortIdentity(identity)) + burnBadge(rates.byIdentity[identity]), sort: shortIdentity(identity) };
   }
 
   function stageTokenCells(repo, stage) {
@@ -328,7 +330,7 @@
       return {
         html: '<span' + (live ? ' class="live"' : "") + spendTitle + ">" +
           fmtInt(value) + mark + "</span>" + estimateSuffix(estimate, role),
-        cls: "num"
+        cls: "num", sort: value
       };
     });
   }
@@ -552,9 +554,19 @@
 
   // --- tables --------------------------------------------------------------
 
-  function tableHtml(headers, rows, filters) {
-    var html = '<table class="stages"><thead><tr>' + headers.map(function (h) {
-      return "<th>" + esc(h.label != null ? h.label : h) + "</th>";
+  function tableHtml(headers, rows, filters, sorts) {
+    var html = '<table class="stages"><thead><tr>' + headers.map(function (h, i) {
+      var label = h.label != null ? h.label : h;
+      if (!sorts) return "<th>" + esc(label) + "</th>";
+      var priority = sorts.findIndex(function (s) { return s.col === i; });
+      var sort = sorts[priority];
+      var direction = sort && sort.dir === "desc" ? "descending" : "ascending";
+      return '<th scope="col"' + (priority >= 0 ? ' aria-sort="' + (priority ? "other" : direction) + '"' : "") +
+        '><button type="button" class="sort-header" data-sort-col="' + i +
+        '" title="Click to sort; Shift-click to add a column" aria-label="' + esc(label) +
+        (sort ? ", " + direction + ", priority " + (priority + 1) : ", sort") + '">' + esc(label) +
+        '<span class="sort-indicator" aria-hidden="true">' +
+        (sort ? (sort.dir === "desc" ? "▼" : "▲") + (priority + 1) : "↕") + "</span></button></th>";
     }).join("") + "</tr>";
     if (filters) {
       html += '<tr class="filter-row">' + headers.map(function (h, i) {
@@ -608,24 +620,143 @@
         target.hidden = false;
         row.classList.add("open");
       }
-      row.addEventListener("click", function () {
+      row.onclick = function () {
         if (!target) return;
         target.hidden = !target.hidden;
         row.classList.toggle("open", !target.hidden);
         if (target.hidden) delete state.expanded[stateKey];
         else state.expanded[stateKey] = true;
-      });
+      };
     });
   }
 
   function renderSimpleTable(id, headers, rows) {
     var wrap = document.getElementById(id);
     if (!rows.length) {
-      wrap.innerHTML = '<p class="empty">(none)</p>';
+      setTableHtml(wrap, '<p class="empty">(none)</p>');
       return;
     }
-    wrap.innerHTML = tableHtml(headers, rows);
+    var sorts = sortsFor(id);
+    setTableHtml(wrap, sortControls(headers, sorts) + tableHtml(headers, sortRows(rows, sorts), null, sorts));
+    bindSorters(wrap, id, function () { renderSimpleTable(id, headers, rows); });
+  }
+
+  // A changing token cell must not send the reader back to line one of a card.
+  function setTableHtml(wrap, html) {
+    if (wrap.dashboardHtml === html) return false;
+    var positions = Object.create(null);
+    wrap.querySelectorAll("pre.card-text").forEach(function (card) {
+      positions[card.closest("tr").getAttribute("data-expand-for")] = [card.scrollTop, card.scrollLeft];
+    });
+    wrap.innerHTML = html;
+    wrap.dashboardHtml = html;
+    // Unhide before restoring offsets: hidden elements have no scroll range.
     bindExpanders(wrap);
+    wrap.querySelectorAll("pre.card-text").forEach(function (card) {
+      var pos = positions[card.closest("tr").getAttribute("data-expand-for")];
+      if (pos) { card.scrollTop = pos[0]; card.scrollLeft = pos[1]; }
+    });
+    return true;
+  }
+
+  function sortsFor(key) {
+    if (!state.sorts[key]) {
+      var saved;
+      try { saved = JSON.parse(storeGet("autometta.sort." + key)); } catch (e) { saved = null; }
+      var seen = Object.create(null);
+      state.sorts[key] = Array.isArray(saved) ? saved.filter(function (s) {
+        if (!s || !Number.isInteger(s.col) || s.col < 0 || seen[s.col] ||
+            (s.dir !== "asc" && s.dir !== "desc")) return false;
+        seen[s.col] = true;
+        return true;
+      }) : [];
+    }
+    return state.sorts[key];
+  }
+
+  function saveSort(key, sorts) {
+    state.sorts[key] = sorts;
+    state.page[key] = 0;
+    storeSet("autometta.sort." + key, JSON.stringify(sorts));
+  }
+
+  function changeSort(key, col, additive) {
+    var sorts = sortsFor(key).slice();
+    var index = sorts.findIndex(function (s) { return s.col === col; });
+    var current = sorts[index];
+    var next = !current ? { col: col, dir: "asc" }
+      : current.dir === "asc" ? { col: col, dir: "desc" } : null;
+    if (!additive) sorts = next ? [next] : [];
+    else if (index < 0) sorts.push(next);
+    else if (next) sorts[index] = next;
+    else sorts.splice(index, 1);
+    saveSort(key, sorts);
+  }
+
+  function clearSort(key) {
+    saveSort(key, []);
+    if (key === "stages") {
+      state.stageOrder = "recent";
+      storeSet("autometta.stageOrder", "recent");
+    }
+  }
+
+  function sortValue(cell) {
+    if (cell && typeof cell === "object" && Object.prototype.hasOwnProperty.call(cell, "sort")) {
+      return typeof cell.sort === "number" && !isFinite(cell.sort) ? null : cell.sort;
+    }
+    if (typeof cell === "number" || cell == null) return cell;
+    var text = cellText(cell).trim();
+    if (!text || text === "-" || text === "unknown" || text === "n/a") return null;
+    if (/^\d{4}-\d{2}-\d{2}T/.test(text) && isFinite(Date.parse(text))) return Date.parse(text);
+    // Plain numbers, currency, percentages and compact rates sort by magnitude.
+    var number = text.replace(/,/g, "").match(/^\$?(-?\d+(?:\.\d+)?)([kM])?(?:%|x|s|\/min)?$/);
+    if (number) return Number(number[1]) * (number[2] === "M" ? 1000000 : number[2] === "k" ? 1000 : 1);
+    return text;
+  }
+
+  function sortRows(rows, sorts) {
+    if (!sorts.length) return rows;
+    return rows.slice().sort(function (a, b) {
+      for (var i = 0; i < sorts.length; i++) {
+        var s = sorts[i], av = sortValue(rowCells(a)[s.col]), bv = sortValue(rowCells(b)[s.col]);
+        // Unknown figures stay last in either direction.
+        if (av == null || bv == null) {
+          if ((av == null) !== (bv == null)) return av == null ? 1 : -1;
+          continue;
+        }
+        var cmp = typeof av === "number" && typeof bv === "number" ? av - bv
+          : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" });
+        if (cmp) return s.dir === "desc" ? -cmp : cmp;
+      }
+      return 0;
+    });
+  }
+
+  function sortControls(headers, sorts) {
+    return '<div class="sort-controls"><span>Click a heading to sort; Shift-click to add a column.</span>' +
+      '<span class="sort-summary">' + esc(sorts.map(function (s, i) {
+        var header = headers[s.col];
+        return (i + 1) + ". " + (header && header.label != null ? header.label : header || "") +
+          (s.dir === "desc" ? " ▼" : " ▲");
+      }).join(" · ")) + '</span><button type="button" data-clear-sort' +
+      (!sorts.length ? " disabled" : "") + '>Clear sort</button></div>';
+  }
+
+  function bindSorters(wrap, key, redraw) {
+    wrap.querySelectorAll("button[data-sort-col]").forEach(function (button) {
+      button.onclick = function (event) {
+        changeSort(key, Number(button.getAttribute("data-sort-col")), event.shiftKey);
+        redraw();
+        if (key === "stages") renderStageOrder();
+        wrap.querySelector('button[data-sort-col="' + button.getAttribute("data-sort-col") + '"]').focus({ preventScroll: true });
+      };
+    });
+    wrap.querySelector("button[data-clear-sort]").onclick = function () {
+      clearSort(key);
+      if (key === "stages") renderAll();
+      else redraw();
+    };
   }
 
   function rowCells(row) {
@@ -659,12 +790,13 @@
   function renderPagedTable(id, headers, allRows, key, footer) {
     var wrap = document.getElementById(id);
     if (!allRows.length) {
-      wrap.innerHTML = '<p class="empty">(none)</p>';
+      setTableHtml(wrap, '<p class="empty">(none)</p>');
       state.rowOrder[key] = [];
       return;
     }
     var filters = state.filters[key] || (state.filters[key] = Object.create(null));
-    var rows = filterRows(allRows, filters);
+    var sorts = sortsFor(key);
+    var rows = sortRows(filterRows(allRows, filters), sorts);
     state.rowOrder[key] = rows.map(function (row) { return row && row.key; });
 
     // Redrawing replaces the inputs, so a poll landing mid-keystroke would
@@ -675,6 +807,10 @@
 
     var size = pageSizeFor(key);
     var pages = size > 0 ? Math.max(1, Math.ceil(rows.length / size)) : 1;
+    if (key === "stages" && size > 0 && state.readingCard) {
+      var readingIndex = state.rowOrder[key].indexOf(state.readingCard.key);
+      if (readingIndex >= 0) state.page[key] = Math.floor(readingIndex / size);
+    }
     var page = Math.min(Math.max(state.page[key] || 0, 0), pages - 1);
     state.page[key] = page;
 
@@ -682,7 +818,7 @@
     var shown = size > 0 ? rows.slice(start, start + size) : rows;
     if (footer) shown = shown.concat([footer]);
 
-    var range = size > 0
+    var range = !rows.length ? "0" : size > 0
       ? fmtInt(start + 1) + "-" + fmtInt(start + shown.length - (footer ? 1 : 0))
       : "all";
     var controls =
@@ -701,32 +837,32 @@
       '<button type="button" data-page="next"' + (page >= pages - 1 ? " disabled" : "") + ">next</button>" +
       "</div>";
 
-    wrap.innerHTML = tableHtml(headers, shown, filters) +
-      (rows.length ? "" : '<p class="empty">(no rows match the filters)</p>') + controls;
-    bindExpanders(wrap);
+    var changed = setTableHtml(wrap, sortControls(headers, sorts) + tableHtml(headers, shown, filters, sorts) +
+      (rows.length ? "" : '<p class="empty">(no rows match the filters)</p>') + controls);
+    bindSorters(wrap, key, function () { renderPagedTable(id, headers, allRows, key, footer); });
 
     wrap.querySelectorAll("input[data-filter-col]").forEach(function (input) {
       var col = input.getAttribute("data-filter-col");
-      if (col === focusCol) {
-        input.focus();
+      if (changed && col === focusCol) {
+        input.focus({ preventScroll: true });
         if (caret != null) input.setSelectionRange(caret, caret);
       }
-      input.addEventListener("input", function () {
+      input.oninput = function () {
         filters[col] = input.value;
         state.page[key] = 0;
         renderPagedTable(id, headers, allRows, key, footer);
-      });
+      };
     });
 
-    wrap.querySelector("select[data-pagesize]").addEventListener("change", function (ev) {
+    wrap.querySelector("select[data-pagesize]").onchange = function (ev) {
       setPageSize(key, parseInt(ev.target.value, 10) || 0);
-      renderAll();
-    });
+      renderPagedTable(id, headers, allRows, key, footer);
+    };
     wrap.querySelectorAll("button[data-page]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
+      btn.onclick = function () {
         state.page[key] = page + (btn.getAttribute("data-page") === "next" ? 1 : -1);
-        renderAll();
-      });
+        renderPagedTable(id, headers, allRows, key, footer);
+      };
     });
   }
 
@@ -755,6 +891,7 @@
     if (!row || !target) return;
     target.hidden = false;
     row.classList.add("open");
+    state.expanded[wrap.id + "\u0000" + key] = true;
     row.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
@@ -787,8 +924,11 @@
       (r.agents || []).forEach(function (a) {
         var elapsed = fmtInt(a.elapsed_seconds || 0) + "s";
         if (a.budget_seconds) elapsed += " / " + fmtInt(a.budget_seconds) + "s";
+        var burn = burnCell(a);
+        var burnHtml = burn && typeof burn === "object" ? burn.html : burn;
         rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-",
-          activityText(a.activity), { html: burnCell(a) }, elapsed]);
+          activityText(a.activity), { html: burnHtml, sort: liveAgentTokens(a) },
+          { html: esc(elapsed), sort: a.elapsed_seconds || 0 }]);
       });
       (r.queue || []).forEach(function (q) {
         rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "", "-", "-"]);
@@ -884,11 +1024,12 @@
     wrap.innerHTML = '<span class="filter-label">order</span>' +
       STAGE_ORDERS.map(function (choice) {
         return '<button type="button" data-order="' + choice.id + '"' +
-          (choice.id === current ? ' class="on"' : "") + ">" + choice.label + "</button>";
+          (choice.id === current && !sortsFor("stages").length ? ' class="on"' : "") + ">" + choice.label + "</button>";
       }).join("");
     wrap.querySelectorAll("button[data-order]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         state.stageOrder = btn.getAttribute("data-order");
+        saveSort("stages", []);
         storeSet("autometta.stageOrder", state.stageOrder);
         state.page.stages = 0;
         renderAll();
@@ -979,7 +1120,7 @@
       return { cls: row.groupStart ? "group-start" : "", expand: expand,
                key: stageKey(row.repo, s.id), cells: [
         row.repo,
-        { html: '<span class="caret">\u25b8</span> ' + esc(s.id) },
+        { html: '<span class="caret">\u25b8</span> ' + esc(s.id), sort: s.id },
         { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
         identityCell(s.worker, rates),
         identityCell(s.verifier, rates),
@@ -1000,6 +1141,7 @@
 
   function chartCommon() {
     return {
+      animation: false,
       maintainAspectRatio: false,
       responsive: true,
       plugins: { legend: { labels: { color: "#e6edf3" } } },
@@ -1010,11 +1152,23 @@
     };
   }
 
-  // Re-rendering on a filter change would stack a second Chart on the same
-  // canvas, so each one replaces its predecessor by id.
   function draw(id, config) {
-    if (charts[id]) charts[id].destroy();
-    charts[id] = new Chart(document.getElementById(id).getContext("2d"), config);
+    var chart = charts[id];
+    var signature = JSON.stringify(config);
+    // Callbacks close over the current stages, even when their plotted values
+    // happen to match the previous reading.
+    if (chart && chart.config.type === config.type) {
+      chart.options.onClick = config.options.onClick;
+      if (config.options.plugins.tooltip) chart.options.plugins.tooltip = config.options.plugins.tooltip;
+      if (chartSignatures[id] === signature) return;
+      chart.data = config.data;
+      chart.options = config.options;
+      chart.update("none");
+    } else {
+      if (chart) chart.destroy();
+      charts[id] = new Chart(document.getElementById(id).getContext("2d"), config);
+    }
+    chartSignatures[id] = signature;
   }
 
   // Every token chart is drawn from stage rows so all four obey the range
@@ -1117,12 +1271,12 @@
     });
     var rows = rates.map(function (r) {
       return [
-        { html: esc(shortIdentity(r.identity)) + burnBadge(r) },
-        { html: fmtInt(r.samples), cls: "num" },
-        { html: compactTokens(r.median_tokens), cls: "num" },
-        { html: r.tokens_per_min == null ? "-" : compactTokens(r.tokens_per_min), cls: "num" },
-        { html: r.cost_usd_per_min == null ? "-" : "$" + r.cost_usd_per_min.toFixed(2), cls: "num" },
-        { html: r.relative == null ? "-" : r.relative.toFixed(1) + "x", cls: "num" }
+        { html: esc(shortIdentity(r.identity)) + burnBadge(r), sort: shortIdentity(r.identity) },
+        { html: fmtInt(r.samples), cls: "num", sort: r.samples },
+        { html: compactTokens(r.median_tokens), cls: "num", sort: r.median_tokens },
+        { html: r.tokens_per_min == null ? "-" : compactTokens(r.tokens_per_min), cls: "num", sort: r.tokens_per_min },
+        { html: r.cost_usd_per_min == null ? "-" : "$" + r.cost_usd_per_min.toFixed(2), cls: "num", sort: r.cost_usd_per_min },
+        { html: r.relative == null ? "-" : r.relative.toFixed(1) + "x", cls: "num", sort: r.relative }
       ];
     });
     renderSimpleTable("burn-table-wrap",
@@ -1306,8 +1460,27 @@
   function applyData(data) {
     var stamp = data && data.generated_at;
     if (stamp && stamp === state.lastGeneratedAt) return false;
+    var reading = null;
+    document.querySelectorAll("tr.expand-row:not([hidden]) pre.card-text").forEach(function (card) {
+      var rect = card.getBoundingClientRect();
+      if (!reading && rect.bottom > 0 && rect.top < window.innerHeight) {
+        reading = { key: card.closest("tr").getAttribute("data-expand-for"), top: rect.top };
+      }
+    });
+    state.readingCard = reading;
+    var scrollX = window.scrollX, scrollY = window.scrollY;
     state.lastGeneratedAt = stamp || null;
     render(data);
+    if (reading) {
+      document.querySelectorAll("tr.expand-row:not([hidden])").forEach(function (row) {
+        if (row.getAttribute("data-expand-for") === reading.key) {
+          var card = row.querySelector("pre.card-text");
+          if (card) scrollY += card.getBoundingClientRect().top - reading.top;
+        }
+      });
+    }
+    window.scrollTo({ left: scrollX, top: scrollY, behavior: "instant" });
+    state.readingCard = null;
     return true;
   }
 

@@ -22,7 +22,11 @@ const fs = require("fs");
 const source = fs.readFileSync(process.env.AUTOMETTA_DASHBOARD_JS, "utf8");
 const defs = source.match(/\n  function \w+\([^)]*\) \{[\s\S]*?\n  \}(?=\n)/g) || [];
 const api = new Function("state", "charts", "document", "window",
-  defs.join("\n") + "\nreturn { stageTokenCells: stageTokenCells, burnCell: burnCell };")({}, {}, {}, {});
+  defs.join("\n") + `
+  var rendered;
+  renderSimpleTable = function (id, headers, rows) { rendered = rows; };
+  return { stageTokenCells, burnCell, renderAgents, rows: function () { return rendered; } };
+  `)({}, {}, {}, {});
 const html = (c) => (c && typeof c === "object" && c.html != null) ? String(c.html) : String(c == null ? "" : c);
 const text = (c) => html(c).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 const isLive = (c) => /class="[^"]*\blive\b[^"]*"/.test(html(c));
@@ -44,7 +48,14 @@ const counted = Object.assign({}, fleetAgent, { stage_tokens: 2500000, stage_tok
 const [cw] = api.stageTokenCells(Object.assign({}, repo, { agents: [counted] }), working);
 if (!/2,500,000/.test(text(cw))) problems.push("a transcript figure must still win over the heartbeat, got '" + text(cw) + "'");
 
-if (!/\{ html: burnCell\(a\) \}/.test(source)) problems.push("renderAgents escapes burnCell's markup instead of rendering it");
+api.renderAgents([repo]);
+if (!html(api.rows()[0][7]).includes('<span class="burn-total">10.6M heartbeat</span>')) {
+  problems.push("renderAgents must render heartbeat burn as HTML");
+}
+api.renderAgents([Object.assign({}, repo, {agents: [counted]})]);
+if (!html(api.rows()[0][7]).includes('<div class="burn-cell">')) {
+  problems.push("renderAgents must also render a transcript burn cell as HTML");
+}
 if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
 NODE
 printf 'PASS fleet-live-tokens\n'
