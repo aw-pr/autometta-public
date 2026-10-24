@@ -42,11 +42,19 @@ viewer.
 
 Per stage, Failures and Provider windows page at ten rows, with a per-table size
 control; the default comes from `AUTOMETTA_DASHBOARD_PAGE_SIZE` at generation
-time. Per stage is grouped by repo and ordered by queue position rather than
-by timestamp, since a stage waiting to run has none: still-queued cards first
-(the last-queued card leads), then everything with a clock on it newest first,
-which puts the in-flight stage directly under the queue, then the undated
-remainder (terminal stages that never ran) at the bottom.
+time. Each of those tables has a filter box under every column header: a row
+shows when each filled column contains its text, ignoring case. Filters apply
+before paging, survive a poll, and never hide a pinned totals row. Opening a
+card from the chart clears the Per stage filters if they hide it.
+
+Per stage has two orders, remembered per viewer. The default, newest first,
+interleaves the fleet by each stage's last movement (completed, else started),
+so page one is what just happened anywhere; queued cards follow in dispatch
+order, then terminal stages that never ran. By repo groups the rows and orders
+each group by queue position rather than by timestamp, since a stage waiting to
+run has none: still-queued cards first (the last-queued card leads), then
+everything with a clock on it newest first, which puts the in-flight stage
+directly under the queue, then the undated remainder at the bottom.
 
 The stage chart follows the same order, newest card first, and a runs slider
 beside the range control scopes it to the most recent N runs (remembered per

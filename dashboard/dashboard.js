@@ -30,6 +30,12 @@
     // the DOM: a poll re-renders every table, and a reader mid-way through a
     // stage card should not have it collapse under them every few seconds.
     expanded: Object.create(null),
+    // Per-table column filters, table key -> column index -> text. Held here
+    // for the same reason as `expanded`: a poll must not wipe a search.
+    filters: Object.create(null),
+    // Row keys in the order the paged table last drew them, after filtering.
+    rowOrder: Object.create(null),
+    stageOrder: null,
     lastGeneratedAt: null,
     pollFailures: 0
   };
@@ -546,10 +552,17 @@
 
   // --- tables --------------------------------------------------------------
 
-  function tableHtml(headers, rows) {
+  function tableHtml(headers, rows, filters) {
     var html = '<table class="stages"><thead><tr>' + headers.map(function (h) {
       return "<th>" + esc(h.label != null ? h.label : h) + "</th>";
-    }).join("") + "</tr></thead><tbody>";
+    }).join("") + "</tr>";
+    if (filters) {
+      html += '<tr class="filter-row">' + headers.map(function (h, i) {
+        return '<th><input type="search" data-filter-col="' + i + '" placeholder="filter" value="' +
+          esc(filters[i] || "") + '" /></th>';
+      }).join("") + "</tr>";
+    }
+    html += "</thead><tbody>";
     rows.forEach(function (row, index) {
       var cells = row;
       var rowCls = "";
@@ -615,15 +628,51 @@
     bindExpanders(wrap);
   }
 
+  function rowCells(row) {
+    return row && !Array.isArray(row) && row.cells ? row.cells : row;
+  }
+
+  // What a filter matches against: the text a reader sees, not the markup.
+  function cellText(cell) {
+    if (cell && typeof cell === "object" && cell.html != null) {
+      return String(cell.html).replace(/<[^>]*>/g, "").replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    }
+    return cell == null ? "" : String(cell);
+  }
+
+  // Every filled column must contain its text, case-insensitively.
+  function filterRows(rows, filters) {
+    var active = Object.keys(filters).filter(function (i) { return filters[i]; });
+    if (!active.length) return rows;
+    return rows.filter(function (row) {
+      var cells = rowCells(row);
+      return active.every(function (i) {
+        return cellText(cells[i]).toLowerCase().indexOf(filters[i].toLowerCase()) >= 0;
+      });
+    });
+  }
+
   // Paged sibling of renderSimpleTable. `key` names the table for the stored
   // page size; `footer` is a row pinned below every page (a totals line), which
-  // must not be paginated away.
-  function renderPagedTable(id, headers, rows, key, footer) {
+  // must not be paginated away and is never filtered.
+  function renderPagedTable(id, headers, allRows, key, footer) {
     var wrap = document.getElementById(id);
-    if (!rows.length) {
+    if (!allRows.length) {
       wrap.innerHTML = '<p class="empty">(none)</p>';
+      state.rowOrder[key] = [];
       return;
     }
+    var filters = state.filters[key] || (state.filters[key] = Object.create(null));
+    var rows = filterRows(allRows, filters);
+    state.rowOrder[key] = rows.map(function (row) { return row && row.key; });
+
+    // Redrawing replaces the inputs, so a poll landing mid-keystroke would
+    // otherwise drop the caret out of the box being typed in.
+    var focused = document.activeElement;
+    var focusCol = focused && wrap.contains(focused) ? focused.getAttribute("data-filter-col") : null;
+    var caret = focusCol != null ? focused.selectionStart : null;
+
     var size = pageSizeFor(key);
     var pages = size > 0 ? Math.max(1, Math.ceil(rows.length / size)) : 1;
     var page = Math.min(Math.max(state.page[key] || 0, 0), pages - 1);
@@ -643,15 +692,31 @@
         return '<option value="' + n + '"' + (n === size ? " selected" : "") + ">" +
           (n === 0 ? "all" : n) + "</option>";
       }).join("") +
-      "</select> of " + fmtInt(rows.length) + "</label>" +
+      "</select> of " + fmtInt(rows.length) +
+      (rows.length !== allRows.length ? " matching (" + fmtInt(allRows.length) + " total)" : "") +
+      "</label>" +
       '<span class="pager-range">' + range + "</span>" +
       '<button type="button" data-page="prev"' + (page === 0 ? " disabled" : "") + ">prev</button>" +
       '<span class="pager-page">' + (page + 1) + " / " + pages + "</span>" +
       '<button type="button" data-page="next"' + (page >= pages - 1 ? " disabled" : "") + ">next</button>" +
       "</div>";
 
-    wrap.innerHTML = tableHtml(headers, shown) + controls;
+    wrap.innerHTML = tableHtml(headers, shown, filters) +
+      (rows.length ? "" : '<p class="empty">(no rows match the filters)</p>') + controls;
     bindExpanders(wrap);
+
+    wrap.querySelectorAll("input[data-filter-col]").forEach(function (input) {
+      var col = input.getAttribute("data-filter-col");
+      if (col === focusCol) {
+        input.focus();
+        if (caret != null) input.setSelectionRange(caret, caret);
+      }
+      input.addEventListener("input", function () {
+        filters[col] = input.value;
+        state.page[key] = 0;
+        renderPagedTable(id, headers, allRows, key, footer);
+      });
+    });
 
     wrap.querySelector("select[data-pagesize]").addEventListener("change", function (ev) {
       setPageSize(key, parseInt(ev.target.value, 10) || 0);
@@ -674,8 +739,13 @@
   // currently shown; page to it first, then expand and scroll to it.
   function openStageCard(repo, stageId) {
     var key = stageKey(repo, stageId);
-    var order = state.stageRowOrder || [];
-    var index = order.indexOf(key);
+    var index = (state.rowOrder.stages || []).indexOf(key);
+    if (index < 0 && state.filters.stages) {
+      // The filters are hiding the stage that was asked for; showing it wins.
+      state.filters.stages = Object.create(null);
+      renderAll();
+      index = (state.rowOrder.stages || []).indexOf(key);
+    }
     var size = pageSizeFor("stages");
     if (index >= 0 && size > 0) state.page.stages = Math.floor(index / size);
     renderAll();
@@ -795,26 +865,64 @@
       ["Repo", "Family", "Window", "Used", "Resets", "Source / reason"], rows, "quota", null);
   }
 
-  function renderStagesTable(repos) {
+  var STAGE_ORDERS = [
+    { id: "recent", label: "newest first" },
+    { id: "repo", label: "by repo" }
+  ];
+
+  function stageOrder() {
+    if (state.stageOrder == null) {
+      state.stageOrder = storeGet("autometta.stageOrder") === "repo" ? "repo" : "recent";
+    }
+    return state.stageOrder;
+  }
+
+  function renderStageOrder() {
+    var wrap = document.getElementById("stage-order");
+    if (!wrap) return;
+    var current = stageOrder();
+    wrap.innerHTML = '<span class="filter-label">order</span>' +
+      STAGE_ORDERS.map(function (choice) {
+        return '<button type="button" data-order="' + choice.id + '"' +
+          (choice.id === current ? ' class="on"' : "") + ">" + choice.label + "</button>";
+      }).join("");
+    wrap.querySelectorAll("button[data-order]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        state.stageOrder = btn.getAttribute("data-order");
+        storeSet("autometta.stageOrder", state.stageOrder);
+        state.page.stages = 0;
+        renderAll();
+      });
+    });
+  }
+
+  // A stage's last movement: finished if it has, else when it started.
+  function stageActivity(stage) {
+    return stage.completed_at || stage.started_at || "";
+  }
+
+  // Queue position, last first. The queue array is the order the tick will
+  // actually dispatch in, so it is the only thing that knows a stage's place
+  // in the run; a timestamp cannot, because a stage waiting to run has none.
+  // Reading "no timestamp" as "queued" put every never-dispatched terminal
+  // stage -- a failed card from May with both dates null -- at the top of the
+  // table, where the next stage to run belongs.
+  function queuePositions(repo) {
+    var queuePos = Object.create(null);
+    (repo.queue || []).forEach(function (q, i) { queuePos[q.stage_id] = i + 1; });
+    return queuePos;
+  }
+
+  // Grouped by repo: within each, still queued (descending position, so the
+  // last-queued card leads), then everything with a clock on it (newest
+  // first, which lands the in-flight stage directly under the queue on its
+  // own merit rather than by pinning it), then the undated remainder --
+  // terminal stages that never ran, which belong at the bottom.
+  function stageRowsByRepo(repos) {
     var rows = [];
     repos.forEach(function (r) {
-      // Grouped by repo, because a fleet view interleaved by time reads as
-      // noise; the filter narrows which repos appear, the grouping keeps each
-      // one's run legible once several are showing.
       var group = r.stages.map(function (s) { return { repo: r.name, stage: s }; });
-      // Queue position, last first. The queue array is the order the tick will
-      // actually dispatch in, so it is the only thing that knows a stage's
-      // place in the run; a timestamp cannot, because a stage waiting to run
-      // has none. Reading "no timestamp" as "queued" put every never-dispatched
-      // terminal stage -- a failed card from May with both dates null -- at the
-      // top of the table, where the next stage to run belongs.
-      var queuePos = Object.create(null);
-      (r.queue || []).forEach(function (q, i) { queuePos[q.stage_id] = i + 1; });
-      // Three bands, in this order: still queued (descending position, so the
-      // last-queued card leads), then everything with a clock on it (newest
-      // first, which lands the in-flight stage directly under the queue on its
-      // own merit rather than by pinning it), then the undated remainder --
-      // terminal stages that never ran, which belong at the bottom.
+      var queuePos = queuePositions(r);
       function band(s) { return queuePos[s.id] ? 0 : (s.started_at || s.completed_at) ? 1 : 2; }
       group.sort(function (a, b) {
         var ab = band(a.stage), bb = band(b.stage);
@@ -827,9 +935,34 @@
       });
       group.forEach(function (row, i) { row.groupStart = i === 0; rows.push(row); });
     });
-    // The chart addresses table rows by key, and needs the row order to work
-    // out which page a stage has landed on.
-    state.stageRowOrder = rows.map(function (row) { return stageKey(row.repo, row.stage.id); });
+    return rows;
+  }
+
+  // Fleet-wide, by last movement, so page one is what just happened anywhere.
+  // Stages with no clock on them follow: the queued ones in the order they
+  // will run, then terminal stages that never ran.
+  function stageRowsByRecency(repos) {
+    var dated = [], queued = [], undated = [];
+    repos.forEach(function (r) {
+      var queuePos = queuePositions(r);
+      r.stages.forEach(function (s) {
+        var row = { repo: r.name, stage: s, queuePos: queuePos[s.id] };
+        if (stageActivity(s)) dated.push(row);
+        else if (row.queuePos) queued.push(row);
+        else undated.push(row);
+      });
+    });
+    dated.sort(function (a, b) {
+      var at = stageActivity(a.stage), bt = stageActivity(b.stage);
+      return at < bt ? 1 : at > bt ? -1 : 0;
+    });
+    queued.sort(function (a, b) { return a.queuePos - b.queuePos; });
+    return dated.concat(queued, undated);
+  }
+
+  function renderStagesTable(repos) {
+    renderStageOrder();
+    var rows = stageOrder() === "repo" ? stageRowsByRepo(repos) : stageRowsByRecency(repos);
     var byName = Object.create(null);
     repos.forEach(function (r) { byName[r.name] = r; });
     var rates = modelBurnRates(repos);

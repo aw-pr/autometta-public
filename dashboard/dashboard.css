@@ -247,6 +247,21 @@ table.stages td.num .live::after {
   color: #fff;
 }
 
+/* Per-column filters under each paged table's header. */
+tr.filter-row th { padding-top: 0; }
+tr.filter-row input {
+  width: 100%;
+  min-width: 4rem;
+  box-sizing: border-box;
+  background: #0d1117;
+  color: inherit;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
 /* First row of each repo's block in the per-stage table. */
 tr.group-start td { border-top: 2px solid #30363d; }
 tr.group-start td:first-child { font-weight: 600; }
