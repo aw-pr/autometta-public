@@ -174,6 +174,17 @@ frontier verifier (`api` or `subscription`) for judgement-heavy criteria; the
 cloud free tier (Groq, OpenRouter) is measured but not yet a selectable
 dispatch mode, only reachable via `scripts/verifier-bake-off.sh` directly.
 
+### Orchestration-chat escalation hooks
+
+Run mcp-hub's `scripts/sync-all-platforms.sh` to install and verify the Claude
+Code and Codex lifecycle hooks. Without mcp-hub, run Autometta's
+`scripts/install-escalation-hook.sh --family all` and enable Codex's
+`features.hooks = true`. Restart CLI sessions and complete any hook trust review.
+`--check --family all` verifies the hook entries without changing settings.
+Hooks deliver new or changed escalations at session start, on user prompts and
+after tools; they do not wake idle chats. Worker/verifier headless runs are
+excluded. See `docs/tick-loop.md` under Escalations for scope and delivery state.
+
 ### Optional: set the host's reserve in the mandate
 
 There is no controller agent to install. The tick preserves stranded work, resumes a passing envelope and retries a dead worker once; anything it cannot decide becomes an escalation for the operator's orchestration chat (`autometta-escalations`). Design and history: `docs/proposals/controller-retired.md`.

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# SessionStart hook: show pending escalations as session context.
+# Snapshot reader, or change-only lifecycle delivery with --live <family>.
 #
 # Prints nothing when there are none. Never fails the session: every error
-# path exits 0 silently, and stdin (Claude Code passes session JSON) is never
-# read.
+# path exits 0 silently. Snapshot mode ignores stdin; live mode consumes the
+# harness's session JSON in the shared Python adapter.
+if [[ "${1:-}" == --live ]]; then
+  exec python3 "$(dirname "${BASH_SOURCE[0]}")/escalation-context.py" "${2:-claude}" 2>/dev/null
+fi
 exec 2>/dev/null </dev/null
 
 hook_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 0
@@ -91,6 +94,13 @@ main() {
     if [[ -n "$repo_raw" && "$parsed_repo" != "$repo_raw" && "$parsed_repo" != "$repo_physical" ]]; then
       continue
     fi
+    if [[ "${1:-}" == --records ]]; then
+      [[ -n "$parsed_repo" && -n "$parsed_kind" && -n "$parsed_summary" ]] || continue
+      jq -nc --arg path "$file" --arg repo "$parsed_repo" --arg stage "$parsed_stage" \
+        --arg kind "$parsed_kind" --arg summary "${parsed_summary:0:$hook_summary_width}" \
+        '{path:$path,repo:$repo,stage:$stage,kind:$kind,summary:$summary}'
+      continue
+    fi
     total=$((total + 1))
     [[ ${#lines[@]} -lt $hook_max_lines ]] || continue
     base="${file##*/}"
@@ -107,5 +117,5 @@ main() {
   printf 'Run scripts/escalations.sh list, or work them with the autometta-escalations skill.\n'
 }
 
-main || true
+main "$@" || true
 exit 0

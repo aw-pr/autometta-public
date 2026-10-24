@@ -147,10 +147,10 @@ else
   printf 'WARN mandate template missing %s; the provider-window reserve is off until one is installed\n' "$mandate_template"
 fi
 
-if hook_status="$("$script_dir/install-escalation-hook.sh" --check)"; then
+if hook_status="$("$script_dir/install-escalation-hook.sh" --check --family all)"; then
   printf 'PASS escalation hook %s\n' "$hook_status"
 else
-  printf 'WARN escalation hook missing; install it with: %s/install-escalation-hook.sh\n' "$script_dir"
+  printf 'WARN escalation hooks missing; run mcp-hub/scripts/sync-all-platforms.sh or %s/install-escalation-hook.sh --family all (Codex also needs features.hooks=true)\n' "$script_dir"
 fi
 
 if [[ "$(uname -s)" == "Darwin" ]]; then

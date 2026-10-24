@@ -64,6 +64,15 @@ symlink `~/.phat-controller -> .autometta` for one release. `AUTOMETTA_HOME`
 overrides the home. `PHAT_CONTROLLER_HOME` remains a deprecated fallback for
 the same compatibility window.
 
+For orchestration-chat updates, run mcp-hub's `scripts/sync-all-platforms.sh`.
+It installs Claude Code and Codex escalation hooks and enables Codex hooks.
+Restart CLI sessions and complete any hook trust review. Without mcp-hub, use
+`scripts/install-escalation-hook.sh --family all` from the Autometta checkout
+and set Codex's `features.hooks = true`. Verify with
+`scripts/install-escalation-hook.sh --check --family all`. These hooks deliver
+new or changed escalations during active chats; they do not wake idle sessions.
+See [Escalations](tick-loop.md#escalations) for scope and delivery semantics.
+
 ## 3. Per-repo subscription
 
 Subscribe one repository to the controller:

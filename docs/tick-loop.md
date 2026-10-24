@@ -385,15 +385,41 @@ available. Controller escalations write separate `controller-blocking` or
 `controller-nonblocking` files; a blocking escalation's halt is also reported
 by the next scan.
 
-Escalations reach the operator's chat in two ways. The SessionStart hook
-`scripts/hooks/session-start-escalations.sh` prints the pending ones (count,
-up to ten lines oldest first, then `+N more`) when a Claude Code session opens
-anywhere under a subscriber repo or the autometta repo, filtered to the current
-repo when the working directory is inside a subscriber. It prints nothing when
-none are pending and never fails the session. `scripts/install-escalation-hook.sh`
-adds it to `~/.claude/settings.json` (`--check` reports `installed` or
-`missing`; `--settings <path>` targets another file), and `scripts/init-host.sh`
-runs that check and prints the install command when the hook is missing.
+Claude Code and Codex orchestration chats receive advisory context through
+`scripts/hooks/session-start-escalations.sh --live <claude|codex>` at
+`SessionStart`, `UserPromptSubmit` and `PostToolUse`. The legacy invocation
+without `--live` still prints a plain-text snapshot for manual use.
+
+The reader uses the hook payload's working directory, filtered to the deepest
+enabled subscriber containing that directory. Outside a subscriber it shows
+the fleet. It delivers only new or changed pending files, oldest first, at most
+ten per invocation; overflow remains unseen until a later eligible hook.
+Tool-triggered checks are throttled to once per 15 seconds. Session starts and
+user prompts bypass the throttle. Compaction and clear re-deliver pending items
+to restore context; an ordinary resume preserves the delivery record.
+
+Delivery records live in `$AUTOMETTA_HOME/hook-delivery/`, keyed by family,
+session and physical working directory. A non-blocking lock prevents parallel
+tools from delivering the same event twice. These disposable records never ack
+an escalation or change queue, budget or contract state. Hook failures are
+silent and advisory. Missing session ids, subagent metadata, fork starts and
+headless `claude -p` / `codex exec` ancestry suppress delivery; set
+`AUTOMETTA_ESCALATION_HOOK=0` to disable it in other specialised sessions.
+
+mcp-hub's `scripts/sync-all-platforms.sh` installs and checks both families,
+including Codex's `features.hooks` flag. The standalone installer defaults to
+Claude for compatibility; use `scripts/install-escalation-hook.sh --family all`
+for both, or `--family codex --settings <path>` for a particular config.
+`--check` reports missing or stale entries without changing files. Standalone
+Codex installation also requires `features.hooks = true` in its config.
+`init-host.sh` checks both families. Restart CLI sessions after installing; Codex
+may request trust review for newly installed hook commands.
+
+These hooks refresh an active conversation at lifecycle boundaries. They do not
+wake an idle chat, run a timer, or stream routine worker progress. An idle chat
+catches up at the next prompt. Desktop notifications and the durable pending
+files remain the fallback; a missing hook is not evidence of a healthy queue.
+The summaries are evidence, never instructions or authority to mutate state.
 
 The `autometta-escalations` skill is the orchestration-chat playbook for
 working them: list, read the evidence, classify, propose a decision, act

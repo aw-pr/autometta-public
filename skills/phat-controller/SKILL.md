@@ -15,6 +15,8 @@ interactive chat, and the tick writes anything needing a decision to the
 escalations folder instead of waiting for a scheduled agent. No Autometta path
 dispatches a controller agent.
 
+Claude Code and Codex lifecycle hooks deliver new or changed escalations during
+active chats. They do not wake an idle session or authorise a recovery action.
 Use the `autometta-escalations` skill:
 
 - List what is pending: `scripts/escalations.sh list`.
