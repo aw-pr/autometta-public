@@ -27,7 +27,14 @@ The operational roles are the tick (deterministic, including the mechanical
 recovery that used to need an agent) and the operator's orchestration chat,
 plus the worker and the verifier it dispatches. Anything the tick cannot decide
 becomes an escalation in the escalations folder for the chat to work
-(`skills/autometta-escalations`). The scheduled controller agent is retired
+(`skills/autometta-escalations`). Claude Code and Codex lifecycle hooks deliver
+new or changed escalations at session start, user prompts and after tools;
+PostToolUse checks are throttled to 15 seconds. Use the hook's evidence instead
+of a model-driven polling loop. Delivery is not acknowledgement or authority to
+change state; verify the current episode before acting. Idle sessions are not
+awakened. mcp-hub distributes the hooks; `scripts/install-escalation-hook.sh
+--check --family all` checks their entries. See `docs/tick-loop.md`, Escalations.
+The scheduled controller agent is retired
 (`docs/proposals/controller-retired.md`); `scripts/phat-controller.sh` remains
 as a set of verbs, not a role.
 
