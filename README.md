@@ -22,7 +22,7 @@ Not a framework. Not a runtime. Not a hosted service. A set of contracts, templa
 
 ![The autometta fleet dashboard](docs/images/dashboard.png)
 
-`autometta dashboard --open` over a seven-repo fleet. Every stage the fleet has run, newest first across the fleet by default, with an optional by-repo grouping and sortable columns. Shift-click headings to combine sorts; Clear sort restores newest first. Click a row or a bar to read its stage card; refreshes preserve the reading position and update charts without animation. `autometta dashboard --repo <path>` gives the same page scoped to one repo, and `autometta tui <path>` is the terminal equivalent for a run in flight.
+`autometta dashboard --open` over a seven-repo fleet. Every stage the fleet has run, newest first across the fleet by default, with an optional by-repo grouping and sortable columns. Shift-click headings to combine sorts; Clear sort restores newest first. Click a row or a bar to read its stage card; refreshes preserve the reading position and update charts without animation. `autometta dashboard --repo <path>` gives the same page scoped to one repo, and `autometta tui <path>` is the terminal equivalent for a run in flight. Fleet views start with no repositories selected and remember your selection. Compact role columns compare uncached actual and predicted tokens, with cached reads separate; expanded rows retain the full breakdown. The allowance header reports shared account usage independently of the repository filter. Cost equivalents are not subscription charges.
 
 ```mermaid
 flowchart LR
