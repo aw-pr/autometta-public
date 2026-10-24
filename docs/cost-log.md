@@ -286,3 +286,28 @@ line. Both routes cache, they just expose it differently:
   applied automatically by the harness. The terminal output is incomplete,
   but the local Claude and Codex transcripts expose cached-token counts, so
   ordinary dispatch rows now retain the full breakdown.
+
+### Subscription observations and cache writes
+
+New rows also carry `model`, `cache_creation_input_tokens` and
+`subscription_usage`. Cache creation remains included in `input_tokens` for
+compatibility with existing totals and budget gates. Subtract the separate
+cache-creation field to recover fresh input; a missing field on an old record
+means unknown, not zero. The transcript readers retain their three-number
+contract unless the cost-log producer opts into the additional cache-write
+field with `AUTOMETTA_TOKEN_CACHE_WRITES=1`.
+
+Registration reads the existing credential-free quota reader and saves a
+snapshot under `state/usage-starts/<agent-id>.json`. This survives removal of
+the active-agent registry. Cost-log emission matches the log path, role,
+family and dispatch start time, then captures a closing reading. Observability
+failures remain non-fatal and do not affect admission, budgets or pacing.
+
+`subscription_usage` contains `start`, `end`, `status`, `windows` and
+`attribution: shared_account` when evidence is present. Each usable window has
+`percentage_points`, its key, label and reset time. The two readings must be
+chronologically distinct and in the same unexpired window with a non-decreasing
+meter. Missing or unchanged readings and reset windows produce unavailable
+observations. The observation is account movement between the recorded sample
+times, including concurrent activity and collection lag; it is not a per-card
+charge. Account movements must not be summed across overlapping dispatches.

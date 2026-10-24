@@ -27,12 +27,31 @@ const context = vm.createContext({
 const source = fs.readFileSync(process.env.AUTOMETTA_DASHBOARD_JS, 'utf8');
 vm.runInContext(source.slice(0, source.lastIndexOf('  var first =')) + `
   window.test = { state, charts, draw, chartCommon, stageTokenCells,
-    stageRowsByRecency, tableHtml };
+    stageRowsByRecency, tableHtml, bindSorters, sortControls, initialiseRepoSelection, saveRepoSelection, visibleRepos };
   for (var name of ["sortRows", "sortsFor", "changeSort", "clearSort", "setTableHtml"]) {
     window.test[name] = eval("typeof " + name) === "function" ? eval(name) : null;
   }
 })();`, context);
 const api = context.window.test;
+assert.equal(api.sortControls(['Repo'],[]),'','unsorted tables have no instruction row');
+assert.doesNotThrow(()=>api.bindSorters({querySelectorAll:()=>[],querySelector:()=>null},'test',()=>{}),
+  'absence of an unused clear button must not abort rendering');
+api.state.data = {scope:'fleet', repos:[{name:'a'},{name:'b'}]};
+api.initialiseRepoSelection(api.state.data);
+assert.equal(api.visibleRepos().length,0,'fresh fleet opens with no repositories selected');
+delete api.state.hidden.a;
+api.saveRepoSelection();
+api.state.repoSelection = null;
+api.initialiseRepoSelection(api.state.data);
+assert.equal(api.visibleRepos().map(r=>r.name).join(','),'a','explicit selection survives reload');
+api.state.data.repos.push({name:'new'});
+api.initialiseRepoSelection(api.state.data);
+assert.equal(api.visibleRepos().map(r=>r.name).join(','),'a','new repos default to unselected');
+api.state.hidden = Object.create(null);
+api.state.repoSelection = null;
+api.state.data = {scope:'a',repos:[{name:'a'}]};
+api.initialiseRepoSelection(api.state.data);
+assert.equal(api.visibleRepos().length,1,'single-repo pages retain their content');
 const config = tokens => ({type: 'bar', data: {labels: ['a'], datasets: [{data: [tokens]}]}, options: api.chartCommon()});
 api.draw('chart', config(10));
 const chart = api.charts.chart;

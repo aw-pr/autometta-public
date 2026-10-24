@@ -342,3 +342,23 @@ pre.card-text {
   .run-total .run-repo,
   .run-total .run-id { flex-basis: 100%; }
 }
+
+/* Model and consumption stay together while the full audit lives below the row. */
+.role-cell { min-width: 25rem; width: 30%; vertical-align: top; }
+.role-usage { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .6rem; line-height: 1.35; font-variant-numeric: tabular-nums; }
+.role-usage > * { white-space: nowrap; }
+#stages-table-wrap { overflow-x: auto; }
+.role-model { font-weight: 600; }
+.role-usage .live { color: var(--accent); font-weight: 600; }
+.role-usage .live::after { content: " live"; font-size: .75rem; font-weight: 400; }
+.usage-muted { color: var(--muted); font-size: .82rem; }
+.usage-details { white-space: normal; max-width: 75rem; line-height: 1.5; }
+.usage-details h3 { font-size: .95rem; margin: .5rem 0; }
+
+.quota-summary { display: flex; flex-wrap: wrap; gap: .75rem 2rem; margin-bottom: .6rem; }
+.quota-summary > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1.25rem; }
+.quota-summary p { margin: 0; font-size: .85rem; font-variant-numeric: tabular-nums; }
+#panel-quota summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+
+.stage-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.25rem; margin-bottom: .75rem; }
+.stage-heading h2, .stage-heading #stage-order { margin: 0; }

@@ -99,6 +99,7 @@ costlog_parse_breakdown() {
   local structured
   structured="$(python3 - "$log_path" <<'PY'
 import re
+import os
 import sys
 
 path = sys.argv[1]
@@ -113,7 +114,7 @@ sdk = re.findall(
 )
 if sdk:
     w, r, i, o = (int(x) for x in sdk[-1])
-    print(f"{i + w} {r} {o}")
+    print(f"{i + w} {r} {o}" + (f" {w}" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
     sys.exit(0)
 
 # 2. claude --output-format json usage block. Pull the last occurrence of
@@ -127,7 +128,7 @@ out = last_int("output_tokens")
 if inp is not None or out is not None:
     create = last_int("cache_creation_input_tokens") or 0
     read = last_int("cache_read_input_tokens") or 0
-    print(f"{(inp or 0) + create} {read} {out or 0}")
+    print(f"{(inp or 0) + create} {read} {out or 0}" + (f" {create}" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
     sys.exit(0)
 
 # Nothing structured found; let the bash total-only fallback handle it.
@@ -207,12 +208,12 @@ costlog_append() {
   out_file="$repo_root/state/cost-log.jsonl"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  breakdown="$(costlog_parse_breakdown "$log_path" "$work_dir" "$since_epoch" "$family")"
-  local input_tokens cached_tokens output_tokens total_tokens usage_status
+  breakdown="$(AUTOMETTA_TOKEN_CACHE_WRITES=1 costlog_parse_breakdown "$log_path" "$work_dir" "$since_epoch" "$family")"
+  local input_tokens cached_tokens output_tokens total_tokens usage_status cache_writes=null
   if [[ -n "$breakdown" ]]; then
     # Explicit space IFS: callers (budget.sh) set IFS=$'\n\t', which would
     # otherwise leave the whole triple in the first variable.
-    IFS=' ' read -r input_tokens cached_tokens output_tokens <<<"$breakdown"
+    IFS=' ' read -r input_tokens cached_tokens output_tokens cache_writes <<<"$breakdown"
     total_tokens=$(( input_tokens + cached_tokens + output_tokens ))
     usage_status="recorded"
   else
@@ -267,11 +268,15 @@ costlog_append() {
   arin="${arin:-0}"
   arout="${arout:-0}"
 
+  local subscription_usage='null'
+  if [[ "$auth_route" == subscription ]]; then
+    subscription_usage="$(python3 "$_costlog_script_dir/lib/subscription-usage.py" "$repo_root" "$log_path" "$role" "$family" "$since_epoch" 2>/dev/null)" || subscription_usage='null'
+  fi
   mkdir -p "$repo_root/state"
   if ! python3 - "$out_file" "$ts" "$repo_name" "$stage_id" "$role" "$identity" \
       "$tier" "$auth_route" "$input_tokens" "$cached_tokens" "$output_tokens" \
       "$total_tokens" "$usage_status" "$wall_clock_s" "$result" "$rin" "$rcached" "$rout" \
-      "$adv_model" "$adv_tier" "$adv_in" "$adv_out" "$arin" "$arout" <<'PY'
+      "$adv_model" "$adv_tier" "$adv_in" "$adv_out" "$arin" "$arout" "${cache_writes:-null}" "$subscription_usage" "$model" <<'PY'
 import json
 import sys
 
@@ -279,7 +284,7 @@ import sys
  input_tokens, cached_tokens, output_tokens, total_tokens, usage_status,
  wall_clock_s, result,
  rin, rcached, rout,
- adv_model, adv_tier, adv_in, adv_out, arin, arout) = sys.argv[1:]
+ adv_model, adv_tier, adv_in, adv_out, arin, arout, cache_writes, subscription_usage, model) = sys.argv[1:]
 
 def optional_int(value):
     return None if value == "null" else int(value)
@@ -317,6 +322,9 @@ line = {
     "identity": identity,
     "tier": tier,
     "auth_route": auth_route,
+    "model": model or None,
+    "cache_creation_input_tokens": optional_int(cache_writes),
+    "subscription_usage": json.loads(subscription_usage),
     "input_tokens": input_tokens,
     "cached_input_tokens": cached_tokens,
     "output_tokens": output_tokens,

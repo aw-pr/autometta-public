@@ -20,13 +20,20 @@
 
   <main>
 
+    <section class="panel" id="panel-quota">
+      <h2 title="Provider-reported account usage, shared across chats and jobs. Stale readings do not establish remaining capacity.">Subscription allowance</h2>
+      <div id="quota-summary" class="quota-summary"></div>
+      <details><summary>Readings by repo</summary><div id="quota-table-wrap"></div></details>
+    </section>
+
     <section class="panel" id="panel-stages">
-      <h2>Per stage</h2>
+      <div class="stage-heading">
+        <h2 title="Click a stage for its card and dispatch breakdown. Cached reads count in token totals; cost equivalents are not subscription charges.">Per stage</h2>
+        <div id="stage-order" class="repo-filter range-filter"></div>
+        <span class="usage-muted usage-key" title="Main tokens are uncached input plus output, including cache writes. Predictions use the same measure. Cached reads are shown separately and still contribute to cost equivalents. ? means the breakdown is unavailable.">Tokens: uncached / ~predicted; +cache separate</span>
+      </div>
       <div id="run-totals" class="run-totals"></div>
-      <p class="panel-note">Click a stage, or a bar in the chart below, to read its card. * recovered from the
-        cost log: a stage records its own totals when it completes, so one that
-        stalled reports them here.</p>
-      <div id="stage-order" class="repo-filter range-filter"></div>
+
       <div id="stages-table-wrap"></div>
       <div id="runs-filter" class="repo-filter range-filter"></div>
       <div class="chart-wrap">
@@ -71,10 +78,7 @@
         <canvas id="chart-repos"></canvas>
       </div>
     </section>
-    <section class="panel" id="panel-quota">
-      <h2>Provider windows</h2>
-      <div id="quota-table-wrap"></div>
-    </section>
+
   </main>
 
   <script src="data.js"></script>

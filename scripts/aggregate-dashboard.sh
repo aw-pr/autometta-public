@@ -529,6 +529,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
           elapsed_seconds: ($live.elapsed_seconds // ($now - (($reg.started_at // "") | epoch))),
           flags: ($live.flags // []),
           live_total_tokens: ($live.live_total_tokens // null),
+          live_uncached_tokens: ($live.live_uncached_tokens // null),
           baseline_median_tokens: ($live.baseline_median_tokens // null),
           baseline_sample_size: ($live.baseline_sample_size // null),
           token_outlier: ($live.token_outlier // null),
@@ -678,9 +679,13 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
          {identity: ($model_rows[0].identity // "unknown"), role: ($model_rows[0].role // "unknown"),
           samples: ($model_rows | length),
           median_tokens: ([$model_rows[] | dispatch_tokens] | median | round),
+          median_uncached_tokens: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null) | .input_tokens + .output_tokens] | median),
           tokens_per_min: ([$timed[] | dispatch_tokens * 60 / .wall_clock_s] | median |
             if . == null then null else round end),
           cost_usd_per_min: ([$timed[] | dispatch_cost * 60 / .wall_clock_s] | median)}]),
+       role_usage: ([$dispatches[] | {stage_id, role, identity, model, ts, auth_route,
+         input_tokens, cached_input_tokens, cache_creation_input_tokens, output_tokens,
+         total_tokens, usage_status, cost_usd_est, subscription_usage}]),
        by_stage: ([$all | group_by(.stage_id)[] | . as $stage_rows |
          (totals($stage_rows)) + {stage_id:($stage_rows[0].stage_id // "unknown")}]),
        failures: ([$all[] | select((.result // "") != "pass" and not_landed(.stage_id // "") and epoch >= ($today - 518400)) |

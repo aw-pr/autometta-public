@@ -23,6 +23,7 @@
   var state = {
     data: null,
     hidden: Object.create(null), // repo name -> true once deselected
+    repoSelection: null,
     pageSize: Object.create(null),
     page: Object.create(null),
     rangeDays: null,
@@ -184,11 +185,9 @@
 
   // --- per-stage spend -----------------------------------------------------
 
-  // Tokens are written onto a stage row when it completes. A stage that
-  // stalled never gets that write, so its row reads 0 while the cost log knows
-  // it burned over a million -- which is why a repo whose whole run stalled
-  // drew empty charts. Fall back to the cost log, which carries the same
-  // figures per stage and per role.
+  // Dispatch history includes failed attempts as well as the landed attempt.
+  // Use it consistently for totals, cache shares and cost equivalents; older
+  // snapshots without role history fall back to the ledger and legacy sums.
   function stageSpend(repo, stage) {
     var spend = repo.spend || {};
     // A spend query that could not run reports null figures and a state_error,
@@ -203,10 +202,25 @@
     var worker = Number(stage.worker_tokens || 0);
     var verifier = Number(stage.verifier_tokens || 0);
     var total = Number(stage.tokens || 0);
+    var logged = 0;
+    var roles = (spend.role_usage || []).filter(function (row) { return row.stage_id === stage.id; });
+    if (roles.length) {
+      worker = verifier = 0;
+      var unknown = {worker: false, verifier: false};
+      roles.forEach(function (row) {
+        var n = row.total_tokens;
+        if (n == null && row.input_tokens != null && row.cached_input_tokens != null && row.output_tokens != null)
+          n = row.input_tokens + row.cached_input_tokens + row.output_tokens;
+        if (n == null) unknown[row.role] = true;
+        else if (row.role === "worker") worker += n;
+        else if (row.role === "verifier") verifier += n;
+      });
+      return {worker: unknown.worker ? null : worker, verifier: unknown.verifier ? null : verifier,
+        total: unknown.worker || unknown.verifier ? null : worker + verifier, logged: true};
+    }
     if (total || worker || verifier) {
       return { worker: worker, verifier: verifier, total: total || worker + verifier, logged: false };
     }
-    var logged = 0;
     (spend.by_stage || []).forEach(function (row) {
       if (row.stage_id === stage.id) logged += Number(row.tokens || 0);
     });
@@ -321,7 +335,8 @@
     var mark = spend.logged ? "*" : "";
     var estimate = stage.estimate || null;
     var spendTitle = spend.unavailable
-      ? ' title="' + esc((repo.spend || {}).state_error) + '"' : "";
+      ? ' title="' + esc((repo.spend || {}).state_error) + '"' :
+        spend.logged ? ' title="Recorded dispatch totals, including earlier attempts and cached reads"' : "";
     return ["worker", "verifier", "total"].map(function (role) {
       var live = role === "total" ? hasLive.worker || hasLive.verifier : hasLive[role];
       var extra = role === "total" ? liveTotal : liveByRole[role];
@@ -333,6 +348,137 @@
         cls: "num", sort: value
       };
     });
+  }
+
+  // Standard-speed credit equivalents, not debits or included subscription usage.
+  // https://learn.chatgpt.com/docs/pricing#token-rates (2026-10-24)
+  function creditEquivalent(row) {
+    if (row.auth_route !== "subscription" || row.input_tokens == null ||
+        row.cached_input_tokens == null || row.output_tokens == null) return null;
+    var model = String(row.model || row.identity || "").toLowerCase().replace(/[ .]/g, "-");
+    var rates = [
+      [/gpt-6-1-sol(?:-|$)/, [50, 2.5, 250]],
+      [/gpt-6-astra(?:-|$)/, [250, 25, 1250]],
+      [/gpt-6-sol(?:-|$)/, [50, 5, 250]],
+      [/gpt-6-luna(?:-|$)/, [2.5, 0.25, 12.5]],
+      [/gpt-5-6-sol(?:-|$)/, [100, 10, 500]],
+      [/gpt-5-6-terra(?:-|$)/, [50, 5, 300]],
+      [/gpt-5-6-luna(?:-|$)/, [5, 0.5, 30]]
+    ];
+    var found = rates.filter(function (entry) { return entry[0].test(model); })[0];
+    return found ? (row.input_tokens * found[1][0] + row.cached_input_tokens * found[1][1] +
+      row.output_tokens * found[1][2]) / 1e6 : null;
+  }
+
+  function roleUsage(repo, stage, role) {
+    return ((repo.spend || {}).role_usage || []).filter(function (row) {
+      return row.stage_id === stage.id && row.role === role;
+    });
+  }
+
+  function subscriptionText(observation) {
+    if (!observation || observation.status !== "observed") return "Subscription impact unavailable";
+    return (observation.windows || []).map(function (w) {
+      return w.label + " +" + Number(w.percentage_points).toFixed(1) + " pp";
+    }).join(", ") + " during run (shared account)";
+  }
+
+  function roleTokenSplit(repo, stage, role) {
+    var rows = roleUsage(repo, stage, role);
+    var uncached = 0, cached = 0, live = false;
+    var unknown = !!(repo.spend || {}).state_error;
+    rows.forEach(function (r) {
+      if (r.input_tokens == null || r.output_tokens == null || r.cached_input_tokens == null) unknown = true;
+      else { uncached += r.input_tokens + r.output_tokens; cached += r.cached_input_tokens; }
+    });
+    var recorded = stageSpend(repo, stage);
+    if (!rows.length && (recorded[role] !== 0 ||
+        (recorded.total > 0 && !recorded.worker && !recorded.verifier))) unknown = true;
+    (repo.agents || []).forEach(function (a) {
+      if (a.stage_id !== stage.id || a.role !== role) return;
+      live = true;
+      // Both heartbeat fields describe the same sample. Mixing a newer
+      // transcript total with an older uncached count invents cache reads.
+      if (a.live_uncached_tokens == null || a.live_total_tokens == null ||
+          a.live_uncached_tokens > a.live_total_tokens) unknown = true;
+      else { uncached += a.live_uncached_tokens; cached += a.live_total_tokens - a.live_uncached_tokens; }
+    });
+    return {uncached: unknown ? null : uncached, cached: unknown ? null : cached, live: live};
+  }
+
+  function uncachedPrediction(repo, stage, role) {
+    var rates = ((repo.spend || {}).model_rates || []).filter(function (r) {
+      return r.role === role && r.median_uncached_tokens != null;
+    });
+    var match = rates.filter(function (r) { return r.identity === stage[role]; })[0];
+    if (match) return match.median_uncached_tokens;
+    var values = rates.map(function (r) { return r.median_uncached_tokens; }).sort(function (a, b) { return a - b; });
+    return values.length ? values[Math.floor(values.length / 2)] : null;
+  }
+
+  function usageTokenMarkup(split, prediction) {
+    var actual = split.uncached == null ? "?" : compactTokens(split.uncached);
+    var title = "Uncached input plus output; includes cache writes. ";
+    title += split.uncached == null ? "Breakdown unavailable." : fmtInt(split.uncached) + " uncached tokens.";
+    var html = '<span' + (split.live ? ' class="live"' : '') + ' title="' + esc(title) + '">' + actual + '</span>';
+    if (prediction != null) html += '<span class="usage-muted" title="Predicted uncached tokens: historical median per dispatch, not subscription consumption">/ ~' + compactTokens(prediction) + '</span>';
+    if (split.cached != null && split.cached > 0) html += '<span class="usage-muted" title="Cached input reads; discounted but not free">+' + compactTokens(split.cached) + ' cache</span>';
+    return html;
+  }
+
+  function stageUsageTotal(repo, stage) {
+    var w = roleTokenSplit(repo, stage, "worker"), v = roleTokenSplit(repo, stage, "verifier");
+    var wp = uncachedPrediction(repo, stage, "worker"), vp = uncachedPrediction(repo, stage, "verifier");
+    var total = w.uncached == null || v.uncached == null ? null : w.uncached + v.uncached;
+    return {html: '<div class="role-usage">' + usageTokenMarkup({uncached: total,
+      cached: w.cached == null || v.cached == null ? null : w.cached + v.cached, live: w.live || v.live},
+      wp == null || vp == null ? null : wp + vp) + '</div>', sort: total};
+  }
+
+  function stageRoleCell(repo, stage, role, tokenCell) {
+    var rows = roleUsage(repo, stage, role);
+    var complete = rows.length && rows.every(function (r) {
+      return r.input_tokens != null && r.cached_input_tokens != null && r.output_tokens != null;
+    });
+    var lines = ['<strong class="role-model">' + esc(shortIdentity(stage[role])) + '</strong>'];
+    var split = roleTokenSplit(repo, stage, role);
+    var count = split.uncached, live = split.live;
+    lines.push(usageTokenMarkup(split, uncachedPrediction(repo, stage, role)));
+    if (complete) {
+      var credits = rows.map(creditEquivalent);
+      if (credits.every(function (n) { return n != null; })) {
+        lines.push('<span class="usage-muted" title="Current published Standard-speed credit equivalent. Not credits charged or weekly subscription consumption.">~' +
+          credits.reduce(function (a, b) { return a + b; }, 0).toFixed(1) + ' credits eq.' + (live ? ' (settled)' : '') + '</span>');
+      } else if (rows.every(function (r) { return r.cost_usd_est != null; })) {
+        lines.push('<span class="usage-muted" title="Estimated API-equivalent cost from the cost log, not a subscription charge; cache-write premiums may be excluded.">~$' +
+          rows.reduce(function (n, r) { return n + r.cost_usd_est; }, 0).toFixed(2) + ' API eq.' + (live ? ' (settled)' : '') + '</span>');
+      }
+    }
+    var observed = rows.filter(function (r) { return r.subscription_usage && r.subscription_usage.status === "observed"; });
+    if (observed.length) lines.push('<span class="usage-muted" title="See dispatch readings below. Overlapping account movements are never added together.">' +
+      esc(subscriptionText(observed[observed.length - 1].subscription_usage)) + '</span>');
+    return {html: '<div class="role-usage">' + lines.join('') + '</div>', sort: count, cls: "role-cell"};
+  }
+
+  function stageUsageDetails(repo, stage) {
+    var rows = ((repo.spend || {}).role_usage || []).filter(function (r) { return r.stage_id === stage.id; });
+    if (!rows.length) return '<p class="usage-muted">No settled dispatch breakdown recorded.</p>';
+    return '<div class="usage-details"><h3>Settled dispatches</h3><p class="usage-muted">Quota movement includes other chats and jobs on the account. Readings may lag; overlapping movements are not additive. pp = percentage points.</p>' +
+      rows.map(function (r) {
+        var writes = r.cache_creation_input_tokens;
+        var input = writes != null && r.input_tokens != null ? r.input_tokens - writes : r.input_tokens;
+        var detail = r.role + ': ' + shortIdentity(r.identity) + ' | ' + (r.ts || '') + ' | ' + (r.auth_route || 'route unknown');
+        var tokens = fmtInt(input) + (writes == null ? ' input (writes included)' : ' fresh input; ' + fmtInt(writes) + ' cache writes') +
+          '; ' + fmtInt(r.cached_input_tokens) + ' cached reads; ' + fmtInt(r.output_tokens) + ' output';
+        var full = r.total_tokens;
+        if (full == null && r.input_tokens != null && r.cached_input_tokens != null && r.output_tokens != null)
+          full = r.input_tokens + r.cached_input_tokens + r.output_tokens;
+        tokens += '; ' + fmtInt(full) + ' processed in total';
+        var obs = r.subscription_usage;
+        var times = obs && obs.start && obs.end ? ' Readings: ' + (obs.start.fetched_at || '?') + ' to ' + (obs.end.fetched_at || '?') + '.' : '';
+        return '<p><strong>' + esc(detail) + '</strong><br>' + esc(tokens) + '<br>' +
+          esc(r.auth_route === "subscription" ? subscriptionText(obs) + times : "Subscription impact: not applicable") + '</p>';
+      }).join('') + '</div>';
   }
 
   function runTotals(repo) {
@@ -360,7 +506,7 @@
       '<span class="run-repo">' + esc(repo.name || "repo") + "</span>" +
       '<span class="run-id">' + esc(run.id || "current run") + "</span>" +
       '<span>' + completed + " of " + stages.length + " stages done</span>" +
-      '<span class="run-tokens">' + fmtInt(tokens) + " tokens</span>" +
+      '<span class="run-tokens">' + fmtInt(tokens) + " processed tokens</span>" +
       '<span>$' + cost.toFixed(2) + " settled</span></div>";
   }
 
@@ -495,6 +641,25 @@
 
   // --- repo filter ---------------------------------------------------------
 
+  function initialiseRepoSelection(data) {
+    if (data.scope !== "fleet") return;
+    if (state.repoSelection == null) {
+      var saved;
+      try { saved = JSON.parse(storeGet("autometta.selectedRepos")); } catch (e) { saved = null; }
+      state.repoSelection = Object.create(null);
+      if (Array.isArray(saved)) saved.forEach(function (name) {
+        if (typeof name === "string") state.repoSelection[name] = true;
+      });
+    }
+    (data.repos || []).forEach(function (repo) { state.hidden[repo.name] = !state.repoSelection[repo.name]; });
+  }
+
+  function saveRepoSelection() {
+    state.repoSelection = Object.create(null);
+    visibleRepos().forEach(function (repo) { state.repoSelection[repo.name] = true; });
+    storeSet("autometta.selectedRepos", JSON.stringify(Object.keys(state.repoSelection)));
+  }
+
   function visibleRepos() {
     return (state.data.repos || []).filter(function (r) { return !state.hidden[r.name]; });
   }
@@ -510,7 +675,7 @@
     if (!wrap) return;
     var repos = state.data.repos || [];
     // A narrowed page has exactly one repo and nothing to choose between.
-    if (state.data.scope !== "fleet" || repos.length < 2) {
+    if (state.data.scope !== "fleet") {
       wrap.innerHTML = "";
       return;
     }
@@ -533,6 +698,7 @@
         var name = box.getAttribute("data-repo");
         if (box.checked) delete state.hidden[name];
         else state.hidden[name] = true;
+        saveRepoSelection();
         resetPages();
         renderAll();
       });
@@ -542,6 +708,7 @@
         var on = btn.getAttribute("data-filter-all") === "on";
         state.hidden = Object.create(null);
         if (!on) repos.forEach(function (r) { state.hidden[r.name] = true; });
+        saveRepoSelection();
         resetPages();
         renderAll();
       });
@@ -662,7 +829,7 @@
   function sortsFor(key) {
     if (!state.sorts[key]) {
       var saved;
-      try { saved = JSON.parse(storeGet("autometta.sort." + key)); } catch (e) { saved = null; }
+      try { saved = JSON.parse(storeGet("autometta.sort." + (key === "stages" ? "stages.usage-v2" : key))); } catch (e) { saved = null; }
       var seen = Object.create(null);
       state.sorts[key] = Array.isArray(saved) ? saved.filter(function (s) {
         if (!s || !Number.isInteger(s.col) || s.col < 0 || seen[s.col] ||
@@ -677,7 +844,7 @@
   function saveSort(key, sorts) {
     state.sorts[key] = sorts;
     state.page[key] = 0;
-    storeSet("autometta.sort." + key, JSON.stringify(sorts));
+    storeSet("autometta.sort." + (key === "stages" ? "stages.usage-v2" : key), JSON.stringify(sorts));
   }
 
   function changeSort(key, col, additive) {
@@ -734,7 +901,8 @@
   }
 
   function sortControls(headers, sorts) {
-    return '<div class="sort-controls"><span>Click a heading to sort; Shift-click to add a column.</span>' +
+    if (!sorts.length) return "";
+    return '<div class="sort-controls">' +
       '<span class="sort-summary">' + esc(sorts.map(function (s, i) {
         var header = headers[s.col];
         return (i + 1) + ". " + (header && header.label != null ? header.label : header || "") +
@@ -752,7 +920,8 @@
         wrap.querySelector('button[data-sort-col="' + button.getAttribute("data-sort-col") + '"]').focus({ preventScroll: true });
       };
     });
-    wrap.querySelector("button[data-clear-sort]").onclick = function () {
+    var clear = wrap.querySelector("button[data-clear-sort]");
+    if (clear) clear.onclick = function () {
       clearSort(key);
       if (key === "stages") renderAll();
       else redraw();
@@ -985,24 +1154,49 @@
 
   function renderQuota(repos) {
     var rows = [];
+    var summary = document.getElementById("quota-summary");
+    if (summary) summary.innerHTML = ["claude", "codex"].map(function (family) {
+      var readings = repos.map(function (repo) { return ((repo.quota || {}).families || {})[family]; })
+        .filter(function (r) { return r && r.status === "known" && isFinite(Date.parse(r.fetched_at)); })
+        .sort(function (a, b) { return Date.parse(b.fetched_at) - Date.parse(a.fetched_at); });
+      var reading = readings[0];
+      var label = family === "claude" ? "Claude" : "Codex";
+      if (!reading) return '<div><strong>' + label + '</strong><p class="usage-muted">Allowance unavailable</p></div>';
+      var age = Math.max(0, (Date.now() - Date.parse(reading.fetched_at)) / 1000);
+      return '<div><strong>' + label + '</strong>' + (reading.windows || []).map(function (w) {
+        var stale = age > 600 || !w.resets_at || Date.parse(w.resets_at) <= Date.now();
+        return '<p>' + esc(w.label) + ': <strong>' + Number(w.utilization).toFixed(1) + '% used</strong>' +
+          '<span class="usage-muted">' + (stale ? ' (stale; remaining unknown)' :
+          ', ' + Math.max(0, 100 - Number(w.utilization)).toFixed(1) + '% remaining') +
+          '<br>Resets ' + esc(w.resets_at ? new Date(w.resets_at).toLocaleString() : "unknown") + '</span></p>';
+      }).join('') + '<span class="usage-muted" title="' + esc(reading.fetched_at) + '">Latest reading ' +
+        Math.floor(age / 60) + 'm ago</span></div>';
+    }).join('');
     repos.forEach(function (repo) {
       ["claude", "codex"].forEach(function (family) {
         var reading = ((repo.quota || {}).families || {})[family] || {
           status: "unknown", reason: "no tick reading", windows: []
         };
         if (reading.status !== "known") {
-          rows.push([repo.name, family, "unknown", "-", "-", reading.reason || "unknown"]);
+          rows.push([repo.name, family, "unknown", "-", "-", "-", "-", reading.reason || "unknown"]);
           return;
         }
         (reading.windows || []).forEach(function (window) {
+          var age = reading.fetched_at ? Math.max(0, (Date.now() - Date.parse(reading.fetched_at)) / 1000) : null;
+          var stale = age == null || !isFinite(age) || age > 600 ||
+            (window.resets_at && Date.parse(window.resets_at) <= Date.now());
+          var freshness = age == null || !isFinite(age) ? "Age unknown" : Math.floor(age / 60) + "m ago";
           rows.push([repo.name, family, window.label,
-            Number(window.utilization).toFixed(1) + "%", window.resets_at || "unknown",
+            {html: esc(Number(window.utilization).toFixed(1) + "%" + (stale ? " (stale)" : "")), sort: Number(window.utilization)},
+            stale ? "Unknown" : Math.max(0, 100 - Number(window.utilization)).toFixed(1) + "%",
+            window.resets_at || "unknown",
+            {html: '<span title="' + esc(reading.fetched_at || "unknown") + '">' + esc(freshness) + '</span>', sort: age},
             reading.source || "unknown"]);
         });
       });
     });
     renderPagedTable("quota-table-wrap",
-      ["Repo", "Family", "Window", "Used", "Resets", "Source / reason"], rows, "quota", null);
+      ["Observed in", "Family", "Window", "Used", "Remaining", "Resets", "Reading age", "Source / reason"], rows, "quota", null);
   }
 
   var STAGE_ORDERS = [
@@ -1106,7 +1300,6 @@
     var rows = stageOrder() === "repo" ? stageRowsByRepo(repos) : stageRowsByRecency(repos);
     var byName = Object.create(null);
     repos.forEach(function (r) { byName[r.name] = r; });
-    var rates = modelBurnRates(repos);
     var cells = rows.map(function (row) {
       var s = row.stage;
       var tokenCells = stageTokenCells(byName[row.repo] || {}, s);
@@ -1116,24 +1309,23 @@
       // rather than inferred from the row above.
       var expand =
         '<div class="card-path">' + esc(cardPath) + "</div>" +
+        stageUsageDetails(byName[row.repo] || {}, s) +
         '<pre class="card-text">' + esc(s.card_text || "card not read") + "</pre>";
       return { cls: row.groupStart ? "group-start" : "", expand: expand,
                key: stageKey(row.repo, s.id), cells: [
         row.repo,
         { html: '<span class="caret">\u25b8</span> ' + esc(s.id), sort: s.id },
         { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
-        identityCell(s.worker, rates),
-        identityCell(s.verifier, rates),
-        tokenCells[0],
-        tokenCells[1],
-        tokenCells[2],
+        stageRoleCell(byName[row.repo] || {}, s, "worker", tokenCells[0]),
+        stageRoleCell(byName[row.repo] || {}, s, "verifier", tokenCells[1]),
+        stageUsageTotal(byName[row.repo] || {}, s),
         s.started_at || "",
         s.completed_at || ""
       ] };
     });
     renderPagedTable("stages-table-wrap",
       ["Repo", "Stage", "Status", "Worker", "Verifier",
-       "Worker tok (est)", "Verifier tok (est)", "Total tok (est)", "Queued", "Completed"],
+       "Total tokens", "Queued", "Completed"],
       cells, "stages", null);
   }
 
@@ -1351,7 +1543,7 @@
     renderAgents(repos);
     renderFailures(data.spend || {}, names);
     renderSpend(data.spend || {}, names);
-    renderQuota(repos);
+    renderQuota(data.repos || []);
     renderRunTotals(repos);
     renderStagesTable(repos);
     renderBurnTable(repos);
@@ -1363,6 +1555,7 @@
 
   function render(data) {
     state.data = data;
+    initialiseRepoSelection(data);
     var scoped = data.scope && data.scope !== "fleet";
     document.title = scoped
       ? "autometta - " + data.scope

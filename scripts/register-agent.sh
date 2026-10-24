@@ -68,12 +68,12 @@ agent_id="${pid}-$(date +%s)"
 
 tmp="$(mktemp)"
 python3 - "$tmp" "$pid" "$role" "$family" "$identity" "$card_path" "$log_path" \
-  "$budget_seconds" "$started_at" "$agent_id" "$working_dir" "$log_streams" "$quota_start" <<'PY'
+  "$budget_seconds" "$started_at" "$agent_id" "$working_dir" "$log_streams" "$quota_start" "$script_dir" "$repo_root" <<'PY'
 import json
 import sys
 
 (out, pid, role, family, identity, card_path, log_path,
- budget_seconds, started_at, agent_id, working_dir, log_streams, quota_start) = sys.argv[1:]
+ budget_seconds, started_at, agent_id, working_dir, log_streams, quota_start, script_dir, repo_root) = sys.argv[1:]
 
 doc = {
     "agent_id": agent_id,
@@ -91,6 +91,14 @@ if log_streams == "1":
     doc["log_streams"] = True
 if quota_start:
     doc["quota_start"] = json.loads(quota_start)
+try:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("subscription_usage", script_dir + "/lib/subscription-usage.py")
+    usage = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(usage)
+    usage.capture(doc, repo_root)
+except Exception as exc:
+    print(f"subscription observation unavailable: {exc}", file=sys.stderr)
 with open(out, "w", encoding="utf-8") as fh:
     json.dump(doc, fh, indent=2, sort_keys=True)
     fh.write("\n")

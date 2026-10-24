@@ -937,7 +937,7 @@ for raw_root in roots_raw.split(":"):
             found = True
 
 if found:
-    print(f"{inp} {cached} {out}")
+    print(f"{inp} {cached} {out}" + (" 0" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
 PY
 }
 
@@ -974,7 +974,7 @@ except ValueError:
     since = 0
 
 seen = set()
-inp = cached = out = 0
+inp = cached = out = writes = 0
 
 for base, _dirs, files in os.walk(root):
     for name in files:
@@ -1012,11 +1012,12 @@ for base, _dirs, files in os.walk(root):
                     seen.add(key)
                 inp += usage.get("input_tokens", 0) or 0
                 inp += usage.get("cache_creation_input_tokens", 0) or 0
+                writes += usage.get("cache_creation_input_tokens", 0) or 0
                 cached += usage.get("cache_read_input_tokens", 0) or 0
                 out += usage.get("output_tokens", 0) or 0
 
 if inp or cached or out:
-    print(f"{inp} {cached} {out}")
+    print(f"{inp} {cached} {out}" + (f" {writes}" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
 PY
 }
 

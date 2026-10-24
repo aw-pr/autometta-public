@@ -453,3 +453,56 @@ per-repo drain fields are active.
 
 The fleet pane shortens token counts for scanning and rounds estimated USD to
 two decimal places. The exact token and cost values remain in `data.json`.
+
+### Role usage and subscription allowance
+
+The stage table combines each role's model and usage in one wider column.
+Details flow inline and wrap between figures when needed: uncached tokens,
+predicted uncached tokens (historical median), cached reads and a cost equivalent. Worker and verifier headings sort by uncached tokens;
+column filters also match the displayed model. When available, dispatch history supplies burned totals including failed attempts,
+so cache shares and cost equivalents use the same scope. Old stage sort preferences are
+versioned out because the column positions changed. Existing queue pinning,
+card expansion and refresh behaviour remain intact.
+
+Expand a stage to inspect each settled dispatch's input, cache writes, cached
+reads, output, billing route and subscription observations. A running role's
+token split includes paired live heartbeat counts; cost equivalents explicitly
+refer to settled dispatches until the live dispatch is reaped. Old records
+without a breakdown remain unavailable rather than acquiring a synthetic split.
+
+Codex subscription rows with a recognised model show a Standard-speed credit
+equivalent using the published rates checked on 2026-10-24:
+<https://learn.chatgpt.com/docs/pricing#token-rates>. This is a comparison at the
+current rate, not a historical invoice, speed-adjusted debit or conversion to
+included allowance. Other complete rows show the cost log's estimated API
+cost, whose cache-write premiums may be excluded. Neither measure proves a
+subscription charge. Unknown models do not inherit another model's credit rate.
+
+Subscription allowance shows provider-reported used and remaining percentages,
+reset times and reading age. These are shared account readings observed in each
+repo, not independent repo budgets; never sum them. Readings older than ten
+minutes or past their reset are marked stale, with remaining capacity unknown.
+
+New dispatches retain starting quota evidence for both families. When a newer
+reading exists in the same window, the dispatch detail reports the change in
+percentage points as shared-account movement. This includes other chats and
+jobs, can include reporting/reaping lag and is never attributed exclusively to
+the card or added across overlapping dispatches. Missing evidence, decreased
+meters and reset windows have no inferred delta. Historical cards cannot
+recover subscription usage from tokens alone.
+
+The fleet opens with no repositories selected until a selection is saved.
+Checkboxes and All/None persist an explicit selection across reloads; newly
+appearing repositories start unselected. Single-repo pages still show their
+repository automatically. Account allowance stays visible independently of
+repo selection, because those limits belong to the shared provider accounts.
+
+The stage table's primary token measure is now uncached input plus output
+(including cache writes). It displays `actual / ~predicted +cached cache`, with
+a short key beside the panel title. Predictions use medians of the same
+uncached measure, and role/total sorts use uncached actuals. Cached reads still
+contribute to cost equivalents. Missing splits display `?`, never the full
+total relabelled as uncached. Live splits use the heartbeat's paired total and
+uncached counts from the same sample. Expanded dispatch details retain full
+processed totals; run banners explicitly label their full totals as processed
+tokens. Charts and budget enforcement keep their existing processed measure.
