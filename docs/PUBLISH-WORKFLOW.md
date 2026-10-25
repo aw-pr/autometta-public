@@ -4,35 +4,51 @@ How autometta keeps a public mirror in step with private development. Read this 
 
 Placeholders: `PRIV` = the private remote (`origin`), `PUB` = the public remote (`public`), `PUB_MATCH` = a substring of the public remote URL (e.g. `myorg/myrepo`), `PUBLISH_BRANCH` = the line that becomes public (`publish`).
 
-## Model (read this first)
+## Model
 
-The history is **linear and shared**. There is one line of development:
+`dev` is the private working line. `publish` is the curated, append-only public
+line. They share ancestry, but tracked private material is removed from every
+new public commit by `scripts/publish-sync.sh`. A replay preserves the original
+author and message and records its source commit in a `Publish-Sync-Source`
+trailer. A fast-forward is used only when no private path needs removal.
 
-- **`dev`** - the working branch on `PRIV`. Atomic commits, per-agent author attribution. This is the canonical line; all work lands here.
-- **`publish`** - not a separate history. It is a pointer that sits behind `dev` on the same line and is **fast-forwarded** up to a chosen `dev` commit when you publish. `publish` is pushed to `PUB` as `main`.
-- `PUB/main` is whatever `publish` last fast-forwarded to.
+Stage cards are intentionally public. They are part of the implementation and
+review evidence, together with frozen assertions and role attribution. They
+are not private-file exclusions. Machine configuration, session handoffs and
+runtime records remain outside the public head.
 
-`dev` and `publish` share one root commit, and `git merge-base dev publish` is publish's own tip. There is no orphan, no unrelated history, nothing to rebase or cherry-pick. To publish you fast-forward `publish` up to `dev` and push. That is the whole model.
+The public default branch advances through a PR from `publish`. Published
+commits are immutable; a later cleanup does not erase material from older
+public history. Audit both the candidate trees and the incoming history before
+pushing. Do not rewrite existing public history as part of a routine release.
 
-> This replaced an earlier orphan-squash model (see "History note" at the end). If any doc or memory still describes `publish` as an orphan you must cherry-pick onto, it is stale: verify with `git merge-base dev publish` and trust the topology, not the prose.
+## Normal publish
 
-## Normal publish (the common case)
+First commit the intended changes on the working line and run their relevant
+checks. Use a clean review worktree if the working checkout contains unrelated
+or active work. Never clean that work away just to prepare a release.
 
 ```sh
-# 1. work on dev as usual - atomic commits, per-agent --author=
-# 2. when a batch is ready for the public mirror:
-git switch publish
-git merge --ff-only dev          # publish catches up to dev's tip; always a clean ff
-git push origin publish          # private backup first
-git push public publish          # PR source, private-file-scanned by the gate
-gh pr create --base main --head publish   # when no PR is open; a push while one is open updates it
-git switch dev                   # back to the working branch
-# 3. merge the PR on the forge (gh pr merge <n> --merge, or the web button)
+# In a clean working or review checkout, with the intended source on dev:
+scripts/publish-sync.sh                         # read the dry-run plan
+scripts/publish-sync.sh --apply --on-conflict abort
+# Audit the resulting publish tree and incoming history before either push.
+git push origin publish                        # private backup
+git push public publish                        # guarded public PR source
+gh pr create --repo "$(git config --get publishguard.publicmatch)" --base main --head publish
+# Omit creation if an open public PR already exists.
 ```
 
-The publish boundary is PR-by-default and the pre-push gate enforces it strictly: any push to `PUB/main` is rejected, with no attestation escape hatch. The old `PUBLISH_PR_REVIEWED=1 git publish` completion is retired; a flag set by the same automation it gates certifies nothing, so the merge happens on the forge where the diff is actually in front of you. The forge merge is a merge commit, so `PUB/main` carries publish's per-agent commits plus one merge bubble per batch; `publish` itself stays a strict ancestor and the next batch's push updates or reopens the PR (first exercised here as PR #3, merged 2026-08-31). A repo where the PR is genuinely surplus opts out with `git config publishguard.boundary direct`.
+The pre-push gate rejects direct pushes to public `main` and private paths on
+the PR source. Review and merge the PR on the forge. An agent prepares the
+reviewable PR; it does not replace the human merge decision with a sentinel or
+attestation flag. Keep the public default branch protected on the forge as
+well as locally. No force-push or guard bypass belongs in this workflow.
 
-If `git merge --ff-only dev` refuses, `publish` has commits `dev` does not (someone committed directly on `publish`). That should not happen in this model; reconcile by hand rather than forcing.
+The replay helper may report a conflict or a tree mismatch. Stop and inspect
+it; do not skip a public change merely to make the gate pass. Its final public
+paths must match the intended source, with only the declared private paths
+removed. See mcp-hub's `docs/PUBLISH-SYNC.md` for the helper's detailed contract.
 
 ## Tagging a release
 
@@ -63,7 +79,7 @@ The guard ships at `scripts/git-hooks/` and installs via `scripts/install-guards
 
 Why fail-closed rather than a warning: publishing is effectively irreversible. Objects stay fetchable by SHA and content gets cached and indexed. A guard for an irreversible outward action has to stop it and point at the right command.
 
-Deliberate one-off override: `git commit --no-verify` or `git push --no-verify`. These are intentional escape hatches and should not appear in routine workflows. Releases do not need one, because `gh release create` makes the tag server-side instead of pushing it.
+Do not bypass these hooks. A rejected candidate needs a fix and another guard run. Releases do not require a tag-push bypass: `gh release create` can create the reviewed tag server-side after the public PR is merged.
 
 ## Config keys
 
@@ -77,7 +93,7 @@ git config publishguard.publishbranch 'publish'
 git config publishguard.sentinel      'PUBLISH_GUARD_OK'
 ```
 
-Keys the hook reads that this repo leaves at their defaults:
+Other guard keys:
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -90,13 +106,24 @@ Keys the hook reads that this repo leaves at their defaults:
 
 ## What is private, and how
 
-In a linear model there is **no private-tier branch**. Whatever is tracked and committed on `dev` reaches `PUB` on the next fast-forward. Privacy is enforced by three mechanisms, not by branch separation: `.gitignore`, the pre-commit guard, and the pre-push `publishguard.privatefile` tree scan:
+- **Ignored local files:** `.env*`, `*.local`, `op-refs.local.sh`,
+  `.publish-guard.local`, `.publish-guard-strict.local`, `.autometta.local.yaml`,
+  and runtime contents under `state/`. Tracked state README/marker files describe
+  the contract; they are not live runtime snapshots.
+- **Tracked private records:** `HANDOFF.md`, `RUNBOOK.md`, `runs/` and `archive/`
+  remain portable on the private working line. Declare these file or directory
+  paths with repeatable `publishguard.privatefile` settings. The replay helper
+  strips them; the pre-push guard rejects their presence in the candidate tree.
+- **Public review material:** `stage-cards/`, templates, smoke tests, design
+  notes and shared `memory/` are part of the public project. Keep actual home
+  paths, credentials and private service references out of them. Test fixtures
+  and configuration examples must use placeholders.
 
-- **Gitignored, never public:** `.env*`, `*.local`, `op-refs.local.sh`, `.publish-guard.local`, `.autometta.local.yaml`, `state/**` (runtime; only the legacy `state/handoffs/` markers are tracked).
-- **Tracked, blocked at the publish boundary:** `HANDOFF.md` is tracked (`handoff.mode=tracked`, so it follows clones and worktrees); whether it crosses the publish boundary is governed by `publishguard.privatefile`, which the pre-push hook scans for on every push to `PUB` and rejects fail-closed. Lift or extend that key deliberately, never by editing the hook.
-- **Tracked, intentionally public:** `memory/` is the in-repo shared agent memory and is part of the public mirror by design. Keep secrets and absolute home-dir paths out of it; the pre-commit guard patterns are the floor.
-
-If a file must never be public, it has to be gitignored or named in `publishguard.privatefile`. Keeping it only on `dev` is no longer protection.
+A private-file configuration overrides the default list, so retain
+`HANDOFF.md` when adding another path. Directory rules cover their descendants,
+without matching similarly named public directories. The mcp-hub policy
+registry is the source for this machine's local rules; sync it rather than
+leaving a local setting that the next policy refresh will undo.
 
 ## Fresh-clone setup (one time)
 
@@ -110,7 +137,9 @@ If a file must never be public, it has to be gitignored or named in `publishguar
    ```
 5. Prove the guard fires:
    ```sh
-   printf '/Users/<you>/secret\n' > /tmp/leak.md && git add /tmp/leak.md && git commit -m test   # must fail
+   # In a disposable test clone, stage a harmless fixture matching a configured
+   # private path or personal pattern, then invoke the installed guard.
+   # It must reject the candidate; never plant a real credential.
    ```
 
 ## When to re-audit
@@ -119,4 +148,4 @@ Run the `repo-publish-audit` skill before publishing if more than ten-ish commit
 
 ## History note (the first publish, done once)
 
-The public mirror was seeded once by an orphan-squash from older repositories whose early commit blobs carried operator home-dir paths. That one-time cleanup is finished. The pre-arm histories are archived in the tags `archive/dev-final`, `archive/main-legacy`, and `pre-rewrite-2026-05-27` (private only). From that seed onward, `dev` and `publish` are one linear history and the normal flow above is all you need. The orphan-squash is not part of routine publishing and should not be repeated.
+The public mirror was seeded once by an orphan-squash from older repositories whose early commit blobs carried operator home-dir paths. That one-time cleanup is finished. The pre-arm histories are archived in the tags `archive/dev-final`, `archive/main-legacy`, and `pre-rewrite-2026-05-27` (private only). Later private handoffs require curated replay above that shared seed. The current flow preserves published commits and strips private paths from new public commits. The orphan-squash is not part of routine publishing and should not be repeated.
