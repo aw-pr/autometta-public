@@ -119,9 +119,19 @@ halt (run-lessons entry, 2026-08-25 morning). A re-brief is not a discount;
 budget attempt 2 at attempt 1's scale unless the re-brief only corrects
 details on a preserved tree.
 
+Preparation is part of this spend plan, not free orchestration overhead.
+Record its allowance and actual usage separately from worker/verifier estimates,
+including cache reads, reference experiments and review sessions. Use the
+checkpoint and bounded-attempt rules in `autometta-card-review`; changing seats
+or restarting a chat does not replenish that allowance. Prefer the smallest
+useful preflight that makes one bounded attempt actionable. Preserve independent
+verification and final acceptance instead of paying for a full implementation
+in a preparation session. Explain material differences between dashboard
+predictions and historical estimates before using them for the cost comparison.
+
 ## 6. Hand over
 
 Queue the cards with `add-stage.sh` in gate order, confirm the ticker's
 NEXT section shows the intended order, and hand the queue to the tick and
-phat-controller. The design session's remaining job is feedback, re-briefs
+the operator's escalation chat. The design session's remaining job is feedback, re-briefs
 and landing-boundary commits, not driving dispatches by hand.
