@@ -530,6 +530,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
           flags: ($live.flags // []),
           live_total_tokens: ($live.live_total_tokens // null),
           live_uncached_tokens: ($live.live_uncached_tokens // null),
+          live_uncached_input_tokens: ($live.live_uncached_input_tokens // null),
           baseline_median_tokens: ($live.baseline_median_tokens // null),
           baseline_sample_size: ($live.baseline_sample_size // null),
           token_outlier: ($live.token_outlier // null),

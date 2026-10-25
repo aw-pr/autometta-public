@@ -82,7 +82,7 @@ let cells = api.stageTokenCells(repo,stage);
 const html = api.stageRoleCell(repo,stage,'worker',cells[0]).html;
 assert.match(html,/>2M</);
 assert.match(html,/~2.5M/);
-assert.match(html,/\+10M cache/);
+assert.match(html,/\+10M cache \(91%\)/);
 assert.match(html,/325.0 credits eq/);
 assert.match(api.stageUsageDetails(repo,stage),/Subscription impact unavailable/);
 assert.doesNotMatch(api.stageUsageDetails(repo,stage),/0 pp/);
@@ -91,10 +91,12 @@ const unknown = {spend:{role_usage:[{...row,input_tokens:null,cached_input_token
 cells = api.stageTokenCells(unknown,stage);
 assert.equal(cells[0].sort,null);
 assert.match(api.stageRoleCell(unknown,stage,'worker',cells[0]).html,/Breakdown unavailable/);
-const live = {...repo,agents:[{stage_id:'test',role:'worker',live_total_tokens:5000000,live_uncached_tokens:100000}]};
+const live = {...repo,agents:[{stage_id:'test',role:'worker',live_total_tokens:5000000,live_uncached_tokens:100000,live_uncached_input_tokens:50000}]};
 assert.equal(api.roleTokenSplit(live,stage,'worker').uncached,2100000);
 assert.equal(api.roleTokenSplit(live,stage,'worker').cached,14900000);
 assert.equal(api.stageUsageTotal(live,stage).sort,2100000);
+assert.match(api.stageUsageTotal(live,stage).html,/cache \(93%\)/);
+assert.doesNotMatch(api.stageUsageTotal({...repo,agents:[{stage_id:'test',role:'worker',live_total_tokens:5000000,live_uncached_tokens:100000}]},stage).html,/cache \(.*%/);
 assert.equal(api.roleTokenSplit({...repo,agents:[{stage_id:'test',role:'worker',live_total_tokens:5000000}]},stage,'worker').uncached,null);
 assert.doesNotMatch(api.stageRoleCell({spend:{role_usage:[row]}},stage,'worker',cells[0]).html,/~5M/,
   'a total-token prediction must never appear beside uncached actuals');

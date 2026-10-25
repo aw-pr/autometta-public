@@ -516,3 +516,9 @@ Each role shows its card-declared thinking effort beside the model, for example
 chooses the level. `?` means the card could not establish the setting. This is
 the current card declaration, not proof of the level used by every historical
 attempt; the tooltip states that distinction.
+
+Cached counts include their share of input, for example `+5.6M cache (98%)`.
+The denominator is uncached input plus cached reads; output is excluded. The
+combined percentage is weighted by input counts, not averaged across roles.
+Live input comes from the same heartbeat sample as the cached count. A missing
+live input split omits the percentage until fresh evidence arrives.

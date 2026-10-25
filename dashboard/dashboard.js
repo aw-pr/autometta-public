@@ -385,11 +385,11 @@
 
   function roleTokenSplit(repo, stage, role) {
     var rows = roleUsage(repo, stage, role);
-    var uncached = 0, cached = 0, live = false;
+    var uncached = 0, cached = 0, input = 0, live = false, inputKnown = true;
     var unknown = !!(repo.spend || {}).state_error;
     rows.forEach(function (r) {
       if (r.input_tokens == null || r.output_tokens == null || r.cached_input_tokens == null) unknown = true;
-      else { uncached += r.input_tokens + r.output_tokens; cached += r.cached_input_tokens; }
+      else { uncached += r.input_tokens + r.output_tokens; cached += r.cached_input_tokens; input += r.input_tokens; }
     });
     var recorded = stageSpend(repo, stage);
     if (!rows.length && (recorded[role] !== 0 ||
@@ -397,13 +397,16 @@
     (repo.agents || []).forEach(function (a) {
       if (a.stage_id !== stage.id || a.role !== role) return;
       live = true;
+      if (a.live_uncached_input_tokens == null) inputKnown = false;
+      else input += a.live_uncached_input_tokens;
       // Both heartbeat fields describe the same sample. Mixing a newer
       // transcript total with an older uncached count invents cache reads.
       if (a.live_uncached_tokens == null || a.live_total_tokens == null ||
           a.live_uncached_tokens > a.live_total_tokens) unknown = true;
       else { uncached += a.live_uncached_tokens; cached += a.live_total_tokens - a.live_uncached_tokens; }
     });
-    return {uncached: unknown ? null : uncached, cached: unknown ? null : cached, live: live};
+    return {uncached: unknown ? null : uncached, cached: unknown ? null : cached,
+      input: unknown || !inputKnown ? null : input, live: live};
   }
 
   function uncachedPrediction(repo, stage, role) {
@@ -422,7 +425,11 @@
     title += split.uncached == null ? "Breakdown unavailable." : fmtInt(split.uncached) + " uncached tokens.";
     var html = '<span' + (split.live ? ' class="live"' : '') + ' title="' + esc(title) + '">' + actual + '</span>';
     if (prediction != null) html += '<span class="usage-muted" title="Predicted uncached tokens: historical median per dispatch, not subscription consumption">/ ~' + compactTokens(prediction) + '</span>';
-    if (split.cached != null && split.cached > 0) html += '<span class="usage-muted" title="Cached input reads; discounted but not free">+' + compactTokens(split.cached) + ' cache</span>';
+    if (split.cached != null && split.cached > 0) {
+      var percent = split.input == null ? "" : " (" + (100 * split.cached / (split.input + split.cached)).toFixed(0) + "%)";
+      html += '<span class="usage-muted" title="Cached reads as a share of all input tokens, excluding output; discounted but not free. Percentage omitted when the input split is unavailable.">+' +
+        compactTokens(split.cached) + ' cache' + percent + '</span>';
+    }
     return html;
   }
 
@@ -431,7 +438,8 @@
     var wp = uncachedPrediction(repo, stage, "worker"), vp = uncachedPrediction(repo, stage, "verifier");
     var total = w.uncached == null || v.uncached == null ? null : w.uncached + v.uncached;
     return {html: '<div class="role-usage">' + usageTokenMarkup({uncached: total,
-      cached: w.cached == null || v.cached == null ? null : w.cached + v.cached, live: w.live || v.live},
+      cached: w.cached == null || v.cached == null ? null : w.cached + v.cached,
+      input: w.input == null || v.input == null ? null : w.input + v.input, live: w.live || v.live},
       wp == null || vp == null ? null : wp + vp) + '</div>', sort: total, cls: 'usage-total-cell'};
   }
 

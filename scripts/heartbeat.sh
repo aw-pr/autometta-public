@@ -100,8 +100,8 @@ for agent_path in "$active_dir"/*.json; do
   fi
   live_total=$((live_input + live_cached + live_output))
   live_uncached=$((live_input + live_output))
-  jq --argjson pid "$pid" --argjson total "$live_total" --argjson uncached "$live_uncached" \
-    '. + [{pid:$pid,total_tokens:$total,uncached_tokens:$uncached}]' "$tmp_usage" > "${tmp_usage}.next"
+  jq --argjson pid "$pid" --argjson total "$live_total" --argjson uncached "$live_uncached" --argjson input "$live_input" \
+    '. + [{pid:$pid,total_tokens:$total,uncached_tokens:$uncached,uncached_input_tokens:$input}]' "$tmp_usage" > "${tmp_usage}.next"
   mv "${tmp_usage}.next" "$tmp_usage"
 done
 
@@ -297,6 +297,7 @@ for name in sorted(os.listdir(active_dir)):
     if live_total is not None:
         doc["live_total_tokens"] = live_total
         doc["live_uncached_tokens"] = live_uncached
+        doc["live_uncached_input_tokens"] = usage.get("uncached_input_tokens")
     doc["baseline_median_uncached_tokens"] = uncached_baseline
     if baseline is not None:
         doc["baseline_median_tokens"] = baseline
