@@ -109,10 +109,6 @@ stages:
     status: pending
     worker: "Claude Sonnet 5 <claude-sonnet-5@local>"
     verifier: "GPT-5.6 Sol <gpt-5-6-sol@local>"
-  - id: mixed-stage
-    status: pending
-    worker: "GPT-5.6 Sol <gpt-5-6-sol@local>"
-    verifier: "Claude Sonnet 5 <claude-sonnet-5@local>"
 YAML
 cat > "$repo/state/budget.json" <<'JSON'
 {"paused_until":null,"paused_reason":null}
@@ -307,7 +303,12 @@ assert_eq 1 "$overrun_rc" "a drain that would outlive the overnight window is re
 assert_contains "$(cat "$fixture/overrun.log")" "overnight window" "refusal names the window"
 printf 'PASS acceptance 5: --ignore-reserve suspends the reserve for its own life only, never past the window\n'
 
-# --- Acceptance 6: the current host policy is deliberately asymmetric.
+# AUTOMETTA-CONTRACT-END
+
+# Additional regression coverage stays outside the recorded frozen assertions.
+yq -i '.stages += [{"id":"mixed-stage","status":"pending","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Sonnet 5 <claude-sonnet-5@local>"}]' "$repo/state/state.yaml"
+
+# --- Post-contract regression: asymmetric provider session reserves.
 # Codex has no session window, so its weekly pace is a separate gate. Claude
 # does have a five-hour session: a new card that names Claude in either role
 # stops at 70% used by day and 90% overnight. A nearly spent Claude weekly
@@ -382,7 +383,7 @@ AUTOMETTA_IGNORE_RESERVE=1 AUTOMETTA_SCHEDULE_CLOCK=14:00 \
   || fail "AUTOMETTA_IGNORE_RESERVE=1 should override the Claude session reserve"
 printf 'PASS acceptance 6: Claude reserves 30%% by day and 10%% overnight for new cards, with a manual override\n'
 
-# AUTOMETTA-CONTRACT-END
+
 
 for file in quota-window.sh budget.sh tick.sh drain.sh; do
   bash -n "$script_dir/$file"

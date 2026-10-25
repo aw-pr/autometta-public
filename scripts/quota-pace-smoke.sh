@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=quota pacing regression; no stage card freezes this file
 # Offline checks for weekly pacing and the Codex run cap. No provider/model calls.
 set -euo pipefail
 IFS=$'\n\t'
