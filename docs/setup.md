@@ -70,7 +70,12 @@ Restart CLI sessions and complete any hook trust review. Without mcp-hub, use
 `scripts/install-escalation-hook.sh --family all` from the Autometta checkout
 and set Codex's `features.hooks = true`. Verify with
 `scripts/install-escalation-hook.sh --check --family all`. These hooks deliver
-new or changed escalations during active chats; they do not wake idle sessions.
+new or changed escalations and lifecycle notices during active chats. Optional
+`scripts/wakeups.sh enable` registration adds native idle wake-ups with batching,
+one outstanding message per chat, a 120-second fleet cooldown and six/hour,
+24/day rolling fleet caps. Add `--fleet` for a fleet fallback. The host remains
+off until enabled; `scripts/wakeups.sh disable` is the off switch. After the next
+Homebrew rebuild these controls are also available as `autometta wake`.
 See [Escalations](tick-loop.md#escalations) for scope and delivery semantics.
 
 ## 3. Per-repo subscription

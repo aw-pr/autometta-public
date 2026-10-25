@@ -181,9 +181,13 @@ Code and Codex lifecycle hooks. Without mcp-hub, run Autometta's
 `scripts/install-escalation-hook.sh --family all` and enable Codex's
 `features.hooks = true`. Restart CLI sessions and complete any hook trust review.
 `--check --family all` verifies the hook entries without changing settings.
-Hooks deliver new or changed escalations at session start, on user prompts and
-after tools; they do not wake idle chats. Worker/verifier headless runs are
-excluded. See `docs/tick-loop.md` under Escalations for scope and delivery state.
+Hooks deliver new or changed escalations and lifecycle notices at session start, on user prompts and
+after tools. Optional `scripts/wakeups.sh enable` registration adds native Claude
+`asyncRewake` and Codex queue delivery. Use `--fleet` for a fleet fallback.
+One outstanding wake per chat, a 120-second fleet cooldown, six/hour and 24/day
+rolling fleet caps bound storms. `disable` stops new delivery; restarts do not
+reset counters. Headless workers/verifiers and subagents are excluded. See
+`docs/tick-loop.md` under Escalations for scope, leases and delivery state.
 
 ### Optional: set the host's reserve in the mandate
 

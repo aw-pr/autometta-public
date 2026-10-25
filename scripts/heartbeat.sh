@@ -111,7 +111,7 @@ codex_reading="$(python3 "$script_dir/quota-window.py" codex 2>/dev/null || prin
 
 python3 - "$active_dir" "$recent_dir" "$tmp_report" "$stall_seconds" \
   "$cost_log_path" "$tmp_usage" "$outlier_window" "$outlier_min_samples" \
-  "$outlier_multiple" "$outlier_kill_multiple" "$outlier_total_kill_multiple" "$codex_reading" <<'PY'
+  "$outlier_multiple" "$outlier_kill_multiple" "$outlier_total_kill_multiple" "$codex_reading" "$script_dir" <<'PY'
 import json
 import os
 import signal
@@ -123,8 +123,15 @@ import time
 (
     active_dir, recent_dir, out_path, stall_str, cost_log_path, usage_path,
     window_str, min_samples_str, multiple_str, kill_multiple_str,
-    total_kill_multiple_str, codex_reading_str,
+    total_kill_multiple_str, codex_reading_str, script_dir,
 ) = sys.argv[1:]
+
+sys.path.insert(0, os.path.join(script_dir, "lib"))
+try:
+    from lifecycle_events import agent_event
+except ImportError:
+    def agent_event(*args, **kwargs):
+        pass
 
 try:
     codex_reading = json.loads(codex_reading_str)
@@ -433,6 +440,7 @@ for name in sorted(os.listdir(active_dir)):
                 json.dump(doc, fh, indent=2, sort_keys=True)
                 fh.write("\n")
             os.remove(path)
+            agent_event(os.path.dirname(os.path.dirname(active_dir)), doc, finished=True)
         except OSError:
             pass
         continue

@@ -80,13 +80,25 @@ main() {
   local dir file base repo_raw="" repo_physical="" scope="" subscriber
   local lines=() total=0
   dir="$(escalations_dir)" || return 0
-  [[ -d "$dir/pending" ]] || return 0
 
   if subscriber="$(current_subscriber_repo)"; then
     repo_raw="${subscriber%%$'\n'*}"
     repo_physical="${subscriber#*$'\n'}"
     scope=" for $(basename "$repo_physical")"
   fi
+
+  if [[ "${1:-}" == --repos ]]; then
+    if [[ -n "$repo_physical" ]]; then
+      printf '%s\n' "$repo_physical"
+    else
+      while IFS= read -r file; do
+        [[ "$(read_subscriber_field "$file" enabled)" == true ]] || continue
+        physical_dir "$(read_subscriber_field "$file" repo_path)" || true
+      done < <(sort_subscribers)
+    fi
+    return 0
+  fi
+  [[ -d "$dir/pending" ]] || return 0
 
   for file in "$dir/pending"/*.md; do
     [[ -f "$file" ]] || continue

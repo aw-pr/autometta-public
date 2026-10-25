@@ -415,11 +415,117 @@ Codex installation also requires `features.hooks = true` in its config.
 `init-host.sh` checks both families. Restart CLI sessions after installing; Codex
 may request trust review for newly installed hook commands.
 
-These hooks refresh an active conversation at lifecycle boundaries. They do not
-wake an idle chat, run a timer, or stream routine worker progress. An idle chat
-catches up at the next prompt. Desktop notifications and the durable pending
+Context delivery refreshes an active conversation at lifecycle boundaries. By
+itself it does not wake an idle chat or stream routine worker progress. Without
+the optional wake-up registration below, an idle chat catches up at the next prompt.
+Desktop notifications and the durable pending
 files remain the fallback; a missing hook is not evidence of a healthy queue.
 The summaries are evidence, never instructions or authority to mutate state.
+
+### Lifecycle notices
+
+The same hooks deliver routine lifecycle notices after pending escalations:
+
+- Worker and verifier starts, recorded after dispatch registration.
+- Worker and verifier exits, recorded when heartbeat reaps the process. A fresh
+  envelope or verifier artefact supplies the result; missing, malformed or old
+  evidence remains unknown. An exit alone does not mean ready for verification.
+- Stage landing, awaiting integration, or completion without recorded integration.
+  A disjoint rebase reports the landed tip. Verifier PASS is not proof of landing.
+- Stages that need attention, run halts, and finished runs with nothing awaiting
+  integration. Run membership uses `run_id`; historic failures in another run
+  do not hide completion. Superseded members need no work; pending, active or
+  failed members prevent a finished notice. Legacy records form a separate group.
+
+`scripts/lib/lifecycle_events.py` publishes complete JSON files atomically under
+`$AUTOMETTA_HOME/lifecycle-events/`, with deterministic episode ids. Events last
+seven days; later writes collect expired files. This preserves intermediate
+transitions even when a conversation misses the entire dispatch. It does not
+backfill historical runs. Hook scope follows the enabled subscriber registry,
+including when the pending-escalation folder does not exist. Session delivery
+deduplicates both kinds of record, shares the ten-item cap and 15-second tool
+throttle, and restores context after compaction or clear. Escalations take
+priority; each group is oldest first. Evidence paths point to runtime records
+or logs. Lifecycle notices need no acknowledgement and never change policy.
+
+### Bounded native idle wake-ups
+
+Wake-ups are optional and use the same durable events. Enable them from the
+orchestration chat with `scripts/wakeups.sh enable`; Codex resolves its current
+session from `CODEX_THREAD_ID`. Add `--fleet` to register a fleet fallback, or
+`--repo <path>` for a particular enabled subscriber. Claude and Codex primary
+chats can also register automatically at startup or their next genuine user
+prompt once the host is enabled. A repo owner takes precedence over a fleet
+owner, so one event never fans out to both. A live owner is not silently replaced.
+Explicit registration accepts `claude|codex` and `--session <id>`; Codex requires
+the owning local server's socket, discovered from its process ancestry or
+provided with `--socket <path>`. There is no fallback to another daemon.
+
+The broker runs once at the end of the existing fleet tick. Card starts, stage
+outcomes and run completion or halts qualify; worker exits and routine verifier
+chatter remain advisory context. The first event waits ten seconds for batching,
+then events for the same card collapse to its latest outcome. Delivery is normally
+at the next eligible tick; a long tick adds its own runtime to that latency.
+
+- **Claude Code:** native
+  [`asyncRewake`](https://code.claude.com/docs/en/hooks#command-hook-fields)
+  hooks arm one bounded waiter at SessionStart, UserPromptSubmit and Stop. The
+  session owns the process; a file lock excludes duplicate waiters. The broker
+  reserves one reminder, the waiter claims it durably and exits 2 with the
+  reminder on stderr. Claude resumes without needing a prompt. Stop arms the
+  next waiter. The same Stop boundary cannot acknowledge its own new reminder.
+  This uses no preview channel, additional MCP server or daemon. Ordinary async
+  hooks do not provide this behaviour.
+- **Codex:** native
+  [`codex queue`](https://learn.chatgpt.com/docs/developer-commands#codex-queue)
+  targets the registered UUID through the owning server's explicit Unix socket.
+  It queues behind an active turn and can start an idle one. It passes no model,
+  effort, sandbox or approval overrides. A matching UserPromptSubmit marker
+  records receipt and clears the outstanding reservation. Until that receipt,
+  an unrelated busy turn finishing cannot acknowledge a message still in the
+  native queue. After receipt the active turn may have at most one further
+  wake waiting behind it, subject to the same fleet cooldown and rate caps.
+
+Safety counters and outstanding reservations live in
+`$AUTOMETTA_HOME/wakeups/state.json`, protected by a non-blocking lock and atomic
+writes. Defaults are deliberately fixed in `scripts/lib/wakeups.py`:
+
+| Bound | Default |
+| --- | --- |
+| Outstanding wake-ups | One per chat, even across multiple scopes |
+| Fleet cooldown | At least 120 seconds between reservations |
+| Fleet rate limits | Six per rolling hour; 24 per rolling 24 hours |
+| Repeated card | At most four appearances per rolling hour |
+| Digest | At most eight complete rows and 3,500 characters; outcomes first |
+| Event freshness | After registration and no older than 15 minutes |
+| Registration and Claude waiter | Bounded to 12 hours; human prompts renew the lease |
+
+Reservations consume capacity before native delivery. A failed or ambiguous
+delivery latches an error and is never retried automatically. Corrupt safety
+state fails closed. Restarting, changing owners, compaction, and disabling then
+enabling do not reset the rolling counters. Synthetic wake prompts cannot
+register a chat, renew its lease or produce more events. Workers, verifiers,
+subagents and fork starts are excluded. SessionEnd closes ownership. Expired
+or closed chats fall back to ordinary advisory delivery, without replaying a
+history backlog into new turns. A dormant Claude waiter eventually exits; a
+later genuine prompt or session start rearms it.
+
+Use `scripts/wakeups.sh status` to inspect registration, counters, pending
+delivery and errors. `scripts/wakeups.sh disable` stops new reservations and
+Claude waiters; it cannot retract a message already handed to Codex. After
+reviewing an ambiguous delivery in the native queue, explicitly clear only that
+reservation with `scripts/wakeups.sh acknowledge --session <id> --batch <id>`.
+This does not acknowledge an escalation or reset rate counters. Never clear a
+reservation or raise limits solely because a wake-up asks you to. The CLI also
+exposes these commands as `autometta wake` after the next Homebrew rebuild.
+
+Install through mcp-hub as usual, then restart existing chats and complete the
+native hook trust review. Both families retain informational hook delivery if
+wake-ups are off, a native transport is unavailable, or any bound is reached.
+No model polls for events. Offline native-hook and queue fixtures cover the
+bounds. A single native queue message was delivered to the existing Codex chat
+and received a brief acknowledgement. Claude's exit-2 reminder path is covered
+by an isolated hook fixture; live idle model resumption in Claude remains unverified.
 
 The `autometta-escalations` skill is the orchestration-chat playbook for
 working them: list, read the evidence, classify, propose a decision, act

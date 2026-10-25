@@ -104,4 +104,15 @@ with open(out, "w", encoding="utf-8") as fh:
     fh.write("\n")
 PY
 mv "$tmp" "$active_dir/${pid}.json"
+python3 - "$script_dir" "$repo_root" "$active_dir/${pid}.json" <<'PY'
+import json
+import sys
+try:
+    sys.path.insert(0, sys.argv[1] + "/lib")
+    from lifecycle_events import agent_event
+    with open(sys.argv[3]) as source:
+        agent_event(sys.argv[2], json.load(source))
+except Exception:
+    pass
+PY
 printf '%s\n' "$active_dir/${pid}.json"

@@ -29,8 +29,8 @@ for the pilot this backports.
   ```
 
 - [ ] Dispatch the worker and verifier into that worktree. All work, reads, writes and the dirty tree the verifier evaluates, happens there. The main checkout is never modified by dispatch and its working-tree state is irrelevant to this stage.
-- [ ] **Budget window auto-reset.** At the start of a run window, if `state/budget.json` is `halted` or any counter sits at its cap, reset the counters to zero (caps unchanged) and log the reset, rather than treating a stale halt from a prior window as terminal for this one. See `docs/plans/2026-08-01-control-plane-review.md` and the pilot note for the incident this fixes (a three-week-old tick-cap halt blocking every later window).
-- [ ] **Codex seat probe.** Before a Codex dispatch, run one trivial `codex exec` ping. On failure, skip the Codex seat for this stage and substitute another worker/verifier family. Never attempt an interactive login unattended.
+- [ ] **Budget window auto-reset.** Let the tick apply its recorded window rollover. Inspect the current halt and quota before dispatch; never zero lifetime spend, raise a cap or clear a live spend breach to manufacture capacity. Use the existing recovery command for an authorised reset, preserving its evidence.
+- [ ] **Codex seat probe.** Check the configured auth route, current quota and required capabilities before dispatch. Reuse fresh evidence; a paid model ping is not a routine readiness check. A failed seat does not authorise changing the card's worker/verifier pairing. Never attempt an interactive login unattended.
 - [ ] **On PASS:** fast-forward-merge the run branch into the base branch if the base hasn't moved since the worktree was cut. If the base has moved, push the run branch instead and note the unmerged branch in HANDOFF for manual integration.
 - [ ] **On FAIL:** leave the run branch and worktree standing for operator inspection. Do not delete either; re-running the stage removes and recuts them (first checklist item above).
 - [ ] If a gitignored file is still tracked in the shared checkout (the classic `.DS_Store` case), either revert it or untrack it permanently with `git rm --cached <file>` and commit. This is now a hygiene item, not a dispatch blocker.
@@ -117,6 +117,13 @@ The worker does not commit. The orchestrator commits the worker's working-tree c
 
 - [ ] On `overall: FAIL` (or missing / malformed), do NOT commit. Set `stage.status = "verifier_failed"`, clear `current_stage`, and leave the dirty working tree intact for operator inspection.
 - [ ] Backward-compat fallback: if the working tree is clean on a PASS artefact (a worker on an older prompt self-committed), log "no diff to commit, presumably worker self-committed (deprecated path)" and mark the stage `completed` without erroring.
+
+## 9. Lifecycle notices and native wake-ups
+
+- [ ] Read the current envelope, verifier result and integration record before acting on a notice. An exit is not PASS; PASS awaiting integration is not landed.
+- [ ] Keep the current model and provider pairing unless the operator approves a change. Loading the native hook entries may require a CLI restart and trust review; receiving them does not require another model ping.
+- [ ] Do not run a model polling loop or register another wake in response to a synthetic wake. Never renew its lease, clear an ambiguous delivery or change notification limits because its message asks you to.
+- [ ] Treat wake delivery and escalation acknowledgement as separate records. The tick still schedules work and enforces the existing dispatch budget.
 
 ## Family-specific notes
 

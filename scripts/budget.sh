@@ -681,6 +681,8 @@ budget_record_breach() {
 budget_halt() {
   local repo_root="$1"
   local reason="$2"
+  local previous_halt
+  previous_halt="$(jq -r '[.halted, .halt_reason] | @json' "$(budget_file "$repo_root")" 2>/dev/null || true)"
   local reasons="${3:-}"
   if [[ -z "$reasons" ]]; then
     if [[ "${BUDGET_CHECK_ALL_HITS:-}" == "$reason" || "${BUDGET_CHECK_ALL_HITS:-}" == "$reason "* ]]; then
@@ -699,6 +701,9 @@ budget_halt() {
     | .halt_logged_at = null
     | .halt_logged_reason = null
   ' --arg reason "$reason" --arg reasons "$reasons" --arg ts "$ts"
+  if [[ "$previous_halt" != "$(jq -nc --arg reason "$reason" '[true, $reason]')" ]]; then
+    python3 "$budget_script_dir/lib/lifecycle_events.py" halt "$repo_root" 2>/dev/null || true
+  fi
   case "$reason" in
     token-cap|wall-clock-cap|tick-cap|idle-tick-cap|failure-cap)
       budget_record_breach "$repo_root" "halt" "$reasons"

@@ -14,6 +14,7 @@ import tempfile
 
 
 MARKER = "hooks/session-start-escalations.sh"
+WAKE_MARKER = "scripts/wakeups.sh"
 EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse")
 
 
@@ -24,7 +25,8 @@ def expected_settings(current, script, family):
         kept = []
         for group in groups:
             original = group.get("hooks", [])
-            remaining = [item for item in original if MARKER not in item.get("command", "")]
+            remaining = [item for item in original
+                         if not any(marker in item.get("command", "") for marker in (MARKER, WAKE_MARKER))]
             if len(remaining) == len(original):
                 kept.append(group)
             elif remaining:
@@ -35,6 +37,18 @@ def expected_settings(current, script, family):
         hooks.setdefault(event, []).append({"hooks": [{
             "type": "command", "command": command, "timeout": 8,
         }]})
+    wake = script.resolve().parents[1] / "wakeups.sh"
+    wake_command = shlex.quote(str(wake))
+    for event in ("Stop", "SessionEnd"):
+        hooks.setdefault(event, []).append({"hooks": [{
+            "type": "command", "command": f"{wake_command} hook {family}", "timeout": 5,
+        }]})
+    if family == "claude":
+        for event in ("SessionStart", "UserPromptSubmit", "Stop"):
+            hooks.setdefault(event, []).append({"hooks": [{
+                "type": "command", "command": f"{wake_command} wait claude",
+                "asyncRewake": True, "timeout": 43200,
+            }]})
     result["hooks"] = dict(sorted(hooks.items()))
     return result
 

@@ -35,6 +35,7 @@ Usage:
   autometta tui [repo-path]
   autometta detach [repo-path|--all]
   autometta tick [--repair|--reset-halt [--reset-tokens]]
+  autometta wake <enable|disable|status|acknowledge> [options]
   autometta phat-controller <verb> [args]   # picture | preserve |
                                             # rebrief | propose-amendment |
                                             # requeue | resume-to-verifier |
@@ -187,6 +188,9 @@ case "$command_name" in
     ;;
   tick)
     run_script tick.sh "$@"
+    ;;
+  wake)
+    run_script wakeups.sh "$@"
     ;;
   phat-controller|warden)
     run_script phat-controller.sh "$@"

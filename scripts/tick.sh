@@ -854,7 +854,7 @@ state_apply_json() {
   local state_yaml="$1"
   local jq_filter="$2"
   shift 2
-  local cur_json tmp_json tmp_yaml
+  local cur_json tmp_json tmp_yaml lifecycle_changed
   cur_json="$(mktemp)"
   tmp_json="$(mktemp)"
   tmp_yaml="$(mktemp)"
@@ -873,7 +873,22 @@ state_apply_json() {
   # Write guard: the result must be non-empty, valid JSON, and still an
   # object carrying a .stages array. Never let a degenerate document
   # (e.g. {"stages":[]} or null) overwrite good state.
-  if [[ ! -s "$tmp_json" ]] || ! python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d, dict) and isinstance(d.get("stages"), list) else 1)' "$tmp_json" 2>/dev/null; then
+  if [[ ! -s "$tmp_json" ]] || ! lifecycle_changed="$(python3 - "$tmp_json" "$cur_json" 2>/dev/null <<'PY'
+import json
+import sys
+with open(sys.argv[1]) as source:
+    after = json.load(source)
+if not isinstance(after, dict) or not isinstance(after.get("stages"), list):
+    sys.exit(1)
+with open(sys.argv[2]) as source:
+    before = json.load(source)
+def lifecycle(doc):
+    return [{key: stage.get(key) for key in ("id", "status", "integration", "run_id")}
+            if isinstance(stage, dict) else stage for stage in doc.get("stages", [])]
+if lifecycle(before) != lifecycle(after):
+    print("changed")
+PY
+)"; then
     log "state_apply_json: refusing to write degenerate state to ${state_yaml} (filter: ${jq_filter})"
     rm -f "$cur_json" "$tmp_json" "$tmp_yaml"
     return 1
@@ -886,6 +901,10 @@ state_apply_json() {
 
   yq -P '.' "$tmp_json" > "$tmp_yaml"
   mv "$tmp_yaml" "$state_yaml"
+  if [[ "$lifecycle_changed" == changed ]]; then
+    python3 "$script_dir/lib/lifecycle_events.py" state "$(dirname "$(dirname "$state_yaml")")" \
+      "$cur_json" "$tmp_json" 2>/dev/null || true
+  fi
   rm -f "$cur_json" "$tmp_json"
 }
 
@@ -4148,6 +4167,10 @@ main() {
     fi
     process_repo "$repo_path" "$manifest_path"
   done <<< "$subscriber_list"
+
+  if [[ -f "$controller_home/wakeups/state.json" ]]; then
+    python3 "$script_dir/lib/wakeups.py" flush </dev/null 2>/dev/null || true
+  fi
 
   if tick_profile_enabled; then
     local fire_end_ns
