@@ -15,12 +15,7 @@ block dispatch. See `memory/adopters/emergence-viewer/feedback-worktree-dispatch
 for the pilot this backports.
 
 - [ ] The stage card declares `Base branch` and `Run branch` (`autometta/<stage-id>`) in its Metadata section. Pin both to branch names, never a commit SHA (no `expected_head`): the run branch is cut from the base branch fresh at dispatch time, so a SHA pin is stale the moment the base moves.
-- [ ] Remove any worktree or branch left standing by a prior attempt at this stage before cutting a new one:
-
-  ```sh
-  git worktree remove --force ../<repo>-run-<stage-id> 2>/dev/null || true
-  git branch -D autometta/<stage-id> 2>/dev/null || true
-  ```
+- [ ] If a previous attempt left a worktree, branch, envelope or live agent, follow `autometta-requeue` before cutting a new one. Inspect liveness and preserve failed work first. Never force-remove a live or dirty worktree, discard its branch, or remove runtime state just to make the next dispatch start.
 
 - [ ] Cut the run worktree as a sibling of the repo, not a subdirectory, so `../sibling-repo`-style card inputs still resolve the same way they do from the main checkout:
 
@@ -31,7 +26,7 @@ for the pilot this backports.
 - [ ] Dispatch the worker and verifier into that worktree. All work, reads, writes and the dirty tree the verifier evaluates, happens there. The main checkout is never modified by dispatch and its working-tree state is irrelevant to this stage.
 - [ ] **Budget window auto-reset.** Let the tick apply its recorded window rollover. Inspect the current halt and quota before dispatch; never zero lifetime spend, raise a cap or clear a live spend breach to manufacture capacity. Use the existing recovery command for an authorised reset, preserving its evidence.
 - [ ] **Codex seat probe.** Check the configured auth route, current quota and required capabilities before dispatch. Reuse fresh evidence; a paid model ping is not a routine readiness check. A failed seat does not authorise changing the card's worker/verifier pairing. Never attempt an interactive login unattended.
-- [ ] **On PASS:** fast-forward-merge the run branch into the base branch if the base hasn't moved since the worktree was cut. If the base has moved, push the run branch instead and note the unmerged branch in HANDOFF for manual integration.
+- [ ] **On PASS:** use the existing ordered integration path. An unchanged base fast-forwards; a verified file-disjoint change can rebase in its own worktree and fast-forward. Overlap, conflicts or an unavailable proof leave the branch awaiting integration. Record that state; verifier PASS alone does not mean landed.
 - [ ] **On FAIL:** leave the run branch and worktree standing for operator inspection. Do not delete either; re-running the stage removes and recuts them (first checklist item above).
 - [ ] If a gitignored file is still tracked in the shared checkout (the classic `.DS_Store` case), either revert it or untrack it permanently with `git rm --cached <file>` and commit. This is now a hygiene item, not a dispatch blocker.
 
