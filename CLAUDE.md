@@ -85,7 +85,7 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 - `skills/autometta-setup/` - adopt the dispatch contract and the tick loop in another repo.
 - `skills/autometta-run-design/` - design a run before anything is queued: cards, pairings, gates, spend.
 - `skills/autometta-card-review/` - interview the operator and review one card before it is queued: seat check, baseline run, cold read, `card-lint.sh --strict`.
-- `skills/autometta-oracle/` - author a card's frozen contract test, proven red on the base branch and green against a reference, and record its digest.
+- `skills/autometta-oracle/` - author a focused frozen contract test with proportionate proof, record its digest and any authorised supplemental evidence gates.
 - `skills/autometta-requeue/` - re-queue a stage safely after a FAIL, a dead agent or a stale run worktree.
 - `skills/autometta-escalations/` - work the operator's pending escalations from an orchestration chat.
 - `skills/phat-controller/` - a pointer: the role is retired, work the queue through `autometta-escalations`.
