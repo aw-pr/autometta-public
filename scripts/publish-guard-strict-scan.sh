@@ -50,19 +50,34 @@ files=$(
 [ -z "$files" ] && exit 0
 
 fail=0
+scan_files=()
+while IFS= read -r f; do
+  [ -f "$repo_root/$f" ] && scan_files+=("$repo_root/$f")
+done <<< "$files"
 while IFS= read -r pat; do
   [ -z "$pat" ] && continue
-  while IFS= read -r f; do
-    [ -f "$repo_root/$f" ] || continue
-    # -I skips binary; -n prefixes line numbers; -E for ERE.
-    if matches="$(grep -InE -- "$pat" "$repo_root/$f" 2>/dev/null)"; then
+  pattern_status=0
+  grep -E -- "$pat" /dev/null >/dev/null 2>&1 || pattern_status=$?
+  if [ "$pattern_status" -gt 1 ]; then
+    echo "publish-guard-strict: invalid pattern configuration — blocked." >&2
+    fail=1
+    continue
+  fi
+  # Bound argv size without spawning a grep process for every file.
+  for ((offset=0; offset<${#scan_files[@]}; offset+=100)); do
+    grep_status=0
+    matches="$(grep -HInE -- "$pat" "${scan_files[@]:offset:100}" 2>/dev/null)" || grep_status=$?
+    if [ "$grep_status" -gt 1 ]; then
+      echo "publish-guard-strict: a candidate file could not be scanned — blocked." >&2
+      fail=1
+    elif [ "$grep_status" -eq 0 ]; then
       if [ -n "$matches" ]; then
-        echo "publish-guard-strict: forbidden phrase /$pat/ in '$f':" >&2
+        echo "publish-guard-strict: forbidden phrase /$pat/:" >&2
         echo "$matches" | sed 's/^/  /' >&2
         fail=1
       fi
     fi
-  done <<< "$files"
+  done
 done <<< "$patterns"
 
 if [ "$fail" -ne 0 ]; then
