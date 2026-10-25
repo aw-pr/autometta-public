@@ -62,8 +62,15 @@ AUTOMETTA_DASHBOARD_JS="$script_dir/../dashboard/dashboard.js" node <<'JS'
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const context = vm.createContext({window:{location:{protocol:'http:'}}, document:{}});
 const source = fs.readFileSync(process.env.AUTOMETTA_DASHBOARD_JS,'utf8');
-vm.runInContext(source.slice(0,source.lastIndexOf('  var first =')) + '\nwindow.test = {creditEquivalent, stageRoleCell, stageTokenCells, stageUsageDetails, subscriptionText, roleTokenSplit, stageUsageTotal};})();',context);
+vm.runInContext(source.slice(0,source.lastIndexOf('  var first =')) + '\nwindow.test = {creditEquivalent, stageRoleCell, stageTokenCells, stageUsageDetails, subscriptionText, roleTokenSplit, stageUsageTotal, roleEffortLabel};})();',context);
 const api = context.window.test;
+const effortCard = {card_text:'- **Worker effort:** high\n- **Verifier effort:** medium'};
+assert.match(api.roleEffortLabel(effortCard,'worker'),/\(high\)/);
+assert.match(api.roleEffortLabel(effortCard,'verifier'),/\(medium\)/);
+assert.match(api.roleEffortLabel({card_text:'# Legacy card'},'worker'),/\(default\)/);
+assert.match(api.roleEffortLabel({},'worker'),/\(\?\)/);
+assert.match(api.roleEffortLabel({card_text:'could not read card'},'worker'),/\(\?\)/);
+
 const row = {stage_id:'test',role:'worker',identity:'GPT-6.1 Sol',auth_route:'subscription',input_tokens:1000000,cached_input_tokens:10000000,output_tokens:1000000,total_tokens:12000000};
 assert.equal(api.creditEquivalent(row),325);
 assert.equal(api.creditEquivalent({...row,identity:'unknown'}),null);

@@ -510,3 +510,9 @@ total relabelled as uncached. Live splits use the heartbeat's paired total and
 uncached counts from the same sample. Expanded dispatch details retain full
 processed totals; run banners explicitly label their full totals as processed
 tokens. Charts and budget enforcement keep their existing processed measure.
+
+Each role shows its card-declared thinking effort beside the model, for example
+`GPT-6.1 Sol (high)`. `default` means no usable card override; the CLI/provider
+chooses the level. `?` means the card could not establish the setting. This is
+the current card declaration, not proof of the level used by every historical
+attempt; the tooltip states that distinction.

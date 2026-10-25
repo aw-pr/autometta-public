@@ -435,12 +435,29 @@
       wp == null || vp == null ? null : wp + vp) + '</div>', sort: total, cls: 'usage-total-cell'};
   }
 
+  function roleEffortLabel(stage, role) {
+    var text = stage.card_text;
+    var value = "?", title = "Thinking effort unavailable: card could not be read";
+    if (typeof text === "string" && text && text.indexOf("could not read ") !== 0) {
+      var name = role === "worker" ? "Worker" : "Verifier";
+      var match = text.match(new RegExp("^- \\*\\*" + name + " effort:\\*\\* (.*)$", "m"));
+      if (match && /^(low|medium|high|xhigh|max)$/.test(match[1])) {
+        value = match[1];
+        title = "Card-declared " + role + " thinking effort; historical attempts may differ";
+      } else if (!/\.\.\. \d+ more line\(s\)/.test(text)) {
+        value = "default";
+        title = "No usable card effort override; the provider or CLI configuration supplies the default";
+      }
+    }
+    return ' <span class="usage-muted role-effort" title="' + esc(title) + '">(' + value + ')</span>';
+  }
+
   function stageRoleCell(repo, stage, role, tokenCell) {
     var rows = roleUsage(repo, stage, role);
     var complete = rows.length && rows.every(function (r) {
       return r.input_tokens != null && r.cached_input_tokens != null && r.output_tokens != null;
     });
-    var lines = ['<strong class="role-model">' + esc(shortIdentity(stage[role])) + '</strong>'];
+    var lines = ['<span class="role-model"><strong>' + esc(shortIdentity(stage[role])) + '</strong>' + roleEffortLabel(stage, role) + '</span>'];
     var split = roleTokenSplit(repo, stage, role);
     var count = split.uncached, live = split.live;
     lines.push(usageTokenMarkup(split, uncachedPrediction(repo, stage, role)));
