@@ -57,7 +57,7 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 # Strict scanner — runs on every push, regardless of remote, if the repo ships
 # one. Catches personal positioning phrases before any push leaves the laptop.
 if [ -n "$repo_root" ] && [ -x "$repo_root/scripts/publish-guard-strict-scan.sh" ]; then
-  "$repo_root/scripts/publish-guard-strict-scan.sh"
+  "$repo_root/scripts/publish-guard-strict-scan.sh" || exit $?
 fi
 
 pub_match="$(git config --get publishguard.publicmatch || true)"
