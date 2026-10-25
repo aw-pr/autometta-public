@@ -432,7 +432,7 @@
     var total = w.uncached == null || v.uncached == null ? null : w.uncached + v.uncached;
     return {html: '<div class="role-usage">' + usageTokenMarkup({uncached: total,
       cached: w.cached == null || v.cached == null ? null : w.cached + v.cached, live: w.live || v.live},
-      wp == null || vp == null ? null : wp + vp) + '</div>', sort: total};
+      wp == null || vp == null ? null : wp + vp) + '</div>', sort: total, cls: 'usage-total-cell'};
   }
 
   function stageRoleCell(repo, stage, role, tokenCell) {

@@ -344,7 +344,7 @@ pre.card-text {
 }
 
 /* Model and consumption stay together while the full audit lives below the row. */
-.role-cell { min-width: 25rem; width: 30%; vertical-align: top; }
+.role-cell { min-width: 25rem; width: 25%; vertical-align: top; }
 .role-usage { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .6rem; line-height: 1.35; font-variant-numeric: tabular-nums; }
 .role-usage > * { white-space: nowrap; }
 #stages-table-wrap { overflow-x: auto; }
@@ -362,3 +362,6 @@ pre.card-text {
 
 .stage-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.25rem; margin-bottom: .75rem; }
 .stage-heading h2, .stage-heading #stage-order { margin: 0; }
+
+.usage-total-cell { min-width: 21rem; width: 20%; }
+.usage-total-cell .role-usage { flex-wrap: nowrap; }
