@@ -159,11 +159,11 @@ dispatch_silence_seconds() {
 }
 
 # Silence beyond this many seconds kills a streaming dispatch; 0 turns the
-# check off. The default is twice the Claude Bash tool's ten-minute cap, so no
-# single tool call can reach it.
+# check off. Quiet local compute and background tasks can outlive tool-call
+# limits, so silence alone is opt-in; wall-clock and quota guards remain active.
 dispatch_silence_limit_seconds() {
-  local limit="${AUTOMETTA_SILENCE_KILL_SECONDS:-1200}"
-  [[ "$limit" =~ ^[0-9]+$ ]] || limit=1200
+  local limit="${AUTOMETTA_SILENCE_KILL_SECONDS:-0}"
+  [[ "$limit" =~ ^[0-9]+$ ]] || limit=0
   printf '%s\n' "$limit"
 }
 

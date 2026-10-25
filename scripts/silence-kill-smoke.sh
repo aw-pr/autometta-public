@@ -56,11 +56,14 @@ set_mtime "$transcript_dir/session.jsonl" "$((now_epoch - 60))"
 [[ "$(dispatch_silence_seconds "$repo" 101 "$now_epoch" "")" == "60" ]] \
   || fail "a recent transcript write does not count as activity"
 
-[[ "$(dispatch_silence_limit_seconds)" == "1200" ]] || fail "the default limit is not 1200s"
+unset AUTOMETTA_SILENCE_KILL_SECONDS
+[[ "$(dispatch_silence_limit_seconds)" == "0" ]] || fail "silence killing must default to disabled"
+[[ "$(AUTOMETTA_SILENCE_KILL_SECONDS=1200 dispatch_silence_limit_seconds)" == "1200" ]] \
+  || fail "an explicit silence limit is not honoured"
 [[ "$(AUTOMETTA_SILENCE_KILL_SECONDS=0 dispatch_silence_limit_seconds)" == "0" ]] \
   || fail "AUTOMETTA_SILENCE_KILL_SECONDS=0 does not turn the check off"
-[[ "$(AUTOMETTA_SILENCE_KILL_SECONDS=soon dispatch_silence_limit_seconds)" == "1200" ]] \
-  || fail "a non-numeric limit does not fall back to 1200s"
+[[ "$(AUTOMETTA_SILENCE_KILL_SECONDS=soon dispatch_silence_limit_seconds)" == "0" ]] \
+  || fail "an invalid limit must not enable silence killing"
 
 if [[ "$(uname)" == "Darwin" ]]; then
   [[ "$(system_wake_epoch)" =~ ^[0-9]+$ ]] || fail "kern.waketime did not parse to epoch seconds"

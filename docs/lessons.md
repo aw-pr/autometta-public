@@ -598,9 +598,12 @@ binary's path, and every Claude Code release installs to a new
 The fix has two parts. First, keep TCC-protected folders out of user-level
 permission rules. Second, the tick now kills a streaming dispatch, worker or
 verifier, that writes neither its log nor its newest transcript for
-`AUTOMETTA_SILENCE_KILL_SECONDS` (default 1200, `0` disables), and marks the
-stage stalled. Twenty minutes is twice the Claude Bash tool's ten-minute cap,
-so no single tool call reaches it. API outages write `api_error` rows to the
+`AUTOMETTA_SILENCE_KILL_SECONDS` when explicitly enabled, and marks the
+stage stalled. It now defaults to `0` (disabled): stage 129 on 2026-10-25
+launched long browser tests and scheduled a 25-minute wake-up, but the old
+20-minute silence limit killed it first. A tool-call timeout does not bound
+background compute. Keep role wall-clock and quota guards; use silence killing
+only when the workload is known to emit regular activity. API outages write `api_error` rows to the
 transcript and are judged by the api-error rule, not this one. A system wake
 later than the last write restarts the count, so a sleeping Mac is not
 mistaken for a hung agent. `scripts/silence-kill-smoke.sh` covers it.
