@@ -461,10 +461,11 @@ Explicit registration accepts `claude|codex` and `--session <id>`; Codex require
 the owning local server's socket, discovered from its process ancestry or
 provided with `--socket <path>`. There is no fallback to another daemon.
 
-The broker runs once at the end of the existing fleet tick. Card starts, stage
-outcomes and run completion or halts qualify; worker exits and routine verifier
-chatter remain advisory context. The first event waits ten seconds for batching,
-then events for the same card collapse to its latest outcome. Delivery is normally
+The broker runs once at the end of the existing fleet tick. Worker and verifier
+starts and finishes, stalled or failed stages, integration outcomes and run
+completion or halts qualify. The first event waits ten seconds for batching,
+then events for the same card share a row with their transitions and latest
+outcome. A retry start does not hide an earlier stalled or failed transition. Delivery is normally
 at the next eligible tick; a long tick adds its own runtime to that latency.
 
 - **Claude Code:** native

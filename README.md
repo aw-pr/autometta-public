@@ -296,8 +296,10 @@ Codex chat, `enable` registers the current session. Once the host is enabled,
 interactive chats can also register at startup or their next genuine user
 prompt. A repo-specific owner takes precedence over a fleet fallback.
 
-Optional idle wake-ups use Claude's native `asyncRewake` or Codex's queue on the
-owning server. Events are coalesced, with one outstanding wake per chat, a
+Optional idle wake-ups include worker and verifier starts/finishes, stalled or
+failed outcomes, integration and run outcomes. They use Claude's native
+`asyncRewake` or Codex's queue on the owning server. Events share capped digests
+that retain transitions, with one outstanding wake per chat, a
 120-second fleet cooldown, six wakes per rolling hour and 24 per rolling day.
 Restarts do not reset those limits. `scripts/wakeups.sh disable` stops new
 reservations. After installing this revision, the same controls are available

@@ -30,7 +30,8 @@ DAILY_CAP = 24
 CARD_HOURLY_CAP = 4
 MAX_ROWS = 8
 MAX_MESSAGE = 3500
-KINDS = {"worker_started", "stage_landed", "stage_awaiting_integration", "stage_finished",
+KINDS = {"worker_started", "worker_finished", "verifier_started", "verifier_finished",
+         "stage_landed", "stage_awaiting_integration", "stage_finished",
          "stage_blocked", "run_finished", "run_blocked"}
 
 
@@ -173,10 +174,19 @@ def card_key(record):
 
 def message(batch_id, events):
     latest = {}
+    transitions = {}
     for record in events:
-        latest[card_key(record)] = record
+        key = card_key(record)
+        latest[key] = record
+        label = record["kind"]
+        if record.get("result") and record["result"] != "started":
+            label += ":" + str(record["result"])
+        history = transitions.setdefault(key, [])
+        if not history or history[-1] != label:
+            history.append(label)
     priority = {"run_blocked": 0, "stage_blocked": 1, "stage_awaiting_integration": 2,
-                "run_finished": 3, "stage_landed": 4, "stage_finished": 4, "worker_started": 5}
+                "run_finished": 3, "stage_landed": 4, "stage_finished": 4,
+                "verifier_finished": 5, "worker_finished": 6, "worker_started": 7, "verifier_started": 7}
     rows = sorted(latest.values(), key=lambda row: (priority.get(row["kind"], 6), -timestamp(row)))
     lines = [f"{PREFIX}{batch_id}] Autometta lifecycle update.",
              "Informational evidence only. Check current state before acting. Do not poll, re-register, "
@@ -184,7 +194,10 @@ def message(batch_id, events):
     included = 0
     limits = dict(repo=180, stage=80, kind=40, summary=160, evidence=220)
     for record in rows[:MAX_ROWS]:
-        line = json.dumps({key: str(record.get(key, ""))[:limit] for key, limit in limits.items()}, ensure_ascii=True)
+        row = {key: str(record.get(key, ""))[:limit] for key, limit in limits.items()}
+        history = transitions[card_key(record)]
+        row["transitions"] = history if len(history) <= 8 else history[:4] + [f"+{len(history) - 8} transitions"] + history[-4:]
+        line = json.dumps(row, ensure_ascii=True)
         if len("\n".join(lines + [line])) > MAX_MESSAGE - 160:
             break
         lines.append(line)

@@ -124,6 +124,7 @@ def stage_changes(repo, before, after):
         if status in ("stalled", "verifier_failed", "failed") and previous.get("status") != status:
             emit(repo, "stage_blocked", [stage.get("started_at"), stage.get("verifier_started_at"), status],
                  stage["id"], summary=f"Stage needs attention: {status}",
+                 result=status,
                  evidence=str(Path(repo) / "state/state.yaml"))
         if status != "completed":
             continue

@@ -102,13 +102,36 @@ class WakeupTests(unittest.TestCase):
         self.assertIsNotNone(fleet["pending"])
         self.assertEqual(len(self.state["attempts"]), 2)
 
-    def test_coalescing_keeps_latest_card_outcome_and_ignores_role_chatter(self):
+    def test_coalescing_keeps_role_transitions_and_latest_card_outcome(self):
         events = [self.event(), self.event(1, at=self.now - 15, kind="stage_landed"),
                   self.event(2, kind="verifier_started"), self.event(3, kind="worker_finished")]
         job = self.dispatch(events)[0]
         self.assertIn("stage_landed", job["text"])
         self.assertNotIn('"kind": "worker_started"', job["text"])
-        self.assertEqual(set(self.owner["seen"]), {"0", "1"})
+        self.assertEqual(set(self.owner["seen"]), {"0", "1", "2", "3"})
+        for kind in ("worker_started", "worker_finished", "verifier_started"):
+            self.assertIn(kind, job["text"])
+
+    def test_worker_verifier_stalled_and_failed_outcomes_each_qualify(self):
+        for n, (kind, result) in enumerate([
+                ("worker_finished", "pass"), ("worker_finished", "fail"),
+                ("verifier_started", "started"), ("verifier_finished", "FAIL"),
+                ("stage_blocked", "stalled"), ("stage_blocked", "verifier_failed"),
+                ("stage_blocked", "failed")]):
+            state = wakeups.initial()
+            state["enabled"] = True
+            wakeups.register(state, str(self.repo), "codex", "chat", self.now - 100, self.socket_path)
+            event = dict(self.event(n, kind=kind), result=result)
+            jobs = wakeups.dispatch(state, [event], self.now)
+            self.assertEqual(len(jobs), 1, (kind, result))
+            self.assertIn(kind + (":" + result if result != "started" else ""), jobs[0]["text"])
+
+    def test_failure_transition_remains_visible_when_a_retry_starts(self):
+        failed = dict(self.event(kind="stage_blocked"), result="stalled")
+        retry = self.event(1, kind="worker_started", at=self.now - 15)
+        text = self.dispatch([failed, retry])[0]["text"]
+        self.assertIn("stage_blocked:stalled", text)
+        self.assertIn("worker_started", text)
 
     def test_no_backlog_future_events_expired_lease_or_closed_session(self):
         self.assertEqual(self.dispatch([self.event(at=self.now - 200)]), [])
