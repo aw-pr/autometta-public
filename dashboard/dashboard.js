@@ -23,6 +23,7 @@
   var state = {
     data: null,
     hidden: Object.create(null), // repo name -> true once deselected
+    repoSelection: null,
     pageSize: Object.create(null),
     page: Object.create(null),
     rangeDays: null,
@@ -30,10 +31,18 @@
     // the DOM: a poll re-renders every table, and a reader mid-way through a
     // stage card should not have it collapse under them every few seconds.
     expanded: Object.create(null),
+    // Per-table column filters, table key -> column index -> text. Held here
+    // for the same reason as `expanded`: a poll must not wipe a search.
+    filters: Object.create(null),
+    sorts: Object.create(null),
+    // Row keys in the order the paged table last drew them, after filtering.
+    rowOrder: Object.create(null),
+    stageOrder: null,
     lastGeneratedAt: null,
     pollFailures: 0
   };
   var charts = Object.create(null);
+  var chartSignatures = Object.create(null);
 
   function fmtInt(n) {
     if (n == null) return "-";
@@ -107,6 +116,10 @@
       return live;
     }
     if (agent.stage_tokens_status === "waiting") return "waiting";
+    if ((agent.stage_tokens_status !== "counted" || agent.stage_tokens == null) &&
+        agent.live_total_tokens != null) {
+      return '<span class="burn-total">' + compactTokens(agent.live_total_tokens) + " heartbeat</span>";
+    }
     if (agent.stage_tokens_status !== "counted" || agent.stage_tokens == null) return "n/a";
 
     var parts = ['<span class="burn-total">' + compactTokens(agent.stage_tokens) + " transcript</span>"];
@@ -172,11 +185,9 @@
 
   // --- per-stage spend -----------------------------------------------------
 
-  // Tokens are written onto a stage row when it completes. A stage that
-  // stalled never gets that write, so its row reads 0 while the cost log knows
-  // it burned over a million -- which is why a repo whose whole run stalled
-  // drew empty charts. Fall back to the cost log, which carries the same
-  // figures per stage and per role.
+  // Dispatch history includes failed attempts as well as the landed attempt.
+  // Use it consistently for totals, cache shares and cost equivalents; older
+  // snapshots without role history fall back to the ledger and legacy sums.
   function stageSpend(repo, stage) {
     var spend = repo.spend || {};
     // A spend query that could not run reports null figures and a state_error,
@@ -191,10 +202,25 @@
     var worker = Number(stage.worker_tokens || 0);
     var verifier = Number(stage.verifier_tokens || 0);
     var total = Number(stage.tokens || 0);
+    var logged = 0;
+    var roles = (spend.role_usage || []).filter(function (row) { return row.stage_id === stage.id; });
+    if (roles.length) {
+      worker = verifier = 0;
+      var unknown = {worker: false, verifier: false};
+      roles.forEach(function (row) {
+        var n = row.total_tokens;
+        if (n == null && row.input_tokens != null && row.cached_input_tokens != null && row.output_tokens != null)
+          n = row.input_tokens + row.cached_input_tokens + row.output_tokens;
+        if (n == null) unknown[row.role] = true;
+        else if (row.role === "worker") worker += n;
+        else if (row.role === "verifier") verifier += n;
+      });
+      return {worker: unknown.worker ? null : worker, verifier: unknown.verifier ? null : verifier,
+        total: unknown.worker || unknown.verifier ? null : worker + verifier, logged: true};
+    }
     if (total || worker || verifier) {
       return { worker: worker, verifier: verifier, total: total || worker + verifier, logged: false };
     }
-    var logged = 0;
     (spend.by_stage || []).forEach(function (row) {
       if (row.stage_id === stage.id) logged += Number(row.tokens || 0);
     });
@@ -218,7 +244,79 @@
       var transcriptTokens = Number(agent.stage_tokens);
       return isFinite(transcriptTokens) ? transcriptTokens : null;
     }
+    // The fleet page never reads transcripts (too costly across every repo
+    // each cycle), so stage_tokens is absent there. The heartbeat's figure is
+    // a tick behind at worst, but without it a running stage read as zero.
+    if (agent.live_total_tokens != null) {
+      var heartbeatTokens = Number(agent.live_total_tokens);
+      return isFinite(heartbeatTokens) ? heartbeatTokens : null;
+    }
     return null;
+  }
+
+  // The predicted figure sits in brackets after the actual one, so a queued
+  // stage reads "0 (~1.2M)" and a finished one shows how far it strayed.
+  function estimateSuffix(estimate, role) {
+    if (!estimate || estimate[role] == null) return "";
+    var basis = estimate.basis === "model"
+      ? "median of this model's past dispatches in this repo"
+      : "no history for this model here: median across models in the role";
+    return ' <span class="est" title="predicted: ' + esc(basis) + '">(~' +
+      compactTokens(estimate[role]) + ")</span>";
+  }
+
+  // One rate per model across the visible repos and both roles, weighted by
+  // dispatch count. The heat compares cost per minute rather than tokens per
+  // minute: a pricier model can spend fewer tokens and still drain the window
+  // faster.
+  function modelBurnRates(repos) {
+    var acc = Object.create(null);
+    repos.forEach(function (repo) {
+      ((repo.spend || {}).model_rates || []).forEach(function (row) {
+        var a = acc[row.identity] || (acc[row.identity] =
+          { identity: row.identity, samples: 0, tokens: 0, tokenWeight: 0, cost: 0, costWeight: 0, medianTokens: 0 });
+        var n = Number(row.samples || 0);
+        a.samples += n;
+        a.medianTokens += Number(row.median_tokens || 0) * n;
+        if (row.tokens_per_min != null) { a.tokens += Number(row.tokens_per_min) * n; a.tokenWeight += n; }
+        if (row.cost_usd_per_min != null) { a.cost += Number(row.cost_usd_per_min) * n; a.costWeight += n; }
+      });
+    });
+    var rates = Object.keys(acc).map(function (k) {
+      var a = acc[k];
+      return {
+        identity: a.identity, samples: a.samples,
+        median_tokens: a.samples ? a.medianTokens / a.samples : null,
+        tokens_per_min: a.tokenWeight ? a.tokens / a.tokenWeight : null,
+        cost_usd_per_min: a.costWeight ? a.cost / a.costWeight : null
+      };
+    });
+    var costs = rates.map(function (r) { return r.cost_usd_per_min; })
+      .filter(function (c) { return c != null; }).sort(function (a, b) { return a - b; });
+    var mid = costs.length ? costs[Math.floor(costs.length / 2)] : null;
+    var byIdentity = Object.create(null);
+    rates.forEach(function (r) {
+      r.relative = (mid && r.cost_usd_per_min != null) ? r.cost_usd_per_min / mid : null;
+      r.heat = r.relative == null ? "" : r.relative >= 1.5 ? "hot" : r.relative <= 0.67 ? "cool" : "warm";
+      byIdentity[r.identity] = r;
+    });
+    return { list: rates, byIdentity: byIdentity };
+  }
+
+  function burnBadge(rate) {
+    if (!rate || rate.tokens_per_min == null) return "";
+    var title = shortIdentity(rate.identity) + ": " + fmtInt(Math.round(rate.tokens_per_min)) +
+      " tokens/min" + (rate.cost_usd_per_min != null
+        ? ", ~$" + rate.cost_usd_per_min.toFixed(2) + "/min" : "") +
+      (rate.relative != null ? ", " + rate.relative.toFixed(1) + "x the median model's cost burn" : "") +
+      " (" + rate.samples + " dispatches)";
+    return ' <span class="burn-rate ' + esc(rate.heat) + '" title="' + esc(title) + '">' +
+      compactTokens(rate.tokens_per_min) + "/min</span>";
+  }
+
+  function identityCell(identity, rates) {
+    if (!identity) return shortIdentity(identity);
+    return { html: esc(shortIdentity(identity)) + burnBadge(rates.byIdentity[identity]), sort: shortIdentity(identity) };
   }
 
   function stageTokenCells(repo, stage) {
@@ -235,8 +333,10 @@
     });
     var liveTotal = liveByRole.worker + liveByRole.verifier;
     var mark = spend.logged ? "*" : "";
+    var estimate = stage.estimate || null;
     var spendTitle = spend.unavailable
-      ? ' title="' + esc((repo.spend || {}).state_error) + '"' : "";
+      ? ' title="' + esc((repo.spend || {}).state_error) + '"' :
+        spend.logged ? ' title="Recorded dispatch totals, including earlier attempts and cached reads"' : "";
     return ["worker", "verifier", "total"].map(function (role) {
       var live = role === "total" ? hasLive.worker || hasLive.verifier : hasLive[role];
       var extra = role === "total" ? liveTotal : liveByRole[role];
@@ -244,10 +344,166 @@
       if (live) value = Number(value || 0) + extra;
       return {
         html: '<span' + (live ? ' class="live"' : "") + spendTitle + ">" +
-          fmtInt(value) + mark + "</span>",
-        cls: "num"
+          fmtInt(value) + mark + "</span>" + estimateSuffix(estimate, role),
+        cls: "num", sort: value
       };
     });
+  }
+
+  // Standard-speed credit equivalents, not debits or included subscription usage.
+  // https://learn.chatgpt.com/docs/pricing#token-rates (2026-10-24)
+  function creditEquivalent(row) {
+    if (row.auth_route !== "subscription" || row.input_tokens == null ||
+        row.cached_input_tokens == null || row.output_tokens == null) return null;
+    var model = String(row.model || row.identity || "").toLowerCase().replace(/[ .]/g, "-");
+    var rates = [
+      [/gpt-6-1-sol(?:-|$)/, [50, 2.5, 250]],
+      [/gpt-6-astra(?:-|$)/, [250, 25, 1250]],
+      [/gpt-6-sol(?:-|$)/, [50, 5, 250]],
+      [/gpt-6-luna(?:-|$)/, [2.5, 0.25, 12.5]],
+      [/gpt-5-6-sol(?:-|$)/, [100, 10, 500]],
+      [/gpt-5-6-terra(?:-|$)/, [50, 5, 300]],
+      [/gpt-5-6-luna(?:-|$)/, [5, 0.5, 30]]
+    ];
+    var found = rates.filter(function (entry) { return entry[0].test(model); })[0];
+    return found ? (row.input_tokens * found[1][0] + row.cached_input_tokens * found[1][1] +
+      row.output_tokens * found[1][2]) / 1e6 : null;
+  }
+
+  function roleUsage(repo, stage, role) {
+    return ((repo.spend || {}).role_usage || []).filter(function (row) {
+      return row.stage_id === stage.id && row.role === role;
+    });
+  }
+
+  function subscriptionText(observation) {
+    if (!observation || observation.status !== "observed") return "Subscription impact unavailable";
+    return (observation.windows || []).map(function (w) {
+      return w.label + " +" + Number(w.percentage_points).toFixed(1) + " pp";
+    }).join(", ") + " during run (shared account)";
+  }
+
+  function roleTokenSplit(repo, stage, role) {
+    var rows = roleUsage(repo, stage, role);
+    var uncached = 0, cached = 0, input = 0, live = false, inputKnown = true;
+    var unknown = !!(repo.spend || {}).state_error;
+    rows.forEach(function (r) {
+      if (r.input_tokens == null || r.output_tokens == null || r.cached_input_tokens == null) unknown = true;
+      else { uncached += r.input_tokens + r.output_tokens; cached += r.cached_input_tokens; input += r.input_tokens; }
+    });
+    var recorded = stageSpend(repo, stage);
+    if (!rows.length && (recorded[role] !== 0 ||
+        (recorded.total > 0 && !recorded.worker && !recorded.verifier))) unknown = true;
+    (repo.agents || []).forEach(function (a) {
+      if (a.stage_id !== stage.id || a.role !== role) return;
+      live = true;
+      if (a.live_uncached_input_tokens == null) inputKnown = false;
+      else input += a.live_uncached_input_tokens;
+      // Both heartbeat fields describe the same sample. Mixing a newer
+      // transcript total with an older uncached count invents cache reads.
+      if (a.live_uncached_tokens == null || a.live_total_tokens == null ||
+          a.live_uncached_tokens > a.live_total_tokens) unknown = true;
+      else { uncached += a.live_uncached_tokens; cached += a.live_total_tokens - a.live_uncached_tokens; }
+    });
+    return {uncached: unknown ? null : uncached, cached: unknown ? null : cached,
+      input: unknown || !inputKnown ? null : input, live: live};
+  }
+
+  function uncachedPrediction(repo, stage, role) {
+    var rates = ((repo.spend || {}).model_rates || []).filter(function (r) {
+      return r.role === role && r.median_uncached_tokens != null;
+    });
+    var match = rates.filter(function (r) { return r.identity === stage[role]; })[0];
+    if (match) return match.median_uncached_tokens;
+    var values = rates.map(function (r) { return r.median_uncached_tokens; }).sort(function (a, b) { return a - b; });
+    return values.length ? values[Math.floor(values.length / 2)] : null;
+  }
+
+  function usageTokenMarkup(split, prediction) {
+    var actual = split.uncached == null ? "?" : compactTokens(split.uncached);
+    var title = "Uncached input plus output; includes cache writes. ";
+    title += split.uncached == null ? "Breakdown unavailable." : fmtInt(split.uncached) + " uncached tokens.";
+    var html = '<span' + (split.live ? ' class="live"' : '') + ' title="' + esc(title) + '">' + actual + '</span>';
+    if (prediction != null) html += '<span class="usage-muted" title="Predicted uncached tokens: historical median per dispatch, not subscription consumption">/ ~' + compactTokens(prediction) + '</span>';
+    if (split.cached != null && split.cached > 0) {
+      var percent = split.input == null ? "" : " (" + (100 * split.cached / (split.input + split.cached)).toFixed(0) + "%)";
+      html += '<span class="usage-muted" title="Cached reads as a share of all input tokens, excluding output; discounted but not free. Percentage omitted when the input split is unavailable.">+' +
+        compactTokens(split.cached) + ' cache' + percent + '</span>';
+    }
+    return html;
+  }
+
+  function stageUsageTotal(repo, stage) {
+    var w = roleTokenSplit(repo, stage, "worker"), v = roleTokenSplit(repo, stage, "verifier");
+    var wp = uncachedPrediction(repo, stage, "worker"), vp = uncachedPrediction(repo, stage, "verifier");
+    var total = w.uncached == null || v.uncached == null ? null : w.uncached + v.uncached;
+    return {html: '<div class="role-usage">' + usageTokenMarkup({uncached: total,
+      cached: w.cached == null || v.cached == null ? null : w.cached + v.cached,
+      input: w.input == null || v.input == null ? null : w.input + v.input, live: w.live || v.live},
+      wp == null || vp == null ? null : wp + vp) + '</div>', sort: total, cls: 'usage-total-cell'};
+  }
+
+  function roleEffortLabel(stage, role) {
+    var text = stage.card_text;
+    var value = "?", title = "Thinking effort unavailable: card could not be read";
+    if (typeof text === "string" && text && text.indexOf("could not read ") !== 0) {
+      var name = role === "worker" ? "Worker" : "Verifier";
+      var match = text.match(new RegExp("^- \\*\\*" + name + " effort:\\*\\* (.*)$", "m"));
+      if (match && /^(low|medium|high|xhigh|max)$/.test(match[1])) {
+        value = match[1];
+        title = "Card-declared " + role + " thinking effort; historical attempts may differ";
+      } else if (!/\.\.\. \d+ more line\(s\)/.test(text)) {
+        value = "default";
+        title = "No usable card effort override; the provider or CLI configuration supplies the default";
+      }
+    }
+    return ' <span class="usage-muted role-effort" title="' + esc(title) + '">(' + value + ')</span>';
+  }
+
+  function stageRoleCell(repo, stage, role, tokenCell) {
+    var rows = roleUsage(repo, stage, role);
+    var complete = rows.length && rows.every(function (r) {
+      return r.input_tokens != null && r.cached_input_tokens != null && r.output_tokens != null;
+    });
+    var lines = ['<span class="role-model"><strong>' + esc(shortIdentity(stage[role])) + '</strong>' + roleEffortLabel(stage, role) + '</span>'];
+    var split = roleTokenSplit(repo, stage, role);
+    var count = split.uncached, live = split.live;
+    lines.push(usageTokenMarkup(split, uncachedPrediction(repo, stage, role)));
+    if (complete) {
+      var credits = rows.map(creditEquivalent);
+      if (credits.every(function (n) { return n != null; })) {
+        lines.push('<span class="usage-muted" title="Current published Standard-speed credit equivalent. Not credits charged or weekly subscription consumption.">~' +
+          credits.reduce(function (a, b) { return a + b; }, 0).toFixed(1) + ' credits eq.' + (live ? ' (settled)' : '') + '</span>');
+      } else if (rows.every(function (r) { return r.cost_usd_est != null; })) {
+        lines.push('<span class="usage-muted" title="Estimated API-equivalent cost from the cost log, not a subscription charge; cache-write premiums may be excluded.">~$' +
+          rows.reduce(function (n, r) { return n + r.cost_usd_est; }, 0).toFixed(2) + ' API eq.' + (live ? ' (settled)' : '') + '</span>');
+      }
+    }
+    var observed = rows.filter(function (r) { return r.subscription_usage && r.subscription_usage.status === "observed"; });
+    if (observed.length) lines.push('<span class="usage-muted" title="See dispatch readings below. Overlapping account movements are never added together.">' +
+      esc(subscriptionText(observed[observed.length - 1].subscription_usage)) + '</span>');
+    return {html: '<div class="role-usage">' + lines.join('') + '</div>', sort: count, cls: "role-cell"};
+  }
+
+  function stageUsageDetails(repo, stage) {
+    var rows = ((repo.spend || {}).role_usage || []).filter(function (r) { return r.stage_id === stage.id; });
+    if (!rows.length) return '<p class="usage-muted">No settled dispatch breakdown recorded.</p>';
+    return '<div class="usage-details"><h3>Settled dispatches</h3><p class="usage-muted">Quota movement includes other chats and jobs on the account. Readings may lag; overlapping movements are not additive. pp = percentage points.</p>' +
+      rows.map(function (r) {
+        var writes = r.cache_creation_input_tokens;
+        var input = writes != null && r.input_tokens != null ? r.input_tokens - writes : r.input_tokens;
+        var detail = r.role + ': ' + shortIdentity(r.identity) + ' | ' + (r.ts || '') + ' | ' + (r.auth_route || 'route unknown');
+        var tokens = fmtInt(input) + (writes == null ? ' input (writes included)' : ' fresh input; ' + fmtInt(writes) + ' cache writes') +
+          '; ' + fmtInt(r.cached_input_tokens) + ' cached reads; ' + fmtInt(r.output_tokens) + ' output';
+        var full = r.total_tokens;
+        if (full == null && r.input_tokens != null && r.cached_input_tokens != null && r.output_tokens != null)
+          full = r.input_tokens + r.cached_input_tokens + r.output_tokens;
+        tokens += '; ' + fmtInt(full) + ' processed in total';
+        var obs = r.subscription_usage;
+        var times = obs && obs.start && obs.end ? ' Readings: ' + (obs.start.fetched_at || '?') + ' to ' + (obs.end.fetched_at || '?') + '.' : '';
+        return '<p><strong>' + esc(detail) + '</strong><br>' + esc(tokens) + '<br>' +
+          esc(r.auth_route === "subscription" ? subscriptionText(obs) + times : "Subscription impact: not applicable") + '</p>';
+      }).join('') + '</div>';
   }
 
   function runTotals(repo) {
@@ -275,7 +531,7 @@
       '<span class="run-repo">' + esc(repo.name || "repo") + "</span>" +
       '<span class="run-id">' + esc(run.id || "current run") + "</span>" +
       '<span>' + completed + " of " + stages.length + " stages done</span>" +
-      '<span class="run-tokens">' + fmtInt(tokens) + " tokens</span>" +
+      '<span class="run-tokens">' + fmtInt(tokens) + " processed tokens</span>" +
       '<span>$' + cost.toFixed(2) + " settled</span></div>";
   }
 
@@ -410,6 +666,25 @@
 
   // --- repo filter ---------------------------------------------------------
 
+  function initialiseRepoSelection(data) {
+    if (data.scope !== "fleet") return;
+    if (state.repoSelection == null) {
+      var saved;
+      try { saved = JSON.parse(storeGet("autometta.selectedRepos")); } catch (e) { saved = null; }
+      state.repoSelection = Object.create(null);
+      if (Array.isArray(saved)) saved.forEach(function (name) {
+        if (typeof name === "string") state.repoSelection[name] = true;
+      });
+    }
+    (data.repos || []).forEach(function (repo) { state.hidden[repo.name] = !state.repoSelection[repo.name]; });
+  }
+
+  function saveRepoSelection() {
+    state.repoSelection = Object.create(null);
+    visibleRepos().forEach(function (repo) { state.repoSelection[repo.name] = true; });
+    storeSet("autometta.selectedRepos", JSON.stringify(Object.keys(state.repoSelection)));
+  }
+
   function visibleRepos() {
     return (state.data.repos || []).filter(function (r) { return !state.hidden[r.name]; });
   }
@@ -425,7 +700,7 @@
     if (!wrap) return;
     var repos = state.data.repos || [];
     // A narrowed page has exactly one repo and nothing to choose between.
-    if (state.data.scope !== "fleet" || repos.length < 2) {
+    if (state.data.scope !== "fleet") {
       wrap.innerHTML = "";
       return;
     }
@@ -448,6 +723,7 @@
         var name = box.getAttribute("data-repo");
         if (box.checked) delete state.hidden[name];
         else state.hidden[name] = true;
+        saveRepoSelection();
         resetPages();
         renderAll();
       });
@@ -457,6 +733,7 @@
         var on = btn.getAttribute("data-filter-all") === "on";
         state.hidden = Object.create(null);
         if (!on) repos.forEach(function (r) { state.hidden[r.name] = true; });
+        saveRepoSelection();
         resetPages();
         renderAll();
       });
@@ -469,10 +746,27 @@
 
   // --- tables --------------------------------------------------------------
 
-  function tableHtml(headers, rows) {
-    var html = '<table class="stages"><thead><tr>' + headers.map(function (h) {
-      return "<th>" + esc(h.label != null ? h.label : h) + "</th>";
-    }).join("") + "</tr></thead><tbody>";
+  function tableHtml(headers, rows, filters, sorts) {
+    var html = '<table class="stages"><thead><tr>' + headers.map(function (h, i) {
+      var label = h.label != null ? h.label : h;
+      if (!sorts) return "<th>" + esc(label) + "</th>";
+      var priority = sorts.findIndex(function (s) { return s.col === i; });
+      var sort = sorts[priority];
+      var direction = sort && sort.dir === "desc" ? "descending" : "ascending";
+      return '<th scope="col"' + (priority >= 0 ? ' aria-sort="' + (priority ? "other" : direction) + '"' : "") +
+        '><button type="button" class="sort-header" data-sort-col="' + i +
+        '" title="Click to sort; Shift-click to add a column" aria-label="' + esc(label) +
+        (sort ? ", " + direction + ", priority " + (priority + 1) : ", sort") + '">' + esc(label) +
+        '<span class="sort-indicator" aria-hidden="true">' +
+        (sort ? (sort.dir === "desc" ? "▼" : "▲") + (priority + 1) : "↕") + "</span></button></th>";
+    }).join("") + "</tr>";
+    if (filters) {
+      html += '<tr class="filter-row">' + headers.map(function (h, i) {
+        return '<th><input type="search" data-filter-col="' + i + '" placeholder="filter" value="' +
+          esc(filters[i] || "") + '" /></th>';
+      }).join("") + "</tr>";
+    }
+    html += "</thead><tbody>";
     rows.forEach(function (row, index) {
       var cells = row;
       var rowCls = "";
@@ -518,37 +812,200 @@
         target.hidden = false;
         row.classList.add("open");
       }
-      row.addEventListener("click", function () {
+      row.onclick = function () {
         if (!target) return;
         target.hidden = !target.hidden;
         row.classList.toggle("open", !target.hidden);
         if (target.hidden) delete state.expanded[stateKey];
         else state.expanded[stateKey] = true;
-      });
+      };
     });
   }
 
   function renderSimpleTable(id, headers, rows) {
     var wrap = document.getElementById(id);
     if (!rows.length) {
-      wrap.innerHTML = '<p class="empty">(none)</p>';
+      setTableHtml(wrap, '<p class="empty">(none)</p>');
       return;
     }
-    wrap.innerHTML = tableHtml(headers, rows);
+    var sorts = sortsFor(id);
+    setTableHtml(wrap, sortControls(headers, sorts) + tableHtml(headers, sortRows(rows, sorts), null, sorts));
+    bindSorters(wrap, id, function () { renderSimpleTable(id, headers, rows); });
+  }
+
+  // A changing token cell must not send the reader back to line one of a card.
+  function setTableHtml(wrap, html) {
+    if (wrap.dashboardHtml === html) return false;
+    var positions = Object.create(null);
+    wrap.querySelectorAll("pre.card-text").forEach(function (card) {
+      positions[card.closest("tr").getAttribute("data-expand-for")] = [card.scrollTop, card.scrollLeft];
+    });
+    wrap.innerHTML = html;
+    wrap.dashboardHtml = html;
+    // Unhide before restoring offsets: hidden elements have no scroll range.
     bindExpanders(wrap);
+    wrap.querySelectorAll("pre.card-text").forEach(function (card) {
+      var pos = positions[card.closest("tr").getAttribute("data-expand-for")];
+      if (pos) { card.scrollTop = pos[0]; card.scrollLeft = pos[1]; }
+    });
+    return true;
+  }
+
+  function sortsFor(key) {
+    if (!state.sorts[key]) {
+      var saved;
+      try { saved = JSON.parse(storeGet("autometta.sort." + (key === "stages" ? "stages.usage-v2" : key))); } catch (e) { saved = null; }
+      var seen = Object.create(null);
+      state.sorts[key] = Array.isArray(saved) ? saved.filter(function (s) {
+        if (!s || !Number.isInteger(s.col) || s.col < 0 || seen[s.col] ||
+            (s.dir !== "asc" && s.dir !== "desc")) return false;
+        seen[s.col] = true;
+        return true;
+      }) : [];
+    }
+    return state.sorts[key];
+  }
+
+  function saveSort(key, sorts) {
+    state.sorts[key] = sorts;
+    state.page[key] = 0;
+    storeSet("autometta.sort." + (key === "stages" ? "stages.usage-v2" : key), JSON.stringify(sorts));
+  }
+
+  function changeSort(key, col, additive) {
+    var sorts = sortsFor(key).slice();
+    var index = sorts.findIndex(function (s) { return s.col === col; });
+    var current = sorts[index];
+    var next = !current ? { col: col, dir: "asc" }
+      : current.dir === "asc" ? { col: col, dir: "desc" } : null;
+    if (!additive) sorts = next ? [next] : [];
+    else if (index < 0) sorts.push(next);
+    else if (next) sorts[index] = next;
+    else sorts.splice(index, 1);
+    saveSort(key, sorts);
+  }
+
+  function clearSort(key) {
+    saveSort(key, []);
+    if (key === "stages") {
+      state.stageOrder = "recent";
+      storeSet("autometta.stageOrder", "recent");
+    }
+  }
+
+  function sortValue(cell) {
+    if (cell && typeof cell === "object" && Object.prototype.hasOwnProperty.call(cell, "sort")) {
+      return typeof cell.sort === "number" && !isFinite(cell.sort) ? null : cell.sort;
+    }
+    if (typeof cell === "number" || cell == null) return cell;
+    var text = cellText(cell).trim();
+    if (!text || text === "-" || text === "unknown" || text === "n/a") return null;
+    if (/^\d{4}-\d{2}-\d{2}T/.test(text) && isFinite(Date.parse(text))) return Date.parse(text);
+    // Plain numbers, currency, percentages and compact rates sort by magnitude.
+    var number = text.replace(/,/g, "").match(/^\$?(-?\d+(?:\.\d+)?)([kM])?(?:%|x|s|\/min)?$/);
+    if (number) return Number(number[1]) * (number[2] === "M" ? 1000000 : number[2] === "k" ? 1000 : 1);
+    return text;
+  }
+
+  function sortRows(rows, sorts) {
+    if (!sorts.length && !rows.some(function (row) { return row.pinned; })) return rows;
+    return rows.slice().sort(function (a, b) {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+      for (var i = 0; i < sorts.length; i++) {
+        var s = sorts[i], av = sortValue(rowCells(a)[s.col]), bv = sortValue(rowCells(b)[s.col]);
+        // Unknown figures stay last in either direction.
+        if (av == null || bv == null) {
+          if ((av == null) !== (bv == null)) return av == null ? 1 : -1;
+          continue;
+        }
+        var cmp = typeof av === "number" && typeof bv === "number" ? av - bv
+          : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" });
+        if (cmp) return s.dir === "desc" ? -cmp : cmp;
+      }
+      return 0;
+    });
+  }
+
+  function sortControls(headers, sorts) {
+    if (!sorts.length) return "";
+    return '<div class="sort-controls">' +
+      '<span class="sort-summary">' + esc(sorts.map(function (s, i) {
+        var header = headers[s.col];
+        return (i + 1) + ". " + (header && header.label != null ? header.label : header || "") +
+          (s.dir === "desc" ? " ▼" : " ▲");
+      }).join(" · ")) + '</span><button type="button" data-clear-sort' +
+      (!sorts.length ? " disabled" : "") + '>Clear sort</button></div>';
+  }
+
+  function bindSorters(wrap, key, redraw) {
+    wrap.querySelectorAll("button[data-sort-col]").forEach(function (button) {
+      button.onclick = function (event) {
+        changeSort(key, Number(button.getAttribute("data-sort-col")), event.shiftKey);
+        redraw();
+        if (key === "stages") renderStageOrder();
+        wrap.querySelector('button[data-sort-col="' + button.getAttribute("data-sort-col") + '"]').focus({ preventScroll: true });
+      };
+    });
+    var clear = wrap.querySelector("button[data-clear-sort]");
+    if (clear) clear.onclick = function () {
+      clearSort(key);
+      if (key === "stages") renderAll();
+      else redraw();
+    };
+  }
+
+  function rowCells(row) {
+    return row && !Array.isArray(row) && row.cells ? row.cells : row;
+  }
+
+  // What a filter matches against: the text a reader sees, not the markup.
+  function cellText(cell) {
+    if (cell && typeof cell === "object" && cell.html != null) {
+      return String(cell.html).replace(/<[^>]*>/g, "").replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    }
+    return cell == null ? "" : String(cell);
+  }
+
+  // Every filled column must contain its text, case-insensitively.
+  function filterRows(rows, filters) {
+    var active = Object.keys(filters).filter(function (i) { return filters[i]; });
+    if (!active.length) return rows;
+    return rows.filter(function (row) {
+      var cells = rowCells(row);
+      return active.every(function (i) {
+        return cellText(cells[i]).toLowerCase().indexOf(filters[i].toLowerCase()) >= 0;
+      });
+    });
   }
 
   // Paged sibling of renderSimpleTable. `key` names the table for the stored
   // page size; `footer` is a row pinned below every page (a totals line), which
-  // must not be paginated away.
-  function renderPagedTable(id, headers, rows, key, footer) {
+  // must not be paginated away and is never filtered.
+  function renderPagedTable(id, headers, allRows, key, footer) {
     var wrap = document.getElementById(id);
-    if (!rows.length) {
-      wrap.innerHTML = '<p class="empty">(none)</p>';
+    if (!allRows.length) {
+      setTableHtml(wrap, '<p class="empty">(none)</p>');
+      state.rowOrder[key] = [];
       return;
     }
+    var filters = state.filters[key] || (state.filters[key] = Object.create(null));
+    var sorts = sortsFor(key);
+    var rows = sortRows(filterRows(allRows, filters), sorts);
+    state.rowOrder[key] = rows.map(function (row) { return row && row.key; });
+
+    // Redrawing replaces the inputs, so a poll landing mid-keystroke would
+    // otherwise drop the caret out of the box being typed in.
+    var focused = document.activeElement;
+    var focusCol = focused && wrap.contains(focused) ? focused.getAttribute("data-filter-col") : null;
+    var caret = focusCol != null ? focused.selectionStart : null;
+
     var size = pageSizeFor(key);
     var pages = size > 0 ? Math.max(1, Math.ceil(rows.length / size)) : 1;
+    if (key === "stages" && size > 0 && state.readingCard) {
+      var readingIndex = state.rowOrder[key].indexOf(state.readingCard.key);
+      if (readingIndex >= 0) state.page[key] = Math.floor(readingIndex / size);
+    }
     var page = Math.min(Math.max(state.page[key] || 0, 0), pages - 1);
     state.page[key] = page;
 
@@ -556,7 +1013,7 @@
     var shown = size > 0 ? rows.slice(start, start + size) : rows;
     if (footer) shown = shown.concat([footer]);
 
-    var range = size > 0
+    var range = !rows.length ? "0" : size > 0
       ? fmtInt(start + 1) + "-" + fmtInt(start + shown.length - (footer ? 1 : 0))
       : "all";
     var controls =
@@ -566,25 +1023,41 @@
         return '<option value="' + n + '"' + (n === size ? " selected" : "") + ">" +
           (n === 0 ? "all" : n) + "</option>";
       }).join("") +
-      "</select> of " + fmtInt(rows.length) + "</label>" +
+      "</select> of " + fmtInt(rows.length) +
+      (rows.length !== allRows.length ? " matching (" + fmtInt(allRows.length) + " total)" : "") +
+      "</label>" +
       '<span class="pager-range">' + range + "</span>" +
       '<button type="button" data-page="prev"' + (page === 0 ? " disabled" : "") + ">prev</button>" +
       '<span class="pager-page">' + (page + 1) + " / " + pages + "</span>" +
       '<button type="button" data-page="next"' + (page >= pages - 1 ? " disabled" : "") + ">next</button>" +
       "</div>";
 
-    wrap.innerHTML = tableHtml(headers, shown) + controls;
-    bindExpanders(wrap);
+    var changed = setTableHtml(wrap, sortControls(headers, sorts) + tableHtml(headers, shown, filters, sorts) +
+      (rows.length ? "" : '<p class="empty">(no rows match the filters)</p>') + controls);
+    bindSorters(wrap, key, function () { renderPagedTable(id, headers, allRows, key, footer); });
 
-    wrap.querySelector("select[data-pagesize]").addEventListener("change", function (ev) {
-      setPageSize(key, parseInt(ev.target.value, 10) || 0);
-      renderAll();
+    wrap.querySelectorAll("input[data-filter-col]").forEach(function (input) {
+      var col = input.getAttribute("data-filter-col");
+      if (changed && col === focusCol) {
+        input.focus({ preventScroll: true });
+        if (caret != null) input.setSelectionRange(caret, caret);
+      }
+      input.oninput = function () {
+        filters[col] = input.value;
+        state.page[key] = 0;
+        renderPagedTable(id, headers, allRows, key, footer);
+      };
     });
+
+    wrap.querySelector("select[data-pagesize]").onchange = function (ev) {
+      setPageSize(key, parseInt(ev.target.value, 10) || 0);
+      renderPagedTable(id, headers, allRows, key, footer);
+    };
     wrap.querySelectorAll("button[data-page]").forEach(function (btn) {
-      btn.addEventListener("click", function () {
+      btn.onclick = function () {
         state.page[key] = page + (btn.getAttribute("data-page") === "next" ? 1 : -1);
-        renderAll();
-      });
+        renderPagedTable(id, headers, allRows, key, footer);
+      };
     });
   }
 
@@ -597,8 +1070,13 @@
   // currently shown; page to it first, then expand and scroll to it.
   function openStageCard(repo, stageId) {
     var key = stageKey(repo, stageId);
-    var order = state.stageRowOrder || [];
-    var index = order.indexOf(key);
+    var index = (state.rowOrder.stages || []).indexOf(key);
+    if (index < 0 && state.filters.stages) {
+      // The filters are hiding the stage that was asked for; showing it wins.
+      state.filters.stages = Object.create(null);
+      renderAll();
+      index = (state.rowOrder.stages || []).indexOf(key);
+    }
     var size = pageSizeFor("stages");
     if (index >= 0 && size > 0) state.page.stages = Math.floor(index / size);
     renderAll();
@@ -608,6 +1086,7 @@
     if (!row || !target) return;
     target.hidden = false;
     row.classList.add("open");
+    state.expanded[wrap.id + "\u0000" + key] = true;
     row.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
@@ -640,8 +1119,11 @@
       (r.agents || []).forEach(function (a) {
         var elapsed = fmtInt(a.elapsed_seconds || 0) + "s";
         if (a.budget_seconds) elapsed += " / " + fmtInt(a.budget_seconds) + "s";
+        var burn = burnCell(a);
+        var burnHtml = burn && typeof burn === "object" ? burn.html : burn;
         rows.push([r.name, "live", a.stage_id, a.role, a.identity || a.family, "-",
-          activityText(a.activity), burnCell(a), elapsed]);
+          activityText(a.activity), { html: burnHtml, sort: liveAgentTokens(a) },
+          { html: esc(elapsed), sort: a.elapsed_seconds || 0 }]);
       });
       (r.queue || []).forEach(function (q) {
         rows.push([r.name, "next", q.stage_id, "queued", q.worker, q.verifier, "", "-", "-"]);
@@ -698,46 +1180,110 @@
 
   function renderQuota(repos) {
     var rows = [];
+    var summary = document.getElementById("quota-summary");
+    if (summary) summary.innerHTML = ["claude", "codex"].map(function (family) {
+      var readings = repos.map(function (repo) { return ((repo.quota || {}).families || {})[family]; })
+        .filter(function (r) { return r && r.status === "known" && isFinite(Date.parse(r.fetched_at)); })
+        .sort(function (a, b) { return Date.parse(b.fetched_at) - Date.parse(a.fetched_at); });
+      var reading = readings[0];
+      var label = family === "claude" ? "Claude" : "Codex";
+      if (!reading) return '<div><strong>' + label + '</strong><p class="usage-muted">Allowance unavailable</p></div>';
+      var age = Math.max(0, (Date.now() - Date.parse(reading.fetched_at)) / 1000);
+      return '<div><strong>' + label + '</strong>' + (reading.windows || []).map(function (w) {
+        var stale = age > 600 || !w.resets_at || Date.parse(w.resets_at) <= Date.now();
+        return '<p>' + esc(w.label) + ': <strong>' + Number(w.utilization).toFixed(1) + '% used</strong>' +
+          '<span class="usage-muted">' + (stale ? ' (stale; remaining unknown)' :
+          ', ' + Math.max(0, 100 - Number(w.utilization)).toFixed(1) + '% remaining') +
+          '<br>Resets ' + esc(w.resets_at ? new Date(w.resets_at).toLocaleString() : "unknown") + '</span></p>';
+      }).join('') + '<span class="usage-muted" title="' + esc(reading.fetched_at) + '">Latest reading ' +
+        Math.floor(age / 60) + 'm ago</span></div>';
+    }).join('');
     repos.forEach(function (repo) {
       ["claude", "codex"].forEach(function (family) {
         var reading = ((repo.quota || {}).families || {})[family] || {
           status: "unknown", reason: "no tick reading", windows: []
         };
         if (reading.status !== "known") {
-          rows.push([repo.name, family, "unknown", "-", "-", reading.reason || "unknown"]);
+          rows.push([repo.name, family, "unknown", "-", "-", "-", "-", reading.reason || "unknown"]);
           return;
         }
         (reading.windows || []).forEach(function (window) {
+          var age = reading.fetched_at ? Math.max(0, (Date.now() - Date.parse(reading.fetched_at)) / 1000) : null;
+          var stale = age == null || !isFinite(age) || age > 600 ||
+            (window.resets_at && Date.parse(window.resets_at) <= Date.now());
+          var freshness = age == null || !isFinite(age) ? "Age unknown" : Math.floor(age / 60) + "m ago";
           rows.push([repo.name, family, window.label,
-            Number(window.utilization).toFixed(1) + "%", window.resets_at || "unknown",
+            {html: esc(Number(window.utilization).toFixed(1) + "%" + (stale ? " (stale)" : "")), sort: Number(window.utilization)},
+            stale ? "Unknown" : Math.max(0, 100 - Number(window.utilization)).toFixed(1) + "%",
+            window.resets_at || "unknown",
+            {html: '<span title="' + esc(reading.fetched_at || "unknown") + '">' + esc(freshness) + '</span>', sort: age},
             reading.source || "unknown"]);
         });
       });
     });
     renderPagedTable("quota-table-wrap",
-      ["Repo", "Family", "Window", "Used", "Resets", "Source / reason"], rows, "quota", null);
+      ["Observed in", "Family", "Window", "Used", "Remaining", "Resets", "Reading age", "Source / reason"], rows, "quota", null);
   }
 
-  function renderStagesTable(repos) {
+  var STAGE_ORDERS = [
+    { id: "recent", label: "newest first" },
+    { id: "repo", label: "by repo" }
+  ];
+
+  function stageOrder() {
+    if (state.stageOrder == null) {
+      state.stageOrder = storeGet("autometta.stageOrder") === "repo" ? "repo" : "recent";
+    }
+    return state.stageOrder;
+  }
+
+  function renderStageOrder() {
+    var wrap = document.getElementById("stage-order");
+    if (!wrap) return;
+    var current = stageOrder();
+    wrap.innerHTML = '<span class="filter-label">order</span>' +
+      STAGE_ORDERS.map(function (choice) {
+        return '<button type="button" data-order="' + choice.id + '"' +
+          (choice.id === current && !sortsFor("stages").length ? ' class="on"' : "") + ">" + choice.label + "</button>";
+      }).join("");
+    wrap.querySelectorAll("button[data-order]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        state.stageOrder = btn.getAttribute("data-order");
+        saveSort("stages", []);
+        storeSet("autometta.stageOrder", state.stageOrder);
+        state.page.stages = 0;
+        renderAll();
+      });
+    });
+  }
+
+  // A stage's last movement: finished if it has, else when it started.
+  function stageActivity(stage) {
+    return stage.completed_at || stage.started_at || "";
+  }
+
+  // Queue position, last first. The queue array is the order the tick will
+  // actually dispatch in, so it is the only thing that knows a stage's place
+  // in the run; a timestamp cannot, because a stage waiting to run has none.
+  // Reading "no timestamp" as "queued" put every never-dispatched terminal
+  // stage -- a failed card from May with both dates null -- at the top of the
+  // table, where the next stage to run belongs.
+  function queuePositions(repo) {
+    var queuePos = Object.create(null);
+    (repo.queue || []).forEach(function (q, i) { queuePos[q.stage_id] = i + 1; });
+    return queuePos;
+  }
+
+  // Grouped by repo: within each, still queued (descending position, so the
+  // last-queued card leads), then everything with a clock on it (newest
+  // first, which lands the in-flight stage directly under the queue on its
+  // own merit rather than by pinning it), then the undated remainder --
+  // terminal stages that never ran, which belong at the bottom.
+  function stageRowsByRepo(repos) {
     var rows = [];
     repos.forEach(function (r) {
-      // Grouped by repo, because a fleet view interleaved by time reads as
-      // noise; the filter narrows which repos appear, the grouping keeps each
-      // one's run legible once several are showing.
-      var group = r.stages.map(function (s) { return { repo: r.name, stage: s }; });
-      // Queue position, last first. The queue array is the order the tick will
-      // actually dispatch in, so it is the only thing that knows a stage's
-      // place in the run; a timestamp cannot, because a stage waiting to run
-      // has none. Reading "no timestamp" as "queued" put every never-dispatched
-      // terminal stage -- a failed card from May with both dates null -- at the
-      // top of the table, where the next stage to run belongs.
-      var queuePos = Object.create(null);
-      (r.queue || []).forEach(function (q, i) { queuePos[q.stage_id] = i + 1; });
-      // Three bands, in this order: still queued (descending position, so the
-      // last-queued card leads), then everything with a clock on it (newest
-      // first, which lands the in-flight stage directly under the queue on its
-      // own merit rather than by pinning it), then the undated remainder --
-      // terminal stages that never ran, which belong at the bottom.
+      var queuePos = queuePositions(r);
+      var group = r.stages.map(function (s) { return { repo: r.name, stage: s, queuePos: queuePos[s.id] }; });
       function band(s) { return queuePos[s.id] ? 0 : (s.started_at || s.completed_at) ? 1 : 2; }
       group.sort(function (a, b) {
         var ab = band(a.stage), bb = band(b.stage);
@@ -750,9 +1296,33 @@
       });
       group.forEach(function (row, i) { row.groupStart = i === 0; rows.push(row); });
     });
-    // The chart addresses table rows by key, and needs the row order to work
-    // out which page a stage has landed on.
-    state.stageRowOrder = rows.map(function (row) { return stageKey(row.repo, row.stage.id); });
+    return rows;
+  }
+
+  // Queued cards lead newest first; the rest follow by last movement, then
+  // terminal stages that never ran. A retry may still carry an old timestamp.
+  function stageRowsByRecency(repos) {
+    var dated = [], queued = [], undated = [];
+    repos.forEach(function (r) {
+      var queuePos = queuePositions(r);
+      r.stages.forEach(function (s) {
+        var row = { repo: r.name, stage: s, queuePos: queuePos[s.id] };
+        if (row.queuePos) queued.push(row);
+        else if (stageActivity(s)) dated.push(row);
+        else undated.push(row);
+      });
+    });
+    dated.sort(function (a, b) {
+      var at = stageActivity(a.stage), bt = stageActivity(b.stage);
+      return at < bt ? 1 : at > bt ? -1 : 0;
+    });
+    queued.sort(function (a, b) { return b.queuePos - a.queuePos; });
+    return queued.concat(dated, undated);
+  }
+
+  function renderStagesTable(repos) {
+    renderStageOrder();
+    var rows = stageOrder() === "repo" ? stageRowsByRepo(repos) : stageRowsByRecency(repos);
     var byName = Object.create(null);
     repos.forEach(function (r) { byName[r.name] = r; });
     var cells = rows.map(function (row) {
@@ -764,24 +1334,23 @@
       // rather than inferred from the row above.
       var expand =
         '<div class="card-path">' + esc(cardPath) + "</div>" +
+        stageUsageDetails(byName[row.repo] || {}, s) +
         '<pre class="card-text">' + esc(s.card_text || "card not read") + "</pre>";
-      return { cls: row.groupStart ? "group-start" : "", expand: expand,
+      return { cls: row.groupStart ? "group-start" : "", expand: expand, pinned: !!row.queuePos,
                key: stageKey(row.repo, s.id), cells: [
         row.repo,
-        { html: '<span class="caret">\u25b8</span> ' + esc(s.id) },
+        { html: '<span class="caret">\u25b8</span> ' + esc(s.id), sort: s.id },
         { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
-        shortIdentity(s.worker),
-        shortIdentity(s.verifier),
-        tokenCells[0],
-        tokenCells[1],
-        tokenCells[2],
+        stageRoleCell(byName[row.repo] || {}, s, "worker", tokenCells[0]),
+        stageRoleCell(byName[row.repo] || {}, s, "verifier", tokenCells[1]),
+        stageUsageTotal(byName[row.repo] || {}, s),
         s.started_at || "",
         s.completed_at || ""
       ] };
     });
     renderPagedTable("stages-table-wrap",
       ["Repo", "Stage", "Status", "Worker", "Verifier",
-       "Worker tok", "Verifier tok", "Total tok", "Queued", "Completed"],
+       "Total tokens", "Started", "Completed"],
       cells, "stages", null);
   }
 
@@ -789,6 +1358,7 @@
 
   function chartCommon() {
     return {
+      animation: false,
       maintainAspectRatio: false,
       responsive: true,
       plugins: { legend: { labels: { color: "#e6edf3" } } },
@@ -799,11 +1369,23 @@
     };
   }
 
-  // Re-rendering on a filter change would stack a second Chart on the same
-  // canvas, so each one replaces its predecessor by id.
   function draw(id, config) {
-    if (charts[id]) charts[id].destroy();
-    charts[id] = new Chart(document.getElementById(id).getContext("2d"), config);
+    var chart = charts[id];
+    var signature = JSON.stringify(config);
+    // Callbacks close over the current stages, even when their plotted values
+    // happen to match the previous reading.
+    if (chart && chart.config.type === config.type) {
+      chart.options.onClick = config.options.onClick;
+      if (config.options.plugins.tooltip) chart.options.plugins.tooltip = config.options.plugins.tooltip;
+      if (chartSignatures[id] === signature) return;
+      chart.data = config.data;
+      chart.options = config.options;
+      chart.update("none");
+    } else {
+      if (chart) chart.destroy();
+      charts[id] = new Chart(document.getElementById(id).getContext("2d"), config);
+    }
+    chartSignatures[id] = signature;
   }
 
   // Every token chart is drawn from stage rows so all four obey the range
@@ -900,6 +1482,24 @@
     });
   }
 
+  function renderBurnTable(repos) {
+    var rates = modelBurnRates(repos).list.sort(function (a, b) {
+      return (b.cost_usd_per_min || 0) - (a.cost_usd_per_min || 0);
+    });
+    var rows = rates.map(function (r) {
+      return [
+        { html: esc(shortIdentity(r.identity)) + burnBadge(r), sort: shortIdentity(r.identity) },
+        { html: fmtInt(r.samples), cls: "num", sort: r.samples },
+        { html: compactTokens(r.median_tokens), cls: "num", sort: r.median_tokens },
+        { html: r.tokens_per_min == null ? "-" : compactTokens(r.tokens_per_min), cls: "num", sort: r.tokens_per_min },
+        { html: r.cost_usd_per_min == null ? "-" : "$" + r.cost_usd_per_min.toFixed(2), cls: "num", sort: r.cost_usd_per_min },
+        { html: r.relative == null ? "-" : r.relative.toFixed(1) + "x", cls: "num", sort: r.relative }
+      ];
+    });
+    renderSimpleTable("burn-table-wrap",
+      ["Model", "Dispatches", "Median tok/dispatch", "Tok/min", "Cost/min", "vs median"], rows);
+  }
+
   function drawDaysChart(stages) {
     var totals = Object.create(null);
     stages.forEach(function (row) {
@@ -968,9 +1568,10 @@
     renderAgents(repos);
     renderFailures(data.spend || {}, names);
     renderSpend(data.spend || {}, names);
-    renderQuota(repos);
+    renderQuota(data.repos || []);
     renderRunTotals(repos);
     renderStagesTable(repos);
+    renderBurnTable(repos);
     drawReposChart(repos, stages);
     drawStagesChart(stages);
     drawModelsChart(stages);
@@ -979,6 +1580,7 @@
 
   function render(data) {
     state.data = data;
+    initialiseRepoSelection(data);
     var scoped = data.scope && data.scope !== "fleet";
     document.title = scoped
       ? "autometta - " + data.scope
@@ -1076,8 +1678,27 @@
   function applyData(data) {
     var stamp = data && data.generated_at;
     if (stamp && stamp === state.lastGeneratedAt) return false;
+    var reading = null;
+    document.querySelectorAll("tr.expand-row:not([hidden]) pre.card-text").forEach(function (card) {
+      var rect = card.getBoundingClientRect();
+      if (!reading && rect.bottom > 0 && rect.top < window.innerHeight) {
+        reading = { key: card.closest("tr").getAttribute("data-expand-for"), top: rect.top };
+      }
+    });
+    state.readingCard = reading;
+    var scrollX = window.scrollX, scrollY = window.scrollY;
     state.lastGeneratedAt = stamp || null;
     render(data);
+    if (reading) {
+      document.querySelectorAll("tr.expand-row:not([hidden])").forEach(function (row) {
+        if (row.getAttribute("data-expand-for") === reading.key) {
+          var card = row.querySelector("pre.card-text");
+          if (card) scrollY += card.getBoundingClientRect().top - reading.top;
+        }
+      });
+    }
+    window.scrollTo({ left: scrollX, top: scrollY, behavior: "instant" });
+    state.readingCard = null;
     return true;
   }
 

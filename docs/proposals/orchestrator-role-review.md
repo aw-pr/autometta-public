@@ -1,5 +1,7 @@
 # The controller is a seeded agent, not a script
 
+> Superseded by [controller-retired.md](controller-retired.md) (card 162, 2026-10-23): the controller agent is retired; the negative list it owns still binds the `phat-controller.sh` verbs.
+
 Operator design review, 2026-08-24, after card 54 landed. Supersedes the
 control flow card 54 shipped; the mechanism it shipped is kept.
 

@@ -109,8 +109,8 @@ editing the checkout does not update it; until you refresh deliberately, run
    autometta status
    ```
 
-2. Open the terminal UI for the repo you are reviewing. Use its run, history
-   and messages pages to inspect a card, an escalation or a controller reply.
+2. Open the terminal UI for the repo you are reviewing. Use its run and
+   history pages to inspect a card or an escalation.
 
    ```sh
    autometta tui <repo-path>
@@ -155,8 +155,8 @@ editing the checkout does not update it; until you refresh deliberately, run
    ```
 
 7. Land a stage awaiting integration only after checking its pinned worktree
-   and the current base branch. Ask phat-controller to perform the ordered
-   integration; [the controller role](phat-controller.md) explains its remit.
+   and the current base branch. Perform the ordered
+   integration with the verb below; see [the retired controller](phat-controller.md).
 
    ```sh
    autometta phat-controller merge-awaiting <repo-path> <stage-id>
@@ -182,6 +182,9 @@ editing the checkout does not update it; until you refresh deliberately, run
    `window_reserve.percent: 0` to switch it off. If the controller
    mandate's `window_reserve.overnight` is declared, its percentage applies
    inside that window and the top-level percentage applies outside it.
+   Set `window_reserve.claude_window: 5-hour` when this reserve is specifically
+   for Claude's session rather than its weekly allowance. A new card is checked
+   when either its worker or verifier uses the Claude subscription.
    Set `window_reserve.overnight.stop_outside: true` to stop new workers
    outside the window regardless of quota; this curfew defaults off.
    An overnight percentage of zero allows spending freely inside it. A stage

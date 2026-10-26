@@ -233,6 +233,80 @@ quota_codex_role_uses_subscription() {
   [[ "$mode" == subscription ]]
 }
 
+quota_family_role_uses_subscription() {
+  local repo_root="$1" family="$2" identity="$3" role="$4" mode
+  [[ -n "$identity" && "$(agent_family_for_identity "$identity")" == "$family" ]] || return 1
+  mode="$(REPO_ROOT="$repo_root" "$quota_window_script_dir/auth-route.sh" "$family" --print-mode --role "$role" 2>/dev/null)" || return 0
+  [[ "$mode" == subscription ]]
+}
+
+# quota_pace_mandate <key> <default>: one window_reserve.pace field.
+quota_pace_mandate() {
+  local mandate_path value
+  mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(autometta_controller_home)/phat-controller-mandate.yaml}"
+  [[ -f "$mandate_path" ]] && command -v yq >/dev/null 2>&1 || { printf '%s\n' "$2"; return 0; }
+  value="$(yq -r ".window_reserve.pace.$1 // \"\"" "$mandate_path" 2>/dev/null || true)"
+  printf '%s\n' "${value:-$2}"
+}
+
+# quota_reserve_window_for_family <family>: optional label of the one
+# provider window the reserve protects. Empty keeps the historical behaviour
+# of considering every reported window. Unknown values also stay
+# conservative rather than silently disabling the reserve.
+quota_reserve_window_for_family() {
+  local family="$1" mandate_path value
+  mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(autometta_controller_home)/phat-controller-mandate.yaml}"
+  [[ -f "$mandate_path" ]] && command -v yq >/dev/null 2>&1 || return 0
+  value="$(yq -r ".window_reserve.${family}_window // \"\"" "$mandate_path" 2>/dev/null || true)"
+  case "$value" in
+    ""|5-hour|Weekly) printf '%s\n' "$value" ;;
+    *) printf '\n' ;;
+  esac
+}
+
+# quota_pace_reading <family>: the pace verdict JSON for this family against
+# the tick's reading. Pace is off unless the mandate declares a pace block
+# whose families list names this family.
+quota_pace_reading() {
+  local family="$1" action reading
+  action="$(quota_pace_mandate action off)"
+  if [[ "${AUTOMETTA_IGNORE_PACE:-}" == "1" ]] \
+     || ! quota_pace_mandate 'families[]' '' | grep -qx "$family"; then
+    action=off
+  fi
+  [[ -n "$AUTOMETTA_QUOTA_TICK_JSON" ]] || quota_refresh_tick || true
+  reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family] // {}' 2>/dev/null || printf '{}')"
+  printf '%s' "$reading" | AUTOMETTA_PACE_ACTION="$action" \
+    AUTOMETTA_PACE_SLOT_HOURS="$(quota_pace_mandate slot_hours 12)" \
+    AUTOMETTA_PACE_STATE="$(autometta_controller_home)/quota-pace.json" \
+    python3 "$quota_window_script_dir/quota-window.py" pace "$family"
+}
+
+# quota_card_pace_permits <repo-root> <worker-identity> <verifier-identity>
+#
+# A new card spends from every family it names, so it starts only when each
+# subscription family it uses is under its weekly pace ceiling. Only a new
+# card is held: an admitted card's verifier always runs. Returns 1 with
+# QUOTA_GATE_REASON naming the family that is ahead of pace.
+quota_card_pace_permits() {
+  local repo_root="$1" worker_id="$2" verifier_id="$3" family verdict reason
+  QUOTA_GATE_REASON=""
+  for family in codex claude; do
+    quota_family_role_uses_subscription "$repo_root" "$family" "$worker_id" worker \
+      || quota_family_role_uses_subscription "$repo_root" "$family" "$verifier_id" verifier \
+      || continue
+    verdict="$(quota_pace_reading "$family" 2>/dev/null || true)"
+    [[ -n "$verdict" && "$(printf '%s' "$verdict" | jq -r '.action')" != off ]] || continue
+    reason="$(printf '%s' "$verdict" | jq -r '.reason')"
+    if [[ "$(printf '%s' "$verdict" | jq -r '.allowed')" != true ]]; then
+      QUOTA_GATE_REASON="$reason"
+      return 1
+    fi
+    QUOTA_GATE_REASON="${QUOTA_GATE_REASON:+$QUOTA_GATE_REASON; }$reason"
+  done
+  return 0
+}
+
 # quota_codex_admit_percent: window_reserve.codex_admit_percent from the
 # controller mandate, the used percentage at which no new Codex card starts.
 # Empty when unset, so the reader keeps its 100% default.
@@ -278,6 +352,24 @@ quota_spawn_permits() {
     QUOTA_GATE_REASON="reserve already applied by the tick"
     return 0
   fi
+  if [[ -n "$card_path" ]]; then
+    local pace_worker pace_verifier
+    pace_worker="$(sed -n 's/^- \*\*Worker:\*\* //p' "$card_path" | head -n1)"
+    pace_verifier="$(sed -n 's/^- \*\*Verifier:\*\* //p' "$card_path" | head -n1)"
+    quota_card_pace_permits "$repo_root" "$pace_worker" "$pace_verifier" || return 1
+    if [[ "$family" != claude ]] \
+       && { quota_family_role_uses_subscription "$repo_root" claude "$pace_worker" worker \
+         || quota_family_role_uses_subscription "$repo_root" claude "$pace_verifier" verifier; }; then
+      local claude_identity claude_model
+      if [[ "$(agent_family_for_identity "$pace_worker")" == claude ]]; then
+        claude_identity="$pace_worker"
+      else
+        claude_identity="$pace_verifier"
+      fi
+      claude_model="$(claude_model_for_identity "$claude_identity")"
+      quota_spawn_family_reserve_permits "$repo_root" claude "$claude_model" || return 1
+    fi
+  fi
   if quota_codex_card_policy; then
     local worker_id verifier_id uses_codex=false
     if [[ -n "$card_path" ]]; then
@@ -297,6 +389,16 @@ quota_spawn_permits() {
     fi
     [[ "$family" != codex ]] || return 0
   fi
+  if [[ "$family" == claude && -n "$card_path" ]]; then
+    local worker_identity
+    worker_identity="$(sed -n 's/^- \*\*Worker:\*\* //p' "$card_path" | head -n1)"
+    model="$(claude_model_for_identity "$worker_identity")"
+  fi
+  quota_spawn_family_reserve_permits "$repo_root" "$family" "$model"
+}
+
+quota_spawn_family_reserve_permits() {
+  local repo_root="$1" family="$2" model="${3:-}"
   if [[ "${AUTOMETTA_IGNORE_RESERVE:-}" == "1" ]]; then
     QUOTA_GATE_REASON="AUTOMETTA_IGNORE_RESERVE=1"
     return 0
@@ -305,18 +407,14 @@ quota_spawn_permits() {
     QUOTA_GATE_REASON="family unknown"
     return 0
   esac
-  local mandate_path settings reserve action window reading
-  if [[ "$family" == claude && -n "$card_path" ]]; then
-    local worker_identity
-    worker_identity="$(sed -n 's/^- \*\*Worker:\*\* //p' "$card_path" | head -n1)"
-    model="$(claude_model_for_identity "$worker_identity")"
-  fi
+  local mandate_path settings reserve action window reading reserve_window
   mandate_path="${AUTOMETTA_CONTROLLER_MANDATE:-$(autometta_controller_home)/phat-controller-mandate.yaml}"
   settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
   IFS=$'\t' read -r reserve action window <<<"$settings"
+  reserve_window="$(quota_reserve_window_for_family "$family")"
   [[ -n "$AUTOMETTA_QUOTA_TICK_JSON" ]] || quota_refresh_tick || true
   reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]' 2>/dev/null || printf '{}')"
-  if quota_gate_reading "$reading" "$reserve" "$action" "$model"; then
+  if quota_gate_reading "$reading" "$reserve" "$action" "$model" "$reserve_window"; then
     return 0
   fi
   QUOTA_GATE_REASON="${QUOTA_GATE_REASON} (${window:-default} schedule); resets $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
@@ -389,12 +487,12 @@ quota_schedule_permits_dispatch() {
   return 1
 }
 
-# quota_gate_reading <reading-json> <reserve-percent> <action> [model]
+# quota_gate_reading <reading-json> <reserve-percent> <action> [model] [window-label]
 # Returns 1 only when a known window is inside a non-zero hold reserve and has
 # a future reset. Unknown, zero and observe all fail open with an explicit
 # QUOTA_GATE_REASON. The caller owns budget_pause_until and logging.
 quota_gate_reading() {
-  local reading="$1" reserve="$2" action="$3" model="${4:-}" now
+  local reading="$1" reserve="$2" action="$3" model="${4:-}" reserve_window="${5:-}" now
   QUOTA_GATE_WINDOW=""; QUOTA_GATE_RESET=""; QUOTA_GATE_REASON=""
   if awk -v r="$reserve" 'BEGIN { exit !(r <= 0) }'; then
     QUOTA_GATE_REASON="reserve off"
@@ -408,7 +506,7 @@ quota_gate_reading() {
     return 0
   fi
   local binding
-  binding="$(printf '%s' "$reading" | jq -c --argjson reserve "$reserve" --arg model "$model" '
+  binding="$(printf '%s' "$reading" | jq -c --argjson reserve "$reserve" --arg model "$model" --arg reserve_window "$reserve_window" '
     def scoped_model_name:
       (.key // "") as $key
       | if ($key | type) == "string" and ($key | test("^(weekly|5-hour)-.+$"))
@@ -416,6 +514,11 @@ quota_gate_reading() {
         else ""
         end;
     [.windows[]? | select((.utilization | type) == "number")
+      | select(
+          $reserve_window == ""
+          or (.label // "") == $reserve_window
+          or ((.label // "") | startswith($reserve_window + " ("))
+        )
       | scoped_model_name as $scope
       | select($model == "" or $scope == "" or ("-" + $model + "-" | contains("-" + $scope + "-")))
       | . + {remaining:(100 - .utilization)}

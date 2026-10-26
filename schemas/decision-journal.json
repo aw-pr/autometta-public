@@ -37,7 +37,7 @@
     },
     "pass_id": {
       "type": ["string", "null"],
-      "description": "Present on both decision and outcome lines. The headless pass this line was written under, from the repo's state/.phat-controller-current-pass-id marker (or AUTOMETTA_CONTROLLER_PASS_ID). Null for a verb called by hand between passes. Every line sharing a pass_id is what pc_transcript_materialize collects into that pass's transcript, and state/phat-controller-transcripts/index.jsonl resolves the pass_id to where it landed."
+      "description": "Present on both decision and outcome lines. A tag from AUTOMETTA_CONTROLLER_PASS_ID grouping a run of manual verb calls, and null otherwise. Lines written by the retired agent pass carry a pass_id from its marker file."
     },
     "verb": {
       "type": "string",

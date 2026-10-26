@@ -126,7 +126,18 @@ if "$serve"; then
   # Foreground-owned: the trap kills it on any exit path, including the
   # interrupt that ends --watch. Bound to loopback, because this reports on
   # every subscriber in the fleet and has no auth of its own.
-  python3 -m http.server "$port" --bind 127.0.0.1 --directory "$dashboard_dir" >/dev/null 2>&1 &
+  # no-cache, because http.server sends only Last-Modified and Chrome then
+  # caches dashboard.js heuristically: an upgraded page went on running the
+  # old script even in a fresh tab until the cache was bypassed by hand.
+  python3 -c '
+import functools, http.server, sys
+class NoCache(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+handler = functools.partial(NoCache, directory=sys.argv[2])
+http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), handler).serve_forever()
+' "$port" "$dashboard_dir" >/dev/null 2>&1 &
   server_pid=$!
   # shellcheck disable=SC2064
   trap "kill $server_pid 2>/dev/null || true" EXIT INT TERM

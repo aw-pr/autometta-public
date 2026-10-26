@@ -29,6 +29,25 @@ Any stage with executable acceptance does. A prose-only, throwaway or
 exploratory card leaves the section as `None` and says why in its
 Surfacing concern. Decide this first.
 
+## Keep proof proportional
+
+Use the shared preparation allowance in `autometta-card-review`; this skill
+gets no separate budget. A reference checks whether the oracle can distinguish
+correct from incorrect behaviour. It is not a second production implementation.
+Prefer a minimal fixture, a local seam or an already valid implementation path.
+Do not require full end-to-end reference green for every card regardless of cost.
+If proving the test requires doing most of the worker's job, stop and use a
+bounded implementation attempt with explicit evidence obligations, or split the
+card. Apply an already authorised exception without asking again.
+
+Frozen assertions remain orchestrator-owned. Under an explicitly authorised
+coverage exception, freeze the validated core and name the uncovered outcomes
+and supplemental worker/verifier evidence separately. A defective check must be
+labelled diagnostic or excluded, never passed. The independent verifier must
+validate supplemental measurements and their raw evidence; missing evidence
+cannot earn overall PASS. Do not weaken historical frozen tests or invent an
+exemption for a card with executable acceptance.
+
 ## Procedure
 
 1. **Read the whole card**, every Re-brief and amendment included. Card
@@ -83,16 +102,19 @@ Surfacing concern. Decide this first.
    a baseline finding: record it on the card as unchanged-from-base, do
    not make it a criterion.
 
-6. **Prove green with a throwaway reference.** In a detached scratch
-   worktree (`git worktree add --detach <<scratch-dir>> <<base>>`), write
-   the smallest implementation that should satisfy the card, in any
-   language, and run the test. It must pass every assertion. When it does
-   not, decide which side is wrong, and record on the card any trap the
-   worker will meet too (in the batch that introduced this skill, the
-   reference hit the `/var` path trap above). Then remove it:
-   `git worktree remove --force <<scratch-dir>>` and `git worktree prune`.
-   Never commit the reference. On a small card, red on the base plus a
-   careful read of the block is enough; say so on the card.
+6. **Bound the positive proof.** Exercise a minimal passing fixture or a
+   narrowly scoped throwaway reference when it cheaply catches an impossible or
+   toothless assertion. Pair it with the intended base failure; check that bad
+   fixtures fail for the correct reason. For a small, clear change, red plus a
+   careful assertion review can suffice; record the limitation. A full reference
+   is justified only when the risk it resolves warrants the additional cost
+   within the shared preparation allowance. Do not iterate a reference until it
+   becomes the implementation. If the operator accepts a bounded attempt before
+   complete proof, record the exact coverage exception and remaining evidence
+   gate. Preserve useful scratch results; never discard the only evidence or
+   imply that a reference passed when it did not. Keep reference behaviour out
+   of the dispatch baseline unless it is deliberately delivered as a separate
+   implementation change.
 
 7. **Digest and record.** `scripts/check-contract-test-gate.sh print
    <<test-file>>` prints the digest. The card's Contract test section
@@ -106,10 +128,11 @@ Surfacing concern. Decide this first.
 
 ## Done when
 
-- Every criterion and every constraint maps to an assertion with a seat
-  and a command.
+- Every criterion and constraint maps to a frozen assertion or an explicitly
+  authorised supplemental evidence gate with a seat and command.
 - The test fails on the base at a named assertion for the card's reason,
   and passed the reference, or the card says why that step was skipped.
 - Test, digest and Oracle proof are on the card, in one commit with the
   test.
-- No scratch worktree or reference branch remains.
+- Scratch work is clearly labelled and separated from the dispatch baseline;
+  preserve evidence before any cleanup.

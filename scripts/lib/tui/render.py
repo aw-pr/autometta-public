@@ -245,12 +245,8 @@ class TuiState:
         self.pinned_stage = None
         self.history_selection = 0
         self.pinned_history_card = None
-        self.controller = {"journal": [], "conversation": []}
+        self.pending_escalations = None
         self.status_updates = []
-        self.journal_offset = 0
-        self.composing = False
-        self.compose_buffer = ""
-        self.compose_notice = ""
         self.card_notice = ""
         self.card_body = []
         self.card_body_stage = None
@@ -322,18 +318,8 @@ class TuiState:
     def update_status_updates(self, rows):
         self.status_updates = list(rows or [])
 
-    def update_controller(self, controller):
-        self.controller = controller or {"journal": [], "conversation": []}
-        maximum = max(0, len(self.controller.get("journal") or []) - 1)
-        self.journal_offset = min(self.journal_offset, maximum)
-
-    def compose_done(self, notice):
-        self.composing = False
-        self.compose_buffer = ""
-        self.compose_notice = notice
-
-    def compose_failed(self, notice):
-        self.compose_notice = "not queued: " + notice
+    def update_pending_escalations(self, count):
+        self.pending_escalations = count
 
     def _follow_selection(self, rows):
         """Point the detail pane at whatever the cursor is now on.
@@ -361,20 +347,6 @@ class TuiState:
         return [self.payload]
 
     def key(self, key):
-        if self.composing:
-            if key in ("ESC", "\x1b"):
-                self.composing = False
-                self.compose_buffer = ""
-                self.compose_notice = "message cancelled"
-            elif key in ("BACKSPACE", "\b", "\x7f"):
-                self.compose_buffer = self.compose_buffer[:-1]
-            elif key in ("ENTER", "\n", "\r"):
-                if self.compose_buffer.strip():
-                    return "submit", self.compose_buffer
-                self.compose_notice = "not queued: message is empty"
-            elif key and all(char.isprintable() for char in key):
-                self.compose_buffer += key
-            return None
         if key not in ("o", "O"):
             self.card_notice = ""
         if key in ("o", "O"):
@@ -394,24 +366,18 @@ class TuiState:
                 return None
             path = stage.get("card") or "stage-cards/%s.md" % stage.get("id")
             return ("open_card" if key == "o" else "open_card_external"), path
-        if key in ("m", "M"):
-            self.page = 3
-            self.composing = True
-            self.compose_buffer = ""
-            self.compose_notice = ""
-            return None
         if key in ("0", "1", "2", "3", "4", "5"):
             # The number row means two things, and which one depends on what is
             # on screen. The run page draws panels labelled [0]-[4], so there a
             # number focuses a panel. The other pages draw no numbered panels,
             # and the footer's tab strip is the only thing the number row can
             # mean there -- so it switches page. It used to focus a panel on
-            # every page and return, which on the messages page did nothing at
+            # every page and return, which on the history page did nothing at
             # all: the tab strip advertised [1]run while pressing 1 left the
             # reader exactly where they were, with only [ ] or q to escape.
             if self.page == 1:
                 self.focus = int(key)
-            elif key in ("1", "2", "3"):
+            elif key in ("1", "2"):
                 self.page = int(key)
             return
         if key in ("ESC", "\x1b"):
@@ -432,10 +398,10 @@ class TuiState:
             self.focus = self.focus % 5 + 1
             return
         if key in ("PAGE_NEXT", "]"):
-            self.page = self.page % 3 + 1
+            self.page = self.page % 2 + 1
             return
         if key in ("PAGE_PREV", "["):
-            self.page = (self.page - 2) % 3 + 1
+            self.page = (self.page - 2) % 2 + 1
             return
         if self.page == 2:
             rows = history_cards(self.payload)
@@ -448,17 +414,6 @@ class TuiState:
             elif key in ("ENTER", "\n", "\r") and rows:
                 self.pinned_history_card = rows[self.history_selection].get("id")
             return
-        if self.page == 3:
-            journal = self.controller.get("journal") or []
-            if key in ("j", "DOWN"):
-                self.journal_offset = max(0, self.journal_offset - 1)
-            elif key in ("k", "UP") and journal:
-                self.journal_offset = min(len(journal) - 1, self.journal_offset + 1)
-            elif key in ("ENTER", "\n", "\r"):
-                self.composing = True
-                self.compose_buffer = ""
-                self.compose_notice = ""
-            return None
         # The detail pane follows the cursor. It used to update only on enter,
         # so arrowing down the run list left the pane describing the card you
         # had moved away from: every intermediate row was rendered against the
@@ -483,16 +438,6 @@ class TuiState:
         elif key in ("ENTER", "\n", "\r") and self.focus == 2 and rows:
             self.pinned_stage = rows[self.selection[2]].get("id")
             self.card_offset = 0
-        elif key in ("ENTER", "\n", "\r") and self.focus == 4 and rows:
-            # Escalations are the one panel where the answer is a conversation,
-            # so enter opens the composer already carrying the stage and the
-            # reason -- the controller inbox that m writes to, pre-addressed.
-            stage_id, status, reason = rows[self.selection[4]]
-            self.page = 3
-            self.composing = True
-            self.compose_buffer = "%s (%s: %s): " % (stage_id, status, reason)
-            self.compose_notice = ""
-            return None
 
 
 def stage_state(payload, stage):
@@ -1046,15 +991,10 @@ def agent_lines(state, inner_width=None):
     return lines or [content_line("no live agents", [(0, 14, DIM)])]
 
 
-def inbox_message_count(state):
-    rows = (state.controller or {}).get("conversation") or []
-    return len([row for row in rows if row.get("status") == "pending"])
-
-
-def inbox_lines(state):
+def escalation_lines(state):
     rows = escalation_rows(state.payload)
     if not rows:
-        return [content_line("no escalations or messages", [(0, 27, DIM)])]
+        return [content_line("no escalations", [(0, 14, DIM)])]
     lines = []
     for index, (stage_id, status, reason) in enumerate(rows):
         heading = "✖ %s  needs you" % status
@@ -1333,80 +1273,6 @@ def fit_heights(desired, minimum, available, shrink_order):
     return heights
 
 
-def _journal_window(state, capacity):
-    rows = state.controller.get("journal") or []
-    if not rows:
-        return [content_line("no controller record yet", [(0, 24, DIM)]),
-                content_line("the controller's first decision will populate this strip", [(0, 55, DIM)])]
-    end = max(0, len(rows) - state.journal_offset)
-    available = max(1, capacity)
-    start = max(0, end - available)
-    if start > 0:
-        start = max(0, end - max(1, available - 1))
-    visible = rows[start:end]
-    lines = []
-    if start > 0:
-        label = "and %d earlier" % start
-        lines.append(content_line(label, [(0, len(label), DIM)]))
-    for row in visible:
-        text = "%s  %-8s  %s" % (row.get("time") or "?", row.get("kind") or "decision",
-                                  row.get("summary") or "recorded")
-        kind_start = 7
-        attr = ALERT if row.get("kind") == "refusal" else BOLD
-        lines.append(content_line(text, [(kind_start, kind_start + len(row.get("kind") or "decision"), attr)]))
-    return lines[-available:]
-
-
-def _conversation_lines(state, capacity):
-    rows = state.controller.get("conversation") or []
-    if not rows:
-        empty = [content_line("no operator messages or controller replies yet", [(0, 45, DIM)]),
-                 content_line("press m to write; replies arrive after the controller's next pass", [(0, 63, DIM)])]
-        return empty[:max(1, capacity)]
-    lines = []
-    for row in rows:
-        status = row.get("status")
-        marker = " [%s]" % status if status in ("pending", "refusal") else ""
-        text = "%-4s  %s%s  %s" % (row.get("speaker") or "?", row.get("time") or "?", marker,
-                                   row.get("text") or "")
-        spans = []
-        if status == "pending":
-            start = text.find("[pending]")
-            spans.append((start, start + 9, ACTIVE))
-        elif status == "refusal":
-            start = text.find("[refusal]")
-            spans.append((start, start + 9, ALERT))
-        lines.append(content_line(text, spans))
-    if len(lines) > capacity:
-        hidden = len(lines) - max(1, capacity - 1)
-        label = "and %d earlier messages" % hidden
-        lines = [content_line(label, [(0, len(label), DIM)])] + lines[-max(1, capacity - 1):]
-    return lines[:capacity]
-
-
-def render_messages(canvas, state, width, usable):
-    inner_height = max(1, usable - 2)
-    journal_capacity = min(8, max(2, (inner_height - 5) // 2))
-    journal = _journal_window(state, journal_capacity)
-    separator = "── inbox " + "─" * max(0, width - 15)
-    input_separator = "── message " + "─" * max(0, width - 17)
-    fixed = len(journal) + 4 + (1 if state.compose_notice else 0)
-    conversation = _conversation_lines(state, max(1, inner_height - fixed))
-    # Cursor only. The key hint used to be concatenated onto the input line
-    # right after the cursor, unstyled, so it read as text the operator had
-    # somehow typed into their own message. The footer already states the keys
-    # for the whole time the composer is open, which is where a hint belongs.
-    prompt = "> " + state.compose_buffer + ("_" if state.composing else "")
-    if not state.composing:
-        prompt = "> press m or enter to message the controller"
-    lines = journal + [content_line(separator, [(0, 8, BOLD)])]
-    lines += conversation + [content_line(input_separator, [(0, 10, BOLD)]), content_line(prompt)]
-    if state.compose_notice:
-        attr = ALERT if state.compose_notice.startswith("not queued") else DIM
-        lines.append(content_line(state.compose_notice, [(0, len(state.compose_notice), attr)]))
-    draw_box(canvas, (0, 0, width, usable), "[0]─Controller", lines, state.composing)
-
-
 def footer(canvas, state):
     clock = "%s %s" % (
         "*" if int(state.monotonic_now) % 2 else ".",
@@ -1423,16 +1289,12 @@ def footer(canvas, state):
                 canvas.attrs[canvas.height - 1][x] = attr
         canvas.put(clock_x, canvas.height - 1, clock)
 
-    if state.composing:
-        text = "message draft  enter send · esc cancel"
-        put_footer(text, ACTIVE)
-        return
-    tabs = "[r]un [h]istory [m]essages"
+    tabs = "[r]un [h]istory"
     if state.page == 1:
         hints = ("  1-5 focus · 0 card · j/k select · enter detail · [ ] page"
                  " · o page card · O default viewer · q quit")
     else:
-        hints = "  j/k scroll · enter reply · esc run page · q quit"
+        hints = "  j/k scroll · esc run page · q quit"
     text = tabs + hints
     if len(text) > hint_width:
         # The narrow fallback still has to name a way off this page, which is
@@ -1464,10 +1326,6 @@ def render(state, width, height):
         render_history(canvas, state, width, height - 1)
         footer(canvas, state)
         return canvas
-    if state.page != 1:
-        render_messages(canvas, state, width, height - 1)
-        footer(canvas, state)
-        return canvas
 
     usable = height - 1
     stacked = width <= 80
@@ -1481,11 +1339,11 @@ def render(state, width, height):
     else:
         agents_title = "[3]─Agents  %d live" % live_count
     esc_count = len(escalation_rows(state.payload))
-    msg_count = inbox_message_count(state)
+    pending = "?" if state.pending_escalations is None else state.pending_escalations
     # Two lines per escalation, so a fixed four-line box showed one row and hid
     # the rest behind "and N more" -- including the reasons it exists to show.
     # It still yields first when the terminal is short; it just asks for enough.
-    inbox_desired = max(4, min(12, 2 + 2 * esc_count))
+    esc_desired = max(4, min(12, 2 + 2 * esc_count))
     if not stacked:
         left_width = min(86, max(74, int(width * 0.52)))
         left_width = min(left_width, width - 45)
@@ -1495,21 +1353,21 @@ def render(state, width, height):
         # Panel 5 shrinks first and to the smallest floor: it is the one panel
         # whose content is a tail, so losing rows costs the reader the oldest
         # lines rather than a whole subject.
-        heights = fit_heights([8, 16, 6, inbox_desired, 8], [5, 5, 4, 3, 3],
+        heights = fit_heights([8, 16, 6, esc_desired, 8], [5, 5, 4, 3, 3],
                               panel_total, [4, 1, 2, 0, 3])
-        status_h, run_h, agents_h, inbox_h, updates_h = heights
+        status_h, run_h, agents_h, esc_h, updates_h = heights
         y1 = 0
         y2 = y1 + status_h + 1
         y3 = y2 + run_h + 1
         y4 = y3 + agents_h + 1
-        y5 = y4 + inbox_h + 1
+        y5 = y4 + esc_h + 1
         draw_box(canvas, (0, y1, left_width, status_h), "[1]─Status", status_lines(state), state.focus == 1)
         draw_box(canvas, (0, y2, left_width, run_h), run_title,
                  run_lines(state, left_width - 4), state.focus == 2)
         draw_box(canvas, (0, y3, left_width, agents_h), agents_title,
                  agent_lines(state, left_width - 4), state.focus == 3)
-        draw_box(canvas, (0, y4, left_width, inbox_h), "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
-                 inbox_lines(state), state.focus == 4)
+        draw_box(canvas, (0, y4, left_width, esc_h), "[4]─Escalations  %d · %s pending" % (esc_count, pending),
+                 escalation_lines(state), state.focus == 4)
         draw_box(canvas, (0, y5, left_width, updates_h), "[5]─Status updates",
                  status_update_lines(state, left_width - 4), state.focus == 5)
         draw_box(canvas, (right_x, 0, right_width, usable), "[0]─Card detail",
@@ -1517,9 +1375,9 @@ def render(state, width, height):
                  state.focus == 0)
     else:
         available = usable - 5
-        heights = fit_heights([8, 18, 6, inbox_desired, 6, 18], [4, 5, 3, 3, 3, 6],
+        heights = fit_heights([8, 18, 6, esc_desired, 6, 18], [4, 5, 3, 3, 3, 6],
                               available, [4, 1, 5, 2, 0, 3])
-        status_h, run_h, agents_h, inbox_h, updates_h, detail_h = heights
+        status_h, run_h, agents_h, esc_h, updates_h, detail_h = heights
         rects = []
         cursor = 0
         for panel_height in heights:
@@ -1528,8 +1386,8 @@ def render(state, width, height):
         draw_box(canvas, rects[0], "[1]─Status", status_lines(state), state.focus == 1)
         draw_box(canvas, rects[1], run_title, run_lines(state, width - 4), state.focus == 2)
         draw_box(canvas, rects[2], agents_title, agent_lines(state, width - 4), state.focus == 3)
-        draw_box(canvas, rects[3], "[4]─Escalations & inbox  %d · %d" % (esc_count, msg_count),
-                 inbox_lines(state), state.focus == 4)
+        draw_box(canvas, rects[3], "[4]─Escalations  %d · %s pending" % (esc_count, pending),
+                 escalation_lines(state), state.focus == 4)
         draw_box(canvas, rects[4], "[5]─Status updates",
                  status_update_lines(state, width - 4), state.focus == 5)
         draw_box(canvas, rects[5], "[0]─Card detail",

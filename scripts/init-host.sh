@@ -147,6 +147,12 @@ else
   printf 'WARN mandate template missing %s; the provider-window reserve is off until one is installed\n' "$mandate_template"
 fi
 
+if hook_status="$("$script_dir/install-escalation-hook.sh" --check --family all)"; then
+  printf 'PASS escalation hook %s\n' "$hook_status"
+else
+  printf 'WARN escalation hooks missing; run mcp-hub/scripts/sync-all-platforms.sh or %s/install-escalation-hook.sh --family all (Codex also needs features.hooks=true)\n' "$script_dir"
+fi
+
 if [[ "$(uname -s)" == "Darwin" ]]; then
   printf 'PASS macOS host uses per-repo LaunchAgents; run autometta subscribe <repo> to install one\n'
 else

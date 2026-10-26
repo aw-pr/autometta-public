@@ -578,3 +578,32 @@ preserves a failed attempt. On 2026-10-12, card 157 quoted system paths and a
 bare slash as prose, so the preserve attempted to walk them. It now rejects
 unsafe tokens and follows symlinks before preserving, so a preserve remains
 inside its run worktree.
+
+## Headless gotcha 22: a Claude dispatch can freeze on a TCC prompt and stay silent
+
+On 2026-10-14 a promo-flow worker read its inputs for 19 minutes, produced its
+first `Write`, and then wrote nothing for 2h40m until the wall-clock stall
+killed it at budget plus 50% grace. Around its first edit, Claude Code
+touches the paths named in the user's permission rules (inferred: the
+prompts arrive in the rules' order), and the operator's
+`~/.claude/settings.json` asked before edits to `~/Desktop`, `~/Documents` and
+`~/Downloads`. A dispatch started under launchd has no terminal to inherit a
+grant from, so macOS asked whether "2.1.300" may access the Desktop, and the
+process blocked until someone answered. Reproduced on 2026-10-15: the same
+binary launched from launchd raised the Documents and then the Downloads
+prompt, in rule order. As with `op` (gotcha 11), TCC keys the grant to the
+binary's path, and every Claude Code release installs to a new
+`~/.local/share/claude/versions/<version>`, so an update re-arms the trap.
+
+The fix has two parts. First, keep TCC-protected folders out of user-level
+permission rules. Second, the tick now kills a streaming dispatch, worker or
+verifier, that writes neither its log nor its newest transcript for
+`AUTOMETTA_SILENCE_KILL_SECONDS` when explicitly enabled, and marks the
+stage stalled. It now defaults to `0` (disabled): stage 129 on 2026-10-25
+launched long browser tests and scheduled a 25-minute wake-up, but the old
+20-minute silence limit killed it first. A tool-call timeout does not bound
+background compute. Keep role wall-clock and quota guards; use silence killing
+only when the workload is known to emit regular activity. API outages write `api_error` rows to the
+transcript and are judged by the api-error rule, not this one. A system wake
+later than the last write restarts the count, so a sleeping Mac is not
+mistaken for a hung agent. `scripts/silence-kill-smoke.sh` covers it.

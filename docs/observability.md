@@ -56,25 +56,24 @@ only, so its rate also covers eras before `state/cost-log.jsonl`.
 
 - **`autometta status`** is the quickest fleet snapshot when one command and no persistent screen is enough.
 - **The tickers** open through `autometta attach <repo>` and suit a passive watch of one repo, its controller log, or the fleet page.
-- **`autometta tui <repo>`** is the detailed live view for the current run, card history and a conversation with phat-controller.
+- **`autometta tui <repo>`** is the detailed live view for the current run, card history and pending escalations.
 - **`autometta failures <repo>`** (or `--fleet`) is the reach-for surface when the question is what failed, how often and what it cost.
 - **The HTML dashboard** from `autometta dashboard --open` is the broad fleet and trend view when a browser is more useful than a terminal.
-- **The controller inbox** is the asynchronous instruction path when phat-controller should consider something on its next pass without an attached session; the TUI messages page is its operator-facing writer.
+- **The escalations folder** is how the tick reaches the operator without an attached session: `scripts/escalations.sh list` and the SessionStart hook show what is pending (see `docs/tick-loop.md`, "Escalations").
 
 The HTML dashboard renders both times in its header in the browser's local
 timezone, so its generation time and freshness clock can be compared directly.
 The aggregator still writes `generated_at` to `data.json` as a UTC ISO stamp;
 hover over the generation time in the header to see that full UTC value.
 
-The TUI has run, history and messages pages. On the run page the number row
-focuses a panel, matching the `[0]`-`[4]` labels the boxes carry; on the other
-two, where no numbered panels are drawn, it switches page as the footer's tab
+The TUI has run and history pages. On the run page the number row
+focuses a panel, matching the `[0]`-`[4]` labels the boxes carry; on the
+history page, where no numbered panels are drawn, it switches page as the footer's tab
 strip says, and escape returns to the run page from anywhere. Focus `0` is the
 card detail pane, which carries the stage card under the metadata and scrolls
 with `j`/`k`; `o` pages that card read-only in a tmux window, and `O` opens it in
-the desktop's default viewer, which can usually write to it. Enter on an
-escalation opens the controller composer already carrying the stage and the
-reason it stopped.
+the desktop's default viewer, which can usually write to it. The escalations
+panel title carries the pending count from `scripts/escalations.sh list`.
 
 The `[3] Agents` panel shows live agents followed by the queued next stages.
 Queued rows come from the aggregate payload's `queue` field and are display-only;
@@ -118,9 +117,7 @@ the cost log, billing totals or state.
 Card 74 replaced per-row process forks and repeated file scans in that seam,
 taking the measured per-repo read from 37 seconds to under one second; a
 five-second poll now represents a fresh snapshot rather than a queue of stale
-ones. Its messages page is the narrow exception to the read-only display
-model: it writes only an operator message to the controller inbox, then reads
-the journal and outbox back from the filesystem.
+ones. The display is read-only.
 
 `autometta init <repo>` creates the tmux viewer automatically when `tmux` is
 available. Each `autometta tick` also re-ensures the viewer per repo it
@@ -326,25 +323,40 @@ watchdog surfaces stalls and budget overruns; it never kills for those. The
 one thing it does kill is a runaway token outlier, described below.
 
 For token spend, the heartbeat reads the running family transcript once at
-the heartbeat cadence. It compares the live total with the median of the last
-ten comparable cost-log rows for the same role. At least five rows are needed
-and the default warning point is ten times the median
-(`AUTOMETTA_OUTLIER_MULTIPLE`). `usage_status: unknown` and null totals do not
-enter the baseline. The report carries the baseline, sample size, live figure
-and multiple, while the warning is written to the controller tick log and
-shown in the repo ticker's `ESCALATIONS` section. The warning does not change
-state-machine status, budget state or process liveness.
+the heartbeat cadence. It compares live uncached tokens (fresh input plus
+output, excluding cache reads) with the same role's median uncached tokens.
+The baseline takes the last ten `recorded` cost-log rows with non-negative
+integer `input_tokens` and `output_tokens`, filtering before taking the
+window. Worker and verifier baselines are separate. At least five split rows
+and a positive median are needed; otherwise judgement falls back to the total
+measure (input plus cached input plus output). Its baseline uses `recorded`
+or `total_only` rows with non-negative integer `total_tokens`.
 
-Above a second, higher multiple the heartbeat acts rather than narrates:
-`AUTOMETTA_OUTLIER_KILL_MULTIPLE` (default 15, `0` disables the kill and
-restores observe-only) sends SIGTERM to the dispatch's children and then to
-the wrapper itself, flags the entry `token-outlier-killed`, records
-`killed_at` and `kill_multiple` under `token_outlier`, and moves the entry to
-`state/recent-agents/` with `outcome: killed-token-outlier`. The run
-worktree is left standing so the work survives for the reaper to preserve;
-what stops is the spending. The default sits above the largest spend an
-honest stage has recorded (11.9x its median), after stage 73 ran 41 minutes
-past its warning at 22.2x on 2026-09-02 because nothing was listening.
+`AUTOMETTA_OUTLIER_BASELINE_WINDOW` (default 10) and
+`AUTOMETTA_OUTLIER_MIN_SAMPLES` (default 5) configure both baselines.
+`AUTOMETTA_OUTLIER_MULTIPLE` (default 10) sets the warning multiple.
+`AUTOMETTA_OUTLIER_KILL_MULTIPLE` (default 15, `0` disables this kill) sets
+the kill multiple for the uncached measure or its total fallback.
+`AUTOMETTA_OUTLIER_TOTAL_KILL_MULTIPLE` (default 40, `0` disables) is an
+independent total-tokens backstop, so a loop dominated by cache reads is still
+stopped. Either kill threshold reaching its multiple terminates the dispatch,
+even when the warning threshold is higher. Set both kill variables to `0` for
+observe-only behaviour.
+
+The report retains `live_total_tokens` and `baseline_median_tokens` and adds
+`live_uncached_tokens` and `baseline_median_uncached_tokens` per entry.
+`token_outlier.measure` names the triggering measure (`uncached` or `total`);
+uncached takes precedence if both kills fire. The outlier record carries both
+figures, sample sizes and the selected multiple. Warnings go to the controller
+tick log and the repo ticker's `ESCALATIONS` section. A warning alone does not
+change state-machine status, budget state or process liveness. Budget caps
+and cost-log accounting continue to count all tokens, including cache reads.
+
+A kill sends SIGTERM to the dispatch's children and then its wrapper, flags
+the entry `token-outlier-killed`, and records `killed_at`, `kill_multiple` and
+`outcome: killed-token-outlier` in the report. The next heartbeat moves the
+dead entry to `state/recent-agents/`. The run worktree is left standing so the
+work survives for the reaper to preserve.
 
 The heartbeat surface answers the "is this stuck?" question that
 `state.yaml` does not: `state.yaml` reflects the FSM, the heartbeat

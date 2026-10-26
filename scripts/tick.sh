@@ -19,6 +19,8 @@ source "$script_dir/subscribers.sh"
 source "$script_dir/resolve-root.sh"
 # shellcheck source=./vendor-set.sh
 source "$script_dir/vendor-set.sh"
+# shellcheck source=./escalations.sh
+source "$script_dir/escalations.sh"
 
 controller_home="$(autometta_controller_home)"
 subscribers_dir="$controller_home/subscribers"
@@ -108,6 +110,63 @@ claude_api_error_stall_count() {
   fi
 }
 
+# The most recent system wake in epoch seconds, or nothing where the platform
+# does not report one.
+system_wake_epoch() {
+  sysctl -n kern.waketime 2>/dev/null | sed -n 's/^{ sec = \([0-9][0-9]*\),.*/\1/p' || true
+}
+
+# Print how long a registered streaming dispatch has gone without writing its
+# log or its newest Claude transcript. A wake later than both restarts the
+# count, because a sleeping Mac suspends the agent with it. An unregistered
+# agent, or one that does not stream its log, prints nothing: that is neutral,
+# not silence.
+dispatch_silence_seconds() {
+  local repo_root="$1" pid="$2"
+  local now_epoch="${3:-$(date -u +%s)}"
+  local wake_epoch="${4-$(system_wake_epoch)}"
+  local registry="$repo_root/state/active-agents/${pid}.json"
+  local projects_dir="${AUTOMETTA_CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+  local log_path work_dir candidate mtime newest=-1
+  local -a candidates=()
+
+  [[ -f "$registry" ]] || return 0
+  jq -e '.log_streams == true' "$registry" >/dev/null 2>&1 || return 0
+  log_path="$(jq -r '.log_path // empty' "$registry" 2>/dev/null || true)"
+  work_dir="$(jq -r '.working_dir // empty' "$registry" 2>/dev/null || true)"
+  [[ -z "$log_path" ]] || candidates+=("$log_path")
+  if [[ -n "$work_dir" ]]; then
+    for candidate in "$projects_dir/${work_dir//\//-}"/*.jsonl; do
+      candidates+=("$candidate")
+    done
+  fi
+  for candidate in "${candidates[@]+"${candidates[@]}"}"; do
+    [[ -f "$candidate" ]] || continue
+    mtime="$(stat -f '%m' "$candidate" 2>/dev/null || stat -c '%Y' "$candidate" 2>/dev/null || printf '0')"
+    if (( mtime > newest )); then
+      newest="$mtime"
+    fi
+  done
+  (( newest >= 0 )) || return 0
+  if [[ "$wake_epoch" =~ ^[0-9]+$ ]] && (( wake_epoch > newest )); then
+    newest="$wake_epoch"
+  fi
+  if (( now_epoch > newest )); then
+    printf '%s\n' "$((now_epoch - newest))"
+  else
+    printf '0\n'
+  fi
+}
+
+# Silence beyond this many seconds kills a streaming dispatch; 0 turns the
+# check off. Quiet local compute and background tasks can outlive tool-call
+# limits, so silence alone is opt-in; wall-clock and quota guards remain active.
+dispatch_silence_limit_seconds() {
+  local limit="${AUTOMETTA_SILENCE_KILL_SECONDS:-0}"
+  [[ "$limit" =~ ^[0-9]+$ ]] || limit=0
+  printf '%s\n' "$limit"
+}
+
 # Terminate a recorded wrapper and every descendant. Descendants are captured
 # before TERM so reparenting cannot leave the agent itself behind. KILL is the
 # bounded fallback for anything still alive after the grace period.
@@ -170,7 +229,7 @@ QUOTA_GATE_RESOLVED_WINDOW="default"
 # outside-reserve, reserve off, observe and every unknown reading.
 quota_gate_family_dispatch() {
   local repo_root="$1" family="$2" what="$3" model="${4:-}"
-  local settings reserve action window reading mandate_path curfew
+  local settings reserve action window reading mandate_path curfew reserve_window
   QUOTA_GATE_RESOLVED_WINDOW="default"
   case "$family" in claude|codex) ;; *)
     log "quota ${what}: family unknown; dispatch remains fail-open"
@@ -186,12 +245,13 @@ quota_gate_family_dispatch() {
   fi
   settings="$(quota_reserve_settings "$mandate_path" "$repo_root")"
   IFS=$'\t' read -r reserve action window <<<"$settings"
+  reserve_window="$(quota_reserve_window_for_family "$family")"
   QUOTA_GATE_RESOLVED_WINDOW="${window:-default}"
   curfew="$(quota_schedule_curfew_window "$mandate_path" || true)"
   log "quota ${what} (${family}): ${reserve}% reserve, ${action} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); curfew ${curfew:+on }${curfew:-off}"
   [[ -f "$mandate_path" ]] || log "quota ${what}: no controller mandate at ${mandate_path}; reserve off until autometta init-host installs one"
   reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
-  if quota_gate_reading "$reading" "$reserve" "$action" "$model"; then
+  if quota_gate_reading "$reading" "$reserve" "$action" "$model" "$reserve_window"; then
     if [[ "$QUOTA_GATE_REASON" == reading\ unknown:* ]]; then
       log "quota ${what} (${family}): ${QUOTA_GATE_REASON}; dispatch remains fail-open"
     elif [[ "$QUOTA_GATE_REASON" == *"inside reserve"* ]]; then
@@ -242,6 +302,26 @@ quota_gate_role_dispatch() {
       curfew="$(quota_schedule_curfew_window "$mandate_path" || true)"
       log "schedule stop ${role} ${stage_id} (${family}): ${QUOTA_SCHEDULE_STOP_REASON}; ${reserve}% reserve, ${action} (${window:-default} schedule); curfew ${curfew:+on }${curfew:-off}; no new dispatch this tick"
       return 1
+    fi
+    local pace_worker pace_verifier
+    pace_worker="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .worker // empty')"
+    pace_verifier="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" '.stages[] | select(.id == $id) | .verifier // empty')"
+    if ! quota_card_pace_permits "$repo_root" "$pace_worker" "$pace_verifier"; then
+      log "quota pace ${role} ${stage_id}: ${QUOTA_GATE_REASON}; no new card, active work may finish"
+      return 1
+    fi
+    [[ -z "$QUOTA_GATE_REASON" ]] || log "quota pace ${role} ${stage_id}: ${QUOTA_GATE_REASON}"
+    if [[ "$family" != claude ]] \
+       && { quota_family_role_uses_subscription "$repo_root" claude "$pace_worker" worker \
+         || quota_family_role_uses_subscription "$repo_root" claude "$pace_verifier" verifier; }; then
+      local claude_identity claude_model
+      if [[ "$(agent_family_for_identity "$pace_worker")" == claude ]]; then
+        claude_identity="$pace_worker"
+      else
+        claude_identity="$pace_verifier"
+      fi
+      claude_model="$(claude_model_for_identity "$claude_identity")"
+      quota_gate_family_dispatch "$repo_root" claude "card ${stage_id}" "$claude_model" || return 1
     fi
   fi
   if quota_codex_card_policy; then
@@ -774,7 +854,7 @@ state_apply_json() {
   local state_yaml="$1"
   local jq_filter="$2"
   shift 2
-  local cur_json tmp_json tmp_yaml
+  local cur_json tmp_json tmp_yaml lifecycle_changed
   cur_json="$(mktemp)"
   tmp_json="$(mktemp)"
   tmp_yaml="$(mktemp)"
@@ -793,7 +873,22 @@ state_apply_json() {
   # Write guard: the result must be non-empty, valid JSON, and still an
   # object carrying a .stages array. Never let a degenerate document
   # (e.g. {"stages":[]} or null) overwrite good state.
-  if [[ ! -s "$tmp_json" ]] || ! python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d, dict) and isinstance(d.get("stages"), list) else 1)' "$tmp_json" 2>/dev/null; then
+  if [[ ! -s "$tmp_json" ]] || ! lifecycle_changed="$(python3 - "$tmp_json" "$cur_json" 2>/dev/null <<'PY'
+import json
+import sys
+with open(sys.argv[1]) as source:
+    after = json.load(source)
+if not isinstance(after, dict) or not isinstance(after.get("stages"), list):
+    sys.exit(1)
+with open(sys.argv[2]) as source:
+    before = json.load(source)
+def lifecycle(doc):
+    return [{key: stage.get(key) for key in ("id", "status", "integration", "run_id")}
+            if isinstance(stage, dict) else stage for stage in doc.get("stages", [])]
+if lifecycle(before) != lifecycle(after):
+    print("changed")
+PY
+)"; then
     log "state_apply_json: refusing to write degenerate state to ${state_yaml} (filter: ${jq_filter})"
     rm -f "$cur_json" "$tmp_json" "$tmp_yaml"
     return 1
@@ -806,6 +901,10 @@ state_apply_json() {
 
   yq -P '.' "$tmp_json" > "$tmp_yaml"
   mv "$tmp_yaml" "$state_yaml"
+  if [[ "$lifecycle_changed" == changed ]]; then
+    python3 "$script_dir/lib/lifecycle_events.py" state "$(dirname "$(dirname "$state_yaml")")" \
+      "$cur_json" "$tmp_json" 2>/dev/null || true
+  fi
   rm -f "$cur_json" "$tmp_json"
 }
 
@@ -2204,11 +2303,17 @@ preserve_failed_work() {
     force_add_card_deliverables "$repo_root" "$stage_id" "$reason_label" "$card_path"
     git diff --cached --quiet && exit 3
     git commit --author="$worker_identity" \
-      -m "wip(${stage_id}): attempt ${attempt}, ${reason_label}: ${reason}" >/dev/null
+      -m "wip(${stage_id}): attempt ${attempt}, ${reason_label}: ${reason}" >/dev/null || exit 1
   ) || commit_rc=$?
   if (( commit_rc != 0 )); then
     cp -p "$index_backup" "$index_path" 2>/dev/null || true
     rm -f "$index_backup"
+    # A prior stall may already have committed every deliverable, including
+    # ignored ones that still make card_deliverables_exist return true.
+    if (( commit_rc == 3 )); then
+      log "stage ${stage_id} ${reason_label}: no new work to preserve"
+      return 0
+    fi
     log "stage ${stage_id} ${reason_label}: git commit preservation failed (exit ${commit_rc}); worktree left standing"
     return 1
   fi
@@ -2232,6 +2337,46 @@ preserve_failed_work() {
     return 1
   fi
   log "stage ${stage_id} ${reason_label}: preserved attempt ${attempt} as ${commit_sha} on ${wip_branch}"
+  return 0
+}
+
+auto_retry_dead_workers() {
+  local repo_root="$1" state_yaml="$2"
+  local stage stage_id worker_pid marker reason wip_commit
+  if [[ -f "$repo_root/state/budget.json" ]] \
+      && ! jq -e '.halted != true' "$repo_root/state/budget.json" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  while IFS= read -r stage; do
+    stage_id="$(printf '%s' "$stage" | jq -r '.id')"
+    validate_stage_id "$stage_id" || continue
+    [[ ! -f "$repo_root/state/envelopes/$stage_id.json" \
+       && ! -f "$repo_root/state/handoffs/$stage_id.json" ]] || continue
+    worker_pid="$(printf '%s' "$stage" | jq -r '.worker_pid // empty')"
+    if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+      continue
+    fi
+    marker="$(printf '%s' "$stage" | jq -r '.stall_marker // empty')"
+    case "$marker" in
+      dispatch_configuration_fault:*|run_worktree_failed|dispatch_base_tip_unresolved|card_missing) continue ;;
+    esac
+    reason="${marker:-worker ended without a usable envelope}"
+    if ! preserve_failed_work "$repo_root" "$state_yaml" "$stage_id" "" "$reason" "stalled"; then
+      log "stage ${stage_id} automatic retry skipped: preservation failed (${reason})"
+      continue
+    fi
+    wip_commit="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+      '.stages[] | select(.id == $id) | .wip_commit // empty')"
+    if ! "$script_dir/requeue-stage.sh" --keep-budget "$repo_root" "$stage_id"; then
+      log "stage ${stage_id} automatic retry failed: requeue refused (${reason}); preserved commit ${wip_commit:-none}"
+      continue
+    fi
+    state_apply_json "$state_yaml" \
+      '(.stages[] | select(.id == $id)).auto_retries = 1' --arg id "$stage_id" || return 1
+    log "stage ${stage_id} automatic retry 1: ${reason}; preserved commit ${wip_commit:-none (clean worktree)}"
+  done < <(state_json "$state_yaml" | jq -c \
+    '.stages[] | select(.status == "stalled" and (.auto_retries // 0) == 0)')
   return 0
 }
 
@@ -3016,6 +3161,8 @@ process_repo() {
   _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
   profile_lap "$profile_repo" "dispatch"
 
+  escalations_scan "$repo_root" || true
+
   # Runs after the tick's own dispatch decision, not before: a stage that
   # goes pending -> in_progress in this same tick must already be reflected
   # in state.yaml for the "only when actually doing work" check below to see
@@ -3362,6 +3509,8 @@ _process_repo_locked() {
       ;;
   esac
 
+  auto_retry_dead_workers "$repo_root" "$state_yaml"
+
   # Work versus idle polling (card 37). A tick charges clock_ticks_used only
   # when it supervises a stage in flight or dispatches a queued one; a tick
   # that finds nothing to do charges idle_ticks_used, which halts nothing.
@@ -3497,6 +3646,27 @@ _process_repo_locked() {
       pipeline_after_member_failure "$state_yaml" "$current_stage"
       budget_record_failure "$repo_root"
       log "stage ${current_stage} stalled: ${api_error_count} api errors and no tool call in ${api_error_window_min} min"
+      budget_increment_tick "$repo_root" work
+      commit_state_branch "$repo_root"
+      return 0
+    fi
+
+    local silence_limit silence_seconds=""
+    silence_limit="$(dispatch_silence_limit_seconds)"
+    if [[ "$worker_returned" != "true" ]] && (( silence_limit > 0 )) \
+       && [[ -n "${worker_pid:-}" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+      silence_seconds="$(dispatch_silence_seconds "$repo_root" "$worker_pid")"
+    fi
+    if [[ -n "$silence_seconds" ]] && (( silence_seconds > silence_limit )); then
+      terminate_process_tree "$worker_pid"
+      state_apply_json "$state_yaml" \
+        '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
+        --arg id "$current_stage"
+      preserve_failed_work "$repo_root" "$state_yaml" "$current_stage" "" \
+        "worker silent for ${silence_seconds}s (limit ${silence_limit}s)" "stalled" || true
+      pipeline_after_member_failure "$state_yaml" "$current_stage"
+      budget_record_failure "$repo_root"
+      log "stage ${current_stage} stalled: worker ${worker_pid} silent for ${silence_seconds}s, no log or transcript write (limit ${silence_limit}s)"
       budget_increment_tick "$repo_root" work
       commit_state_branch "$repo_root"
       return 0
@@ -3714,6 +3884,23 @@ _process_repo_locked() {
       fi
 
       if [[ -n "${verifier_pid:-}" ]] && kill -0 "$verifier_pid" 2>/dev/null; then
+        local verifier_silence_limit verifier_silence_seconds=""
+        verifier_silence_limit="$(dispatch_silence_limit_seconds)"
+        if (( verifier_silence_limit > 0 )); then
+          verifier_silence_seconds="$(dispatch_silence_seconds "$repo_root" "$verifier_pid")"
+        fi
+        if [[ -n "$verifier_silence_seconds" ]] && (( verifier_silence_seconds > verifier_silence_limit )); then
+          terminate_process_tree "$verifier_pid"
+          state_apply_json "$state_yaml" \
+            '(.stages[] | select(.id == $id)).status = "stalled" | .current_stage = null' \
+            --arg id "$current_stage"
+          pipeline_after_member_failure "$state_yaml" "$current_stage"
+          budget_record_failure "$repo_root"
+          log "verifier for stage ${current_stage} stalled: verifier ${verifier_pid} silent for ${verifier_silence_seconds}s, no log or transcript write (limit ${verifier_silence_limit}s)"
+          budget_increment_tick "$repo_root" work
+          commit_state_branch "$repo_root"
+          return 0
+        fi
         local verifier_started_at verifier_budget_seconds verifier_grace_seconds
         local verifier_threshold verifier_started_epoch verifier_now_epoch verifier_elapsed verifier_paused_elapsed
         verifier_started_at="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
@@ -3980,6 +4167,10 @@ main() {
     fi
     process_repo "$repo_path" "$manifest_path"
   done <<< "$subscriber_list"
+
+  if [[ -f "$controller_home/wakeups/state.json" ]]; then
+    python3 "$script_dir/lib/wakeups.py" flush </dev/null 2>/dev/null || true
+  fi
 
   if tick_profile_enabled; then
     local fire_end_ns

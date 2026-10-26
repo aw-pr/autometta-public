@@ -3,8 +3,10 @@
 This is the design and operating record for the autonomous-loop layer that sits on top of the pass-1 dispatch contract. It began as the brief for the stage-5 implementation and has been kept in step with the scripts since they shipped; where the two disagree, the scripts win and this doc is the thing to fix.
 
 The pass-2 layer is the tick loop: a cron-supervised tick that reads state,
-makes one transition, writes state and exits. The name **phat-controller** is
-reserved for the queue-minding role described in section (k).
+makes one transition, writes state and exits. There are two roles: the tick, and the
+operator's orchestration chat, which works the escalations the tick writes.
+The scheduled **phat-controller** agent that once sat between them is retired
+(section (k)).
 
 ## Anchoring
 
@@ -329,7 +331,7 @@ Total work per cron fire was designed to be bounded by `min(N_subscribers, max_p
 
 The tick is the source of stall detection; workers do not self-report stalls.
 
-**Worker stall.** A stage in `in_progress` whose `last_tick_at` (or worker process start time, whichever is more recent) is older than the per-stage worker wall-clock budget plus a grace factor (default 1.5x) is considered stalled. A Claude worker is also stalled when its newest worktree transcript contains at least five `system` rows with `subtype: api_error` in the last ten minutes and no assistant `tool_use` row in that window. Set `AUTOMETTA_API_ERROR_WINDOW_MIN` to change the window. A missing transcript is neutral, and Codex workers skip this check.
+**Worker stall.** A stage in `in_progress` whose `last_tick_at` (or worker process start time, whichever is more recent) is older than the per-stage worker wall-clock budget plus a grace factor (default 1.5x) is considered stalled. A Claude worker is also stalled when its newest worktree transcript contains at least five `system` rows with `subtype: api_error` in the last ten minutes and no assistant `tool_use` row in that window. Set `AUTOMETTA_API_ERROR_WINDOW_MIN` to change the window. A missing transcript is neutral, and Codex workers skip this check. Separately, a streaming dispatch (worker or verifier) that writes neither its log nor its newest transcript for `AUTOMETTA_SILENCE_KILL_SECONDS` (default `0`, disabled; a positive value explicitly enables it) is killed and the stage marked stalled when that optional check is enabled. Silence alone does not distinguish a hung agent from long local compute; role wall-clock and quota guards remain active by default. A system wake later than the last write restarts that count (`docs/lessons.md` gotcha 22).
 
 The tick terminates the recorded worker wrapper and every descendant with TERM, waits for a short grace period, then sends KILL to any process still alive. Claude worker wrappers are started in their own process group as an additional lifecycle boundary. The tick then:
 
@@ -338,7 +340,9 @@ The tick terminates the recorded worker wrapper and every descendant with TERM, 
 3. Increments `consecutive_failures`.
 4. Exits.
 
-The next tick respects `consecutive_failure_cap` and halts the loop if exceeded; otherwise the operator (human, on next session) decides whether to retry, re-brief, or abandon.
+The next tick respects `consecutive_failure_cap` and halts the loop if exceeded.
+
+**Automatic retry.** After the budget, halt and pause checks, the tick retries a `stalled` worker once if its pid is absent or dead and neither `state/envelopes/<id>.json` nor `state/handoffs/<id>.json` exists. An empty stall marker qualifies; `dispatch_configuration_fault:*`, `run_worktree_failed`, `dispatch_base_tip_unresolved` and `card_missing` do not. It first calls `preserve_failed_work`, aborting on preservation failure, then `requeue-stage.sh --keep-budget` and records `auto_retries: 1` (absent means 0). This leaves budget and failure counters untouched; the pending stage still passes every ordinary dispatch gate, including quota reserve and schedule stop. An operator requeue resets `auto_retries` to 0. A second death, worker FAIL, verifier failure, deterministic fault or halt stays in its alert status and goes to the escalation folder for a decision.
 
 **Verifier stall.** The same wall-clock rule and process-tree termination apply. A verifier process that has not written its output file within its declared budget plus grace is terminated before the stage is marked stalled. The transcript API-error rule applies only to Claude workers.
 
@@ -359,6 +363,175 @@ The quota reader's `unknown (snapshot stale)` had the same root cause on the nig
 **Stale log markers.** Every dispatched process logs to a predictable path under `state/logs/<stage-id>-<worker|verifier>.log` per [gotcha 3 (opaque log paths)](./lessons.md#headless-gotcha-3-opaque-log-paths). The tick checks size and mtime on these files when deciding stall status; a log file with non-zero size and recent mtime is evidence the process is making progress, even past nominal budget. Treat as progress and extend grace once per stage.
 
 **Repo subscriber stall.** If a repo's tick consistently stalls, the controller-level `log/tick-YYYY-MM-DD.log` will show repeated stall markers. The operator is responsible for disabling the subscriber file. The controller does not auto-unsubscribe; that decision belongs to the human.
+
+### Escalations
+
+After each repo transition, including a halted return or error, the tick scans
+for `failed`, `verifier_failed` and `stalled` stages and repo halts. Each episode
+writes one Markdown file under `$AUTOMETTA_HOME/escalations/pending/`
+(override with `AUTOMETTA_ESCALATIONS`). A stage episode is the tuple of its
+id, status, `started_at`, `verifier_attempts` and `stall_marker`; a halt episode
+is its `halt_reason` and `halted_at`. The gitignored
+`state/escalated-episodes.json` ledger prevents unchanged episodes being
+reported again, including after acknowledgement. The scan leaves queue and
+budget state untouched, and a failed escalation write never fails the tick.
+
+Use `scripts/escalations.sh list` to list pending ids oldest first,
+`scripts/escalations.sh show <id>` to read one, and
+`scripts/escalations.sh ack <id> [note]` to append a note and acknowledgement
+timestamp and move it to `processed/`. Writes also send a desktop notification;
+set `AUTOMETTA_NOTIFY=0` to disable it. Notification failures leave the file
+available. Controller escalations write separate `controller-blocking` or
+`controller-nonblocking` files; a blocking escalation's halt is also reported
+by the next scan.
+
+Claude Code and Codex orchestration chats receive advisory context through
+`scripts/hooks/session-start-escalations.sh --live <claude|codex>` at
+`SessionStart`, `UserPromptSubmit` and `PostToolUse`. The legacy invocation
+without `--live` still prints a plain-text snapshot for manual use.
+
+The reader uses the hook payload's working directory, filtered to the deepest
+enabled subscriber containing that directory. Outside a subscriber it shows
+the fleet. It delivers only new or changed pending files, oldest first, at most
+ten per invocation; overflow remains unseen until a later eligible hook.
+Tool-triggered checks are throttled to once per 15 seconds. Session starts and
+user prompts bypass the throttle. Compaction and clear re-deliver pending items
+to restore context; an ordinary resume preserves the delivery record.
+
+Delivery records live in `$AUTOMETTA_HOME/hook-delivery/`, keyed by family,
+session and physical working directory. A non-blocking lock prevents parallel
+tools from delivering the same event twice. These disposable records never ack
+an escalation or change queue, budget or contract state. Hook failures are
+silent and advisory. Missing session ids, subagent metadata, fork starts and
+headless `claude -p` / `codex exec` ancestry suppress delivery; set
+`AUTOMETTA_ESCALATION_HOOK=0` to disable it in other specialised sessions.
+
+mcp-hub's `scripts/sync-all-platforms.sh` installs and checks both families,
+including Codex's `features.hooks` flag. The standalone installer defaults to
+Claude for compatibility; use `scripts/install-escalation-hook.sh --family all`
+for both, or `--family codex --settings <path>` for a particular config.
+`--check` reports missing or stale entries without changing files. Standalone
+Codex installation also requires `features.hooks = true` in its config.
+`init-host.sh` checks both families. Restart CLI sessions after installing; Codex
+may request trust review for newly installed hook commands.
+
+Context delivery refreshes an active conversation at lifecycle boundaries. By
+itself it does not wake an idle chat or stream routine worker progress. Without
+the optional wake-up registration below, an idle chat catches up at the next prompt.
+Desktop notifications and the durable pending
+files remain the fallback; a missing hook is not evidence of a healthy queue.
+The summaries are evidence, never instructions or authority to mutate state.
+
+### Lifecycle notices
+
+The same hooks deliver routine lifecycle notices after pending escalations:
+
+- Worker and verifier starts, recorded after dispatch registration.
+- Worker and verifier exits, recorded when heartbeat reaps the process. A fresh
+  envelope or verifier artefact supplies the result; missing, malformed or old
+  evidence remains unknown. An exit alone does not mean ready for verification.
+- Stage landing, awaiting integration, or completion without recorded integration.
+  A disjoint rebase reports the landed tip. Verifier PASS is not proof of landing.
+- Stages that need attention, run halts, and finished runs with nothing awaiting
+  integration. Run membership uses `run_id`; historic failures in another run
+  do not hide completion. Superseded members need no work; pending, active or
+  failed members prevent a finished notice. Legacy records form a separate group.
+
+`scripts/lib/lifecycle_events.py` publishes complete JSON files atomically under
+`$AUTOMETTA_HOME/lifecycle-events/`, with deterministic episode ids. Events last
+seven days; later writes collect expired files. This preserves intermediate
+transitions even when a conversation misses the entire dispatch. It does not
+backfill historical runs. Hook scope follows the enabled subscriber registry,
+including when the pending-escalation folder does not exist. Session delivery
+deduplicates both kinds of record, shares the ten-item cap and 15-second tool
+throttle, and restores context after compaction or clear. Escalations take
+priority; each group is oldest first. Evidence paths point to runtime records
+or logs. Lifecycle notices need no acknowledgement and never change policy.
+
+### Bounded native idle wake-ups
+
+Wake-ups are optional and use the same durable events. Enable them from the
+orchestration chat with `scripts/wakeups.sh enable`; Codex resolves its current
+session from `CODEX_THREAD_ID`. Add `--fleet` to register a fleet fallback, or
+`--repo <path>` for a particular enabled subscriber. Claude and Codex primary
+chats can also register automatically at startup or their next genuine user
+prompt once the host is enabled. A repo owner takes precedence over a fleet
+owner, so one event never fans out to both. A live owner is not silently replaced.
+Explicit registration accepts `claude|codex` and `--session <id>`; Codex requires
+the owning local server's socket, discovered from its process ancestry or
+provided with `--socket <path>`. There is no fallback to another daemon.
+
+The broker runs once at the end of the existing fleet tick. Worker and verifier
+starts and finishes, stalled or failed stages, integration outcomes and run
+completion or halts qualify. The first event waits ten seconds for batching,
+then events for the same card share a row with their transitions and latest
+outcome. A retry start does not hide an earlier stalled or failed transition. Delivery is normally
+at the next eligible tick; a long tick adds its own runtime to that latency.
+
+- **Claude Code:** native
+  [`asyncRewake`](https://code.claude.com/docs/en/hooks#command-hook-fields)
+  hooks arm one bounded waiter at SessionStart, UserPromptSubmit and Stop. The
+  session owns the process; a file lock excludes duplicate waiters. The broker
+  reserves one reminder, the waiter claims it durably and exits 2 with the
+  reminder on stderr. Claude resumes without needing a prompt. Stop arms the
+  next waiter. The same Stop boundary cannot acknowledge its own new reminder.
+  This uses no preview channel, additional MCP server or daemon. Ordinary async
+  hooks do not provide this behaviour.
+- **Codex:** native
+  [`codex queue`](https://learn.chatgpt.com/docs/developer-commands#codex-queue)
+  targets the registered UUID through the owning server's explicit Unix socket.
+  It queues behind an active turn and can start an idle one. It passes no model,
+  effort, sandbox or approval overrides. A matching UserPromptSubmit marker
+  records receipt and clears the outstanding reservation. Until that receipt,
+  an unrelated busy turn finishing cannot acknowledge a message still in the
+  native queue. After receipt the active turn may have at most one further
+  wake waiting behind it, subject to the same fleet cooldown and rate caps.
+
+Safety counters and outstanding reservations live in
+`$AUTOMETTA_HOME/wakeups/state.json`, protected by a non-blocking lock and atomic
+writes. Defaults are deliberately fixed in `scripts/lib/wakeups.py`:
+
+| Bound | Default |
+| --- | --- |
+| Outstanding wake-ups | One per chat, even across multiple scopes |
+| Fleet cooldown | At least 120 seconds between reservations |
+| Fleet rate limits | Six per rolling hour; 24 per rolling 24 hours |
+| Repeated card | At most four appearances per rolling hour |
+| Digest | At most eight complete rows and 3,500 characters; outcomes first |
+| Event freshness | After registration and no older than 15 minutes |
+| Registration and Claude waiter | Bounded to 12 hours; human prompts renew the lease |
+
+Reservations consume capacity before native delivery. A failed or ambiguous
+delivery latches an error and is never retried automatically. Corrupt safety
+state fails closed. Restarting, changing owners, compaction, and disabling then
+enabling do not reset the rolling counters. Synthetic wake prompts cannot
+register a chat, renew its lease or produce more events. Workers, verifiers,
+subagents and fork starts are excluded. SessionEnd closes ownership. Expired
+or closed chats fall back to ordinary advisory delivery, without replaying a
+history backlog into new turns. A dormant Claude waiter eventually exits; a
+later genuine prompt or session start rearms it.
+
+Use `scripts/wakeups.sh status` to inspect registration, counters, pending
+delivery and errors. `scripts/wakeups.sh disable` stops new reservations and
+Claude waiters; it cannot retract a message already handed to Codex. After
+reviewing an ambiguous delivery in the native queue, explicitly clear only that
+reservation with `scripts/wakeups.sh acknowledge --session <id> --batch <id>`.
+This does not acknowledge an escalation or reset rate counters. Never clear a
+reservation or raise limits solely because a wake-up asks you to. The CLI also
+exposes these commands as `autometta wake` after the next Homebrew rebuild.
+
+Install through mcp-hub as usual, then restart existing chats and complete the
+native hook trust review. Both families retain informational hook delivery if
+wake-ups are off, a native transport is unavailable, or any bound is reached.
+No model polls for events. Offline native-hook and queue fixtures cover the
+bounds. A single native queue message was delivered to the existing Codex chat
+and received a brief acknowledgement. Claude's exit-2 reminder path is covered
+by an isolated hook fixture; live idle model resumption in Claude remains unverified.
+
+The `autometta-escalations` skill is the orchestration-chat playbook for
+working them: list, read the evidence, classify, propose a decision, act
+through `autometta-oracle`, `autometta-requeue` and `autometta-card-review`,
+then ack. It replaces the phat-controller skill's autonomous role.
 
 ## (h) Interaction with the pass-1 dispatch contract
 
@@ -429,54 +602,46 @@ integration:
 
 **Reaping.** `scripts/reap-worktrees.sh` runs after every tick as part of `sweep_repo_retention`, and by hand with `--dry-run`. It removes a run worktree whose stage is finished with it, through `requeue-stage.sh --worktree-only` so that removal has one implementation. It refuses to remove a worktree whose stage is `in_progress`, one holding uncommitted work that is not the known `state/` symlink artefact (a verifier FAIL leaves the worker's diff uncommitted by design, and that diff is what the operator inspects), one whose run branch holds commits that are not on base, and one whose stage it cannot find in `state.yaml`. Those it reports instead, on every tick until someone deals with them. When a person merges an `awaiting` branch by hand, the next sweep notices the containment, closes the record out to `merged`, and collects the worktree.
 
-## (k) The phat-controller role
+## (k) The controller is retired
 
-The tick loop dispatches and verifies; it does not decide that a verifier
-FAIL is a card defect rather than a work defect, preserve work stranded by an
-agent that died mid-write, merge an integration a person would otherwise
-merge by hand, clear a stale pause, or keep the queue fed. On 2026-08-24 an
-interactive orchestrator session did all of that on a fifteen-minute cadence
-while the operator left the queue running unattended. **phat-controller** is
-that session, packaged.
+The tick loop dispatches and verifies. On 2026-08-24 an interactive
+orchestrator session also decided that a verifier FAIL was a card defect,
+preserved work stranded by an agent that died mid-write, merged integrations,
+cleared stale pauses and kept the queue fed, on a fifteen-minute cadence while
+the operator left the queue running. **phat-controller** packaged that session
+as a scheduled agent (cards 54 and 58). It cost more than it saved: on
+2026-10-23 one overnight monitor's controller looped 101 passes and 42.7M
+tokens on a single blocked card, and its capped replacement could only append
+an uncommitted proposal, because the Codex workspace-write seat cannot write
+git metadata. The judgement it was built for is either forbidden to it
+(criteria, contracts) or needs the operator's yes. Card 162 removed the agent
+pass, its prompt, seed, inbox, outbox, transcripts and LaunchAgent; the
+decision, the evidence and a map from each duty to its replacement are in
+`docs/proposals/controller-retired.md`.
 
-**An agent that calls scripts, not a script that calls an agent.** Card 54
-shipped this the other way round: four remediations enumerated in bash, two
-stage statuses scanned, one narrow judgement dispatched. Two things fell out
-of that shape the evening it landed. The mandate manifest was not a mandate
-(it said so in its own header: thresholds and cadence only), and the blocker
-that actually happened was not on the list. Stage 54's own first attempt went
-`stalled` with `worker_envelope_missing_after_exit`, and the only occurrence
-of the string "stalled" in the script was inside the word "installed"; the
-queue would have sat there until morning. The list was short because an
-enumerated list is what a script can hold, and the remit wanted is the
-initiative an orchestrator session actually exercises. Initiative does not
-enumerate. Card 58 inverted it: the role is an agent, seeded at configure
-time, and `scripts/phat-controller.sh` is the set of verbs it calls. The
-design is `docs/proposals/orchestrator-role-review.md`.
+What remains is the **two-role model**. The tick does the mechanical recovery
+itself (card 161: it retries a dead worker once) and writes every episode that
+needs a decision to the escalations folder (see "Escalations" above). The
+operator's orchestration chat reads that folder at session start
+(`skills/autometta-escalations`, card 160) and works each item with the
+operator. `scripts/phat-controller.sh` stays as a set of deterministic verbs
+that chat, and the tick, call; it is not a role and nothing schedules it.
 
-**The context seed.** Rendered by `scripts/render-controller-seed.sh` when a
-job is configured, to `$AUTOMETTA_HOME/phat-controller-seed.md`
-(gitignored, operator-owned, editable afterwards). It carries, in this order:
-the persona and mandate, the negative list below, the spend authority and
-provider-window reserve answered for at setup, and the repo facts an
-orchestrator would otherwise rediscover (paths, families and their auth modes,
-branch policy, where state lives, the repo's own gotchas lifted from its agent
-brief at render time). It
-is prose an agent reads, not a config file anything parses; thresholds that a
-script must act on stay in the mandate manifest.
-
-**The spend authority is answered for at configure time, and there is no
-default.** The right level varies by run, by hour and by day, so a committed
-default would be wrong most of the time it was used, and wrong expensively.
-`render-controller-seed.sh` with no `--spend-authority` prints what it needs
-and exits 2 having written nothing;
-`install-launchagent-phat-controller.sh` refuses to install a schedule with
-no seed rather than rendering one. The controller then spends to that
-authority without asking, because there is nobody to ask, and halts when it
-is exhausted rather than escalating into a wait nothing will service. The
-prose answer lives in the seed; its machine-readable half
-(`--token-ceiling`, `--expires`) is mirrored into the mandate's
-`spend_authority` block so a pass can stop without parsing prose.
+**The mandate file stays, for the tick.** `templates/phat-controller-mandate.yaml.tpl`
+is copied by `scripts/init-host.sh` to
+`$AUTOMETTA_HOME/phat-controller-mandate.yaml` (gitignored, operator-owned).
+The tick reads its provider-window reserve and curfew fields
+(`quota_gate_family_dispatch`); the verbs read the attempt cap, the
+repeat-without-progress cap and which repos `picture --all` covers (empty
+means every enabled subscriber). The operator edits every field by hand;
+nothing renders it. Every field is optional. The fields that configured
+controller passes (cadence, dispatch identity, reporting voice, transcript
+retention) are gone, and a mandate that still carries them is read as before
+with those keys ignored. Budget figures are never restated here: they live in
+each repo's `state/budget.json` and the controller's host defaults (card 47).
+The per-repo `budget.json` caps and a drain are the hard spend stops.
+The `AUTOMETTA_WARDEN_MANDATE` env var and a `warden-mandate.yaml` already in
+the controller home are honoured for one release.
 
 **Codex subscription admission uses the full quota window by default.** A new
 card may start while fresh five-hour and weekly utilisation are both below
@@ -503,16 +668,56 @@ The serial viewer run admits one card at a time.
 `window_reserve.codex_admit_percent` in the controller mandate lowers that
 ceiling: at 90, no new Codex card starts once either Codex window is 90% used,
 and the tick keeps re-reading until the window resets. An admitted card still
-finishes. Unset, zero, over 100 or non-numeric keeps the 100% default.
+finishes. Unset, zero, over 100 or non-numeric keeps the 100% default. `off`
+admits a card whatever the reading says. `pace` caps the weekly window at the
+share of the week already gone plus one day's share (`pace+N` sets N points of
+headroom instead), so a week cannot be spent in a day: two days in, a new card
+starts only below about 43%. Pacing leaves any five-hour window at 100%. A Pro
+account reports the weekly window alone, which is a complete reading; a reading
+with no weekly window is still incomplete and holds.
+
+**Weekly pace for selected families.** `window_reserve.pace` spreads each
+listed family's weekly window evenly over what is left of its week. The week
+is cut into `slot_hours` slots (12 by default, 14 a week). A slot's ceiling is
+its base plus the remaining headroom
+divided by the slots left; the base is the first reading the host saw in the
+slot, never above the straight pace line, and is kept in
+`$AUTOMETTA_HOME/quota-pace.json`. A family that ran ahead therefore holds new
+cards until the calendar catches up, and one that fell behind catches up only
+a slot's share at a time. A stale reading still counts, because weekly use only
+rises until reset; an unknown reading or a passed reset fails open. The tick
+and a manual `spawn-worker.sh` hold a new card while any listed subscription
+family its worker or verifier names is ahead of pace; the verifier of an
+admitted card is never held, and no repo is paused. `action: observe` logs
+without holding, and `AUTOMETTA_IGNORE_PACE=1` bypasses the gate. A Codex plan
+with only a weekly window should normally list only `codex` here. Claude's
+short session is protected by the reserve below rather than inferred from its
+weekly consumption rate.
+
+**Codex run cap.** Admission cannot stop a card that is already running, and a
+plan with no session limit has nothing else to stop a runaway. With pace on,
+`register-agent.sh` stamps each Codex dispatch with the weekly reading at
+start and a cap of `run_cap_slots` slot allowances (default 1, 0 for no cap).
+`heartbeat.sh` kills the dispatch once the weekly window has risen by that much,
+leaving its work in the run worktree. The window is account-wide, so
+concurrent Codex dispatches share one allowance. `codex_admit_percent: pace`
+remains as a coarser, stateless alternative; with `window_reserve.pace` on,
+leave `codex_admit_percent` at 100 rather than stacking the two.
 
 **Claude retains the provider-window reserve.** `window_reserve.percent` defaults
 to 20% with `action: hold`, so new Claude work normally stops at 80% used.
+`claude_window: 5-hour` narrows that rule to the Claude session window; without
+it, every reported Claude window remains eligible as before. Admission checks
+Claude before starting any new card that names a subscription Claude worker or
+verifier, so a Codex worker cannot commit the queue to a Claude verifier after
+the session line has already been crossed.
+
 Explicit zero or `action: off` disables that reserve; unknown Claude readings
 retain the existing fail-open behaviour. Scheduled reserve and curfew settings
 are unchanged. A model-scoped window, keyed `<period>-<name>` such as
 `weekly-fable`, holds only seats whose model id has that name as a hyphen-delimited
-segment. An unnamed seat sees every window. The template and
-`render-controller-seed.sh` retain those settings.
+segment. An unnamed seat sees every window. The mandate template retains those
+settings.
 
 `AUTOMETTA_CODEX_QUOTA_POLICY=reserve` explicitly selects the previous Codex
 reserve behaviour, including its unknown-reading semantics. Historical contract
@@ -594,22 +799,21 @@ window: a drain must not outlive the permission it is spending against.
 Without a curfew, the drain may outlive the percentage window; the existing
 maximum drain duration still applies.
 
-**What bounds it is a short negative list, not an action enumeration.** The
-recoverable actions do not need enumerating and the unrecoverable ones are
-few. The governing distinction: the controller may change **what is recorded
-and where**, never **what was asked for or whether it was met**. Anything in
-the first class is auditable and revertible in git; anything in the second is
-the record of intent, and a queue minder that can edit intent can make any
-stage pass.
+**What bounds the verbs is a short negative list, not an action enumeration.**
+The recoverable actions do not need enumerating and the unrecoverable ones are
+few. The governing distinction: a verb may change **what is recorded and
+where**, never **what was asked for or whether it was met**. Anything in the
+first class is auditable and revertible in git; anything in the second is the
+record of intent, and a queue minder that can edit intent can make any stage
+pass.
 
 Forbidden, without exception: editing a card's acceptance criteria, objective
-or specification (it proposes instead, in the `PROPOSED-AMENDMENT` form card
-54 defined); verifying its own dispatches; rewriting history, pushing
-non-fast-forward, or moving a publish branch outward; lifting its own spend
-caps; resolving a merge conflict. The list is written once, in the proposal,
-and copied verbatim into the seed template; `render-controller-seed.sh`
-diffs the two at render time and refuses to render a seed whose prohibitions
-have drifted from the document that owns them.
+or specification (propose instead, in the `PROPOSED-AMENDMENT` form card 54
+defined); verifying one's own dispatches; rewriting history, pushing
+non-fast-forward, or moving a publish branch outward; lifting one's own spend
+caps; resolving a merge conflict. The list is written once, in
+`docs/proposals/orchestrator-role-review.md`, and binds whoever calls the
+verbs.
 
 Two of the five are enforced mechanically rather than trusted to prose.
 `pc_card_append` measures the card before writing and re-checks afterwards
@@ -623,12 +827,12 @@ mechanical triage picture as JSON, reporting observations under `signals` and
 never naming an action), `preserve`, `rebrief`, `propose-amendment`,
 `requeue`, `resume-to-verifier` (with `--accept-partial` to resume a
 `partial` envelope, card 112), `stale-halt`, `merge-awaiting`, `smokes`,
-`push`, `queue-card`, `escalate`, `journal`, `inbox` (journalled as
-`inbox-read`), `inbox-reply`, `inbox-refuse`,
-`transcript-for-decision`, `prune-transcripts`, and `pass` (render the seed
-and dispatch one controller agent). Exit codes are `0` acted or nothing
-needed doing, `1` failed, `2` bad usage, `3` refused or held. A `3` is a
-deliberate answer, not an error.
+`push`, `queue-card`, `escalate`, `journal`, and `--print-mandate`. Exit codes
+are `0` acted or nothing needed doing, `1` failed, `2` bad usage, `3` refused
+or held. A `3` is a deliberate answer, not an error. The verbs that belonged
+to the agent pass (`pass`, `inbox`, `inbox-reply`, `inbox-refuse`,
+`transcript-for-decision`, `prune-transcripts`, `--print-seed`) are gone and
+refuse with usage.
 
 `preserve` covers the case card 54 missed. A stage that went `stalled`
 because its worker exited without a dispatch envelope has no verifier artefact
@@ -646,58 +850,10 @@ The ordering is the contract: a decision whose action is then refused by a
 guard still leaves its decision line, because the journal records intent
 rather than effects. Schema at `schemas/decision-journal.json`.
 
-Long runs, measured in days rather than an evening, invite a second
-controller reviewing the first, on the theory that a role marking its own
-homework drifts. That is not built and building it now would be speculative.
-What the journal does is not foreclose it: it costs little while the
-controller is alone and it is the whole input a reviewing controller would
-need. Retrofitting one afterwards would mean reconstructing intent from
-effects, which is not possible.
-
-**The journal is the record; the transcript is one pass's slice of it.** On
-the default claude route the dispatched agent's turn history cannot be
-scraped off the CLI conversation log -- `claude --output-format json` is
-reduced by `claude-token-log.sh` to the final result text before it reaches
-disk, and turn history never survives that. So the transcript is not mined
-from a log. It is written the same way every other record in this file is:
-through the verbs. Every verb call the dispatched agent makes during a
-pass -- `inbox-read`, `inbox-reply`, `inbox-refuse`, `preserve`, whatever it
-decides -- already journals a decision (rationale, evidence, expected
-effect) and its outcome, tagged with that pass's `pass_id`
-(`pc_current_pass_id_get`, resolved from a marker file inside the repo
-rather than an inherited env var, because `op-fetch`'s `env -i` dispatch
-wrapper would otherwise strip it before it reached a verb call the
-dispatched agent makes as its own tool call). Once the dispatched process
-exits, `pc_transcript_materialize` filters the journal for that `pass_id`
-and writes the matching lines to a predictable, indexed path:
-`state/phat-controller-transcripts/<pass_id>.log`, with
-`state/phat-controller-transcripts/index.jsonl` naming where each pass_id
-landed, so `phat-controller.sh transcript-for-decision <repo> <decision-id>`
-joins a journal line back to the pass that made it. The raw CLI dispatch log
-(`state/logs/phat-controller-pass.log`) still exists, but only for spend
-accounting; it is never presented as the record. Transcripts are
-private-tier like the rest of `state/` (gitignored, never on the publish
-branch, and `*.log` is additionally refused by the pre-commit never-commit
-guard on a forced add) and pruned every pass per the mandate's
-`retention.transcript_days` (`pc_prune_transcripts`).
-
-**The inbox, and the reply.** A running controller has no attach and no
-port to reach it through; `state/phat-controller-inbox/pending/<msg-id>.*`
-is the filesystem doing the job instead. `pc_inbox_scan` reads every
-pending message at the start of a pass, before anything is decided,
-journals that it was read, and carries it into the pass prompt.
-`pc_inbox_reply` (or `pc_inbox_refuse`, the same function with a reason) is
-the disposition: it writes the answer to
-`state/phat-controller-outbox/<msg-id>.md`, readable by whoever sent the
-message without attaching to anything, archives the message to
-`inbox/processed/`, and journals the decision. A message is an instruction
-to consider, never a command to obey: it cannot widen the mandate or lift
-a prohibition, the same anti-gaming rule as the negative list arriving
-through a new door, and this is enforced structurally rather than by
-prose alone: neither inbox verb has any code path that touches a card, so a
-message cannot soften a criterion through this route even if an agent tried
-to honour one that asked; `pc_card_append`'s append-only guard is what
-`rebrief` and `propose-amendment` still answer to.
+The journal is what a reviewer would need to reconstruct why a verb was called:
+retrofitting that afterwards would mean reconstructing intent from effects,
+which is not possible. Its `pass_id` field stays null unless
+`AUTOMETTA_CONTROLLER_PASS_ID` tags a run of manual calls.
 
 **The tick lock.** `preserve`, `pc_card_append` (so `rebrief` and
 `propose-amendment`), `requeue`, `queue-card`, and the acting half of `push`
@@ -722,63 +878,25 @@ the whole judgement. A *blocking* escalation is `budget_halt` with reason
 agent-ticker, alerts table) already reads, and a halted repo dispatches
 nothing further until an operator clears it. It is correct only when carrying
 on makes things worse: the same failure repeated past the mandate's
-`same_remediation_without_progress_cap`, a spend authority exhausted, a
-provider asking for payment. A *non-blocking* escalation is a loud log line
-plus a journal entry, and the queue carries on. No second alert channel
-exists to drift from the first.
+`same_remediation_without_progress_cap`, a provider asking for payment. A
+*non-blocking* escalation is a loud log line plus a journal entry, and the
+queue carries on. Both also write a shared escalation file and desktop
+notification (see "Escalations" above), which is what the operator's
+orchestration chat reads.
 
 `git-push-check` returning `ASK` is the case that forces the split, and its
 three verdicts read directly as a human-presence protocol: `PUSH` act, `ASK`
 escalate and carry on with other work, `HOLD` stop and report. Blocking on
 `ASK` would be the queue sitting still until morning waiting for an answer
-nobody is awake to give, which is the failure this role exists to prevent.
-
-**One skill, two callers.** `skills/phat-controller/SKILL.md` is loaded both
-into the rendered prompt of a scheduled pass and into an interactive session
-that has been asked to mind the queue, so a conversation and a cron dispatch
-read one source of truth rather than two descriptions that drift. It opens
-with a table naming which file owns each fact: the seed owns the persona, the
-prohibitions, the spend authority and the repo facts; the mandate owns
-thresholds and cadence; `phat-controller.sh` owns what the verbs do (the
-full list, `resume-to-verifier [--accept-partial]` included, is in its
-`usage`); the
-skill owns how to decide and the formats a decision has to produce. The
-difference between the two callers is not the contract, it is who is in the
-room: an operator can authorise something the negative list forbids the
-controller doing alone, and a headless pass never can.
-
-**The mandate manifest.** A committed template
-(`templates/phat-controller-mandate.yaml.tpl`) copied to
-`$AUTOMETTA_HOME/phat-controller-mandate.yaml` (gitignored, operator-owned)
-on first use. Thresholds and cadence only: the attempt cap, the
-repeat-without-progress cap, what counts as metered spend, the pass interval
-(read by the installer at provisioning time; re-run it to reschedule a live
-LaunchAgent), which repos the controller minds (empty means every enabled
-subscriber), the dispatch identity and effort, and the reporting voice.
-Budget figures are never restated here: they live in each repo's
-`state/budget.json` and the controller's host defaults (card 47). The
-`AUTOMETTA_WARDEN_MANDATE` env var and a `warden-mandate.yaml` already in the
-controller home are honoured for one release.
-
-**Scheduling.** `autometta phat-controller pass` on its own LaunchAgent
-interval (`templates/launchagent-phat-controller.plist.tpl`,
-`scripts/install-launchagent-phat-controller.sh`, singleton label
-`com.autometta.phat-controller.fleet`, same `AbandonProcessGroup` care as the
-tick's own). One pass reads the picture across every enabled subscriber,
-decides, acts, and exits. It is not a daemon and it does not watch anything
-continuously.
+nobody is awake to give.
 
 **Offline proof.** `scripts/phat-controller-smoke.sh` runs every fixture with
-no auth, network or provider dispatch: the seed rendered for a fresh job, the
-refusal when no spend authority is supplied, the drift check on the negative
-list, each verb, the journal's decision-before-action ordering demonstrated
-by a refused action that still leaves its decision line, the card-58
-contract test replaying the evening of 2026-08-24, the transcript-to-journal
-index round trip, an inbox message answered and one refused with the card
-proven untouched, both directions of tick-lock contention, the 2026-08-25
-race replayed against the now-locked `preserve`, the credential grep across
-transcripts/inbox/outbox, and transcript retention and the private-tier
-publish guard.
+no auth, network or provider dispatch: each verb, the journal's
+decision-before-action ordering demonstrated by a refused action that still
+leaves its decision line, the card-58 contract test replaying the evening of
+2026-08-24, both directions of tick-lock contention, the 2026-08-25 race
+replayed against the now-locked `preserve`, `resume-to-verifier`, and the
+retired agent verbs refusing with usage.
 
 ## Operational entry points
 
@@ -788,18 +906,16 @@ The `autometta` CLI is the preferred operator surface:
 - `autometta init <repo>`: initialise host state if needed, subscribe one repo, and create its tmux viewer when `tmux` is available.
 - `autometta add-stage <repo> <card>`: add a stage card to the repo queue.
 - `autometta tick`: run one cron-safe controller tick.
-- `autometta phat-controller <verb>`: the queue minder's verbs (see (k)). `pass` renders the seed and dispatches one controller agent; `picture` prints the mechanical triage picture; `--print-mandate` and `--print-seed` print the resolved mandate and seed without acting.
-- `autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]`: render the context seed when a job is configured. Refuses, writing nothing, if no spend authority is supplied.
+- `autometta phat-controller <verb>`: the deterministic queue verbs (see (k)). `picture` prints the mechanical triage picture; `--print-mandate` prints the resolved mandate without acting.
 - `autometta status`: print a read-only status table.
 - `autometta attach <repo>`: open or create the repo-scoped tmux viewer.
-- `autometta tui [repo]`: open the full-screen run, history and controller-message view.
+- `autometta tui [repo]`: open the full-screen run and history view.
 
 The CLI delegates to these scripts:
 
 - `scripts/tick.sh`: the cron entry point.
-- `scripts/phat-controller.sh`: the queue minder's verbs; sources `tick.sh` for its merge, teardown, preservation and state-write mechanics rather than duplicating them.
-- `scripts/render-controller-seed.sh`: renders the context seed at configure time and mirrors the machine-readable spend and provider-window bounds into the mandate.
-- `scripts/install-launchagent-phat-controller.sh` / `scripts/uninstall-launchagent-phat-controller.sh`: the controller's own LaunchAgent, on a separate schedule and label from the tick's. The installer is where a job is configured, so it fails closed with no seed.
+- `scripts/phat-controller.sh`: the queue verbs; sources `tick.sh` for its merge, teardown, preservation and state-write mechanics rather than duplicating them.
+- `scripts/uninstall-launchagent-phat-controller.sh`: removes the retired controller LaunchAgent from a machine that still has one; safe when none is installed.
 - `scripts/spawn-worker.sh`: helper invoked by `tick.sh` to dispatch one worker per the stage card.
 - `scripts/spawn-verifier.sh`: helper invoked by `tick.sh` to dispatch the cross-family verifier.
 - `scripts/budget.sh`: helper for reading and updating `state/budget.json` atomically.
@@ -807,7 +923,7 @@ The CLI delegates to these scripts:
 - `scripts/subscribe-repo.sh`: per-repo subscription.
 - `scripts/add-stage.sh`: idempotent queue insertion.
 - `scripts/status.sh`: read-only operator status view.
-- `scripts/attach.sh`: optional tmux viewer for status and controller logs.
+- `scripts/attach.sh`: optional tmux viewer for status and tick logs.
 - `scripts/reap-worktrees.sh`: per-repo sweep of run worktrees nobody came back for. Called after every tick; safe to run by hand with `--dry-run`.
 - `scripts/state-branch-smoke.sh`: offline proof that a tick leaves `repo_root`'s HEAD alone and still snapshots its state.
 

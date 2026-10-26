@@ -37,7 +37,10 @@
 # would discard for good. Preserve it first (tick.sh's preserve_failed_work
 # or `phat-controller.sh preserve`), or pass --discard to proceed anyway.
 #
-# Usage: requeue-stage.sh [--worktree-only] [--force] [--discard] <repo-root> <stage-id>
+# --keep-budget leaves halt and consecutive-failure state untouched for an
+# automatic retry; only an operator re-queue may clear those gates.
+#
+# Usage: requeue-stage.sh [--worktree-only] [--force] [--discard] [--keep-budget] <repo-root> <stage-id>
 # Example: requeue-stage.sh ~/repos/aegis-guardrails 01-per-call-approval-broker
 set -euo pipefail
 
@@ -50,16 +53,18 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_dir/budget.sh"
 IFS=$' \t\n'
 
-usage() { sed -n '2,41p' "$0"; exit 2; }
+usage() { sed -n '2,44p' "$0"; exit 2; }
 
 worktree_only=false
 force=false
 discard=false
+keep_budget=false
 while [ $# -gt 0 ]; do
   case "${1:-}" in
     --worktree-only) worktree_only=true; shift ;;
     --force) force=true; shift ;;
     --discard) discard=true; shift ;;
+    --keep-budget) keep_budget=true; shift ;;
     --) shift; break ;;
     -*) usage ;;
     *) break ;;
@@ -217,6 +222,7 @@ yq -o=json '.' "$state_yaml" | jq --arg id "$stage_id" '
   | .stages = [ .stages[]
       | if .id == $id then
           .status = "pending"
+          | .auto_retries = 0
           | .verifier_attempts = 0
           | .completed_at = null
           | .verifier_started_at = null
@@ -244,7 +250,7 @@ rm -f "$tmp_json"
 # and on emergence-lab-gpu the loop was re-queued repeatedly across a window
 # it had already overrun. Manufacturing token budget is not a re-queue, so
 # say so and stop.
-if [ -f "$budget_json" ]; then
+if [ "$keep_budget" = false ] && [ -f "$budget_json" ]; then
   blown="$(budget_spend_caps_blown "$repo_root")"
   if [ -n "$blown" ]; then
     echo "requeue: $stage_id reset to pending, but NOT clearing the halt." >&2

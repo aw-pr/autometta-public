@@ -514,3 +514,29 @@ Queue order: 82, 86, 83, 84, 85.
 - Cards 84 and 85 modify load-bearing dispatch surfaces (`tick.sh`,
   `spawn-verifier.sh`). Both carry the fail-open/never-block-a-landing rule
   as an acceptance criterion with forced-failure evidence, not prose.
+
+## Controller retirement batch 159-162, designed 2026-10-23
+
+**Designed, not queued.** On 2026-10-23 promo-flow card 36 failed twice on
+frozen-contract contradictions. A controller pass looped 101 times (42.7M
+tokens) on the first; on the second it could only write an uncommitted
+proposal, because its Codex sandbox cannot write git. The fleet controller
+LaunchAgent had refused every 15 minutes since 2026-10-15 on an expired spend
+authority, its escalations unread; the operator unloaded it. Decision:
+judgement moves to the operator's orchestration chat, mechanical recovery to
+the tick, and the agent role is retired.
+
+| Card | Outcome | Worker | Verifier | Contract test |
+| --- | --- | --- | --- | --- |
+| [159](159-escalations-reach-the-operator.md) | Every alert-status episode and halt writes one escalation file plus a desktop notification | Sol | Sonnet 5.5 | `scripts/escalations-smoke.sh` |
+| [160](160-an-orchestration-chat-sees-escalations.md) | A SessionStart hook shows pending escalations; `autometta-escalations` skill is the playbook | Sonnet 5.5 | Sol | `scripts/session-start-escalations-smoke.sh` |
+| [161](161-the-tick-retries-a-dead-worker-once.md) | The tick preserves and requeues a worker that died without an envelope, once | Sol | Sonnet 5.5 | `scripts/auto-retry-smoke.sh` |
+| [162](162-the-controller-is-retired.md) | No path dispatches a controller agent; verbs, mandate and uninstaller stay | Sonnet 5.5 | Sol | None (grep plus existing smokes) |
+
+All serial, chained by `stage-completed` gates in that order: each touches
+`scripts/tick.sh` or `scripts/phat-controller.sh`. Worker family alternates.
+Before queueing, the orchestrating chat runs `autometta-card-review` and
+`autometta-oracle` on 159 to 161 (digests pending) and confirms 162 needs no
+frozen block. Planning allowance 19M (4, 4, 5, 6) against a role median of
+1.0M and p95 of 3.7M. promo-flow is held (`operator-hold`) with card 36
+requeued as a repair until this batch lands.

@@ -35,17 +35,14 @@ Usage:
   autometta tui [repo-path]
   autometta detach [repo-path|--all]
   autometta tick [--repair|--reset-halt [--reset-tokens]]
-  autometta phat-controller <verb> [args]   # pass | picture | preserve |
+  autometta wake <enable|disable|status|acknowledge> [options]
+  autometta phat-controller <verb> [args]   # picture | preserve |
                                             # rebrief | propose-amendment |
                                             # requeue | resume-to-verifier |
                                             # stale-halt |
                                             # merge-awaiting | smokes | push |
-                                            # queue-card | escalate | journal |
-                                            # inbox | inbox-reply | inbox-refuse |
-                                            # transcript-for-decision |
-                                            # prune-transcripts
-  autometta phat-controller --print-mandate | --print-seed
-  autometta controller-seed --spend-authority TEXT [--token-ceiling N] [--expires ISO8601]
+                                            # queue-card | escalate | journal
+  autometta phat-controller --print-mandate
   autometta warden ...                      # deprecated alias for one release
   autometta drain start [--cap N|--lift] [--hours H] [--repo PATH] [--reason TEXT]
                         [--ignore-reserve] [--replace]
@@ -60,7 +57,6 @@ Usage:
   autometta retro-grade [--last N] [--dry-run]
   autometta install-launchagent <repo-path> [--interval N]
   autometta uninstall-launchagent <repo-path>
-  autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--token-ceiling N] [--expires ISO8601] [--window-reserve-percent N] [--window-reserve-action hold|observe]
   autometta uninstall-launchagent-phat-controller
   autometta install-homebrew-local [--dry-run]
   autometta auth status
@@ -193,11 +189,11 @@ case "$command_name" in
   tick)
     run_script tick.sh "$@"
     ;;
+  wake)
+    run_script wakeups.sh "$@"
+    ;;
   phat-controller|warden)
     run_script phat-controller.sh "$@"
-    ;;
-  controller-seed)
-    run_script render-controller-seed.sh "$@"
     ;;
   drain)
     run_script drain.sh "$@"
@@ -227,13 +223,6 @@ case "$command_name" in
       exit 1
     fi
     run_script uninstall-launchagent.sh "$@"
-    ;;
-  install-launchagent-phat-controller|install-launchagent-warden)
-    if [[ $# -lt 1 ]]; then
-      printf 'usage: autometta install-launchagent-phat-controller <repo-path> [--interval N] [--spend-authority TEXT] [--token-ceiling N] [--expires ISO8601] [--window-reserve-percent N] [--window-reserve-action hold|observe]\n' >&2
-      exit 1
-    fi
-    run_script install-launchagent-phat-controller.sh "$@"
     ;;
   uninstall-launchagent-phat-controller|uninstall-launchagent-warden)
     if [[ $# -ne 0 ]]; then

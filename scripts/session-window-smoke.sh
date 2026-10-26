@@ -305,6 +305,86 @@ printf 'PASS acceptance 5: --ignore-reserve suspends the reserve for its own lif
 
 # AUTOMETTA-CONTRACT-END
 
+# Additional regression coverage stays outside the recorded frozen assertions.
+yq -i '.stages += [{"id":"mixed-stage","status":"pending","worker":"GPT-5.6 Sol <gpt-5-6-sol@local>","verifier":"Claude Sonnet 5 <claude-sonnet-5@local>"}]' "$repo/state/state.yaml"
+
+# --- Post-contract regression: asymmetric provider session reserves.
+# Codex has no session window, so its weekly pace is a separate gate. Claude
+# does have a five-hour session: a new card that names Claude in either role
+# stops at 70% used by day and 90% overnight. A nearly spent Claude weekly
+# window does not masquerade as the session rule, and the named manual
+# override still bypasses the reserve.
+session_mandate="$fixture/session-mandate.yaml"
+cat > "$session_mandate" <<'YAML'
+window_reserve:
+  percent: 30
+  action: hold
+  claude_window: 5-hour
+  overnight:
+    start: "22:00"
+    end: "09:00"
+    percent: 10
+  timezone: local
+YAML
+cp "$session_mandate" "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+
+mkdir -p "$repo/stage-cards"
+cat > "$repo/stage-cards/mixed-stage.md" <<'MD'
+# Mixed provider card
+- **Worker:** GPT-5.6 Sol <gpt-5-6-sol@local>
+- **Verifier:** Claude Sonnet 5 <claude-sonnet-5@local>
+MD
+
+session_reading() {
+  jq -nc --argjson session "$1" --argjson weekly "${2:-99}" '
+    {read_at:null, families:{
+      claude:{family:"claude", status:"known", reason:null, source:"fixture", fetched_at:null,
+              windows:[
+                {key:"five_hour", label:"5-hour", utilization:$session, resets_at:"2033-05-18T03:38:20Z"},
+                {key:"seven_day", label:"Weekly", utilization:$weekly, resets_at:"2033-05-24T00:00:00Z"}
+              ]},
+      codex:{family:"codex", status:"known", reason:null, source:"fixture", fetched_at:null,
+             windows:[{key:"primary", label:"Weekly", utilization:0, resets_at:"2033-05-25T00:00:00Z"}]}
+    }}'
+}
+clear_pause() {
+  jq '.paused_until=null | .paused_reason=null' "$repo/state/budget.json" > "$repo/state/budget.next"
+  mv "$repo/state/budget.next" "$repo/state/budget.json"
+}
+
+AUTOMETTA_QUOTA_TICK_JSON="$(session_reading 69)"
+AUTOMETTA_SCHEDULE_CLOCK=14:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" mixed-stage worker \
+  || fail "69% Claude session use should admit a new mixed-provider card by day"
+
+AUTOMETTA_QUOTA_TICK_JSON="$(session_reading 70)"
+day_line_rc=0
+AUTOMETTA_SCHEDULE_CLOCK=14:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" mixed-stage worker \
+  || day_line_rc=$?
+assert_eq 1 "$day_line_rc" "70% Claude session use holds a new mixed-provider card by day"
+assert_contains "$(jq -r '.paused_reason' "$repo/state/budget.json")" "5-hour" "day hold names the session window"
+clear_pause
+
+AUTOMETTA_QUOTA_TICK_JSON="$(session_reading 89)"
+AUTOMETTA_SCHEDULE_CLOCK=23:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" mixed-stage worker \
+  || fail "89% Claude session use should admit a new mixed-provider card overnight"
+
+AUTOMETTA_QUOTA_TICK_JSON="$(session_reading 90)"
+night_line_rc=0
+AUTOMETTA_SCHEDULE_CLOCK=23:00 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" mixed-stage worker \
+  || night_line_rc=$?
+assert_eq 1 "$night_line_rc" "90% Claude session use holds a new mixed-provider card overnight"
+clear_pause
+
+manual_rc=0
+AUTOMETTA_SCHEDULE_CLOCK=14:00 quota_spawn_permits "$repo" codex "$repo/stage-cards/mixed-stage.md" || manual_rc=$?
+assert_eq 1 "$manual_rc" "manual mixed-provider spawn honours the Claude session reserve"
+AUTOMETTA_IGNORE_RESERVE=1 AUTOMETTA_SCHEDULE_CLOCK=14:00 \
+  quota_spawn_permits "$repo" codex "$repo/stage-cards/mixed-stage.md" \
+  || fail "AUTOMETTA_IGNORE_RESERVE=1 should override the Claude session reserve"
+printf 'PASS acceptance 6: Claude reserves 30%% by day and 10%% overnight for new cards, with a manual override\n'
+
+
+
 for file in quota-window.sh budget.sh tick.sh drain.sh; do
   bash -n "$script_dir/$file"
 done

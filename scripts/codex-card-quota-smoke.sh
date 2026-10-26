@@ -140,3 +140,40 @@ yq -i '.window_reserve.codex_admit_percent = "ninety"' "$AUTOMETTA_HOME/phat-con
 set_reading "$(reading 95)"
 quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'invalid ceiling did not fall back to 100'
 printf 'PASS mandate codex_admit_percent lowers the admission ceiling; invalid value keeps 100\n'
+
+# Supplemental regression: codex_admit_percent: off admits a new card however
+# spent, or however stale, the reading is.
+yq -i '.window_reserve.codex_admit_percent = "off"' "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+for pair in '100 30' '105 30' '50 100'; do
+  set_reading "$(reading "${pair%% *}" "${pair#* }")"
+  quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail "ceiling off held $pair"
+  quota_spawn_permits "$repo" codex "$repo/docs/stages/02-next.md" || fail "manual ceiling off held $pair"
+done
+set_reading "$(reading 100 | jq -c '.fetched_at = "2001-01-01T00:00:00Z"')"
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'ceiling off held a stale reading'
+printf 'PASS mandate codex_admit_percent off admits exhausted and stale readings\n'
+
+# Supplemental regression: a Pro reading carries the weekly window alone, and
+# pace caps that window at the share of the week gone plus one day's share.
+pro() { jq -nc --argjson used "$1" --argjson left "$2" '{family:"codex",status:"known",fetched_at:"2033-05-18T03:33:20Z",windows:[{key:"primary",label:"Weekly",utilization:$used,resets_at:((2000000000 + $left) | todate)}]}'; }
+week=604800
+yq -i '.window_reserve.codex_admit_percent = 90' "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+set_reading "$(pro 50 "$week")"
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'Pro weekly-only reading held at 50%'
+set_reading "$(pro 95 "$week")"
+if quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker; then fail 'Pro reading admitted past the 90% ceiling'; fi
+yq -i '.window_reserve.codex_admit_percent = "pace"' "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+set_reading "$(pro 10 "$week")"
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'pace held 10% at the start of the week'
+set_reading "$(pro 20 "$week")"
+if quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker; then fail 'pace admitted 20% at the start of the week'; fi
+set_reading "$(pro 60 $((week / 2)))"
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'pace held 60% half way through the week'
+set_reading "$(pro 70 $((week / 2)))"
+if quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker; then fail 'pace admitted 70% half way through the week'; fi
+set_reading "$(reading 99 10)"
+quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker || fail 'pace capped a Plus five-hour window'
+yq -i '.window_reserve.codex_admit_percent = "pace+0"' "$AUTOMETTA_HOME/phat-controller-mandate.yaml"
+set_reading "$(pro 1 "$week")"
+if quota_gate_role_dispatch "$repo" "$repo/state/state.yaml" 02-next worker; then fail 'pace+0 admitted 1% at the start of the week'; fi
+printf 'PASS Pro weekly-only readings admit and hold; pace paces the weekly window by the week gone\n'

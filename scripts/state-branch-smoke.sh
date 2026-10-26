@@ -468,6 +468,7 @@ YAML
 moved="$(make_repo moved)"
 moved_wt="$(make_passing_stage "$moved")"
 printf '# Handoff\n' > "$moved/HANDOFF.md"
+git -C "$moved" add HANDOFF.md
 operator_commit "$moved" 'base moves between dispatch and verdict' >/dev/null
 _process_verifier_artefact "$moved" "$moved/state/state.yaml" 20-pass state/verifiers/20-pass.json "" >/dev/null 2>&1
 

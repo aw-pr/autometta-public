@@ -27,4 +27,4 @@ and the contract-test gate. Record failures without weakening assertions.
 ## Contract test
 
 - **Test file:** scripts/quota-window-smoke.sh
-- **Assertions digest:** sha256:e1960b4ecf82a987d11c4fa7ce97a8fa7bb6d41bd0d177c03ee5201c2170b52d
+- **Assertions digest:** sha256:bec1c224309a319a6bca1b534c30e595383976561a00c32792c64962cabb6700

@@ -39,6 +39,28 @@ pipeline overlap class (section 4) safe against quota contention.
 Route the open-ended brief to the stronger tier and the mechanical sweep to
 the cheaper one; record the reasoning in the card's pairing rationale.
 
+**Effort tops out at `high` unless the operator asks for more.** Set
+`xhigh` or `max` only when the operator has asked for it on this card, and
+quote the request on a `- **Effort approved:**` metadata line;
+`card-lint --strict` refuses xhigh or max without one. Default worker effort is `high`
+for a fresh design or an open-ended brief, `medium` for a re-brief or
+narrow fix, and `low` or omitted for a mechanical sweep. Verifiers default
+to `high`. Effort multiplies thinking tokens on every turn of a long run,
+and it does not buy consistency: explainer-batch's design card 16 failed
+three times at Fable xhigh on narrow contradictions the cross-family
+verifier caught. A card that failed for lack of reasoning depth, not for
+inconsistency, is the case to raise effort, and only with the operator's
+yes.
+
+**Place Fable and Astra by role, not by price.** They are the right worker
+for high-complexity work and UI work, where they land in fewer attempts
+and so cost fewer tokens overall; choose them there without hesitation. They
+cost most in a role that does not need them, above all as verifier:
+checking criteria is a reading task, and a cheaper cross-family verifier
+gets there sooner. `card-lint` prints a `frontier-tier` NOTE (never an
+error) for either pin; answer it in the pairing rationale by saying why the
+role needs the tier.
+
 ## 3. Gates
 
 Draw the dependency DAG before ordering the list. Any stage that reads what
@@ -97,9 +119,19 @@ halt (run-lessons entry, 2026-08-25 morning). A re-brief is not a discount;
 budget attempt 2 at attempt 1's scale unless the re-brief only corrects
 details on a preserved tree.
 
+Preparation is part of this spend plan, not free orchestration overhead.
+Record its allowance and actual usage separately from worker/verifier estimates,
+including cache reads, reference experiments and review sessions. Use the
+checkpoint and bounded-attempt rules in `autometta-card-review`; changing seats
+or restarting a chat does not replenish that allowance. Prefer the smallest
+useful preflight that makes one bounded attempt actionable. Preserve independent
+verification and final acceptance instead of paying for a full implementation
+in a preparation session. Explain material differences between dashboard
+predictions and historical estimates before using them for the cost comparison.
+
 ## 6. Hand over
 
 Queue the cards with `add-stage.sh` in gate order, confirm the ticker's
 NEXT section shows the intended order, and hand the queue to the tick and
-phat-controller. The design session's remaining job is feedback, re-briefs
+the operator's escalation chat. The design session's remaining job is feedback, re-briefs
 and landing-boundary commits, not driving dispatches by hand.

@@ -23,9 +23,25 @@ The repo extracts patterns from two prior projects (`fractals-from-the-90s` disp
 1. **Dispatch contract (pass 1 - shipped):** the contract between an orchestrator and one worker for one unit of work. Stage card -> worker prompt -> sandbox boundary -> acceptance command -> verifier handoff. Human drives the orchestrator session. Deliverables live in `docs/` and `templates/`.
 2. **Autonomous tick loop (pass 2 - shipped):** cron-driven tick that reads `state.yaml`, dispatches one worker and/or verifier, writes the next state, exits. Two adjacent stages with declared, disjoint path claims may run as a pipeline pair, while verification and landing remain ordered. Budget file is the only safety. The loop layer **sits on top of** the dispatch contract - never modify the loop in ways that bypass it. Runtime in `scripts/`, schemas in `schemas/`, per-repo state in `state/`. See `docs/tick-loop.md` for the design and `docs/setup.md` for the operator flow.
 
-The operational roles are the human or interactive orchestrator, the worker,
-the verifier, and **phat-controller**, the scheduled queue minder. The tick
-loop is the mechanism phat-controller supervises, not an agent role.
+The operational roles are the tick (deterministic, including the mechanical
+recovery that used to need an agent) and the operator's orchestration chat,
+plus the worker and the verifier it dispatches. Anything the tick cannot decide
+becomes an escalation in the escalations folder for the chat to work
+(`skills/autometta-escalations`). Claude Code and Codex lifecycle hooks deliver
+new or changed escalations and lifecycle notices at session start, user prompts and after tools;
+PostToolUse checks are throttled to 15 seconds. Use the hook's evidence instead
+of a model-driven polling loop. Delivery is not acknowledgement or authority to
+change state; verify the current episode before acting. Notices include role starts
+and exits, landing or awaiting integration, and run completion or halts. Optional
+`scripts/wakeups.sh enable` registration adds bounded idle wake-ups through native
+Claude `asyncRewake` or Codex queue controls. One outstanding batch per chat,
+120-second fleet cooldown and rolling fleet caps prevent event storms. A wake-up
+never renews its own lease or authorises policy changes. mcp-hub distributes the
+hooks; `scripts/install-escalation-hook.sh
+--check --family all` checks their entries. See `docs/tick-loop.md`, Escalations.
+The scheduled controller agent is retired
+(`docs/proposals/controller-retired.md`); `scripts/phat-controller.sh` remains
+as a set of verbs, not a role.
 
 Pass 2 also ships **agent observability**: a per-agent liveness registry at `state/active-agents/<pid>.json`, a heartbeat watchdog at `scripts/heartbeat.sh` that surfaces stalls / over-budget conditions to `state/heartbeat.json`, a full-window repo ticker (`scripts/repo-ticker.sh`), the `autometta tui` run/history/messages view, and a polling primitive (`scripts/watch-agent.sh`) that any orchestrator-led manual dispatch can block on to catch silent agent deaths. See `docs/observability.md`. Spend is instrumented separately: `tick.sh` appends one cost-log line per dispatched role to `state/cost-log.jsonl` (per-tier `cost_usd_est` from `scripts/rates.sh`, `cached_input_tokens` vs `input_tokens`, `cache_hit_rate`). Schema and the prompt-caching notes are in `docs/cost-log.md`.
 
@@ -57,6 +73,7 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 11. `op read` can block forever on a macOS TCC prompt no one is there to answer, hanging an overnight dispatch with an empty log. `op-fetch` wraps every read in a watchdog (`OP_FETCH_TIMEOUT`, default 60s). The TCC grant does not survive a `brew upgrade 1password-cli`. See `docs/lessons.md` gotcha 11.
 12. `IFS=$'\n\t'` has no space in it, so an unquoted expansion of a space-joined flag string is a silent no-op split: `--effort high` reached the CLI as one option name containing a space and every Claude verifier with a declared effort died instantly (`error: unknown option '--effort high'`), burning all three `verifier_attempt_cap` retries. Multi-token argument lists travel in a bash array (`AUTOMETTA_EFFORT_ARGV`), expanded quoted, never through word splitting; `# shellcheck disable=SC2086` documents such an intent while hiding its failure. Codex was unaffected: clap attaches a short option's value, and codex trims the leading space, so its effort was honoured throughout. See `docs/lessons.md` gotcha 12.
 13. `codex exec --oss` refuses any Ollama model without thinking support (`"<model>" does not support thinking`), which as of codex-cli 0.149.1 leaves only the gpt-oss family usable on the free local route. `llama3.3:70b`, `llama4:scout`, `qwen3-coder:30b` and `devstral` are all refused, and the last four ran fine in the 2026-08-24 bake-off, so this is a CLI regression under a documented result rather than a standing limit. `codex_local_preflight` checked only that the model was *pulled*, so the failure landed after the stage was `in_progress`; it now reads the `Capabilities` block from `ollama show` and fails closed before the spawn, failing open only when that block cannot be read. See `docs/lessons.md` gotcha 19.
+14. A Claude dispatch started from launchd can block forever on a macOS TCC prompt: around its first edit, Claude Code touches the paths named in the user's permission rules, and a rule naming `~/Desktop`, `~/Documents` or `~/Downloads` raises a prompt that no one is there to answer. Every Claude Code release installs to a new versioned path, so each update re-arms it. Keep protected folders out of user-level rules; the tick kills a streaming dispatch silent for `AUTOMETTA_SILENCE_KILL_SECONDS` (default 1200). See `docs/lessons.md` gotcha 22.
 
 ## Conventions specific to this repo
 
@@ -73,9 +90,10 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 - `skills/autometta-setup/` - adopt the dispatch contract and the tick loop in another repo.
 - `skills/autometta-run-design/` - design a run before anything is queued: cards, pairings, gates, spend.
 - `skills/autometta-card-review/` - interview the operator and review one card before it is queued: seat check, baseline run, cold read, `card-lint.sh --strict`.
-- `skills/autometta-oracle/` - author a card's frozen contract test, proven red on the base branch and green against a reference, and record its digest.
+- `skills/autometta-oracle/` - author a focused frozen contract test with proportionate proof, record its digest and any authorised supplemental evidence gates.
 - `skills/autometta-requeue/` - re-queue a stage safely after a FAIL, a dead agent or a stale run worktree.
-- `skills/phat-controller/` - the scheduled queue minder's brief.
+- `skills/autometta-escalations/` - work the operator's pending escalations from an orchestration chat.
+- `skills/phat-controller/` - a pointer: the role is retired, work the queue through `autometta-escalations`.
 
 ## Auth routes: subscription vs API key (agents: read this before any dispatch)
 
@@ -138,10 +156,18 @@ scripts/watch-agent.sh "$repo" "$pid" "stage-NN-worker"
 `watch-agent.sh` exit code: `0` clean, `2` STUCK, `3` bad input. STUCK escalates when the heartbeat first flags `silent` and the grace window expires (defaults 60s poll, 120s grace, both env-overridable). For the `claude` family swap the launch line for `( cd "$repo" && op-fetch $auth_pairs -- claude -p "$prompt" </dev/null >log 2>&1 ) &` and pass `claude` as the family arg to `auth-route.sh` and `register-agent.sh`.
 
 A manual dispatch through `scripts/spawn-worker.sh` uses the same quota admission
-as the tick. Codex subscription cards may start below 100% in both fresh usage
-windows; the active card may finish in overage, then further cards wait. This
+as the tick. Codex subscription cards may start below 100% in every fresh usage
+window (a Pro plan reports the weekly one alone); the active card may finish in
+overage, then further cards wait. With `window_reserve.pace` on, a new card also
+waits while any listed family it names is ahead of its weekly pace (half-day
+slots, remaining headroom over the slots left), and the heartbeat kills a
+Codex run that moves the weekly window by more than one slot's allowance;
+`AUTOMETTA_IGNORE_PACE=1` bypasses the gate. A weekly-only Codex plan normally
+lists `codex`; Claude's five-hour session uses the reserve below. This
 also checks a Codex verifier before admitting its Claude worker. Missing/stale
-Codex quota holds new cards. Claude keeps its configured reserve (20% by default).
+Codex quota holds new cards. Claude keeps its configured reserve (20% by default);
+`claude_window: 5-hour` makes it session-only and checks a new card whose worker
+or verifier uses the Claude subscription.
 `AUTOMETTA_CODEX_QUOTA_POLICY=reserve` explicitly selects the legacy Codex policy;
 `AUTOMETTA_IGNORE_RESERVE=1` bypasses only that reserve, not the default cutoff.
 See `docs/tick-loop.md` for completion, freshness and concurrent-use limits.

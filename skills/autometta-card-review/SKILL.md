@@ -2,7 +2,7 @@
 name: autometta-card-review
 description: >-
   Interview the operator and review one Autometta stage card before it is
-  queued, so the worker lands it on attempt 1: a short frontier interview
+  queued, with proportionate preparation: a short frontier interview
   with a recommended answer per question, a seat check and a baseline run
   for every acceptance command, a claims-closure grep, a cold read by the
   other model family, and card-lint under --strict. Use when the operator
@@ -23,7 +23,44 @@ a wrong or toothless oracle. Each was a question nobody asked before
 spending a dispatch. This skill asks them.
 
 The card's `- **Open decisions:**` metadata line is the exit condition: the
-card is not queued until it reads `none`.
+card is not queued for execution until it reads `none`. Known implementation
+uncertainty or an explicitly assigned evidence task is not an undecided product
+choice; record it as a risk or deliverable, not as an endless readiness blocker.
+
+## Preparation must earn its cost
+
+Optimise total cost to a verified result, not a perfect first-attempt rate.
+Preparation is useful when it prevents an ambiguous, impossible or unsafe
+attempt; it must not become a second implementation before the worker starts.
+
+- Record a preparation allowance alongside the worker/verifier estimate.
+  Include authoring, test harness work, reference experiments, cold reads and
+  controller sessions. Compare like units: cached-inclusive tokens with the
+  same token measure, or provider cost with cost. Report cached input separately;
+  a dashboard prediction and a historical token estimate are not interchangeable.
+- Default checkpoint: 10% of the expected cost of one worker/verifier attempt.
+  If no credible comparable estimate exists, use a 15-minute initial checkpoint.
+  These are planning defaults, not permission to change runtime caps. At the
+  checkpoint stop adding preparation and choose a smaller card, a bounded
+  implementation attempt, or a specifically justified extension within existing
+  authority. Never renew the allowance by changing model or restarting context.
+- Use a coding-tier model for routine readiness work. Reuse exact-head evidence
+  and cold-read findings; rerun only checks invalidated by code, environment or
+  acceptance changes. Read narrow files and excerpts instead of full histories.
+  A frontier session is for a concrete unresolved judgement, not polling.
+- Before dispatch establish the outcome, scope, judging seat, executable core
+  check, known baseline failures and spend/stop limits. Do not pre-implement the
+  whole feature or build a comprehensive new evidence framework to avoid a
+  bounded worker failure. Follow the oracle skill's proportional proof rules.
+- If the operator authorises a bounded attempt with incomplete new coverage,
+  record precisely what is validated, defective or deferred, who supplies the
+  remaining evidence, and what prevents PASS without it. Existing frozen tests
+  and criteria stay binding unless explicitly amended. A broken harness is
+  inadequate evidence, not a proven product failure. Never count skips as PASS
+  or label an implementation card prose-only to evade the gate.
+- Once the card is actionable, hand it to the worker. Use the deterministic tick,
+  heartbeat and shell state-change waits for monitoring; invoke a model for a
+  concrete failure or decision. Do not spend model turns watching unchanged logs.
 
 ## 1. Interview, briefly
 
@@ -43,8 +80,9 @@ enough that its diff fits one sentence:
    socket unless `Requires network`, no browser unless `Requires GUI`. A
    one-shot `claude -p` session cannot wait for a background batch. The
    wall clock is what the card declares.
-3. **Baseline.** Run every acceptance command on the clean base now and
-   record red or green. A criterion already red on the base (card 116), or
+3. **Baseline.** Record red or green for each acceptance command, reusing
+   evidence on unchanged source/environment. Run missing or invalidated checks.
+   An unintended baseline failure (card 116), or
    one that forbids what a tool does by design (card 122), is a card
    defect. An environment gap (a missing Python module) is recorded on the
    card as unchanged-from-base, not made a criterion.
@@ -85,8 +123,9 @@ read-only sandbox:
 
 (add `--pass CODEX_HOME` when codex is in api mode). From a Codex seat,
 `op-fetch $auth_pairs -- claude -p "$prompt" </dev/null`. Several cards
-can share one cold read. Fold every item back into the card or answer it
-there. A same-family subagent reads the way the author reads; if one is
+can share one cold read. Reuse an existing review for unchanged scope; a
+follow-up should address only unresolved findings. Fold each material item into
+the card or assign it explicitly as evidence work for a bounded attempt. A same-family subagent reads the way the author reads; if one is
 all you can use, say so in the card's Surfacing concern.
 
 ## 4. Lint, then queue
@@ -96,14 +135,19 @@ placeholders, an open decision, a same-family pairing with no rationale,
 missing budget lines or headings, Inputs that do not exist, deliverables
 outside Path claims, absolute home paths, and a contract test that is
 missing, names another card, carries a NONE marker or does not match its
-digest. Then `scripts/add-stage.sh <<repo>> <<card>>`.
+digest, and xhigh or max effort with no `Effort approved` line (lower it
+per autometta-run-design section 2 unless the operator asked). A `frontier-tier` NOTE does not block: confirm the
+pairing rationale says why the role needs Fable or Astra (high complexity
+or UI work as worker; a judgement-heavy verification as verifier). Keep the
+pin when it does; do not trade it down by default. Then
+`scripts/add-stage.sh <<repo>> <<card>>`.
 
 ## Done when
 
 - `Open decisions: none` on the card.
-- Every criterion names a seat and a command, and the baseline result of
-  each command is recorded.
+- Every criterion names a seat and a command; baseline results and any
+  operator-approved coverage exception are recorded without implying PASS.
 - Claims closure done; its findings are in Deliverables and Path claims.
-- The cold read returned nothing unanswered, and the card says which
-  family read it.
+- The cold read has no unassigned material findings, and the card says which
+  family read it. Known evidence tasks have a judging seat and a fail-closed verdict.
 - `card-lint.sh --strict` exits 0.

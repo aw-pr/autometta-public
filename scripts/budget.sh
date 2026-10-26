@@ -681,6 +681,8 @@ budget_record_breach() {
 budget_halt() {
   local repo_root="$1"
   local reason="$2"
+  local previous_halt
+  previous_halt="$(jq -r '[.halted, .halt_reason] | @json' "$(budget_file "$repo_root")" 2>/dev/null || true)"
   local reasons="${3:-}"
   if [[ -z "$reasons" ]]; then
     if [[ "${BUDGET_CHECK_ALL_HITS:-}" == "$reason" || "${BUDGET_CHECK_ALL_HITS:-}" == "$reason "* ]]; then
@@ -699,6 +701,9 @@ budget_halt() {
     | .halt_logged_at = null
     | .halt_logged_reason = null
   ' --arg reason "$reason" --arg reasons "$reasons" --arg ts "$ts"
+  if [[ "$previous_halt" != "$(jq -nc --arg reason "$reason" '[true, $reason]')" ]]; then
+    python3 "$budget_script_dir/lib/lifecycle_events.py" halt "$repo_root" 2>/dev/null || true
+  fi
   case "$reason" in
     token-cap|wall-clock-cap|tick-cap|idle-tick-cap|failure-cap)
       budget_record_breach "$repo_root" "halt" "$reasons"
@@ -937,7 +942,7 @@ for raw_root in roots_raw.split(":"):
             found = True
 
 if found:
-    print(f"{inp} {cached} {out}")
+    print(f"{inp} {cached} {out}" + (" 0" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
 PY
 }
 
@@ -974,7 +979,7 @@ except ValueError:
     since = 0
 
 seen = set()
-inp = cached = out = 0
+inp = cached = out = writes = 0
 
 for base, _dirs, files in os.walk(root):
     for name in files:
@@ -1012,11 +1017,12 @@ for base, _dirs, files in os.walk(root):
                     seen.add(key)
                 inp += usage.get("input_tokens", 0) or 0
                 inp += usage.get("cache_creation_input_tokens", 0) or 0
+                writes += usage.get("cache_creation_input_tokens", 0) or 0
                 cached += usage.get("cache_read_input_tokens", 0) or 0
                 out += usage.get("output_tokens", 0) or 0
 
 if inp or cached or out:
-    print(f"{inp} {cached} {out}")
+    print(f"{inp} {cached} {out}" + (f" {writes}" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
 PY
 }
 

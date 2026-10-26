@@ -1,5 +1,7 @@
 # The controller nobody wired up
 
+> Superseded by [controller-retired.md](controller-retired.md) (card 162, 2026-10-23): the controller, its inbox and its outbox are retired.
+
 Operator design review, 2026-08-27, after an operator sent the TUI's message
 pane two questions and got no answer to either. Extends
 [orchestrator-role-review.md](orchestrator-role-review.md); nothing it decided

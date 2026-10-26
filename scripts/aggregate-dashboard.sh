@@ -529,6 +529,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
           elapsed_seconds: ($live.elapsed_seconds // ($now - (($reg.started_at // "") | epoch))),
           flags: ($live.flags // []),
           live_total_tokens: ($live.live_total_tokens // null),
+          live_uncached_tokens: ($live.live_uncached_tokens // null),
+          live_uncached_input_tokens: ($live.live_uncached_input_tokens // null),
           baseline_median_tokens: ($live.baseline_median_tokens // null),
           baseline_sample_size: ($live.baseline_sample_size // null),
           token_outlier: ($live.token_outlier // null),
@@ -591,7 +593,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     fi
   fi
 
-  spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"by_stage":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0,"history":{"summary":{"card_count":0,"lost_seven_day_tokens":0,"lost_seven_day_marked":false,"seven_day_cost_usd_est":0,"seven_day_cost_marked":false},"cards":[],"fortnight":{"by_day":[],"by_model":[]}}}'
+  spend='{"scope":"today_utc","input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"tokens_total":0,"cost_usd_est":0,"productive":{"tokens":0,"cost_usd_est":0},"lost":{"tokens":0,"cost_usd_est":0},"lost_seven_day":{"tokens":0,"cost_usd_est":0},"openai_zero_output_caveat":false,"by_role":[],"by_stage":[],"model_rates":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":0,"last_hour_tokens":0,"history":{"summary":{"card_count":0,"lost_seven_day_tokens":0,"lost_seven_day_marked":false,"seven_day_cost_usd_est":0,"seven_day_cost_marked":false},"cards":[],"fortnight":{"by_day":[],"by_model":[]}}}'
   if [[ -f "$cost_log_path" ]]; then
     if ! spend="$(jq -s -c --argjson now "$now_epoch" --argjson today "$today_epoch" \
       --argjson ledger_stages "$stages_json" '
@@ -626,6 +628,9 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       def zero_output_read: .row_zero_output;
       def dispatch_tokens: (.total_tokens // .row_tokens);
       def dispatch_cost: (.total_cost_usd_est // .cost_usd_est // 0);
+      def median: sort | length as $n |
+        if $n == 0 then null elif $n % 2 == 1 then .[($n - 1) / 2]
+        else ((.[$n / 2 - 1] + .[$n / 2]) / 2) end;
       def totals($rows): {
         input_tokens: ([$rows[] | .input_tokens // 0] | add // 0),
         cached_input_tokens: ([$rows[] | .cached_input_tokens // 0] | add // 0),
@@ -664,6 +669,24 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
          (totals($role_rows)) + {role:($role_rows[0].role // "unknown"),
            productive_tokens:([$role_rows[] | select((.result // "") == "pass") | tok] | add // 0),
            lost_tokens:([$role_rows[] | select((.result // "") != "pass" and not_landed(.stage_id // "")) | tok] | add // 0)}]),
+       # What each model has historically cost per dispatch, and how fast it
+       # spends: the basis for a queued stage estimate and the burn badge.
+       # Medians, because one runaway dispatch would drag a mean for weeks.
+       # Rates skip dispatches under 30s, whose wall clock is mostly startup.
+       model_rates: ([[$dispatches[] |
+         select((.usage_status // "recorded") != "unknown" and dispatch_tokens > 0)] |
+         group_by([.identity, .role])[] | . as $model_rows |
+         [$model_rows[] | select((.wall_clock_s // 0) >= 30)] as $timed |
+         {identity: ($model_rows[0].identity // "unknown"), role: ($model_rows[0].role // "unknown"),
+          samples: ($model_rows | length),
+          median_tokens: ([$model_rows[] | dispatch_tokens] | median | round),
+          median_uncached_tokens: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null) | .input_tokens + .output_tokens] | median),
+          tokens_per_min: ([$timed[] | dispatch_tokens * 60 / .wall_clock_s] | median |
+            if . == null then null else round end),
+          cost_usd_per_min: ([$timed[] | dispatch_cost * 60 / .wall_clock_s] | median)}]),
+       role_usage: ([$dispatches[] | {stage_id, role, identity, model, ts, auth_route,
+         input_tokens, cached_input_tokens, cache_creation_input_tokens, output_tokens,
+         total_tokens, usage_status, cost_usd_est, subscription_usage}]),
        by_stage: ([$all | group_by(.stage_id)[] | . as $stage_rows |
          (totals($stage_rows)) + {stage_id:($stage_rows[0].stage_id // "unknown")}]),
        failures: ([$all[] | select((.result // "") != "pass" and not_landed(.stage_id // "") and epoch >= ($today - 518400)) |
@@ -735,7 +758,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
          }
        }}
     ' "$cost_log_path" 2>/dev/null)"; then
-      spend='{"state_error":"spend unavailable","scope":"today_utc","input_tokens":null,"cached_input_tokens":null,"output_tokens":null,"tokens_total":null,"cost_usd_est":null,"productive":{"tokens":null,"cost_usd_est":null},"lost":{"tokens":null,"cost_usd_est":null},"lost_seven_day":{"tokens":null,"cost_usd_est":null},"openai_zero_output_caveat":null,"by_role":[],"by_stage":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":null,"last_hour_tokens":null,"history":{"state_error":"spend unavailable","summary":{"card_count":null,"lost_seven_day_tokens":null,"lost_seven_day_marked":null,"seven_day_cost_usd_est":null,"seven_day_cost_marked":null},"cards":[],"fortnight":{"by_day":[],"by_model":[]}}}'
+      spend='{"state_error":"spend unavailable","scope":"today_utc","input_tokens":null,"cached_input_tokens":null,"output_tokens":null,"tokens_total":null,"cost_usd_est":null,"productive":{"tokens":null,"cost_usd_est":null},"lost":{"tokens":null,"cost_usd_est":null},"lost_seven_day":{"tokens":null,"cost_usd_est":null},"openai_zero_output_caveat":null,"by_role":[],"by_stage":[],"model_rates":[],"failures":[],"last_dispatch_at":null,"seven_day_cost_usd_est":null,"last_hour_tokens":null,"history":{"state_error":"spend unavailable","summary":{"card_count":null,"lost_seven_day_tokens":null,"lost_seven_day_marked":null,"seven_day_cost_usd_est":null,"seven_day_cost_marked":null},"cards":[],"fortnight":{"by_day":[],"by_model":[]}}}'
       append_state_error "spend unavailable"
     fi
   fi
@@ -774,6 +797,30 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson vendor_files_current "$vendor_files_current" --argjson vendor_drifted "$vendor_drifted" \
     --argjson build_check "$build_check" '
     input as $spend |
+    # A stage estimate is the median the named model has spent in that role
+    # before; a model this repo has never run falls back to the role median
+    # across models, and a role with no history at all stays null rather than
+    # guessing a zero.
+    ($spend.model_rates // []) as $rates |
+    def role_median($role):
+      [$rates[] | select(.role == $role) | .median_tokens] | sort |
+      if length == 0 then null else .[(length / 2) | floor] end;
+    def role_estimate($identity; $role):
+      if $identity == null then null else
+        ([$rates[] | select(.identity == $identity and .role == $role)][0]) as $hit |
+        if $hit != null then {tokens: $hit.median_tokens, basis: "model", samples: $hit.samples}
+        else (role_median($role)) as $fallback |
+          if $fallback == null then null else {tokens: $fallback, basis: "role", samples: 0} end
+        end
+      end;
+    ($stages | map(. as $stage |
+      role_estimate($stage.worker; "worker") as $w |
+      role_estimate($stage.verifier; "verifier") as $v |
+      . + {estimate: (if $w == null and $v == null then null else
+        {worker: ($w.tokens // null), verifier: ($v.tokens // null),
+         total: (($w.tokens // 0) + ($v.tokens // 0)),
+         basis: (if ($w.basis // "model") == "model" and ($v.basis // "model") == "model"
+                 then "model" else "role" end)} end)})) as $stages |
     (if $current_run_id == null then null else {
       id:$current_run_id,
       started_at:$current_run_started_at,

@@ -231,6 +231,9 @@ def read_codex() -> dict[str, Any]:
 
 def codex_admission(reading: Any) -> dict[str, Any]:
     result = {"allowed": False, "reason": "Codex quota reading unavailable", "window": "", "reset": None}
+    if codex_admission_off():
+        return {**result, "allowed": True,
+                "reason": "Codex admission ceiling off by operator; new cards may run into reserve credits"}
     if not isinstance(reading, dict) or reading.get("status") != "known":
         return result
     now = now_epoch()
@@ -242,18 +245,60 @@ def codex_admission(reading: Any) -> dict[str, Any]:
     if fetched is None or fetched > now + 60 or now - fetched > max_age:
         return {**result, "reason": "Codex quota reading stale or undated"}
     windows = sanitise_windows(reading.get("windows"), allow_overage=True)
-    if not windows or not {"primary", "secondary"}.issubset({w["key"] for w in windows}):
+    # Plus reports a five-hour and a weekly window; Pro reports the weekly one alone.
+    if not windows or not any(is_weekly(w) for w in windows):
         return {**result, "reason": "Codex quota windows incomplete"}
-    ceiling = codex_admit_percent()
     for window in windows:
         reset = parse_time(window["resets_at"])
         if reset is None or reset <= now:
             return {**result, "reason": "Codex quota needs a fresh reading after reset", "window": window["label"]}
+        ceiling = codex_window_ceiling(window, reset, now)
         if window["utilization"] >= ceiling:
             state = "exhausted" if ceiling >= 100 else f"at or past the {ceiling:g}% admission ceiling"
             return {**result, "reason": f"Codex {window['label']} {state} ({window['utilization']:g}% used)",
                     "window": window["label"], "reset": int(reset)}
     return {**result, "allowed": True, "reason": f"Codex quota below {ceiling:g}%; current card may finish in overage"}
+
+
+def codex_admission_off() -> bool:
+    """`off` is the operator's explicit decision to spend past the subscription
+    window into reserve credits, so no reading, stale or exhausted, holds a card."""
+    return os.environ.get("AUTOMETTA_CODEX_ADMIT_PERCENT", "").strip().lower() == "off"
+
+
+WEEK_SECONDS = 7 * 24 * 3600
+
+
+def is_weekly(window: dict[str, Any]) -> bool:
+    return str(window.get("label", "")).strip().lower() == "weekly"
+
+
+def codex_pace_headroom() -> float | None:
+    """`pace` paces the weekly window by the share of the week gone, plus one
+    day's share by default (`pace+N` sets N points instead); None when not pacing."""
+    value = os.environ.get("AUTOMETTA_CODEX_ADMIT_PERCENT", "").strip().lower()
+    if value == "pace":
+        return 100 / 7
+    if value.startswith("pace+"):
+        try:
+            headroom = float(value[5:])
+        except ValueError:
+            return 100 / 7
+        return headroom if 0 <= headroom <= 100 else 100 / 7
+    return None
+
+
+def codex_window_ceiling(window: dict[str, Any], reset: float, now: float) -> float:
+    """A paced weekly window admits up to the share of the week already gone plus
+    the headroom, so a week cannot be spent in a day; any other window keeps the
+    fixed ceiling, which pacing leaves at 100."""
+    headroom = codex_pace_headroom()
+    if headroom is None:
+        return codex_admit_percent()
+    if not is_weekly(window):
+        return 100.0
+    elapsed = min(1.0, max(0.0, 1 - (reset - now) / WEEK_SECONDS))
+    return min(100.0, elapsed * 100 + headroom)
 
 
 def codex_admit_percent() -> float:
@@ -266,6 +311,107 @@ def codex_admit_percent() -> float:
     return value if 0 < value <= 100 else 100.0
 
 
+def pace_action() -> str:
+    value = os.environ.get("AUTOMETTA_PACE_ACTION", "").strip().lower()
+    return value if value in {"hold", "observe"} else "off"
+
+
+def pace_slot_seconds() -> int:
+    """Length of one pacing slot. Twelve hours unless a whole number of hours
+    between 1 and 168 is given."""
+    try:
+        hours = int(os.environ.get("AUTOMETTA_PACE_SLOT_HOURS", "12"))
+    except ValueError:
+        hours = 12
+    return (hours if 1 <= hours <= 168 else 12) * 3600
+
+
+def weekly_window(reading: Any) -> dict[str, Any] | None:
+    if not isinstance(reading, dict) or reading.get("status") != "known":
+        return None
+    windows = sanitise_windows(reading.get("windows"), allow_overage=True) or []
+    return next((window for window in windows if is_weekly(window)), None)
+
+
+def pace_state_path() -> Path | None:
+    value = os.environ.get("AUTOMETTA_PACE_STATE", "")
+    return Path(os.path.expanduser(value)) if value else None
+
+
+def pace_slot_base(family: str, week_reset: str, slot: int, candidate: float) -> float:
+    """The utilisation a slot is measured from: the first one this host saw in
+    the slot, so spend inside the slot cannot raise its own ceiling. Without a
+    state file every call is a first sighting."""
+    path = pace_state_path()
+    if path is None:
+        return candidate
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
+            state = {}
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        state = {}
+    entry = state.get(family)
+    if (
+        isinstance(entry, dict)
+        and entry.get("week_resets_at") == week_reset
+        and entry.get("slot") == slot
+        and isinstance(entry.get("base"), (int, float))
+    ):
+        return float(entry["base"])
+    state[family] = {"week_resets_at": week_reset, "slot": slot, "base": candidate}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        tmp.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+    return candidate
+
+
+def pace_admission(family: str, reading: Any) -> dict[str, Any]:
+    """Spread a weekly window evenly over what is left of the week.
+
+    The week is cut into slots (half-days by default). A slot may spend the
+    remaining headroom divided by the slots left, measured from the slot's
+    base. The base is never above the straight pace line, so a family that ran
+    ahead is held until the calendar catches up, and one that fell behind may
+    catch up only a slot's share at a time. A stale reading still counts:
+    weekly use only rises until reset, so an old figure understates it."""
+    result: dict[str, Any] = {"family": family, "allowed": True, "action": pace_action(),
+                              "used": None, "ceiling": None, "allowance": None,
+                              "slot_ends_at": None, "week_resets_at": None}
+    if result["action"] == "off":
+        return {**result, "reason": "pace off"}
+    window = weekly_window(reading)
+    if window is None:
+        return {**result, "reason": f"{family} weekly reading unavailable; pace not applied"}
+    now = now_epoch()
+    reset = parse_time(window["resets_at"])
+    if reset is None or reset <= now:
+        return {**result, "reason": f"{family} weekly window has reset; pace waits for a fresh reading"}
+    slot_seconds = pace_slot_seconds()
+    slots = math.ceil(WEEK_SECONDS / slot_seconds)
+    start = reset - WEEK_SECONDS
+    slot = min(slots - 1, max(0, int((now - start) // slot_seconds)))
+    slots_left = slots - slot
+    used = window["utilization"]
+    base = pace_slot_base(family, window["resets_at"], slot, min(used, 100.0 * slot / slots))
+    allowance = max(0.0, 100.0 - base) / slots_left
+    ceiling = base + allowance
+    slot_end = min(reset, start + (slot + 1) * slot_seconds)
+    result.update({"used": used, "ceiling": round(ceiling, 2), "allowance": round(allowance, 2),
+                   "slot_ends_at": iso(slot_end), "week_resets_at": window["resets_at"]})
+    if used < ceiling:
+        return {**result, "reason": f"{family} weekly {used:g}% used, under this slot's {ceiling:.1f}% pace ceiling"}
+    reason = (f"{family} weekly {used:g}% used, at or past this slot's {ceiling:.1f}% pace ceiling "
+              f"({allowance:.1f}% per slot over {slots_left} slots left); next slot {iso(slot_end)}")
+    if result["action"] == "observe":
+        return {**result, "reason": f"{reason}; observe does not hold"}
+    return {**result, "allowed": False, "reason": reason}
+
+
 def read_family(family: str) -> dict[str, Any]:
     if family == "claude":
         return read_claude()
@@ -275,8 +421,15 @@ def read_family(family: str) -> dict[str, Any]:
 
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "pace" and sys.argv[2] in {"claude", "codex"}:
+        try:
+            reading = json.load(sys.stdin)
+        except (ValueError, OSError):
+            reading = None
+        print(json.dumps(pace_admission(sys.argv[2], reading), separators=(",", ":"), sort_keys=True))
+        return 0
     if len(sys.argv) != 2 or sys.argv[1] not in {"claude", "codex", "all", "codex-admission"}:
-        print(f"usage: {Path(sys.argv[0]).name} claude|codex|all|codex-admission", file=sys.stderr)
+        print(f"usage: {Path(sys.argv[0]).name} claude|codex|all|codex-admission|pace claude|codex", file=sys.stderr)
         return 2
     if sys.argv[1] == "codex-admission":
         try:

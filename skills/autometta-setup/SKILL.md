@@ -174,33 +174,32 @@ frontier verifier (`api` or `subscription`) for judgement-heavy criteria; the
 cloud free tier (Groq, OpenRouter) is measured but not yet a selectable
 dispatch mode, only reachable via `scripts/verifier-bake-off.sh` directly.
 
-### Optional: configure the phat-controller job (and ask both authority questions)
+### Orchestration-chat escalation hooks
 
-The tick loop dispatches and verifies. It does not decide that a verifier FAIL is a card defect, preserve work stranded by an agent that died mid-write, merge an integration, clear a stale pause, or keep the queue fed. phat-controller does, and it is worth adding only once the loop itself ticks cleanly. Full design: `docs/tick-loop.md` section (k).
+Run mcp-hub's `scripts/sync-all-platforms.sh` to install and verify the Claude
+Code and Codex lifecycle hooks. Without mcp-hub, run Autometta's
+`scripts/install-escalation-hook.sh --family all` and enable Codex's
+`features.hooks = true`. Restart CLI sessions and complete any hook trust review.
+`--check --family all` verifies the hook entries without changing settings.
+Hooks deliver new or changed escalations and lifecycle notices at session start, on user prompts and
+after tools. Optional `scripts/wakeups.sh enable` registration adds native Claude
+`asyncRewake` and Codex queue delivery. Use `--fleet` for a fleet fallback.
+One outstanding wake per chat, a 120-second fleet cooldown, six/hour and 24/day
+rolling fleet caps bound storms. `disable` stops new delivery; restarts do not
+reset counters. Headless workers/verifiers and subagents are excluded. See
+`docs/tick-loop.md` under Escalations for scope, leases and delivery state.
 
-It is an agent seeded at configure time, so configuring the job means rendering its seed, and rendering the seed means answering two questions you cannot skip.
+### Optional: set the host's reserve in the mandate
 
-**Ask the operator, in the conversation, before running anything:**
+There is no controller agent to install. The tick preserves stranded work, resumes a passing envelope and retries a dead worker once; anything it cannot decide becomes an escalation for the operator's orchestration chat (`autometta-escalations`). Design and history: `docs/proposals/controller-retired.md`.
 
-> What may this controller spend on this run? Give me a level in your own words, and optionally a hard token ceiling and a time the authority expires.
+What remains host-level is one file, `$AUTOMETTA_HOME/phat-controller-mandate.yaml`, which `autometta init-host` installs from `templates/phat-controller-mandate.yaml.tpl`. The tick reads its provider-window reserve and curfew fields. Ask the operator before editing it, and do not pick answers for them:
 
 > How much of each provider window should remain unspent? Give a percentage, where zero turns the feature off, and choose `hold` (pause until that window resets) or `observe` (surface it but continue).
 
-**Do not offer defaults and do not pick answers for them.** Both choices vary by run, by hour and by day. If the operator will not answer either question, stop and say the job cannot be configured yet. The tooling agrees: the renderer writes nothing and exits 2 when either answer is absent, and the installer refuses to install a schedule with no seed.
+Then edit the fields by hand (`window_reserve.percent`, `window_reserve.action`). An empty reserve is not off: the loop holds a 20% reserve until an explicit answer says otherwise.
 
-Then, with the answer in hand:
-
-```sh
-autometta install-launchagent-phat-controller <target-repo-root> \
-  --spend-authority 'Up to 40M tokens overnight on the Claude subscription. The codex api route stays off tonight.' \
-  --window-reserve-percent 10 --window-reserve-action hold \
-  --token-ceiling 40000000 \
-  --expires 2026-08-25T07:00:00Z
-```
-
-The prose answer goes into the seed, which the agent reads. The ceiling and expiry are mirrored into the mandate manifest, which is where a script is allowed to read a threshold from. Both are optional; the prose is not.
-
-Check the result with `autometta phat-controller --print-seed` and read it back to the operator: it also carries the prohibitions, this machine's paths, each family's auth route, the repo's branch policy and its own gotchas, and any of those being wrong is worth catching before the first unattended pass rather than after it. The seed is operator-owned afterwards; re-rendering needs `--force`.
+A machine that still has the retired phat-controller LaunchAgent installed runs `autometta uninstall-launchagent-phat-controller` once; it is safe when nothing is installed.
 
 ### Budget policy: the daily cap is a host decision
 
@@ -251,7 +250,7 @@ For multi-agent contributions, append a trailer:
 Co-Authored-By: <assisting agent identity, as printed by agent-whoami>
 ```
 
-The canonical agent table lives in `~/.claude/rules/mcp-hub-dev-rules.md`. Adopter repos should reference this rule file rather than duplicate the table.
+The canonical agent table lives in `mcp-hub/docs/AGENT-IDENTITIES.md`, resolved at commit time by `agent-whoami`. Adopter repos should call the helper rather than duplicate the table.
 
 ## Worked example
 

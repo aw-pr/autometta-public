@@ -15,7 +15,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render import (ACTIVE, ALERT, BOLD, DIM, NORMAL, REVERSE, TuiState,
                     ordered_run_stages, render)
-from messages import read_bus, write_pending
+from pending_escalations import read_pending_count
 from status_updates import read_status_updates
 
 
@@ -81,9 +81,9 @@ def fixture_polls(path):
     return polls
 
 
-def refresh_controller(state, repo_root):
-    state.update_controller(read_bus(repo_root))
-    # Read on the same beat as the controller bus: both are small local files
+def refresh_local_state(state, repo_root):
+    state.update_pending_escalations(read_pending_count())
+    # Read on the same beat as the escalation count: both are small local files
     # the tick appends to, and panel 5 is stale the moment the loop speaks.
     state.update_status_updates(read_status_updates(repo_root))
 
@@ -192,22 +192,6 @@ def apply_key(state, key, repo_root):
     if kind == "open_card_external":
         state.card_notice = open_card_external(repo_root, message)
         return
-    if kind != "submit":
-        return
-    try:
-        message_id = write_pending(repo_root, message)
-        controller = read_bus(repo_root)
-    except (OSError, ValueError) as error:
-        state.compose_failed(str(error))
-        return
-    observed = any(
-        row.get("id") == message_id and row.get("status") == "pending"
-        for row in controller.get("conversation") or [])
-    state.update_controller(controller)
-    if observed:
-        state.compose_done("queued for the controller's next pass")
-    else:
-        state.compose_failed("write completed but the pending message was not observed")
 
 
 def capture(args):
@@ -219,7 +203,7 @@ def capture(args):
     for index, payload in enumerate(polls):
         state.update(payload, observed_at=index * args.interval)
         confine_agent_selection(state)
-        refresh_controller(state, args.repo_root)
+        refresh_local_state(state, args.repo_root)
     ensure_card_body(state, args.repo_root)
     for key in filter(None, (part.strip() for part in args.keys.split(","))):
         apply_key(state, key, args.repo_root)
@@ -311,7 +295,7 @@ def interactive(args):
                     in_flight_generation = None
                 if apply_poll_result(state, result, latest_generation):
                     if result["error"] is None:
-                        refresh_controller(state, args.repo_root)
+                        refresh_local_state(state, args.repo_root)
                     dirty = True
             if now >= next_poll and in_flight_generation is None:
                 latest_generation += 1
@@ -337,7 +321,7 @@ def interactive(args):
             if key == curses.KEY_RESIZE:
                 dirty = True
                 continue
-            if key in (ord("q"), ord("Q")) and not state.composing:
+            if key in (ord("q"), ord("Q")):
                 break
             mapping = {
                 curses.KEY_DOWN: "DOWN", curses.KEY_UP: "UP", curses.KEY_ENTER: "ENTER",

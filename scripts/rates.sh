@@ -10,7 +10,7 @@
 #      (T1 / T2 / T4), matching the agent-orchestrator skill's tier table.
 #   2. rate_for_model     — a model id -> "INPUT CACHED OUTPUT" USD per million
 #      tokens. The primary rate: models sharing a tier do not share a price
-#      (Opus 5.5 is $4/$20, Opus 5 $5/$25, Sol $5/$30).
+#      (Opus 5.5 is $4/$20, Opus 5 $5/$25, GPT-6.1 Sol $2/$10).
 #   3. rate_for_tier      — a tier -> the same triple, used only for a model
 #      rate_for_model does not list.
 #
@@ -31,9 +31,9 @@
 #
 # Tiers follow skills/agent-orchestrator/SKILL.md:
 #   T0 - frontier-above-Opus (Claude Fable 5) - opt-in per card only
-#   T1 - frontier reasoning (Opus, GPT-5.6 Sol, Gemini Pro)
-#   T2 - workhorse         (Sonnet, GPT-5.6 Terra)
-#   T4 - light             (Haiku, GPT-5.6 Luna)
+#   T1 - frontier reasoning (Opus, GPT Sol, Gemini Pro)
+#   T2 - workhorse         (Sonnet, legacy GPT Terra)
+#   T4 - light             (Haiku, GPT Luna)
 #   T5 - local weights     (Codex GPT-OSS 120B, on-machine Ollama) - $0 explicit
 # T0 was previously reserved for the orchestrator's own main session, which is
 # not a dispatched role and is not costed here. It now labels the opt-in Fable
@@ -51,6 +51,8 @@ tier_for_identity() {
   case "$identity" in
     *Fable*|*fable*)   printf 'T0\n' ;;
     *GPT-6\ Astra*|*gpt-6-astra*) printf 'T0\n' ;;
+    *GPT-6.1\ Sol*|*gpt-6.1-sol*|*gpt-6-1-sol@local*|*GPT-6\ Sol*|*gpt-6-sol*) printf 'T1\n' ;;
+    *GPT-6\ Luna*|*gpt-6-luna*) printf 'T4\n' ;;
     *Opus*|*opus*)     printf 'T1\n' ;;
     *GPT-5.6\ Sol*|*gpt-5.6-sol*) printf 'T1\n' ;;
     *Gemini\ Pro*)     printf 'T1\n' ;;
@@ -79,6 +81,9 @@ rate_for_model() {
     claude-sonnet-4-6)                     printf '3.0 0.3 15.0\n' ;;
     claude-haiku-4-5|claude-haiku-4-5-20251001) printf '1.0 0.1 5.0\n' ;;
     gpt-6-astra)                           printf '10.0 1.0 50.0\n' ;;
+    gpt-6.1-sol)                           printf '2.0 0.1 10.0\n' ;;
+    gpt-6-sol)                             printf '2.0 0.2 10.0\n' ;;
+    gpt-6-luna)                            printf '0.1 0.01 0.5\n' ;;
     gpt-5.6-sol)                           printf '5.0 0.5 30.0\n' ;;
     gpt-5.6-terra)                         printf '2.0 0.2 12.0\n' ;;
     gpt-5.6-luna)                          printf '0.2 0.02 1.2\n' ;;

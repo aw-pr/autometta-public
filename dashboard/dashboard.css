@@ -118,8 +118,55 @@ table.stages th, table.stages td {
   vertical-align: top;
 }
 table.stages th { color: var(--muted); font-weight: 500; }
+.sort-header {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .4rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sort-header:hover, th[aria-sort] .sort-header { color: var(--accent); }
+.sort-indicator { font-size: .7rem; white-space: nowrap; }
+.sort-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem .8rem;
+  margin: .6rem 0;
+  color: var(--muted);
+  font-size: .78rem;
+}
+.sort-summary { color: var(--accent); }
+.sort-controls button {
+  background: #21262d;
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .15rem .5rem;
+  font: inherit;
+  cursor: pointer;
+}
+.sort-controls button:disabled { opacity: .4; cursor: default; }
 table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.stages td.num .live { color: var(--accent); font-weight: 600; }
+table.stages .est { color: var(--muted); font-size: 0.8rem; }
+#panel-models .panel-note { margin-top: 2.5rem; }
+.burn-rate {
+  font-size: 0.72rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.burn-rate.hot { color: var(--fail); border-color: var(--fail); }
+.burn-rate.warm { color: var(--stall); border-color: var(--stall); }
+.burn-rate.cool { color: var(--accent); border-color: var(--accent); }
 table.stages td.num .live::after {
   content: " live";
   color: var(--muted);
@@ -234,6 +281,21 @@ table.stages td.num .live::after {
   color: #fff;
 }
 
+/* Per-column filters under each paged table's header. */
+tr.filter-row th { padding-top: 0; }
+tr.filter-row input {
+  width: 100%;
+  min-width: 4rem;
+  box-sizing: border-box;
+  background: #0d1117;
+  color: inherit;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
 /* First row of each repo's block in the per-stage table. */
 tr.group-start td { border-top: 2px solid #30363d; }
 tr.group-start td:first-child { font-weight: 600; }
@@ -280,3 +342,26 @@ pre.card-text {
   .run-total .run-repo,
   .run-total .run-id { flex-basis: 100%; }
 }
+
+/* Model and consumption stay together while the full audit lives below the row. */
+.role-cell { min-width: 25rem; width: 25%; vertical-align: top; }
+.role-usage { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .6rem; line-height: 1.35; font-variant-numeric: tabular-nums; }
+.role-usage > * { white-space: nowrap; }
+#stages-table-wrap { overflow-x: auto; }
+.role-model { font-weight: 600; }
+.role-usage .live { color: var(--accent); font-weight: 600; }
+.role-usage .live::after { content: " live"; font-size: .75rem; font-weight: 400; }
+.usage-muted { color: var(--muted); font-size: .82rem; }
+.usage-details { white-space: normal; max-width: 75rem; line-height: 1.5; }
+.usage-details h3 { font-size: .95rem; margin: .5rem 0; }
+
+.quota-summary { display: flex; flex-wrap: wrap; gap: .75rem 2rem; margin-bottom: .6rem; }
+.quota-summary > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1.25rem; }
+.quota-summary p { margin: 0; font-size: .85rem; font-variant-numeric: tabular-nums; }
+#panel-quota summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+
+.stage-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1.25rem; margin-bottom: .75rem; }
+.stage-heading h2, .stage-heading #stage-order { margin: 0; }
+
+.usage-total-cell { min-width: 21rem; width: 20%; }
+.usage-total-cell .role-usage { flex-wrap: nowrap; }

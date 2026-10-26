@@ -25,7 +25,7 @@ AUTOMETTA_MODEL_FABLE="claude-fable-5-1"
 # wants the best model for its task names it; one that does not need it keeps
 # Sol, Terra, Luna or a local model, which is the point of the per-card
 # mechanism.
-AUTOMETTA_MODEL_CODEX="gpt-5.6-sol"
+AUTOMETTA_MODEL_CODEX="gpt-6.1-sol"
 # The codex `local` auth route (auth.codex.mode: local) runs this Ollama model
 # id via `codex exec --oss --local-provider=ollama -m <id>` instead of the API
 # model above. One place to bump when a faster or better-pulled local model
@@ -92,6 +92,9 @@ codex_local_model_for_identity() {
 codex_cloud_model_for_identity() {
   case "$1" in
     *GPT-6\ Astra*|*gpt-6-astra*)     printf 'gpt-6-astra' ;;
+    *GPT-6.1\ Sol*|*gpt-6.1-sol*|*gpt-6-1-sol@local*) printf 'gpt-6.1-sol' ;;
+    *GPT-6\ Sol*|*gpt-6-sol*)         printf 'gpt-6-sol' ;;
+    *GPT-6\ Luna*|*gpt-6-luna*)       printf 'gpt-6-luna' ;;
     *GPT-5.6\ Sol*|*gpt-5.6-sol*)     printf 'gpt-5.6-sol' ;;
     *GPT-5.6\ Terra*|*gpt-5.6-terra*) printf 'gpt-5.6-terra' ;;
     *GPT-5.6\ Luna*|*gpt-5.6-luna*)   printf 'gpt-5.6-luna' ;;

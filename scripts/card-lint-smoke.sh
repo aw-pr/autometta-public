@@ -231,4 +231,31 @@ printf '%s\n' "$both" | grep -Eq '^card-lint: OK .*/20-good\.md$' \
 [[ "$missing_rc" == 2 ]] || fail "157: a card that does not exist should exit 2, got $missing_rc"
 # AUTOMETTA-CONTRACT-END
 
+variant 39-xhigh '- **Open decisions:** none' '- **Open decisions:** none\n- **Worker effort:** xhigh'
+expect_only 39-xhigh effort
+variant 40-max-verifier '- **Open decisions:** none' '- **Open decisions:** none\n- **Verifier effort:** max'
+expect_only 40-max-verifier effort
+variant 41-xhigh-approved '- **Open decisions:** none' \
+  '- **Open decisions:** none\n- **Worker effort:** xhigh\n- **Effort approved:** operator, 2026-10-20: "run this one at xhigh"'
+"$lint" --strict "$repo/stage-cards/41-xhigh-approved.md" >/dev/null \
+  || fail "effort: an xhigh card carrying the operator's approval is refused"
+variant 42-high '- **Open decisions:** none' '- **Open decisions:** none\n- **Worker effort:** high'
+"$lint" --strict "$repo/stage-cards/42-high.md" >/dev/null \
+  || fail "effort: a high-effort card is refused"
+
+variant 43-fable-worker \
+  '- **Worker:** Codex GPT-5.6 Terra <codex-gpt-5-6-terra@local>' '- **Worker:** GPT-6 Astra <gpt-6-astra@local>' \
+  '- **Verifier:** Claude Sonnet 5.5 <claude-sonnet-5-5@local>' '- **Verifier:** Claude Fable 5.1 <claude-fable-5-1@local>'
+frontier_out="$("$lint" --strict "$repo/stage-cards/43-fable-worker.md")" \
+  || fail "frontier-tier: a Fable or Astra pin fails --strict; it must only advise"
+printf '%s\n' "$frontier_out" | grep -q 'NOTE .*frontier-tier: GPT-6 Astra .* is the Worker' \
+  || fail "frontier-tier: an Astra worker carries no note: $frontier_out"
+printf '%s\n' "$frontier_out" | grep -q 'NOTE .*frontier-tier: Claude Fable .* is the Verifier' \
+  || fail "frontier-tier: a Fable verifier carries no note: $frontier_out"
+printf '%s\n' "$frontier_out" | grep -Eq '^card-lint: OK ' \
+  || fail "frontier-tier: a card with only notes is not reported OK: $frontier_out"
+if "$lint" --strict "$repo/stage-cards/42-high.md" | grep -q NOTE; then
+  fail "frontier-tier: a card with no frontier pin carries a note"
+fi
+
 printf 'PASS: card-lint finds each card-defect class once, and only when it is there\n'
