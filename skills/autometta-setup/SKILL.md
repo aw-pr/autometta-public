@@ -250,7 +250,7 @@ For multi-agent contributions, append a trailer:
 Co-Authored-By: <assisting agent identity, as printed by agent-whoami>
 ```
 
-The canonical agent table lives in `~/.claude/rules/mcp-hub-dev-rules.md`. Adopter repos should reference this rule file rather than duplicate the table.
+The canonical agent table lives in `mcp-hub/docs/AGENT-IDENTITIES.md`, resolved at commit time by `agent-whoami`. Adopter repos should call the helper rather than duplicate the table.
 
 ## Worked example
 
