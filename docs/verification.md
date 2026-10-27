@@ -25,12 +25,14 @@ This report is an input to the orchestrator, it is not an autonomous decision ar
 
 ## Failure budget and re-brief policy
 
-The default failure budget is one re-brief at the same tier, then surface.
+For a manually driven pass-1 stage, the default failure budget is one re-brief at the same tier, then surface.
 
 - First failure: orchestrator re-briefs once, preserving the same stage boundary.
 - Second failure: orchestrator surfaces to the user, with evidence and unresolved blockers.
 
 This keeps stage churn bounded and prevents indefinite retry loops.
+
+The automated loop distinguishes mechanical recovery from a verifier rejection. A dead worker may receive a bounded recovery attempt; a verifier FAIL leaves the stage `verifier_failed` for an operator decision. It does not authorise the tick to change criteria or retry until green. Preserve the prior attempt and use the [requeue procedure](../skills/autometta-requeue/SKILL.md) before another authorised dispatch.
 
 ## Cross-family verification default
 
@@ -53,12 +55,14 @@ For the full operational sequence, see [Step 6: Orchestrator integration](dispat
 
 The pass-2 tick (`scripts/tick.sh`) operationalises Step 7's "orchestrator commits, not worker" rule by branching on the verifier artefact's `overall` field:
 
-- `overall: PASS`: orchestrator stages non-state working-tree changes and commits with `--author=<worker-identity>` and a `Co-Authored-By: <verifier-identity>` trailer derived from `state/state.yaml`. The commit subject is `<stage-id>: <headline>`. Stage moves to `completed`.
-- `overall: FAIL`: no commit. Stage moves to the `verifier_failed` status. The dirty working tree is left intact for operator review.
+- `overall: PASS`: the orchestrator commits the worker's changes in the run worktree with `--author=<worker-identity>`, co-author attribution for orchestrator and verifier, and `Autometta-*` role trailers. The commit subject is `<stage-id>: <headline>`. The stage moves to `completed`; its separate integration record says whether the commit reached base.
+- `overall: FAIL`: no accepted delivery commit. The stage moves to `verifier_failed`. The tick preserves the attempt on a `wip/<stage>-attempt-<n>` branch when possible and retains the run worktree for review. A preservation commit records failed work; it is not a passing delivery.
 - Missing / malformed `overall`: treated as FAIL (fail-safe). Same handling as FAIL.
 - Clean working tree on PASS: logged as the worker-self-commit path, retired by card 7 (2026-05); stage marked `completed` without erroring so a subscriber on a pre-card-7 worker prompt still lands.
 
 The worker prompt explicitly forbids `git commit` so the dirty-tree contract holds. The verifier prompt explicitly states that the verifier reads the dirty tree (not a committed snapshot) and that the `overall` field drives the orchestrator's commit decision.
+
+**PASS is not proof of integration.** The tick fast-forwards a passing run when possible. If base moved, it may rebase a disjoint change under the integration guards. Work that cannot land safely remains `integration.state: awaiting`, with its branch and worktree retained. Check that record and the current base before declaring the change available to a dependent stage. See [worktree-per-run dispatch](dispatch-contract.md#worktree-per-run-dispatch).
 
 ## Family-specific verification notes
 

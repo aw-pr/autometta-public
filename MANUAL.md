@@ -7,7 +7,9 @@ links out to the deep design docs under `docs/` rather than duplicating them.
 Autometta is a pattern library for headless agent orchestration on one machine.
 It dispatches worker and verifier agents across two CLI families (Claude Code
 and Codex CLI) in the same working tree, and uses cross-family verification:
-one family checks the other's work. v1.0.0, single operator. macOS and Linux only.
+one family checks the other's work. Latest tagged release: v1.1.0, with later
+changes on the working line. Single operator; macOS reference platform, Linux
+cron path. Native Windows is unsupported and WSL2 is untested.
 
 If you are new, read in this order: this manual for orientation, then
 `docs/dispatch-contract.md` (the load-bearing document) and `docs/lessons.md`
@@ -80,11 +82,11 @@ Catches silent agent deaths in both manual and loop dispatches.
 - **Auth routing (subscription vs API key vs free).** Per-family billing route
   resolved per repo, with a fail-closed `op-fetch` path. See section 5 and
   `docs/setup.md` section 7.
-- **SDK verifier route with prompt caching.** The Claude verifier can run via
-  the Anthropic SDK instead of `claude -p`, with a cacheable static prompt
-  block. `scripts/verify-sdk.py`, `scripts/sdk-cache-smoke.sh`,
-  `schemas/verifier.json`, `scripts/validate-verifier-artefacts.sh`. Design:
-  `docs/sdk-verifier.md`.
+- **SDK verifier routes.** Both families have verifier transports alongside
+  CLI dispatch. Claude's raw API SDK route supports prompt caching and
+  requires API credentials; subscription routes must satisfy the transport
+  guard. The Claude Agent SDK is opt-in. See `docs/sdk-verifier.md` for
+  preconditions, resolution and the transport matrix.
 - **Worker dispatch envelope.** The worker's structured completion signal,
   validated against `schemas/envelope.json` by
   `scripts/validate-envelope.sh`, written to `state/envelopes/` (or, for a
@@ -113,14 +115,15 @@ to one backing script.
 
 | Command | What it does |
 |---|---|
-| `autometta --version` | Print the installed version (from `VERSION`, falling back to the git short SHA). |
+| `autometta --version` | Print the resolved build SHA, root, resolution origin and checkout/installed state. In a checkout it uses Git; an installed build uses its `VERSION` stamp. This is distinct from the latest release tag. |
 | `autometta init-host` | One-time host setup: create the Autometta home (`~/.autometta` by default) and its subdirectories. |
-| `autometta init [repo-path]` | Subscribe a repo and prepare it: runs `init-host`, subscribes the repo, and ensures a tmux viewer. Defaults to the current directory. Then review and commit the generated `.gitignore`, `state/state.yaml`, `state/budget.json`. |
+| `autometta init [repo-path]` | Run `init-host`, subscribe the repo and ensure a tmux viewer. Defaults to the current directory. On macOS subscription installs the LaunchAgent too. Review generated setup and commit files intended to be tracked; honour existing ignore rules and keep `.autometta.local.yaml` local. Check auth and budget before queueing. |
 | `autometta subscribe [repo-path]` | Subscribe a repo to the controller without the full init flow. Defaults to the current directory. |
 | `autometta refresh-repo <repo-path> [--dry-run] [--adopt]` | Refresh one subscriber's vendored dispatch contract from the resolved Autometta root. It refuses dirty vendored paths and in-flight work; `--adopt` creates the vendor stamp for a first refresh. |
 | `autometta refresh-all-repos [--dry-run]` | Refresh the vendored dispatch contract across every enabled subscriber, naming every skip or refusal. |
 | `autometta add-stage <repo-path> <stage-card-path>` | Append a stage to a subscribed repo's `state.yaml` from a stage card. It inherits the active `run_id` from the most recent pending or in-progress stage, or starts a new UTC timestamped run when none is active; historic rows are not backfilled. |
 | `autometta status` | Per-repo table: enabled flag, current stage, status, budget (ticks/failures), and the live process plus log path. Any stage whose run branch is still waiting to be merged into its base branch gets an `awaiting integration` line under the repo's row, naming the branch to merge. Reads each subscriber's `state.yaml` and `budget.json`. Requires `yq` and `jq`. `scripts/status.sh --repo <path>` narrows the table to one subscriber; the tmux status pane uses it so an attached dash shows the repo you attached to. |
+| `autometta graph [--repo <repo-path>] [--json]` | Read-only dependency readiness, blockers and landed-code evidence. See [the dependency guide](docs/dependency-graph.md). |
 | `autometta attach [repo-path] [--dry-run]` | Open or refresh the tmux viewer (`autometta-<repo>`). An ordinary subscriber gets `tui`, `repo` (full-window repo ticker) and `log` windows. The `autometta-autometta` control-plane session opens `tui`, `repo`, `status`, `fleet` and `log`, but still lands on the repo-scoped page. An interactive attach replaces an existing viewer so ticker changes take effect; `--dry-run` prints the commands and `--ensure` (used by `init`) creates only when absent. A separate job refreshes fleet `data.json` every 120 seconds. Orphaned viewers whose subscriber is disabled or gone are reported. |
 | `autometta tui [repo-path]` | Open the full-screen terminal UI for one repo, defaulting to the current directory. It polls the shared per-repo dashboard aggregate every five seconds. |
 | `autometta detach [repo-path\|--all]` | Remove one tmux viewer, defaulting to the current repo, or tear down every `autometta-*` viewer with `--all`. Other tmux sessions are never touched. |
@@ -131,6 +134,8 @@ to one backing script.
 | `autometta check-build` | Compare the installed build with the source checkout file by file and report which root the loaded fleet tick runs. |
 | `autometta dashboard [--repo <repo-path>] [--open] [--watch] [--serve] [--interval <secs>] [--port <port>]` | Regenerate the static dashboard under the controller home. `--repo` narrows it to one subscriber; `--open` opens it in the default browser; `--watch` regenerates `data.json` every `--interval` seconds (default 5) until interrupted; `--serve` is `--watch` plus a loopback http server on `--port` (default 8787) so the page polls by fetch. |
 | `autometta failures (<repo-path>\|--fleet) [--json]` | Itemised failures history on demand: every terminal-status stage and every non-pass dispatch, with tokens lost. Moved out of the live ticker panes so they stop competing for space; `--fleet` covers every enabled subscriber instead of one repo. Reads the same aggregated JSON the pane it reports for reads, so the two never disagree. |
+| `autometta first-attempts <repo-path> [--json] [--since <n>]` | Report first-attempt outcomes by run from stage history and commit provenance. |
+| `autometta wake <enable\|disable\|status\|acknowledge> [options]` | Manage optional native idle wake-ups for orchestration chats. Active-chat lifecycle hooks are separate; see [the wake-up contract](docs/tick-loop.md#bounded-native-idle-wake-ups) for leases, caps and delivery requirements. |
 | `autometta retro-grade [--last N] [--dry-run]` | Build and optionally submit an Anthropic Message Batch that re-runs the current verifier rubric over recent completed stages. |
 | `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
 | `autometta uninstall-launchagent <repo-path>` | macOS: remove the per-repo LaunchAgent. |
@@ -188,13 +193,21 @@ the repo.
 cd /path/to/autometta
 scripts/install-homebrew-local.sh
 autometta init /path/to/target-repo
-git -C /path/to/target-repo add .gitignore state/state.yaml state/budget.json
-git -C /path/to/target-repo commit -m "Initialise Autometta"
+git -C /path/to/target-repo status --short
+git -C /path/to/target-repo diff -- .gitignore
 autometta status
 autometta attach /path/to/target-repo
 ```
 
-Author your stage cards and queue them:
+Review and commit intended setup files explicitly. Some target repos track
+queue and budget files; others ignore them and use the tick's state snapshots.
+Do not force-add ignored runtime state or the local manifest. Configure auth
+and a bounded budget before queueing. See [the runbook](docs/runbook.md) for
+the ordered cold-start procedure.
+
+Author and review your stage cards, settle open decisions, and freeze any
+executable oracle. Run `scripts/card-lint.sh --strict <card>` from this
+checkout before queueing; `add-stage` does not run lint. Then queue a card:
 
 ```sh
 autometta add-stage /path/to/target-repo stage-cards/02-next-stage.md
@@ -236,7 +249,10 @@ before attempting its role), and the pipeline-pair escalations
 `pipeline-actual-diff-overlap:<paths>`.
 
 On a verifier FAIL, the stage is set to `verifier_failed`, `current_stage` is
-cleared, and the working tree is left intact for operator review.
+cleared, and the tick attempts to pin failed work on a WIP branch while
+retaining the run worktree for operator review. On PASS, inspect
+`integration.state` as well as `completed`: `awaiting` means the commit still
+needs integration into its base branch.
 
 ### Budget and halts
 

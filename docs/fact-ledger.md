@@ -1,9 +1,9 @@
 # Fact ledger
 
-The commit DAG records what changed. Nothing in this repo records what is
-true in a shape a script can query: `memory/` is prose with untyped
-`[[wikilinks]]`, and `state/cost-log.jsonl` records spend only. See
-`docs/graph-engineering.md` for the assessment behind that gap.
+The commit DAG records what changed. The fact ledger records typed assertions
+about that work in a shape scripts can query. It complements the reasoning
+in `memory/` and the spend records in `state/cost-log.jsonl`. The original
+pre-ledger assessment is preserved in [graph-engineering.md](graph-engineering.md).
 
 The fact ledger is the second graph. It lives at `memory/facts.jsonl`,
 committed, one JSON object per line, each a typed triple with provenance:

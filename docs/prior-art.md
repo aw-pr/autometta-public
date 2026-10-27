@@ -5,6 +5,14 @@
 > and the dispatch contract; recommendations are starting positions,
 > not committed scope.
 
+**Historical research, not a current capability comparison.** Vendor features,
+model names and availability below were recorded during the original design
+work and have not been revalidated for this documentation review. Use the
+[README](../README.md) for current scope, [philosophy](philosophy.md) for the
+adopted decisions and [setup](setup.md) for supported routes. Autometta's
+reference implementation supports Claude Code and Codex CLI; mentions of a
+third family here describe intended generality, not a shipped adapter.
+
 Scope: lightweight, single-machine, long-running orchestration of Claude Code + Codex CLI workers. Mid-2026 snapshot. Skim-grade - judgements not hedges.
 
 ## (a) Native orchestrators shipped by the vendors

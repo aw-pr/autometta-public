@@ -25,7 +25,11 @@ without claims remain serial, and existing state needs no migration.
 
 ## Why a contract, and not a framework
 
-Frameworks assume the worker is an in-process LLM call. In Autometta the worker is a CLI subprocess and the state lives on the filesystem. A contract that fits this shape needs to be prose plus templates, not code. Every step below maps to a markdown file you can read, edit, and commit; there is no runtime to install, no DSL to learn, and no service to keep alive.
+In Autometta the worker is a CLI subprocess and the state lives on the
+filesystem. The dispatch contract is prose plus templates: each step maps to
+a Markdown file you can read, edit and commit. The manual pass-1 protocol
+requires no Autometta loop installation or hosted service. Pass 2 adds the
+CLI and shell/Python scheduling scaffold described below.
 
 ## The seven steps
 

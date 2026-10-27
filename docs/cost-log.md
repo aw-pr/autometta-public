@@ -28,7 +28,9 @@ from disk. It is append-only: the loop never rewrites earlier lines.
 
 ## Schema
 
-One JSON object per line. All fields are always present.
+One JSON object per line. This example shows the core fields; newer rows also
+carry the model, cache-creation and subscription-observation fields described
+below. Historical rows are retained without backfilling.
 
 ```json
 {
@@ -56,9 +58,9 @@ One JSON object per line. All fields are always present.
 | `ts` | string | UTC ISO8601 timestamp when the line was written (role reap time, not dispatch time). |
 | `repo` | string | Subscriber repo basename. |
 | `stage_id` | string | The stage this role served. |
-| `role` | string | `worker`, `verifier`, or `phat-controller` (the queue minder's one triage dispatch per pass; see `docs/tick-loop.md` section (k)). |
+| `role` | string | `worker` or `verifier`. Historical rows may contain `phat-controller`, the retired scheduled role. |
 | `identity` | string | The full agent identity string from the stage card / state. |
-| `tier` | string | Capability tier derived from the identity (`T0`, `T1`, `T2`, `T4`, `T5`), matching the agent-orchestrator tier table. Drives the rate row. |
+| `tier` | string | Capability tier derived from the identity (`T0`, `T1`, `T2`, `T4`, `T5`), matching the agent-orchestrator tier table. Supplies the fallback rate when the model has no explicit rate. |
 | `auth_route` | string | `subscription`, `api`, or `local` (codex only), resolved the same way as the dispatch (env override, then `.autometta.local.yaml`, then subscription default). |
 | `input_tokens` | int or null | Fresh (non-cached) input tokens. Cache-creation (write) tokens are folded in here, see below. Null when no full breakdown was recovered. |
 | `cached_input_tokens` | int or null | Input tokens served from the prompt cache (the cache-read count). Null when no full breakdown was recovered. |
@@ -66,7 +68,7 @@ One JSON object per line. All fields are always present.
 | `total_tokens` | int or null | Input including cached input, plus output. This remains populated for a `total_only` row. Null means usage could not be read. |
 | `usage_status` | string | `recorded` for a full breakdown, `total_only` when only a real aggregate was recovered, or `unknown` when no usage signal was readable. |
 | `wall_clock_s` | int | Estimated wall-clock seconds for the role. |
-| `cost_usd_est` | float or null | Estimated USD cost from the per-tier rate table. Null when the breakdown is unavailable, because assigning a total to one rate would fabricate a cost. |
+| `cost_usd_est` | float or null | Estimated USD equivalent from model rates, falling back to tier rates. Null when the breakdown is unavailable, because assigning a total to one rate would fabricate a cost. |
 | `cache_hit_rate` | float or null | `cached_input_tokens / (input_tokens + cached_input_tokens)`, 0 when recorded input was genuinely zero, null when the breakdown is unavailable. |
 | `result` | string | The loop's terminal verdict for this role: `pass`, `fail`, `partial`, `stalled`, or `aborted`. |
 
@@ -79,11 +81,11 @@ worker then a verifier produces two lines. A verifier that is re-dispatched
 `result: "aborted"` for the failed attempt, then a further line for the
 attempt that succeeds.
 
-phat-controller writes a third role, `phat-controller`, once per dispatched
-pass. That line is appended synchronously when the pass returns, while the
-same parsed tokens are also charged to `state/budget.json`; the itemised cost
-log never replaces the hard-stop ledger. The verbs the controller calls write
-no cost line of their own because they dispatch no model.
+The retired scheduled controller wrote a third role, `phat-controller`, once
+per dispatched pass. Those historical rows remain part of the ledger. The
+current deterministic verbs dispatch no controller model and produce no
+controller-role cost line. The itemised cost log never replaces the budget
+ledger.
 
 ### `wall_clock_s` is an estimate
 
@@ -132,46 +134,28 @@ Reconcile against the provider bill for ground truth.
 
 ## Rate table
 
-`cost_usd_est` comes from `scripts/rates.sh`, the single source for both the
-identity-to-tier map and the per-tier rates. Edit that one file when list
-prices move. Rates are USD per one million tokens.
+`cost_usd_est` comes from [scripts/rates.sh](../scripts/rates.sh). The
+producer first calls `rate_for_model` with the dispatched model; only an
+unrecognised model falls back to `rate_for_tier`. Rates are USD per one million
+tokens, with separate input, cached-read and output values. Tier orders
+capability and is not a price ranking.
 
-| Tier | Models (Anthropic / OpenAI) | Input | Cached read | Output |
-|---|---|---|---|---|
-| T0 | Fable 5.1, GPT-6 Astra | 10.00 | 1.00 | 50.00 |
-| T1 | Opus, GPT-5.6 Sol | 15.00 | 1.50 | 75.00 |
-| T2 | Sonnet, GPT-5.6 Terra | 3.00 | 0.30 | 15.00 |
-| T4 | Haiku, GPT-5.6 Luna | 1.00 | 0.10 | 5.00 |
-| T5 | Codex GPT-OSS 120B (local Ollama) | 0.00 | 0.00 | 0.00 |
-
-T0 is the opt-in frontier tier, holding Claude Fable 5.1 and GPT-6 Astra. It is
-dispatched per card only: no existing identity resolves to it, so a stage runs
-one of them solely when its card names a `*Fable*` or `*GPT-6 Astra*` worker or
-verifier. The label was previously a placeholder for the orchestrator's own main
-session, which is not a dispatched role and is not costed here.
-
-Note that T0 sits *below* T1 on price while sitting above it on capability. That
-is not a mistake in the table: T1 carries the Opus and Sol rates, and both are
-dearer per token than Astra or Fable. The tier numbers order capability, not
-cost, and have since T0 was added.
-
-Astra is worth naming explicitly on a card whose task is software engineering,
-which is where OpenAI positions it. Without a card naming it, every codex role
-keeps dispatching to `AUTOMETTA_MODEL_CODEX` (Sol) exactly as before.
-
-T5 is the codex `local` auth route: real tokens still get counted (the token
-cap still bounds attention and wall-clock), only the USD estimate is zero. An
-unrecognised local identity would otherwise fall through to the T2 default and
-cost a free dispatch at the $3/M workhorse rate, so T5 is an explicit row
-rather than an accident of the fallback.
+The numeric table is kept in code rather than duplicated here. It is an
+operator-maintained estimate, not a live provider-price feed. When reviewing
+or changing it, verify the model's pricing and update the matching rate row;
+do not substitute a neighbouring model's price because it shares a tier.
 
 For `usage_status: "recorded"`, `cost_usd_est = (input_tokens * input_rate +
 cached_input_tokens * cached_rate + output_tokens * output_rate) / 1e6`.
-It is null for `total_only` and `unknown` rows.
+It is null for `total_only` and `unknown` rows. Cache-creation tokens remain
+folded into input for this estimate; the separate field supports analysis of
+that limitation.
 
-Tier is derived from the identity string (`tier_for_identity`). An identity
-with no recognised tier marker falls back to T2 (workhorse), so an unknown
-agent is costed rather than treated as free.
+The Codex `local` route has a zero USD rate, while its real token usage still
+counts towards the budget. An unknown identity falls back to T2 rather than
+being treated as free. Subscription rows show an API-equivalent estimate,
+not an incremental subscription charge. Provider bills and account usage are
+separate evidence.
 
 ## Reading the log
 

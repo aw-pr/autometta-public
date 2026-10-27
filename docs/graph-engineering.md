@@ -39,13 +39,22 @@ Production write-ups add a five-plane model: Control (objectives, budgets),
 Execution (sandboxed tools), Artifact (versioned code and plans), Graph
 (entities and lineage), Evaluation (deterministic plus model scorers).
 
-## Where autometta already stands
+## Current implementation
+
+The fact ledger shipped after this assessment. `memory/facts.jsonl` now
+records typed assertions with provenance; the tick writes verification and
+repair relations and verifiers receive a bounded relevant slice. See the
+[ledger contract](fact-ledger.md) for the implemented vocabulary and write
+rules. The assessment below is the August 2026 baseline, retained to explain
+the design decision rather than describe an outstanding gap.
+
+## Baseline before the fact ledger (2026-08-31)
 
 Four of the five planes are implemented, and `docs/prior-art.md` arrived at
 the same consensus ("git as the state backbone", "state machine over
 messages") before the lecture landed.
 
-| Playbook element | Autometta today | Verdict |
+| Playbook element | Autometta at assessment | Verdict |
 | --- | --- | --- |
 | Reflective loop | Tick loop: acceptance commands (verifiable), run worktrees + git reset (reversible), one transition per tick (short horizon), sandbox + `budget.json` (bounded) | done |
 | Parallel execution | Pipeline pairs with declared disjoint path claims, per-agent worktrees, liveness registry, heartbeat | done, deliberately small-scale |

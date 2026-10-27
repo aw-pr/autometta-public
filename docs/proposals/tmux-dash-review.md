@@ -1,5 +1,9 @@
 # Tmux dashboard review: the Autometta fleet and repo panes
 
+> Historical review, 2026-08-24. The observations and proposed layout below
+> describe that run, not the current UI. Use [observability](../observability.md)
+> and the [dashboard guide](../dashboard.md) for current controls and data.
+
 Read-only design review, 2026-08-24. Everything below was read from the live
 tree at `<root>/autometta`, the five subscriber repos, and
 `~/.phat-controller/`. Nothing was edited.

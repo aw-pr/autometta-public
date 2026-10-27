@@ -1,5 +1,10 @@
 # Verifier bake-off: local weights against the cloud free tiers
 
+> Historical measurement, August 2026. Candidate availability, compatibility
+> and prices are not a current recommendation. Preserve the recorded scores;
+> run `scripts/candidate-viability.sh` before attempting to reproduce a local
+> route. See [measurement shelf life](measurement-shelf-life.md).
+
 Card 45 gave the codex family a free local route (`auth.codex.mode: local`,
 Ollama-served weights) and documented a cloud free route in passing,
 without settling which free option is actually good enough to trust as a

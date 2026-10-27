@@ -7,8 +7,11 @@ The tick loop needs an operator surface that answers four questions quickly:
 3. Is a worker or verifier still running?
 4. Where is the log?
 
-The observability layer is read-only. It observes files that already exist; it
-does not supervise workers, retry stages, or create another controller loop.
+The status, ticker, TUI and dashboard views read existing state; they do not
+advance the queue. The heartbeat is an active watchdog: it updates liveness
+reports and can terminate a dispatch at configured silence or token limits.
+The tick owns recovery and state transitions. None of these views creates
+another model-driven controller loop.
 
 ## Authoritative surfaces
 
