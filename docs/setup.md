@@ -147,26 +147,32 @@ escalates rather than rebasing on any file overlap or conflict.
 
 ## 4. Scheduling
 
-macOS uses one LaunchAgent per subscribed repo. `autometta subscribe <repo>`
-installs it automatically after writing the subscriber yaml. On the first run
-`install-launchagent` copies the canonical `templates/launchagent.plist.tpl`
-into the subscriber repo at `.autometta/launchagent.plist.tpl` (gitignored, so
-it is a per-machine copy, not committed); edit that copy if you need a
-different interval or log layout, then re-run:
+macOS uses one fleet LaunchAgent, `com.autometta.tick.fleet`, installed once per
+machine. It runs the tick for every subscriber. `autometta subscribe <repo>`
+re-runs the idempotent installer after writing the subscriber yaml.
+
+With no repo argument, the installer uses the canonical
+`templates/launchagent.plist.tpl`. With a repo argument, it uses that repo's
+`.autometta/launchagent.plist.tpl` (a gitignored, per-machine copy), copying the
+canonical template there if it is missing. Both forms replace the same fleet
+agent and remove any legacy tick agents. Set the interval in seconds (default
+300) with `--interval N`:
 
 ```sh
-autometta install-launchagent <path-to-repo>
+autometta install-launchagent [<path-to-repo>] [--interval N]
 ```
 
 After upgrading from the former home name, wait for a queue gap and rerun
-`autometta install-launchagent <path-to-repo>` once for each subscribed repo.
+`autometta install-launchagent` once per machine.
 This is the only manual migration step: it reloads the plist with
 `~/.autometta` as its working directory. Do not reload it while a worker or
 verifier is in flight.
 
 The installed plist is written to `~/Library/LaunchAgents/` and is not committed.
 It runs `autometta tick` in the user's Aqua session so CLI credentials stored in
-the login keychain are available to workers and verifiers.
+the login keychain are available to workers and verifiers. Standard output and
+error go to `$AUTOMETTA_HOME/log/launchagent.out.log` and `launchagent.err.log`
+(the default home is `~/.autometta`).
 
 Non-macOS hosts keep the cron heartbeat model. Sample cron entry to run every 5
 minutes:
@@ -181,15 +187,15 @@ Migration from the old global cron sample:
 crontab -l | grep autometta
 ```
 
-`autometta install-launchagent <repo>` removes the former autometta-managed cron
+`autometta install-launchagent` removes the former autometta-managed cron
 sample when it finds it (it matches only the `.phat-controller/log/cron.log`
 spelling, which the compatibility symlink from section 2 keeps writable), so a
-macOS repo is not double-scheduled. If you
+macOS fleet is not double-scheduled. If you
 created a hand-written cron line with different paths or logging, remove that
 manual entry yourself after confirming the LaunchAgent is listed:
 
 ```sh
-launchctl list | grep com.autometta.tick.<repo-name>
+launchctl list | grep com.autometta.tick.fleet
 ```
 
 ## 5. Verify the install
@@ -454,7 +460,8 @@ Design and the prompt-caching rationale: `docs/sdk-verifier.md`.
 
 ## 8. Uninstall
 
-Remove one subscriber:
+Remove one subscriber and its legacy tick agent, leaving the fleet agent
+unaffected (the repo path need not exist; a repo named `fleet` is refused):
 
 ```sh
 autometta uninstall-launchagent <path-to-repo>
@@ -464,8 +471,12 @@ rm "${AUTOMETTA_HOME:-$HOME/.autometta}/subscribers/<repo-slug>.yaml"
 Remove the whole host setup:
 
 ```sh
+autometta uninstall-launchagent
 rm -rf "${AUTOMETTA_HOME:-$HOME/.autometta}"
 ```
+
+Without a repo argument, `uninstall-launchagent` removes
+`com.autometta.tick.fleet`.
 
 Optional repo cleanup:
 

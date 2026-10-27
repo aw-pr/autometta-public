@@ -137,8 +137,8 @@ to one backing script.
 | `autometta first-attempts <repo-path> [--json] [--since <n>]` | Report first-attempt outcomes by run from stage history and commit provenance. |
 | `autometta wake <enable\|disable\|status\|acknowledge> [options]` | Manage optional native idle wake-ups for orchestration chats. Active-chat lifecycle hooks are separate; see [the wake-up contract](docs/tick-loop.md#bounded-native-idle-wake-ups) for leases, caps and delivery requirements. |
 | `autometta retro-grade [--last N] [--dry-run]` | Build and optionally submit an Anthropic Message Batch that re-runs the current verifier rubric over recent completed stages. |
-| `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
-| `autometta uninstall-launchagent <repo-path>` | macOS: remove the per-repo LaunchAgent. |
+| `autometta install-launchagent [<repo-path>] [--interval N]` | macOS: install one fleet LaunchAgent, `com.autometta.tick.fleet`, once per machine. Subscribing a repo re-runs this idempotent installer; it removes legacy tick agents. The interval is in seconds (default 300). |
+| `autometta uninstall-launchagent [<repo-path>]` | macOS: without a repo, remove `com.autometta.tick.fleet`. With a repo, remove only its legacy tick agent and leave the fleet agent unaffected; the repo need not exist. A repo named `fleet` is refused. |
 | `autometta uninstall-launchagent-phat-controller` | macOS: unload and remove the retired phat-controller LaunchAgent. Safe to run when none is installed. |
 | `autometta install-homebrew-local [--dry-run]` | Render and install the local Homebrew tap from the working tree. Rerun after every `git pull` of this repo. |
 | `autometta auth status` | Per-family table: mode (`subscription`, `api`, or codex-only `local`), provenance (env, manifest, default), and ref status. Also prints which `op-refs.local.sh` was loaded, whether `op-fetch` is on PATH, and the sibling `CODEX_HOME` state. No token spend. |
