@@ -6,7 +6,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import select
+import shutil
+import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -224,9 +228,164 @@ def read_codex() -> dict[str, Any]:
     rollout = read_codex_rollout()
     snapshot = read_snapshot("codex")
     candidates = [value for value in (rollout, snapshot) if value.get("status") == "known"]
-    if not candidates:
-        return rollout
-    return max(candidates, key=lambda value: parse_time(value.get("fetched_at")) or 0)
+    best = max(candidates, key=lambda value: parse_time(value.get("fetched_at")) or 0) if candidates else rollout
+    if codex_reading_current(best):
+        return best
+    live = read_codex_live()
+    if live is None:
+        return best
+    publish_codex_snapshot(live)
+    return live
+
+
+def stale_seconds_limit() -> int:
+    try:
+        return max(0, int(os.environ.get("AI_QUOTA_STALE_SECONDS", DEFAULT_STALE_SECONDS)))
+    except ValueError:
+        return DEFAULT_STALE_SECONDS
+
+
+def codex_reading_current(reading: dict[str, Any]) -> bool:
+    if reading.get("status") != "known":
+        return False
+    now = now_epoch()
+    fetched = parse_time(reading.get("fetched_at"))
+    if fetched is None or now - fetched > stale_seconds_limit():
+        return False
+    return all((parse_time(w.get("resets_at")) or now + 1) > now for w in reading.get("windows", []))
+
+
+CODEX_LIVE_TIMEOUT_SECONDS = 15
+
+
+def codex_binary() -> str | None:
+    override = os.environ.get("AUTOMETTA_CODEX_BIN", "")
+    if override:
+        return override if os.access(override, os.X_OK) else None
+    found = shutil.which("codex")
+    if found:
+        return found
+    for candidate in ("~/.local/bin/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex"):
+        path = os.path.expanduser(candidate)
+        if os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def read_codex_live() -> dict[str, Any] | None:
+    """Rollout logs only gain a reading when a Codex turn runs, so an idle
+    account looks stale and admission would wait for a turn it is itself
+    holding. `codex app-server` answers `account/rateLimits/read` from the
+    account without a model turn. A fixture clock never mixes with a live read."""
+    if os.environ.get("AI_QUOTA_NOW_EPOCH") or os.environ.get("AUTOMETTA_CODEX_LIVE_READ", "1") == "0":
+        return None
+    binary = codex_binary()
+    if binary is None:
+        return None
+    reply = codex_app_server_request(binary, "account/rateLimits/read")
+    result = reply.get("result") if isinstance(reply, dict) else None
+    limits = result.get("rateLimits") if isinstance(result, dict) else None
+    if not isinstance(limits, dict):
+        return None
+    windows = []
+    for key in ("primary", "secondary"):
+        window = limits.get(key)
+        if not isinstance(window, dict):
+            continue
+        used = window.get("usedPercent")
+        if not isinstance(used, (int, float)) or isinstance(used, bool):
+            continue
+        minutes_value = window.get("windowDurationMins")
+        minutes = int(minutes_value) if isinstance(minutes_value, (int, float)) else None
+        reset_epoch = parse_time(window.get("resetsAt"))
+        windows.append(
+            {
+                "key": key,
+                "label": codex_label(minutes),
+                "utilization": float(used),
+                "resets_at": iso(reset_epoch) if reset_epoch is not None else None,
+            }
+        )
+    windows = sanitise_windows(windows, allow_overage=True)
+    if windows is None:
+        return None
+    return {
+        "family": "codex",
+        "status": "known",
+        "reason": None,
+        "source": "codex-app-server",
+        "fetched_at": iso(now_epoch()),
+        "windows": windows,
+    }
+
+
+def codex_app_server_request(binary: str, method: str) -> dict[str, Any] | None:
+    """The server abandons a request once its stdin closes, so stdin stays open
+    until the reply arrives and the server is then terminated."""
+    messages = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"clientInfo": {"name": "autometta", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+        {"jsonrpc": "2.0", "id": 2, "method": method, "params": {}},
+    ]
+    try:
+        process = subprocess.Popen(
+            [binary, "app-server"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+    try:
+        assert process.stdin is not None and process.stdout is not None
+        process.stdin.write("".join(json.dumps(m) + "\n" for m in messages).encode())
+        process.stdin.flush()
+        deadline = time.monotonic() + CODEX_LIVE_TIMEOUT_SECONDS
+        buffer = b""
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            ready, _, _ = select.select([process.stdout], [], [], remaining)
+            if not ready:
+                return None
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk:
+                return None
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                try:
+                    message = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(message, dict) and message.get("id") == 2:
+                    return message
+    except OSError:
+        return None
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+
+def publish_codex_snapshot(reading: dict[str, Any]) -> None:
+    """Writes the reading in the shared ai-quota contract, so the next reader
+    inside the staleness window reuses it instead of starting another server."""
+    quota_dir = Path(os.path.expanduser(os.environ.get("AI_QUOTA_DIR", "~/.local/state/ai-quota")))
+    payload = {key: reading[key] for key in ("fetched_at", "source", "windows")}
+    try:
+        quota_dir.mkdir(parents=True, exist_ok=True)
+        target = quota_dir / "codex.json"
+        tmp = target.with_name(f"{target.name}.tmp.{os.getpid()}")
+        tmp.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        tmp.replace(target)
+    except OSError:
+        pass
 
 
 def codex_admission(reading: Any) -> dict[str, Any]:
@@ -238,10 +397,7 @@ def codex_admission(reading: Any) -> dict[str, Any]:
         return result
     now = now_epoch()
     fetched = parse_time(reading.get("fetched_at"))
-    try:
-        max_age = max(0, int(os.environ.get("AI_QUOTA_STALE_SECONDS", DEFAULT_STALE_SECONDS)))
-    except ValueError:
-        max_age = DEFAULT_STALE_SECONDS
+    max_age = stale_seconds_limit()
     if fetched is None or fetched > now + 60 or now - fetched > max_age:
         return {**result, "reason": "Codex quota reading stale or undated"}
     windows = sanitise_windows(reading.get("windows"), allow_overage=True)

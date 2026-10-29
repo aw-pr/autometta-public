@@ -658,9 +658,16 @@ Readings older than `AI_QUOTA_STALE_SECONDS` (default 600 seconds) are stale.
 The Codex reader also accepts a sanitised `codex.json` in `AI_QUOTA_DIR`
 (default `~/.local/state/ai-quota`), using the same snapshot envelope as Claude.
 It selects the newer observation between that fresh snapshot and rollout logs.
-An account `account/rateLimits/read` response can therefore reveal a manual
-reset without spending tokens on a model turn. Preserve its actual fetch time;
-do not restamp cached data to make it appear fresh.
+When the newer of the two is stale or has passed a window reset, the reader
+asks `codex app-server` for `account/rateLimits/read` itself: the account
+answers without a model turn, so an idle account no longer holds the card that
+would have produced a fresh rollout reading. The answer is written to
+`codex.json`, so readers inside the staleness window reuse it rather than start
+another server. A missing, failing or slow (15 s) server leaves the older
+reading in place. `AUTOMETTA_CODEX_LIVE_READ=0` turns the live read off,
+`AUTOMETTA_CODEX_BIN` names the binary, and a fixture clock
+(`AI_QUOTA_NOW_EPOCH`) never triggers one. Preserve each reading's actual fetch
+time; do not restamp cached data to make it appear fresh.
 This is admission control, not a cash cap or a kill switch. Concurrent cards
 already admitted elsewhere and interactive sessions can also consume allowance.
 The serial viewer run admits one card at a time.
