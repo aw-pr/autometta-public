@@ -5,17 +5,22 @@
 Required commands:
 
 - `bash` 3.2+ (macOS default is fine; the scripts do not use bash 4+ features)
-- `brew` (for the local `autometta` CLI install)
+- `brew` (for the Homebrew-local install; checkout execution is an alternative)
 - `jq`
 - `git`
 - `codex`
 - `claude`
 - `python3`
 - `yq` (required: `scripts/tick.sh` uses it for atomic YAML writes)
-- `agent-whoami` (from `mcp-hub/scripts`; `tick.sh` attributes state-branch commits with it)
-- `op-fetch` and `op` (the 1Password CLI; every dispatch is wrapped by `op-fetch`, see section 7)
+- `agent-whoami` (an external helper from `mcp-hub/scripts`; `tick.sh` attributes state-branch commits with it)
+- `op-fetch` (an external credential/environment wrapper) and `op` (the 1Password CLI; every dispatch is wrapped by `op-fetch`, see section 7)
 
 Optional: `tmux`, for the `autometta attach` viewer. `autometta check-deps` fails closed on any required command and warns on the optional one.
+
+`agent-whoami` and `op-fetch` are not bundled with this clone. Provision them
+on `PATH` before using the loop; installing the vendor CLIs alone is not
+enough. The [machine dependency inventory](machine-dependencies.md) records
+their sources and the checks that detect missing configuration.
 
 macOS install hints with Homebrew:
 
@@ -41,7 +46,7 @@ autometta check-deps
 
 ## 2. One-time machine setup
 
-Initialise the host controller home once per machine:
+Initialise the host home once per machine:
 
 ```sh
 autometta init-host
@@ -74,13 +79,13 @@ new or changed escalations and lifecycle notices during active chats. Optional
 `scripts/wakeups.sh enable` registration adds native idle wake-ups with batching,
 one outstanding message per chat, a 120-second fleet cooldown and six/hour,
 24/day rolling fleet caps. Add `--fleet` for a fleet fallback. The host remains
-off until enabled; `scripts/wakeups.sh disable` is the off switch. After the next
-Homebrew rebuild these controls are also available as `autometta wake`.
+off until enabled; `scripts/wakeups.sh disable` is the off switch. The CLI
+exposes the same controls as `autometta wake` once this revision is installed.
 See [Escalations](tick-loop.md#escalations) for scope and delivery semantics.
 
 ## 3. Per-repo subscription
 
-Subscribe one repository to the controller:
+Subscribe one repository to the tick loop:
 
 ```sh
 autometta init <path-to-repo>
@@ -97,20 +102,33 @@ It also creates a gitignored `.autometta.local.yaml` manifest that points back
 to the installed Autometta root. If `tmux` is installed, it also starts a
 detached read-only viewer named `autometta-<project-name>`.
 
-Before running `autometta tick`, review and commit the repo setup files. The tick
-refuses to operate with dirty non-state files.
+On macOS, subscription also installs the repository's LaunchAgent. Review
+configuration, authentication and budget before queueing any work.
+
+Review the generated setup and commit the files intended to be tracked by the
+target repo. The subscriber creates queue and budget files if absent, but
+only adds ignore rules for logs and the local manifest. Existing subscribers
+may also ignore runtime state. Honour that policy: do not force-add ignored
+state or `.autometta.local.yaml`. The tick snapshots state onto
+`autometta/state` independently of the working branch's ignore rules.
 
 ```sh
 git status --short
-git add .gitignore state/state.yaml state/budget.json
-git commit -m "Initialise Autometta"
+git diff -- .gitignore
+git check-ignore state/state.yaml state/budget.json .autometta.local.yaml
 ```
+
+`git check-ignore` lists excluded paths and returns 1 if none match. Stage the
+reviewed setup files explicitly. The tick refuses dirty non-state files, so
+finish that commit before dispatch. See [state snapshots](tick-loop.md#j-the-state-snapshot-and-keeping-out-of-the-shared-tree)
+for the runtime backup boundary.
 
 ### Queueing path claims
 
-Serial dispatch needs no extra metadata. To opt two adjacent cards into a
-pipeline pair, give both cards a comma-separated metadata line of repo-relative
-file or directory paths:
+The card template requires an explicit dispatch choice. Use `Dispatch: serial`
+for a serial stage. To make two adjacent cards eligible for a pipeline pair,
+give both cards a comma-separated metadata line of repo-relative file or
+directory paths:
 
 ```markdown
 - **Path claims:** scripts/report.sh, docs/report.md
@@ -118,8 +136,12 @@ file or directory paths:
 
 `autometta add-stage` stores valid claims in the stage record. Absolute paths,
 `.` or `..` segments, empty entries, and characters outside letters, digits,
-`.`, `_`, `/` and `-` are refused at queue time. Omitting the line keeps the
-stage serial and produces no pairing log. Claims are a dispatch precondition,
+`.`, `_`, `/` and `-` are refused at queue time. Older cards without claims
+remain serial; new cards should declare that choice and pass
+`scripts/card-lint.sh --strict` before queueing. `add-stage` validates claims
+and the format of a named contract test's digest, but does not run card lint
+or prove the digest matches the file. Use the contract gate and card lint for
+that check. Claims are a dispatch precondition,
 not a landing guarantee: after N passes, the tick checks both actual diffs and
 escalates rather than rebasing on any file overlap or conflict.
 
@@ -150,7 +172,7 @@ Non-macOS hosts keep the cron heartbeat model. Sample cron entry to run every 5
 minutes:
 
 ```sh
-*/5 * * * * autometta tick >> "$HOME/.phat-controller/log/cron.log" 2>&1
+*/5 * * * * autometta tick >> "$HOME/.autometta/log/cron.log" 2>&1
 ```
 
 Migration from the old global cron sample:
@@ -159,8 +181,8 @@ Migration from the old global cron sample:
 crontab -l | grep autometta
 ```
 
-`autometta install-launchagent <repo>` removes the exact autometta-managed cron
-sample above when it finds it (it matches only the `.phat-controller/log/cron.log`
+`autometta install-launchagent <repo>` removes the former autometta-managed cron
+sample when it finds it (it matches only the `.phat-controller/log/cron.log`
 spelling, which the compatibility symlink from section 2 keeps writable), so a
 macOS repo is not double-scheduled. If you
 created a hand-written cron line with different paths or logging, remove that

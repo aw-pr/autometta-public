@@ -1,6 +1,10 @@
 # Design: Fable-as-advisor verifier
 
-Design-only. No code ships with this document. Implementation, if pursued, is a future card gated behind a flag.
+Implemented as an opt-in API-route verifier feature. This document preserves
+the original design; model examples and API observations below are historical.
+Use [the SDK verifier guide](../sdk-verifier.md#fable-as-advisor-optional) for
+current configuration and route guards. The implementation is in
+`scripts/verify-sdk.py`, with ordering coverage in `scripts/advisor-order-smoke.sh`.
 
 ## Problem
 

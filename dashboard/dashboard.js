@@ -982,6 +982,60 @@
   // Paged sibling of renderSimpleTable. `key` names the table for the stored
   // page size; `footer` is a row pinned below every page (a totals line), which
   // must not be paginated away and is never filtered.
+  function bindStageSizing(wrap) {
+    if (!wrap.dataset.sizingReady) {
+      wrap.dataset.sizingReady = "true";
+      var height = Number(storeGet("autometta.stagesHeight"));
+      if (isFinite(height) && height >= 180) wrap.style.height = height + "px";
+      if (typeof ResizeObserver !== "undefined") {
+        var observer = new ResizeObserver(function () {
+          if (wrap.style.height) storeSet("autometta.stagesHeight", String(wrap.offsetHeight));
+        });
+        observer.observe(wrap);
+      }
+    }
+    var table = wrap.querySelector("table");
+    if (!table || table.querySelector("colgroup")) return;
+    var headers = Array.from(table.querySelectorAll("thead tr:first-child th"));
+    if (!headers.length) return;
+    var saved;
+    try { saved = JSON.parse(storeGet("autometta.stageColumnWidths")); } catch (e) { saved = null; }
+    var widths = headers.map(function (header, i) {
+      return Array.isArray(saved) && isFinite(saved[i]) && saved[i] >= 60
+        ? Number(saved[i]) : Math.max(60, header.getBoundingClientRect().width);
+    });
+    var group = document.createElement("colgroup");
+    widths.forEach(function () { group.appendChild(document.createElement("col")); });
+    table.insertBefore(group, table.firstChild);
+    function applyWidths() {
+      Array.from(group.children).forEach(function (col, i) { col.style.width = widths[i] + "px"; });
+      table.style.width = widths.reduce(function (sum, width) { return sum + width; }, 0) + "px";
+    }
+    table.style.tableLayout = "fixed";
+    applyWidths();
+    headers.forEach(function (header, i) {
+      var handle = document.createElement("span");
+      handle.className = "column-resize";
+      handle.title = "Drag to resize column";
+      handle.onpointerdown = function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        var start = event.clientX, width = widths[i];
+        handle.setPointerCapture(event.pointerId);
+        handle.onpointermove = function (move) {
+          widths[i] = Math.max(60, width + move.clientX - start);
+          applyWidths();
+        };
+        handle.onpointerup = handle.onpointercancel = function () {
+          handle.onpointermove = null;
+          storeSet("autometta.stageColumnWidths", JSON.stringify(widths));
+        };
+      };
+      handle.onclick = function (event) { event.stopPropagation(); };
+      header.appendChild(handle);
+    });
+  }
+
   function renderPagedTable(id, headers, allRows, key, footer) {
     var wrap = document.getElementById(id);
     if (!allRows.length) {
@@ -1034,6 +1088,7 @@
 
     var changed = setTableHtml(wrap, sortControls(headers, sorts) + tableHtml(headers, shown, filters, sorts) +
       (rows.length ? "" : '<p class="empty">(no rows match the filters)</p>') + controls);
+    if (key === "stages") bindStageSizing(wrap);
     bindSorters(wrap, key, function () { renderPagedTable(id, headers, allRows, key, footer); });
 
     wrap.querySelectorAll("input[data-filter-col]").forEach(function (input) {

@@ -365,3 +365,10 @@ pre.card-text {
 
 .usage-total-cell { min-width: 21rem; width: 20%; }
 .usage-total-cell .role-usage { flex-wrap: nowrap; }
+
+#stages-table-wrap { resize: vertical; overflow: auto; min-height: 180px; }
+#stages-table-wrap th { position: relative; }
+#stages-table-wrap td { overflow-wrap: anywhere; }
+#stages-table-wrap .role-cell { min-width: 0; width: auto; }
+.column-resize { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
+.column-resize:hover { background: var(--accent); }

@@ -40,6 +40,11 @@ chart to the repos ticked; it is drawn only on the fleet page. The range control
 (24h/7d/30d/all) slices the token charts by stage date, and is remembered per
 viewer.
 
+Drag the right edge of a Per stage column heading to resize it. Drag the
+bottom-right corner of the table to change its height. Column widths and table
+height are saved in the browser, as are the selected repos. These preferences
+persist between sessions at the same dashboard address (including its port).
+
 Per stage, Failures and Provider windows page at ten rows, with a per-table size
 control; the default comes from `AUTOMETTA_DASHBOARD_PAGE_SIZE` at generation
 time. Each of those tables has a filter box under every column header: a row

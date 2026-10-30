@@ -7,7 +7,8 @@ project into a packaged runtime. The default deployment model is:
 2. Initialise `${AUTOMETTA_HOME:-$HOME/.autometta}` from that checkout.
 3. Subscribe adopter repos to that host controller.
 4. Keep repo-local stage cards and `state/`.
-5. Resolve shared scripts, templates, and docs from the canonical checkout.
+5. Resolve shared loop scripts from the selected install root; explicitly
+   refresh the contract files vendored into each subscriber.
 
 This replaces copy-first pass-2 adoption. Copying remains useful for one-off
 pass-1 dispatches where the adopter wants to own the templates locally.
@@ -22,8 +23,9 @@ clone, VM restore, or path change. They also hide the fact that an adopter
 depends on a host-level install.
 
 The central-install model makes the dependency explicit. The source checkout has
-ordinary git history, so updates are auditable with `git log`. Adopter repos keep
-only their local queue, state, and optional overrides.
+ordinary git history, so updates are auditable with `git log`. Adopter repos
+keep their local queue, state, optional overrides and a stamped copy of the
+dispatch contract. That vendored copy is refreshed separately from the CLI.
 
 ## Default model: Homebrew-local CLI plus local manifest
 
@@ -68,6 +70,10 @@ max_per_fire: 20
 default_weight: 100
 log_level: info
 ```
+
+`max_per_fire` is a legacy configuration field written by `init-host`; the
+tick does not enforce it and visits every enabled subscriber. Do not use it
+as a concurrency or spend control.
 
 Each subscribed repo may also carry a gitignored local manifest:
 
@@ -122,7 +128,9 @@ submodule ceremony.
 ## Update rule
 
 Update the canonical checkout first, rerun `scripts/install-homebrew-local.sh`,
-then let subscribers consume the new scripts on the next tick. If a script
+then check which root the installed scheduler and existing sessions resolve.
+The root-resolution rule may select a configured checkout, whose uncommitted
+script edits are exposed on the next tick. If a script
 change is incompatible with older subscriber state, add an explicit compatibility
 check before dispatching workers.
 
@@ -132,8 +140,26 @@ For an existing subscribed repo, the normal update is:
 cd /path/to/autometta
 git pull --ff-only
 scripts/install-homebrew-local.sh
+autometta --version
+autometta check-build
 autometta status
 ```
+
+CLI installation does not refresh a subscriber's vendored prompts and
+contracts. At a queue gap, inspect and apply that separate update:
+
+```sh
+autometta refresh-repo /path/to/repo --dry-run
+autometta refresh-repo /path/to/repo
+git -C /path/to/repo status --short
+```
+
+Review and commit the refreshed contract files before resuming dispatch. The
+refresh refuses dirty vendored paths and in-flight work. See
+[subscriber refresh](dispatch-contract.md#pushing-a-release-to-the-subscribers)
+for the stamp and compatibility checks, and
+[root resolution](dispatch-contract.md#which-autometta-runs-root-resolution)
+for the installed-build/checkout distinction.
 
 `brew update` alone does not refresh Autometta in the current local formula
 model, because the formula and archive are rendered from the checkout. Rerun the

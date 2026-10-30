@@ -1,5 +1,10 @@
 # Control-plane review: sticky halts, per-repo dash, hygiene (2026-08-01)
 
+> Historical implementation plan. Machine state, dispatch instructions and
+> proposed fixes below belong to the August 2026 review. For current operation,
+> use the [runbook](../runbook.md), [deployment guide](../deployment.md) and
+> [tick-loop contract](../tick-loop.md).
+
 Reviewer: Claude Fable 5 (review half; implementation is a separate worker).
 Evidence base: the 2026-08-01 evening emergence-lab run, stage
 `29-swarmalators-kernel` needed **four** manual state edits (two halt-flag

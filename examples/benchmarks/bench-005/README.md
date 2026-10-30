@@ -1,4 +1,10 @@
-# Benchmarks
+# BENCH-005: Coordinator state refactor
+
+**Outcome: both lanes escalated with acceptance still failing.** The
+[Claude lane](claude/bench-summary.md) and [Codex lane](codex/bench-summary.md)
+stopped after their bounded implementation attempts. Neither met the required
+zero-flap acceptance condition. The reports document process behaviour and
+failure evidence, not a successful delivery or a general productivity gain.
 
 Bench runs that exercise the autometta dispatch contract end-to-end against a real target repo. Each bench has its own directory (`bench-NNN/`) containing a brief, a scorecard, and one lane sub-directory per orchestrator family that ran it.
 
@@ -23,6 +29,9 @@ The bench briefs are deliberately multi-stage so the orchestrator has to use the
 
 ## Why these live in autometta
 
-The bench runs are the fastest signal on whether changes to the contract (or the phat-controller loop on top) have made it harder or easier to drive. Lessons banked in `memory/` cross-reference specific bench entries.
+The bench runs exercise whether the dispatch contract and the tick loop make
+work easier to drive and failures easier to diagnose. Lessons banked in
+`memory/` cross-reference specific bench entries. The former scheduled
+phat-controller agent is retired; it was not a benchmark requirement.
 
 Source of truth for the raw bench tasks themselves is a separate `bench-marks` repo; the copies in this directory are sanitised snapshots taken at the point of the run.

@@ -2,31 +2,31 @@
 
 ## One-line pitch
 
-A lightweight agent orchestrator for long-running coding work toward a defined outcome. The philosophy of Gas Town without the bulk, and the power of Claude Code and Codex CLI without the model lock-in. Autometta uses the multi-agent capabilities of existing harnesses, facilitates cross-family execution and validation, and minimises the human-in-the-loop babysitting that operational runs otherwise demand. The human remains the orchestrator and director, not a micro-managing facilitator.
+A contract and a lightweight tick loop for coding agents working towards a defined outcome. Claude Code and Codex CLI take separate implementation and verification roles. The human defines the work and resolves decisions; deterministic scripts handle scheduling, bookkeeping and mechanical recovery.
 
 ## What problem is Autometta solving?
 
 The problem in plain language:
 
 - I have two CLI agent families on my machine (Claude Code, Codex CLI).
-- I want to run multi-agent work ; implementer + verifier, or N parallel workers ; across hours or overnight, on a single laptop.
-- Every existing framework is either (a) the wrong abstraction level (LangGraph, CrewAI ; they assume the worker is an in-process LLM call, not a CLI subprocess), or (b) the wrong audience (Vibe Kanban, Conductor ; human-in-loop GUI shells).
-- The patterns that actually work ; stage cards, sandbox-as-role- boundary, cron-tick state machines, cross-family verification ; are scattered across blog posts and personal repos. Nobody has packaged them at the right altitude for a solo developer.
+- I want implementation and independent verification to run across hours or overnight, on a single laptop, with bounded overlap between independent stages.
+- The worker is an existing CLI subprocess. I need a delivery contract around it, including permissions, acceptance evidence and integration, rather than an in-process model workflow.
+- Stage cards, worktree isolation, a tick state machine and cross-family verification need to fit together without depending on a hosted orchestration service.
 
 Autometta is that packaging.
 
 ## Beliefs we're betting on
 
-1. **Git is the state store.** State lives in files, files live in git, git is the audit log. No daemon, no database, no service.
-2. **The filesystem is the message bus.** One stage card per dispatch. The card path is the prompt. The worker reads it, the verifier reads it, nothing is in flight.
-3. **Sandbox is the role boundary.** The Codex `workspace-write` sandbox makes worker-self-verification structurally impossible. We exploit this accident rather than try to lift it.
+1. **Git is the state store.** Cards and changes are versioned; the tick snapshots runtime state onto the `autometta/state` ref without checking it out. Live logs and local configuration need not be tracked to participate in that audit trail. No orchestration daemon or database.
+2. **The filesystem is the message bus.** One stage card per dispatch. Both roles read the same brief and exchange structured completion and verdict artefacts through known file paths.
+3. **Sandbox is the role boundary.** The Codex `workspace-write` sandbox prevents checks and writes that require wider permissions. The worker's self-check cannot substitute for independent acceptance in the verifier's declared seat. GUI or network requirements must be explicit.
    See [the bounded worker SDK postmortem](experiments/worker-sdk-postmortem.md): an SDK worker still needs an independently enforced role boundary.
-4. **Cross-family verification by default.** Worker in family A, verifier in family B. Reduces collusion on hallucinated green.
-5. **Cron + tick > daemon.** Long-running != resident process. A tick that reads state, makes one transition per stage, writes state, exits, is easier to reason about, debug, kill, and resume than any long-lived process. A terminal landing may dispatch an eligible next stage in the same fire because nothing about the landed stage can be re-read by the next fire. It never makes two transitions on the same stage in one fire. *Exception:* a sweep stage (opt-in, `Sweep: true` on the card) dispatches N workers in parallel into N scratch worktrees, then a synthesis agent. The tick model still holds; the exception is in the number of dispatches per card, not in the tick structure.
+4. **Cross-family verification by default.** Worker in family A, verifier in family B. This separates authorship from judgement; it does not eliminate shared model errors or faults in the requirement.
+5. **Cron + tick > daemon.** Long-running work does not require a resident orchestration process. A tick reads state, makes one transition per stage, writes state and exits. A terminal landing may dispatch an eligible next stage in the same fire. A declared pipeline pair may overlap worker N+1 with verifier N, with landing kept in order. An N-worker sweep remains [design-only](design/sweep-stage.md).
    See [the bounded SDK controller postmortem](experiments/sdk-controller-postmortem.md).
-6. **Budget files, not retries.** The only safety against runaway spend is a budget file checked at the top of every tick. No exponential backoff, no circuit breakers ; bounded total spend, hard stop.
-7. **Operational failures are normal.** Tests fail, code crashes, agents hang. The cron tick detects and recovers from operational failure without human intervention; the operator only gets pulled back in when the work itself stalls.
-8. **Observability is plain text plus tmux.** A lightweight observability plane: per-stage logs on disk, a live agent graph on top, and tmux panes for attaching to workers and orchestrators when an operator does want to look. No dashboards, no services.
+6. **Budget files, not retries.** A budget file is the authority for bounded spend, checked before further dispatch. Bounded mechanical recovery does not replace it. Token accounting happens after dispatch, so work already admitted can overshoot a cap; quota admission and heartbeat limits add controls, not a promise of an exact cash ceiling.
+7. **Operational failures are normal.** Tests fail, code crashes, agents hang. The tick handles bounded mechanical recovery and preserves failed attempts. Decisions about criteria, frozen contracts or further attempts belong to the operator's orchestration chat, delivered as escalations.
+8. **Observability reads the same files.** Logs, a liveness registry and heartbeat reports feed tmux tickers, the terminal UI and a browser dashboard. No separate telemetry database. Dashboard cost equivalents are estimates, not subscription invoices.
 
 *Considered and deferred:* serving stage cards as MCP resources rather than file paths (multi-machine readiness). The server would read cards from git and the filesystem path stays the mandatory fallback. Design only, see [`docs/design/mcp-cards.md`](design/mcp-cards.md).
 
@@ -34,7 +34,7 @@ Autometta is that packaging.
 
 ## Non-goals
 
-- **Teams.** Multi-developer state is not in scope. Beads / Gas Town scale to a team; Autometta intentionally does not.
+- **Teams.** Multi-developer state and distributed coordination are not in scope.
 - **Cloud agents.** Single-machine. If the laptop is asleep, the loop is asleep.
 - **Generic workflow engine.** This is for coding work. Not data pipelines. Not document workflows. Not "any task with a DAG".
 - **A new agent family.** Autometta drives existing CLIs. It does not ship its own model, its own prompting layer, or its own sandbox.
@@ -42,7 +42,7 @@ Autometta is that packaging.
 ## Scope decisions we've already made
 
 - **Two CLI families to start: Claude Code + Codex CLI.** Patterns should generalise to a third (Gemini CLI, Cursor agent), but the reference implementation assumes these two.
-- **macOS is the reference platform.** Linux should work; Windows is not tested.
+- **macOS is the reference platform.** Linux has a cron path. Native Windows is unsupported and WSL2 is untested.
 - **Bash + Python for the loop scaffold, markdown for the contracts.** No Go, no Rust, no TypeScript runtime. The dispatch contract is language-agnostic by virtue of being prose + templates.
 - **MCP is the only tool integration boundary.** Workers expose tools via MCP; orchestrator consumes via MCP. No bespoke RPC.
 
@@ -50,17 +50,17 @@ Autometta is that packaging.
 
 Patterns are adopted, not invented. Autometta stands on:
 
-- **Gas Town** (Steve Yegge / gastownhall) ; Beads ledger, Polecat identity, Mayor + Convoy semantics. Autometta's `state.yaml` + Mayor tmux is a sub-architecture of this. We mine the patterns; we don't take the runtime dependency.
-- **Aider architect/coder** ; the role split between planner and diff-emitter, with the diff format as the boundary. We extend this to a third role (verifier) and use the sandbox as the boundary.
+- **Gas Town** (Steve Yegge / gastownhall): the git-backed ledger, persistent agent identity and explicit stall detection informed this design. Autometta does not take a runtime dependency on it.
+- **Aider architect/coder**: the role split between planning and implementation informed the protocol. Autometta adds an independent verifier and uses permissions to enforce the role boundary.
 - **The Unix philosophy.** Small tools, plain text, pipes. `state.yaml` is just a file; `tick.sh` is just a shell script; `events.log` is just append-only text.
-- **fractals-from-the-90s** ; the five headless gotchas (stdin hang, card-sync race, opaque log paths, sandbox-as-role-boundary, prior- gate regressions). Canonical for the lessons file.
-- **agentic-rag-kimble pass 28-29** ; the autonomous loop scaffold, the budget file pattern, the cron tick contract, the cross-family verification protocol, the four production quirks (codex sandbox flag, state.yaml authority, publish-guard exemption, result.json rename).
+- **fractals-from-the-90s**: the original dispatch contract and five headless gotchas, recorded in the lessons file.
+- **agentic-rag-kimble pass 28-29**: the autonomous loop scaffold, budget file pattern and cross-family verification protocol.
 
 ## Decisions banked before pass 2
 
 These were the open questions when pass 1 shipped. Each has been resolved and recorded in `memory/`; the resolutions shape the tick-loop layer.
 
-- **Name of the autonomous-loop layer.** It is the tick loop. The former name is now reserved for the queue-minding role.
+- **Name of the autonomous-loop layer.** It is the tick loop. The former scheduled queue-minding role is [retired](proposals/controller-retired.md); `phat-controller.sh` remains a set of deterministic verbs.
 - **Single-tenant vs multi-project.** One cron tick services multiple project repos via a filesystem-based subscriber registry in `~/.autometta/subscribers/`. See [`memory/decision-single-tick-multi-repo-subscribe.md`](../memory/decision-single-tick-multi-repo-subscribe.md).
 - **Identity drift.** `agent-whoami` resolves the current model at dispatch time; the orchestrator skill maintains the cross-family tier mapping. Stage cards record the model that was current when authored, and the loop respects that. See [`memory/decision-identity-via-orchestrator-skill.md`](../memory/decision-identity-via-orchestrator-skill.md).
 - **Verifier handoff format.** Pass 28's `result.json -> result.worker.json` rename is gone. Verifier output lands at `state/verifiers/<stage-id>.json`. See [`memory/decision-verifier-handoff-naming.md`](../memory/decision-verifier-handoff-naming.md).
@@ -69,9 +69,9 @@ These were the open questions when pass 1 shipped. Each has been resolved and re
 
 Autometta is successful if:
 
-1. A new project can easily adopt the dispatch contract ; copy the templates, fill them in, dispatch a worker.
-2. The same operator can convert that project to autonomous loop readily ; install the cron tick, author N cards, walk away.
+1. A new project can adopt the dispatch contract: copy the templates, define acceptance and dispatch a worker and verifier.
+2. The same operator can automate that contract: install the tick, review a bounded queue and budget, then let the scheduler run it.
 3. The five fractals lessons and the four kimble quirks are never relearned the hard way again.
-4. The patterns hold up when a new agent family ships (Gemini CLI, or whatever comes next) ; the dispatch contract accepts a third worker without rewriting.
+4. The protocol remains clear enough to extend to another CLI family without rewriting the contract. The reference implementation currently supports Claude Code and Codex CLI.
 
 If Autometta is doing more than that, it's drifted out of scope.
