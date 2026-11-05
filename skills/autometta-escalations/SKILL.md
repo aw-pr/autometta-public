@@ -26,12 +26,15 @@ The orchestration chat acts on delivered failure hooks under that standing
 authority: inspect, diagnose, repair, preserve evidence and requeue without
 asking again for an ordinary repair. The tick is not a blind model-fixer loop.
 
-Before each requeue, reconcile live state and append a `Recovery log` entry to
+Before each requeue, reconcile live state, set `Recovery attempt` to the next
+actual worker attempt (initial value1), and append a `Recovery log` entry to
 the card: attempt number, dispatch timestamp/base, outcome, preserved evidence
 and WIP reference, diagnosis, repair commit and next-attempt number. Count all
 worker dispatches, including mechanical dead-worker retries, using this log,
 existing dispatch records and durable cost/envelope archives. Never use the
-resettable `auto_retries` or `verifier_attempts` fields as the total. If the
+resettable `auto_retries` or `verifier_attempts` fields as the total. The tick
+honours `Recovery attempt`/`Recovery attempts` before its dead-worker retry;
+its existing one-death retry is still the only mechanical recovery. If the
 count cannot be established, stop and reconcile; requeue cannot replenish it.
 Concurrent chats must re-check the episode and log before acting.
 

@@ -2340,9 +2340,22 @@ preserve_failed_work() {
   return 0
 }
 
+# Card metadata survives requeue, unlike the per-attempt auto_retries field.
+recovery_attempt_available() {
+  local card_path="$1" limit attempt
+  [[ -f "$card_path" ]] || return 0
+  limit="$(sed -n 's/^- \*\*Recovery attempts:\*\* //p' "$card_path")"
+  attempt="$(sed -n 's/^- \*\*Recovery attempt:\*\* //p' "$card_path")"
+  limit="${limit:-3}"
+  attempt="${attempt:-1}"
+  [[ "$limit" =~ ^[1-9][0-9]*$ && "$attempt" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ ${#limit} -le 6 && ${#attempt} -le 6 ]] || return 1
+  (( attempt < limit ))
+}
+
 auto_retry_dead_workers() {
   local repo_root="$1" state_yaml="$2"
-  local stage stage_id worker_pid marker reason wip_commit
+  local stage stage_id worker_pid marker reason wip_commit recovery_card
   if [[ -f "$repo_root/state/budget.json" ]] \
       && ! jq -e '.halted != true' "$repo_root/state/budget.json" >/dev/null 2>&1; then
     return 0
@@ -2361,6 +2374,11 @@ auto_retry_dead_workers() {
     case "$marker" in
       dispatch_configuration_fault:*|run_worktree_failed|dispatch_base_tip_unresolved|card_missing) continue ;;
     esac
+    recovery_card="$(stage_card_for_id "$repo_root" "$stage_id" "" || true)"
+    if ! recovery_attempt_available "$recovery_card"; then
+      log "stage ${stage_id} automatic retry held: recorded recovery allowance exhausted or invalid"
+      continue
+    fi
     reason="${marker:-worker ended without a usable envelope}"
     if ! preserve_failed_work "$repo_root" "$state_yaml" "$stage_id" "" "$reason" "stalled"; then
       log "stage ${stage_id} automatic retry skipped: preservation failed (${reason})"
