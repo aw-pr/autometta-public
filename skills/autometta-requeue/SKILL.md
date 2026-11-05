@@ -38,6 +38,17 @@ specific ways:
    `repo_root` itself, which the tick's dirty-tree halt refused to dispatch
    over; that no longer applies since dispatch never touches `repo_root`.)
 
+## Recovery allowance and evidence
+
+The standard orchestration policy allows three total worker attempts per stage,
+including the initial one; a recorded operator limit wins. Follow
+`autometta-escalations` to diagnose and record the actual attempt number before
+requeue. This script resets per-attempt counters, not the recovery allowance.
+Archive the failed envelope, verifier artefact and logs under a numbered
+`state/uat/<stage>/attempt-<n>/` directory first, and preserve useful work with
+the existing preserve verb. Use `--keep-budget` for standing-policy retries,
+so halt/failure/spend gates are not cleared. Never blindly retry worker FAIL.
+
 ## Procedure
 
 Run the mechanical script; it enforces both rules:
@@ -108,9 +119,11 @@ from the verifier JSON:
    `worker` and `verifier` recorded in `state/state.yaml`, not the card's
    Metadata. Under `state/.tick.lock`, set both with `yq` before running
    `requeue-stage.sh` (the one sanctioned hand edit of that file).
-5. **Ask the operator** only when the defect is not narrow, the fix touches
-   shared code, or the previous attempt overran its budget by more than
-   double.
+5. **Apply the recorded recovery policy.** Shared-code repair within the agreed
+   outcome is allowed while attempts and headroom remain, with verification
+   widened to its blast radius. Ask for changed requirements, weaker acceptance,
+   extra spend/attempts or provider changes. A previous cost overrun changes the
+   estimate, never replenishes the allowance or lifts a gate.
 
 Card 28 (promo-flow, 2026-10-21) is the precedent: attempt 1 cost about 60M
 (Fable 45M, Astra 15M) and failed only a same-route cmd-K navigation case;

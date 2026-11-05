@@ -25,7 +25,12 @@ The repo extracts patterns from two prior projects (`fractals-from-the-90s` disp
 
 The operational roles are the tick (deterministic, including the mechanical
 recovery that used to need an agent) and the operator's orchestration chat,
-plus the worker and the verifier it dispatches. Anything the tick cannot decide
+plus the worker and the verifier it dispatches. The standard escalation recovery policy is three total worker attempts per stage
+(initial plus at most two diagnosed repairs), recorded on the card and bounded
+by existing budget/quota gates. The orchestration chat may fix implementation
+and demonstrated semantic-preserving harness defects automatically; changed
+requirements, relaxed acceptance or extra limits still need approval.
+Anything the tick cannot decide
 becomes an escalation in the escalations folder for the chat to work
 (`skills/autometta-escalations`). Claude Code and Codex lifecycle hooks deliver
 new or changed escalations and lifecycle notices at session start, user prompts and after tools;

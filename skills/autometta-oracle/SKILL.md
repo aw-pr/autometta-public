@@ -40,8 +40,15 @@ If proving the test requires doing most of the worker's job, stop and use a
 bounded implementation attempt with explicit evidence obligations, or split the
 card. Apply an already authorised exception without asking again.
 
-Frozen assertions remain orchestrator-owned. Under an explicitly authorised
-coverage exception, freeze the validated core and name the uncovered outcomes
+Frozen assertions remain orchestrator-owned. The recorded standard recovery
+policy permits a demonstrated harness/oracle correction without another
+approval only when approved criteria, thresholds, coverage and independent
+evidence stay unchanged. Preserve old/new digests, reproduce against the
+production representation (not only a visually similar prototype), and test
+positive and negative cases before requeue. Changes to what counts as success
+require explicit operator approval.
+
+Under an explicitly authorised coverage exception, freeze the validated core and name the uncovered outcomes
 and supplemental worker/verifier evidence separately. A defective check must be
 labelled diagnostic or excluded, never passed. The independent verifier must
 validate supplemental measurements and their raw evidence; missing evidence

@@ -129,6 +129,15 @@ verification and final acceptance instead of paying for a full implementation
 in a preparation session. Explain material differences between dashboard
 predictions and historical estimates before using them for the cost comparison.
 
+## Recovery planning
+
+Default to three total worker attempts per stage, recorded as
+`Recovery attempts: 3`; honour explicit operator overrides. Estimate one
+attempt separately from retry headroom: the allowance is not a promise that
+all three fit, and existing budgets remain binding. The escalation chat
+diagnoses and repairs each failure through the standard recovery policy;
+no automatic blind rerun or new model polling loop is created.
+
 ## 6. Hand over
 
 Queue the cards with `add-stage.sh` in gate order, confirm the ticker's
