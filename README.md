@@ -171,7 +171,7 @@ After updating this checkout, rerun `scripts/install-homebrew-local.sh`, then `a
 | Adopt and operate it | [Runbook](docs/runbook.md), [setup](docs/setup.md), [command manual](MANUAL.md), [deployment](docs/deployment.md) |
 | Understand acceptance and ordering | [Verification](docs/verification.md), [worker envelope](docs/dispatch-envelope.md), [dependency graph](docs/dependency-graph.md) |
 | Watch health and spend | [Observability](docs/observability.md), [dashboard](docs/dashboard.md), [cost log](docs/cost-log.md), [budget drains](docs/budget.md) |
-| Extend verification or shared memory | [SDK verifiers](docs/sdk-verifier.md), [verifier panel](docs/verifier-panel.md), [fact ledger](docs/fact-ledger.md), [graph engineering](docs/graph-engineering.md) |
+| Extend verification or shared memory | [SDK verifiers](docs/sdk-verifier.md), [verifier panel](docs/verifier-panel.md), [fact ledger](docs/fact-ledger.md), [learning log](docs/learning-log.md), [graph engineering](docs/graph-engineering.md) |
 
 `docs/design/`, `docs/proposals/`, `docs/experiments/` and the dated incident records keep the reasoning and the results. A proposal is not evidence that a feature shipped. The vendor comparisons in [prior art](docs/prior-art.md) are context, not buying advice.
 

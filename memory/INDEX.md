@@ -35,6 +35,7 @@ One line per memory file. Keep entries <=150 chars: `- [Title](file.md): one-lin
 - [Orchestrator commits on verifier PASS](decision-orchestrator-commits-on-verifier-pass.md): the worker never commits; FAIL leaves the tree.
 - [Per-role, per-family SDK transport](decision-per-role-family-sdk-transport.md): card 28; Codex verifier SDK reuses CODEX_HOME auth.
 - [Retro-grade is advisory](decision-retro-grade.md): batch retro-grade informs, never gates; it lives in memory.
+- [Learning log is weekly-reviewed](decision-learning-log.md): harness lessons go to proposals.jsonl; operator decides weekly; no probe loop.
 - [SDK controller experiment](decision-sdk-controller-experiment.md): card 23; cron tick retained over a resident Claude Agent SDK controller.
 - [Worker SDK experiment](decision-worker-sdk-experiment.md): card 98; bounded Claude Agent SDK worker route tried and parked.
 - [SDK verifier prototype](decision-sdk-verifier-prototype.md): verify-sdk.py probed before touching spawn-verifier.sh; claude -p stayed production.
