@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autometta.local/schemas/proposals-ledger.json",
+  "title": "Harness proposals ledger line",
+  "description": "One event in the append-only harness proposals ledger at memory/proposals.jsonl. A proposal is a suggested change to the harness itself (a script, skill, template, schema, doc or policy) raised while a run was being worked. Every line is an event against a proposal id; the proposal's current status is its newest event. Lines are never rewritten. The contract is docs/learning-log.md; the gate is scripts/proposals.sh lint.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "event", "agent", "recorded_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^P-[0-9]{8}-[0-9a-f]{4}$",
+      "description": "Proposal id, P-<YYYYMMDD>-<4 hex>, minted by scripts/proposals.sh add. Stable across every event for the same proposal."
+    },
+    "event": {
+      "type": "string",
+      "enum": ["proposed", "approved", "rejected", "merged", "carded", "landed"],
+      "description": "Closed vocabulary. proposed opens; approved and rejected are the operator's weekly decision; merged folds a duplicate into another id; carded names the stage card the change became; landed names the commit that closed it. Legal transitions are enforced by scripts/proposals.sh, not by this schema."
+    },
+    "agent": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^.+ <[^<>@\\s]+@[^<>@\\s]+>$",
+      "description": "Canonical agent identity in git author form, e.g. 'Claude Fable 5.1 <claude-fable-5-1@local>'. The operator's own decision is recorded under the identity of the chat that recorded it; the note names the operator."
+    },
+    "recorded_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "ISO 8601 UTC timestamp of the event."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 8,
+      "description": "proposed only. One line, under about 80 characters, naming the change rather than the symptom."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["script", "skill", "template", "schema", "doc", "policy"],
+      "description": "proposed only. What sort of harness surface the change touches. policy covers caps, gates, allowances and anything else that needs an explicit operator yes under the recovery policy."
+    },
+    "target": {
+      "type": "array",
+      "description": "proposed only. Repo-relative paths in the autometta checkout the change would edit. At least one; never an absolute path."
+    },
+    "change": {
+      "type": "string",
+      "minLength": 20,
+      "description": "proposed only. What to change and why, in a few sentences. Enough for a weekly reviewer who did not see the run to decide; the card is written later."
+    },
+    "evidence": {
+      "type": "array",
+      "description": "proposed only. References a reviewer can open: stage ids, escalation ids, memory/facts.jsonl subjects, repo-relative paths with optional #anchor, commit SHAs. At least one. A proposal with no evidence is an opinion."
+    },
+    "repo": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional. Basename of the subscriber repo the observation came from, when it is not autometta itself."
+    },
+    "stage_id": {
+      "type": "string",
+      "pattern": "^[0-9]{2,}[a-z]*-[a-z0-9-]+$",
+      "description": "Optional on proposed; required on carded, where it names the card the proposal became."
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^run-[0-9]{8}-[0-9]{6}$",
+      "description": "Optional. The run during which the observation was made."
+    },
+    "note": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Decision context. Required on rejected (why not) and approved (what was agreed, naming the operator and date); optional elsewhere."
+    },
+    "into": {
+      "type": "string",
+      "pattern": "^P-[0-9]{8}-[0-9a-f]{4}$",
+      "description": "merged only. The surviving proposal id this one was folded into."
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "landed only. The commit that closed the proposal."
+    }
+  }
+}
