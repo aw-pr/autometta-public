@@ -81,7 +81,7 @@ One proposal is a sequence of events sharing an `id`:
 | `rejected` | weekly review | note | proposed, approved, carded |
 | `merged` | weekly review | into (the surviving id) | proposed |
 | `carded` | weekly review, after `add-stage.sh` | stage_id | approved |
-| `landed` | weekly review, after the landing | commit | carded |
+| `landed` | weekly review, after the landing | commit | carded, or approved when the operator had the chat fix it directly |
 
 `kind` is one of `script`, `skill`, `template`, `schema`, `doc`, `policy`.
 `target` is one or more repo-relative paths in the autometta checkout, never

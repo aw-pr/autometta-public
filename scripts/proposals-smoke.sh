@@ -73,6 +73,13 @@ expect_fail "merge into an unknown id" "$sh" merge "$dup" --into P-20000101-beef
 expect_fail "merge into itself" "$sh" merge "$dup" --into "$dup"
 "$sh" merge "$dup" --into "$id" | grep -q "merged$" || fail "merge failed"
 
+# 7b. An approved item may land directly when the operator had it fixed in the chat.
+direct="$("$sh" add --title "Operator asked for a direct fix in the chat" --kind script \
+  --target scripts/x.sh --change "Fixed by the orchestration chat at the operator's request." --evidence 09-direct)"
+expect_fail "land before approve" "$sh" land "$direct" --commit beef123
+"$sh" approve "$direct" --note "operator asked for it now" >/dev/null
+"$sh" land "$direct" --commit beef123 --note "fixed directly, no card" | grep -q "landed$" || fail "approved should land directly"
+
 # 8. show prints every event for one id, oldest first.
 events="$("$sh" show "$id" | jq -r .event | paste -sd, -)"
 [[ "$events" == "proposed,approved,carded,landed" ]] || fail "show order wrong: $events"

@@ -151,5 +151,7 @@ goes with it. Preserve first, requeue second.
   Never weaken a criterion to make a failed attempt pass.
 - Never ack to make the list shorter; an ack records an outcome.
 - A proposal in `memory/proposals.jsonl` is a note to the weekly review, not
-  authority to change the harness. Only an approved, carded proposal changes
-  anything, and it changes it through a dispatched stage.
+  authority to change the harness. Only an approved proposal changes
+  anything: through a card and a dispatched stage by default, or directly in
+  the chat when the operator asks for that, in which case `approve` then
+  `land` record it.

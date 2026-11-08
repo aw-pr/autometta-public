@@ -91,7 +91,7 @@ ONLY_ON_PROPOSED = {"title", "kind", "target", "change", "evidence"}
 LEGAL = {
     None: {"proposed"},
     "proposed": {"approved", "rejected", "merged"},
-    "approved": {"carded", "rejected"},
+    "approved": {"carded", "landed", "rejected"},
     "carded": {"landed", "rejected"},
     "rejected": set(),
     "merged": set(),
