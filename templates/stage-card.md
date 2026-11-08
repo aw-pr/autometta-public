@@ -13,6 +13,7 @@ Stage card template, part of the dispatch-contract pattern library. Reusable in 
 - **Run branch:** <<autometta/stage-id>>
 - **Fixes:** <<stage-id this card repairs; optional, omit otherwise>>
 - **Supersedes:** <<stage-id this card replaces; optional, omit otherwise>>
+- **Proposal:** <<P-YYYYMMDD-xxxx id from memory/proposals.jsonl when this card lands an approved harness proposal; optional, omit otherwise>>
 
 <!--
 Dispatch happens in an ephemeral worktree cut from the base branch (`git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>`), never in the shared checkout; on PASS the orchestrator fast-forward-merges the run branch back into the base branch (or pushes it, if base moved, and notes that in HANDOFF). Pin both fields to branch names, never commit SHAs. -->
