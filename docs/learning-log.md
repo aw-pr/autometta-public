@@ -28,7 +28,9 @@ middle one.
    artefact. Recording costs one shell command and no model turn. Nothing
    acts on a proposal when it is written.
 2. **Once a week, review.** The operator opens an orchestration chat and
-   runs `skills/autometta-weekly-review`: list open items, read the
+   runs `skills/autometta-weekly-review`: lift any `HARNESS:` line the week
+   missed (`proposals.sh unlifted`; a stage that passed never escalates, so
+   nothing else would surface its line), list open items, read the
    evidence, merge duplicates into one cause, check the fact ledger for
    recurrence, recommend one decision per cluster, record the operator's
    yes or no. Approved items go to `autometta-run-design`,
@@ -82,6 +84,15 @@ One proposal is a sequence of events sharing an `id`:
 | `merged` | weekly review | into (the surviving id) | proposed |
 | `carded` | weekly review, after `add-stage.sh` | stage_id | approved |
 | `landed` | weekly review, after the landing | commit | carded, or approved when the operator had the chat fix it directly |
+| `dismissed` | weekly review, with the operator's agreement | repo, evidence, note | nothing |
+
+`dismissed` opens and closes in one event. It records a verifier `HARNESS:`
+line judged to be outside the harness (the subscriber's own fixture, say),
+so `proposals.sh unlifted` stops listing it without a proposal that would
+never be approved. `unlifted` treats a line as lifted once a `proposed` or
+`dismissed` event under the same repo cites its artefact
+(`state/verifiers/<file>.json`, optionally with an anchor) after the
+artefact's `ran_at`; a stage re-verified since then is listed again.
 
 `kind` is one of `script`, `skill`, `template`, `schema`, `doc`, `policy`.
 `target` is one or more repo-relative paths in the autometta checkout, never

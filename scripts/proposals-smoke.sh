@@ -95,4 +95,55 @@ if [[ -f "$script_dir/../memory/proposals.jsonl" ]]; then
     || fail "committed memory/proposals.jsonl does not lint"
 fi
 
+# 11. unlifted lists verifier HARNESS: lines no proposal cites, across the
+#     subscriber registry; a citation or a dismissal clears one, and a
+#     re-verification after the citation brings it back.
+export PROPOSALS_LEDGER_PATH="$tmp/unlifted.jsonl"
+export AUTOMETTA_HOME="$tmp/home"
+lab="$tmp/lab"
+mkdir -p "$AUTOMETTA_HOME/subscribers" "$lab/state/verifiers"
+printf 'repo_path: "%s"\nenabled: true\n' "$lab" > "$AUTOMETTA_HOME/subscribers/lab.yaml"
+printf 'repo_path: "%s"\nenabled: false\n' "$lab" > "$AUTOMETTA_HOME/subscribers/lab-again.yaml"
+printf 'repo_path: "%s/not-there"\nenabled: true\n' "$tmp" > "$AUTOMETTA_HOME/subscribers/gone.yaml"
+printf 'repo_path: "%s"\nenabled: true\n' "$lab" > "$AUTOMETTA_HOME/subscribers/template.yaml"
+jq -nc '{stage_id:"20-thing", ran_at:"2026-11-08T10:00:00Z",
+  additional_findings:"Ordinary finding.\nHARNESS: templates/x.md misled the worker."}' > "$lab/state/verifiers/20-thing.json"
+jq -nc '{stage_id:"21-clean", ran_at:"2026-11-08T10:00:00Z", additional_findings:"Nothing odd."}' \
+  > "$lab/state/verifiers/21-clean.json"
+jq -nc '{stage_id:"22-listed", ran_at:"2026-11-08T10:00:00Z",
+  additional_findings:["  HARNESS: the fixture lacks an asset."]}' > "$lab/state/verifiers/22-listed.json"
+printf 'not json' > "$lab/state/verifiers/23-broken.json"
+
+out="$("$sh" unlifted)"
+[[ "$(printf '%s\n' "$out" | grep -c .)" == 2 ]] || fail "unlifted should list two lines once each, got: $out"
+printf '%s\n' "$out" | grep -q "^lab	20-thing	state/verifiers/20-thing.json	HARNESS: templates/x.md misled" \
+  || fail "unlifted should list the string-form HARNESS line"
+printf '%s\n' "$out" | grep -q "^lab	22-listed	state/verifiers/22-listed.json	HARNESS: the fixture" \
+  || fail "unlifted should list the array-form HARNESS line"
+
+"$sh" add --title "Template x misleads workers" --kind template --target templates/x.md \
+  --change "Lifted from the stage 20 verifier artefact in the smoke repo." \
+  --evidence "state/verifiers/20-thing.json#additional_findings" --repo other >/dev/null
+"$sh" unlifted | grep -q "20-thing" || fail "a citation under another repo should not clear the line"
+"$sh" add --title "Template x misleads workers" --kind template --target templates/x.md \
+  --change "Lifted from the stage 20 verifier artefact in the smoke repo." \
+  --evidence "state/verifiers/20-thing.json#additional_findings" --repo lab --stage 20-thing >/dev/null
+"$sh" unlifted | grep -q "20-thing" && fail "a proposal citing the artefact should clear the line"
+
+expect_fail "dismiss without a note" "$sh" dismiss --repo lab --evidence state/verifiers/22-listed.json
+expect_fail "dismiss without a repo" "$sh" dismiss --evidence state/verifiers/22-listed.json --note "project scope"
+dismissed="$("$sh" dismiss --repo lab --stage 22-listed --evidence state/verifiers/22-listed.json \
+  --note "project fixture, not the harness" | cut -d' ' -f1)"
+[[ -z "$("$sh" unlifted)" ]] || fail "a dismissal should clear the last line"
+"$sh" list --status dismissed | grep -q "^$dismissed	dismissed	-	22-listed	project fixture" \
+  || fail "list --status dismissed should show the dismissal with its note"
+"$sh" list | grep -q "$dismissed" && fail "a dismissal should not be open"
+expect_fail "approve after dismissed" "$sh" approve "$dismissed" --note "changed my mind"
+"$sh" lint | grep -q '^PASS' || fail "ledger with a dismissal should lint"
+
+jq -nc '{stage_id:"20-thing", ran_at:"2099-01-01T00:00:00Z",
+  additional_findings:"HARNESS: a new finding after re-verification."}' > "$lab/state/verifiers/20-thing.json"
+"$sh" unlifted | grep -q "a new finding after re-verification" \
+  || fail "a re-verification after the citation should list the line again"
+
 printf 'PASS: proposals-smoke\n'

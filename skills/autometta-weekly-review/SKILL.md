@@ -31,10 +31,20 @@ one-line report and ends.
 
 ## Procedure
 
-1. **List what is open.** `scripts/proposals.sh list` prints proposed,
-   approved and carded items oldest first, one per line: id, status, kind,
-   stage and title. Items already `approved` or `carded` from an earlier
-   week are followed up in step 6 before any new decision is made.
+1. **Lift what the week missed, then list what is open.** A verifier's
+   `HARNESS:` line reaches the ledger only when the chat lifts it, and a
+   stage that passed never escalates, so start with `scripts/proposals.sh
+   unlifted`: one line per uncited `HARNESS:` finding across the subscriber
+   registry (repo, stage, artefact, text). Lift each that names a harness
+   path with `scripts/proposals.sh add ... --repo <repo> --stage <stage>
+   --evidence <artefact>#additional_findings`. One that names only the
+   subscriber's own files is project scope: say so to the operator and, on
+   their agreement, record `scripts/proposals.sh dismiss --repo <repo>
+   --stage <stage> --evidence <artefact> --note "<why>"`. Then
+   `scripts/proposals.sh list` prints proposed, approved and carded items
+   oldest first, one per line: id, status, kind, stage and title. Items
+   already `approved` or `carded` from an earlier week are followed up in
+   step 6 before any new decision is made.
 2. **Read each proposed item with its evidence.** `scripts/proposals.sh show
    <id>` prints the full record. Open every evidence reference: the
    escalation, the stage card, the verifier artefact, the facts ledger line

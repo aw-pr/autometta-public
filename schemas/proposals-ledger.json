@@ -14,8 +14,8 @@
     },
     "event": {
       "type": "string",
-      "enum": ["proposed", "approved", "rejected", "merged", "carded", "landed"],
-      "description": "Closed vocabulary. proposed opens; approved and rejected are the operator's weekly decision; merged folds a duplicate into another id; carded names the stage card the change became; landed names the commit that closed it. Legal transitions are enforced by scripts/proposals.sh, not by this schema."
+      "enum": ["proposed", "approved", "rejected", "merged", "carded", "landed", "dismissed"],
+      "description": "Closed vocabulary. proposed opens; approved and rejected are the operator's weekly decision; merged folds a duplicate into another id; carded names the stage card the change became; landed names the commit that closed it; dismissed opens and closes in one event, recording a verifier HARNESS: line judged to be outside the harness so scripts/proposals.sh unlifted stops listing it. Legal transitions are enforced by scripts/proposals.sh, not by this schema."
     },
     "agent": {
       "type": "string",
@@ -49,12 +49,12 @@
     },
     "evidence": {
       "type": "array",
-      "description": "proposed only. References a reviewer can open: stage ids, escalation ids, memory/facts.jsonl subjects, repo-relative paths with optional #anchor, commit SHAs. At least one. A proposal with no evidence is an opinion."
+      "description": "proposed and dismissed only. References a reviewer can open: stage ids, escalation ids, memory/facts.jsonl subjects, repo-relative paths with optional #anchor, commit SHAs. At least one. A proposal with no evidence is an opinion. A citation of state/verifiers/<file>.json under the same repo marks that artefact's HARNESS: lines as lifted."
     },
     "repo": {
       "type": "string",
       "minLength": 1,
-      "description": "Optional. Basename of the subscriber repo the observation came from, when it is not autometta itself."
+      "description": "Basename of the subscriber repo the observation came from, when it is not autometta itself. Required on dismissed."
     },
     "stage_id": {
       "type": "string",
@@ -69,7 +69,7 @@
     "note": {
       "type": "string",
       "minLength": 1,
-      "description": "Decision context. Required on rejected (why not) and approved (what was agreed, naming the operator and date); optional elsewhere."
+      "description": "Decision context. Required on rejected (why not), approved (what was agreed, naming the operator and date) and dismissed (why the line is not a harness change); optional elsewhere."
     },
     "into": {
       "type": "string",

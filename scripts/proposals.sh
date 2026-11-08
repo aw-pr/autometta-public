@@ -3,7 +3,9 @@
 #
 # A proposal is a suggested change to the harness itself, raised while a run
 # was being worked: by the orchestration chat on acking an escalation, or
-# lifted from a verifier's HARNESS: findings. The ledger is append-only and
+# lifted from a verifier's HARNESS: findings (`unlifted` lists the lines no
+# proposal has cited yet, and `dismiss` records one judged to be outside the
+# harness, so it stops being listed). The ledger is append-only and
 # committed; every line is one event against a proposal id and the newest
 # event is the proposal's status. The weekly review (skills/autometta-weekly-
 # review) reads it, the operator decides, and approved items become cards.
@@ -12,13 +14,15 @@
 # Usage:
 #   proposals.sh add --title T --kind K --target PATH[,PATH] --change TEXT \
 #                    --evidence REF[,REF] [--repo NAME] [--stage ID] [--run ID]
-#   proposals.sh list [--status proposed|approved|rejected|merged|carded|landed|open|all]
+#   proposals.sh list [--status proposed|approved|rejected|merged|carded|landed|dismissed|open|all]
 #   proposals.sh show <id>
 #   proposals.sh approve <id> --note TEXT
 #   proposals.sh reject  <id> --note TEXT
 #   proposals.sh merge   <id> --into <id> [--note TEXT]
 #   proposals.sh card    <id> --stage <stage-id> [--note TEXT]
 #   proposals.sh land    <id> --commit <sha> [--note TEXT]
+#   proposals.sh dismiss --repo NAME --evidence REF[,REF] --note TEXT [--stage ID]
+#   proposals.sh unlifted
 #   proposals.sh lint [FILE]
 #
 # Every writing verb needs the recording agent's identity, in git author
@@ -38,7 +42,7 @@ schema_path="$repo_root/schemas/proposals-ledger.json"
 ledger_path="${PROPOSALS_LEDGER_PATH:-$repo_root/memory/proposals.jsonl}"
 
 usage() {
-  sed -n '12,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '14,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -86,16 +90,19 @@ NEEDS = {
     "merged": ["into"],
     "carded": ["stage_id"],
     "landed": ["commit"],
+    "dismissed": ["evidence", "note"],
 }
-ONLY_ON_PROPOSED = {"title", "kind", "target", "change", "evidence"}
+ONLY_ON_PROPOSED = {"title", "kind", "target", "change"}
+EVIDENCE_EVENTS = {"proposed", "dismissed"}
 LEGAL = {
-    None: {"proposed"},
+    None: {"proposed", "dismissed"},
     "proposed": {"approved", "rejected", "merged"},
     "approved": {"carded", "landed", "rejected"},
     "carded": {"landed", "rejected"},
     "rejected": set(),
     "merged": set(),
     "landed": set(),
+    "dismissed": set(),
 }
 
 status = {}
@@ -113,6 +120,8 @@ for lineno, raw in enumerate(Path(sys.argv[1]).read_text(encoding="utf-8").split
         stray = ONLY_ON_PROPOSED & set(rec)
         if stray:
             bad = f"{lineno}: {sorted(stray)[0]!r} belongs on the proposed event only"; break
+    if event not in EVIDENCE_EVENTS and "evidence" in rec:
+        bad = f"{lineno}: 'evidence' belongs on the proposed or dismissed event only"; break
     for key in ("target", "evidence"):
         if key in rec:
             vals = rec[key]
@@ -153,6 +162,99 @@ mint_id() {
   day="$(date -u +%Y%m%d)"
   hex="$(python3 -c 'import secrets; print(secrets.token_hex(2))')"
   printf 'P-%s-%s\n' "$day" "$hex"
+}
+
+mint_unused_id() {
+  local new_id
+  new_id="$(mint_id)"
+  while [[ -f "$ledger_path" ]] && grep -q "\"id\":\"$new_id\"" "$ledger_path"; do new_id="$(mint_id)"; done
+  printf '%s\n' "$new_id"
+}
+
+# Every repo path in the subscriber registry, enabled or not: a repo disabled
+# after this week's run still holds this week's verifier artefacts.
+subscriber_repo_paths() {
+  # shellcheck source=./subscribers.sh
+  source "$script_dir/subscribers.sh"
+  local file
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    read_subscriber_field "$file" repo_path
+    printf '\n'
+  done < <(sort_subscribers)
+}
+
+# HARNESS: lines in subscriber verifier artefacts that no proposed or
+# dismissed event cites. A citation names the artefact as repo-relative
+# evidence under the same repo, and counts only if it was recorded after the
+# artefact's ran_at: a stage re-verified since its line was lifted is new.
+list_unlifted() {
+  local repos=()
+  local path
+  while IFS= read -r path; do
+    [[ -n "$path" ]] && repos+=("$path")
+  done < <(subscriber_repo_paths)
+  python3 - "$ledger_path" "$(basename "$repo_root")" "${repos[@]}" <<'PY'
+import json, sys
+from datetime import datetime
+from pathlib import Path
+
+ledger, own_repo, roots = Path(sys.argv[1]), sys.argv[2], sys.argv[3:]
+
+def when(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+citations = []
+if ledger.is_file():
+    for raw in ledger.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        rec = json.loads(raw)
+        if rec.get("event") not in ("proposed", "dismissed"):
+            continue
+        for ref in rec.get("evidence", []):
+            citations.append((rec.get("repo") or own_repo, ref, when(rec["recorded_at"])))
+
+def is_cited(repo, rel, ran_at):
+    for cited_repo, ref, at in citations:
+        if cited_repo != repo:
+            continue
+        if ref != rel and not ref.startswith((rel + "#", rel + ":")):
+            continue
+        if ran_at is None or at is None or at >= ran_at:
+            return True
+    return False
+
+seen = set()
+for root in roots:
+    root_path = Path(root)
+    if not root_path.is_dir() or root_path.resolve() in seen:
+        continue
+    seen.add(root_path.resolve())
+    repo = root_path.name
+    for artefact in sorted((root_path / "state" / "verifiers").glob("*.json")):
+        try:
+            data = json.loads(artefact.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        findings = data.get("additional_findings")
+        if isinstance(findings, list):
+            findings = "\n".join(str(item) for item in findings)
+        if not isinstance(findings, str):
+            continue
+        harness = [line.strip() for line in findings.splitlines() if line.strip().startswith("HARNESS:")]
+        rel = f"state/verifiers/{artefact.name}"
+        if not harness or is_cited(repo, rel, when(data.get("ran_at"))):
+            continue
+        stage = data.get("stage_id") or artefact.stem
+        for line in harness:
+            print(f"{repo}\t{stage}\t{rel}\t{line}")
+PY
 }
 
 csv_to_json_array() {
@@ -210,8 +312,7 @@ case "$verb" in
     require_agent
     [[ -n "$title" && -n "$kind" && -n "$target" && -n "$change" && -n "$evidence" ]] \
       || usage_error "add needs --title, --kind, --target, --change and --evidence"
-    new_id="$(mint_id)"
-    while [[ -f "$ledger_path" ]] && grep -q "\"id\":\"$new_id\"" "$ledger_path"; do new_id="$(mint_id)"; done
+    new_id="$(mint_unused_id)"
     line="$(jq -nc --arg id "$new_id" --arg agent "$agent" --arg at "$(now_utc)" \
       --arg title "$title" --arg kind "$kind" --arg change "$change" \
       --argjson target "$(csv_to_json_array "$target")" \
@@ -229,13 +330,13 @@ case "$verb" in
   list)
     [[ -z "$pid" ]] || usage_error "list takes no id"
     case "$status_filter" in
-      proposed|approved|rejected|merged|carded|landed|open|all) ;;
+      proposed|approved|rejected|merged|carded|landed|dismissed|open|all) ;;
       *) usage_error "unknown --status: $status_filter" ;;
     esac
     [[ -f "$ledger_path" ]] || exit 0
     jq -rs --arg want "$status_filter" '
       group_by(.id) | map({
-        id: .[0].id, title: .[0].title, kind: .[0].kind,
+        id: .[0].id, title: (.[0].title // .[0].note), kind: (.[0].kind // "-"),
         proposed_at: .[0].recorded_at, status: (.[-1].event),
         stage: ([.[] | .stage_id // empty] | last // "-")
       })
@@ -270,6 +371,26 @@ case "$verb" in
   land)
     [[ -n "$pid" && -n "$commit" ]] || usage_error "land needs <id> --commit <sha>"
     transition landed "$pid" "$(jq -nc --arg c "$commit" --arg n "$note" '{commit:$c} + (if $n != "" then {note:$n} else {} end)')"
+    ;;
+  dismiss)
+    require_agent
+    [[ -z "$pid" ]] || usage_error "dismiss takes no id"
+    [[ -n "$repo" && -n "$evidence" && -n "$note" ]] \
+      || usage_error "dismiss needs --repo, --evidence and --note"
+    new_id="$(mint_unused_id)"
+    line="$(jq -nc --arg id "$new_id" --arg agent "$agent" --arg at "$(now_utc)" \
+      --arg repo "$repo" --arg stage "$stage" --arg note "$note" \
+      --argjson evidence "$(csv_to_json_array "$evidence")" '
+      {id:$id, event:"dismissed", agent:$agent, recorded_at:$at,
+       repo:$repo, evidence:$evidence, note:$note}
+      + (if $stage != "" then {stage_id:$stage} else {} end)')"
+    lint_ledger "$line" >/dev/null || die "dismiss refused (lint above)"
+    append_line "$line"
+    printf '%s dismissed\n' "$new_id"
+    ;;
+  unlifted)
+    [[ -z "$pid" ]] || usage_error "unlifted takes no id"
+    list_unlifted
     ;;
   lint)
     [[ -z "$pid" ]] || ledger_path="$pid"
