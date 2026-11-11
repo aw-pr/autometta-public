@@ -23,6 +23,7 @@ check() {  # check <identity> <want>
 
 check 'Claude Opus 5.5 <claude-opus-5-5@local>'  'claude-opus-5-5'
 check 'Claude Opus 5 <claude-opus-5@local>'      'claude-opus-5'
+check 'Claude Fable 5.2 <claude-fable-5-2@local>' 'claude-fable-5-2'
 check 'Claude Fable 5.1 <claude-fable-5-1@local>' 'claude-fable-5-1'
 check 'Claude Sonnet 5.5 <claude-sonnet-5-5@local>' 'claude-sonnet-5-5'
 check 'Claude Sonnet 5 <claude-sonnet-5@local>'  'claude-sonnet-5'
