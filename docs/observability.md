@@ -409,11 +409,15 @@ is non-null, and stamps `dash_active_at` in `budget.json` when it does. It
 runs *after* the tick's dispatch decision, so a stage that goes pending to
 `in_progress` in this same tick gets its dash immediately rather than a
 tick late. `reap_idle_dash_sessions` then kills any `autometta-<slug>`
-session whose subscriber is disabled, whose slug matches no subscriber at
-all, or whose `dash_active_at` is older than
-`AUTOMETTA_DASH_IDLE_HOURS` (default 24). An operator who is actually
-attached always wins: a session with `tmux list-clients` output is never
-reaped. `last_tick_at` and `tick_count` advance on every tick regardless of
+viewer whose subscriber is disabled or retired (`<slug>.yaml.disabled`), or
+whose `dash_active_at` is older than `AUTOMETTA_DASH_IDLE_HOURS` (default
+24). An operator who is actually attached always wins: a session with
+`tmux list-clients` output is never reaped. The reaper only touches viewers
+it owns, by the same rule as `attach.sh`: the slug must belong to a
+registered subscriber. A session of your own that happens to start with
+`autometta-` (say `autometta-dash-run`) is left alone, and so, since it can
+no longer be told apart from one, is a viewer whose subscriber file was
+deleted outright; remove that one with `tmux kill-session`. `last_tick_at` and `tick_count` advance on every tick regardless of
 dispatch, which is why `state.yaml`'s mtime cannot serve as the idle signal
 and `dash_active_at` exists.
 
