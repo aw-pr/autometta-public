@@ -24,7 +24,10 @@
 #   9. The web stage table draws the share inside the status, coloured by its
 #      level, with a title that says it is not completion, and sorts the
 #      column by status alone.
-#  10. A repo with no history predicts nothing rather than a zero.
+#  10. The TUI run row carries the share beside its status, red only for an
+#      outlier, and the repo ticker's NOW line says "of typical" beside the
+#      phase.
+#  11. A repo with no history predicts nothing rather than a zero.
 #
 # Exit 0 on all-pass, 1 on any assertion failure.
 set -euo pipefail
@@ -88,30 +91,36 @@ cp "$repo/state/state.yaml" "$empty/state/state.yaml"
 cat >> "$repo/state/state.yaml" <<YAML
   - id: 03-working
     status: in_progress
+    run_id: run-20261112-120000
     worker: "$opus"
     verifier: "$sol"
     worker_pid: 4999901
   - id: 04-verifying
     status: in_progress
+    run_id: run-20261112-120000
     worker: "$opus"
     verifier: "$sol"
     verifier_pid: 4999902
   - id: 05-outlier
     status: in_progress
+    run_id: run-20261112-120000
     worker: "$terra"
     verifier: "$sol"
     worker_pid: 4999903
   - id: 06-panel
     status: in_progress
+    run_id: run-20261112-120000
     worker: "$opus"
     verifier: "$sol"
     verifier_pid: 4999904
   - id: 07-waiting
     status: in_progress
+    run_id: run-20261112-120000
     worker: "$opus"
     verifier: "$sol"
   - id: 08-no-reading
     status: in_progress
+    run_id: run-20261112-120000
     worker: "$opus"
     verifier: "$sol"
     worker_pid: 4999908
@@ -275,7 +284,40 @@ check "the title gives both figures and the basis" \
 check "a waiting stage reads 'waiting' alone" "$(eq waiting "$(cell 07-waiting text)")"
 check "the share does not move the column sort" "$(eq working "$(cell 03-working sort)")"
 
-printf '== 10. no history predicts nothing ==\n' >&2
+printf '== 10. the terminal views carry the share beside the status ==\n' >&2
+tui="$(AUTOMETTA_TEST_PAYLOAD="$payload" python3 - "$script_dir/lib/tui/render.py" <<'PY' 2>&1
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("autometta_tui_render", sys.argv[1])
+render = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(render)
+state = render.TuiState(5.0)
+state.update(json.loads(os.environ["AUTOMETTA_TEST_PAYLOAD"]), observed_at=0.0)
+state.observe_time(0.0)
+rows = {}
+for text, spans in render.run_lines(state, 100):
+    for stage_id in ("03-working", "04-verifying", "05-outlier", "07-waiting"):
+        if stage_id in text:
+            alert = [text[a:b] for a, b, attr in spans if attr == render.ALERT]
+            rows[stage_id] = {"text": " ".join(text.split()), "alert": alert}
+print(json.dumps(rows))
+PY
+)" || { printf '  FAIL: the TUI did not render (%s)\n' "$tui" >&2; fail=1; tui='{}'; }
+row() { printf '%s' "$tui" | jq -r --arg id "$1" ".[\$id].$2"; }
+check "the TUI run row reads 'WORKER 40%'" \
+  "$([[ "$(row 03-working text)" == *"03-working WORKER 40% "* ]] && echo ok || row 03-working text)"
+check "a verifying row reads 'VERIFY 250%'" \
+  "$([[ "$(row 04-verifying text)" == *"VERIFY 250% "* ]] && echo ok || row 04-verifying text)"
+check "an outlier share alone is red" \
+  "$(eq '["1500%"]' "$(row 05-outlier alert | jq -c .)")"
+check "a high share is not red" "$(eq '[]' "$(row 04-verifying alert | jq -c .)")"
+check "a waiting row carries no share" \
+  "$([[ "$(row 07-waiting text)" == *"WORKER "* && "$(row 07-waiting text)" != *"%"* ]] && echo ok || row 07-waiting text)"
+now_line="$(AUTOMETTA_TICKER_PAYLOAD="$payload" python3 "$script_dir/lib/repo-ticker-render.py" "$repo" 120 40 5 600 \
+  | sed -n '/^NOW/{n;n;p;}')"
+check "the ticker's NOW line reads 'worker running  40% of typical'" \
+  "$([[ "$now_line" == *"worker running  40% of typical  Opus"* ]] && echo ok || printf '%s' "$now_line")"
+
+printf '== 11. no history predicts nothing ==\n' >&2
 payload="$("$script_dir/aggregate-dashboard.sh" --repo "$empty" 2>/dev/null)"
 check "an empty repo predicts no worker figure" \
   "$(eq null "$(field "$(stage 01-known-pair) | .estimate.worker")")"

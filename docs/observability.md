@@ -117,6 +117,14 @@ eight-poll history with `burn this run`. SDK figures retain the `LIVE` label.
 These figures refresh with the poll and are display only; they do not change
 the cost log, billing totals or state.
 
+A running stage's status in the run row also carries its live share, for
+example `WORKER 40%`: the running dispatch's uncached tokens as a share of the
+stage's estimate for that role, from the aggregator's `live_share` (see
+`docs/dashboard.md`, Live figures). It is spend against a typical dispatch,
+not completion, so half of all dispatches pass 100%. The percentage turns red
+only when the heartbeat has flagged the dispatch as a token outlier. A stage
+with no reading or no prediction shows its status alone.
+
 Card 74 replaced per-row process forks and repeated file scans in that seam,
 taking the measured per-repo read from 37 seconds to under one second; a
 five-second poll now represents a fresh snapshot rather than a queue of stale
@@ -163,12 +171,16 @@ It answers one question, "do I need to intervene?", in five sections:
 
 - `NOW`: the live stage, in full: stage id, phase (`worker running` /
   `verifying` / `landing` while a passed stage awaits integration), the
-  acting family and identity, elapsed against the card's declared
-  wall-clock budget, tokens spent on the stage so far, and, while verifying,
-  the attempt count against the cap. Elapsed against budget is real time
-  spent, not work done, and never clamps at 99% or 100%; a stage past its
-  budget reads `OVER BUDGET` with the true percentage. When nothing is
-  live, it reads `idle`.
+  running dispatch's live share (`40% of typical`, amber from 200%, red when
+  the heartbeat flags a token outlier), the acting family and identity,
+  elapsed against the card's declared wall-clock budget, tokens spent on the
+  stage so far, and, while verifying, the attempt count against the cap.
+  Elapsed against budget is real time spent, not work done, and never clamps
+  at 99% or 100%; a stage past its budget reads `OVER BUDGET` with the true
+  percentage. The live share is spend against a typical dispatch, not work
+  done either, and half of all dispatches pass 100%. A narrow pane drops the
+  token count first, then the live share. When nothing is live, it reads
+  `idle`.
 - `NEXT`: a counts line (stages done, outstanding, and how many of those are
   escalated), then the next few queued stages with the family that will
   work each.

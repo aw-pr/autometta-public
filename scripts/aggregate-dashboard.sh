@@ -849,10 +849,13 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
              level: (if ((.flags // []) | index("token-outlier")) != null then "outlier"
                      elif $percent >= 200 then "high" else "normal" end)}] |
           max_by(.percent) end)})) as $stages |
+    # The run carries the same stage objects as the board, estimate and live
+    # share included, so the TUI run panel reads what the web table reads.
+    (reduce $stages[] as $stage ({}; . + {($stage.id | tostring): $stage})) as $stage_by_id |
     (if $current_run_id == null then null else {
       id:$current_run_id,
       started_at:$current_run_started_at,
-      stages:$current_run_stages,
+      stages:[$current_run_stages[] | $stage_by_id[.id | tostring] // .],
       tokens_total: ([$current_run_stages[] as $stage |
         ([$spend.by_stage[]? | select(.stage_id == $stage.id)][0].tokens // $stage.tokens // 0)] |
         add // 0),
