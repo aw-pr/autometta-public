@@ -680,7 +680,8 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
          {identity: ($model_rows[0].identity // "unknown"), role: ($model_rows[0].role // "unknown"),
           samples: ($model_rows | length),
           median_tokens: ([$model_rows[] | dispatch_tokens] | median | round),
-          median_uncached_tokens: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null) | .input_tokens + .output_tokens] | median),
+          median_uncached_tokens: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null) | .input_tokens + .output_tokens] | median |
+            if . == null then null else round end),
           uncached_samples: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null)] | length),
           tokens_per_min: ([$timed[] | dispatch_tokens * 60 / .wall_clock_s] | median |
             if . == null then null else round end),
@@ -813,12 +814,41 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
       else (role_median($role)) as $fallback |
         if $fallback == null then null else {uncached_tokens: $fallback, basis: "role", samples: null} end
       end;
+    # The live share is what the running dispatch has spent so far against
+    # that estimate, beside the phase it belongs to. It is per dispatch, so
+    # earlier attempts never count, and uncached on both sides. An SDK reading
+    # wins over the heartbeat sample, as in the stage cells. Each verifier on
+    # a panel is its own dispatch, so the stage shows whichever has spent the
+    # most of its own estimate. It is spend against a typical dispatch, not
+    # completion: half of all dispatches finish past 100 by definition, so
+    # "high" starts at twice the median and only the heartbeat says outlier.
+    def live_uncached:
+      if .live_usage != null then
+        ((.live_usage.input_tokens // 0) + (.live_usage.output_tokens // 0))
+      elif .live_uncached_tokens == null then null
+      elif .live_total_tokens != null and .live_uncached_tokens > .live_total_tokens then null
+      else .live_uncached_tokens end;
     ($stages | map(. as $stage |
       role_estimate($stage.worker; "worker") as $w |
       role_estimate($stage.verifier; "verifier") as $v |
+      ({working: "worker", verifying: "verifier"}[$stage.phase // ""]) as $role |
       . + {estimate: {worker: $w, verifier: $v,
         total_uncached_tokens: (if $w == null or $v == null then null
-          else $w.uncached_tokens + $v.uncached_tokens end)}})) as $stages |
+          else $w.uncached_tokens + $v.uncached_tokens end)},
+        live_share: (if $role == null then null else
+          [$agents[] | select(.stage_id == $stage.id and .role == $role) |
+            (.identity // $stage[$role]) as $identity |
+            live_uncached as $live |
+            role_estimate($identity; $role) as $estimate |
+            select($live != null and $estimate != null and $estimate.uncached_tokens > 0) |
+            (($live * 100 / $estimate.uncached_tokens) | round) as $percent |
+            {role: $role, identity: $identity, percent: $percent,
+             live_uncached_tokens: $live,
+             estimate_uncached_tokens: $estimate.uncached_tokens,
+             basis: $estimate.basis, samples: $estimate.samples,
+             level: (if ((.flags // []) | index("token-outlier")) != null then "outlier"
+                     elif $percent >= 200 then "high" else "normal" end)}] |
+          max_by(.percent) end)})) as $stages |
     (if $current_run_id == null then null else {
       id:$current_run_id,
       started_at:$current_run_started_at,

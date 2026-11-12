@@ -370,6 +370,23 @@
       input: unknown || !inputKnown || !cachedKnown ? null : input, live: live};
   }
 
+  // What the running dispatch has spent so far against a typical one, inside
+  // the phase it belongs to: "working (40%)". It is not completion, and the
+  // title says so, because half of all dispatches finish past 100%.
+  function liveShareMarkup(share) {
+    if (!share || share.percent == null) return "";
+    var who = shortIdentity(share.identity) + " " + share.role;
+    var basis = share.basis === "model"
+      ? "median of " + fmtInt(share.samples) + " " + who + " dispatches here"
+      : "no " + who + " history here, so the median across " + share.role + " models";
+    var title = fmtInt(share.live_uncached_tokens) + " uncached tokens so far this dispatch, against a typical " +
+      fmtInt(share.estimate_uncached_tokens) + " (" + basis + "). Spend against a typical dispatch, " +
+      "not completion: half of all dispatches finish past 100%." +
+      (share.level === "outlier" ? " The heartbeat has flagged this dispatch as a token outlier." : "");
+    return ' <span class="live-share ' + esc(share.level || "normal") + '" title="' + esc(title) + '">(' +
+      fmtInt(share.percent) + "%)</span>";
+  }
+
   // The aggregator predicts each role once per stage, so every view that
   // shows a prediction shows the same figure.
   function uncachedPrediction(stage, role) {
@@ -1351,7 +1368,8 @@
                key: stageKey(row.repo, s.id), cells: [
         row.repo,
         { html: '<span class="caret">\u25b8</span> ' + esc(s.id), sort: s.id },
-        { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
+        { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) +
+            liveShareMarkup(s.live_share) + "</span>", sort: s.phase || s.status },
         stageRoleCell(byName[row.repo] || {}, s, "worker"),
         stageRoleCell(byName[row.repo] || {}, s, "verifier"),
         stageUsageTotal(byName[row.repo] || {}, s),

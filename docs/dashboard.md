@@ -181,6 +181,22 @@ adds and marks nothing. An SDK reading carries no cache reads, so its role
 shows no cached share until it settles. These sums are display only, and the
 charts continue to use settled figures only.
 
+The Status pill of a stage whose worker or verifier is running carries a live
+share, for example `working (40%)`: the uncached tokens the running dispatch
+has spent so far, from the same SDK or heartbeat reading, as a percentage of
+the stage's `estimate` for that role. It counts the running dispatch only, so
+a retry starts again from zero rather than inheriting earlier attempts. It is
+spend against a typical dispatch, not progress through the work: the estimate
+is a median, so half of all dispatches finish past 100%, and worker spend
+commonly ranges from half to twice the median. The share turns amber from
+200%, and red only when the heartbeat has flagged the dispatch as a token
+outlier, so the colour never disagrees with the outlier kill. Its title gives
+both figures and the basis of the prediction. A stage with no reading yet, no
+prediction, or no running role (`waiting`) shows no share. On a verifier
+panel, the panellist furthest past its own prediction speaks for the stage.
+The heartbeat samples once per tick, so the share moves in steps of a few
+minutes unless an SDK reading is present.
+
 The run totals strip above the Per stage table shows each visible repo's current
 run, completed-stage count, settled cost and token total. Tokens come from
 `current_run.tokens_total` plus live SDK usage or a counted transcript total for
@@ -425,7 +441,8 @@ fleet. The freshness marker therefore names the transport it is on, and
             "worker": {"uncached_tokens": 98000, "basis": "model", "samples": 12},
             "verifier": {"uncached_tokens": 61000, "basis": "role", "samples": null},
             "total_uncached_tokens": 159000
-          }
+          },
+          "live_share": null
         }
       ]
     }
@@ -466,6 +483,13 @@ and `samples: null`. A role with no history at all is `null`, and so is
 `total_uncached_tokens` unless both roles have a prediction. This is the
 `~predicted` figure the stage cells show; `spend.model_rates[].median_tokens`
 stays the processed median the Per model burn table shows.
+
+A stage's `live_share` is `null` unless its phase is `working` or `verifying`
+and an agent in that role has a reading and a prediction. Otherwise it is
+`{role, identity, percent, live_uncached_tokens, estimate_uncached_tokens,
+basis, samples, level}`, where `percent` is the rounded share and `level` is
+`normal`, `high` (200% or more) or `outlier` (the heartbeat's `token-outlier`
+flag). See Live figures above.
 
 `agents` is the live registration joined to the matching heartbeat row by
 PID; `live_usage` is present only when the registry carries an SDK figure

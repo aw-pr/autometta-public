@@ -203,6 +203,9 @@ table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .status.working         { background: rgba(88,166,255,.15); color: var(--accent); }
 .status.verifying       { background: rgba(163,113,247,.15); color: #a371f7; }
 .status.pending         { background: rgba(110,118,129,.15); color: var(--pending); }
+.status .live-share { font-weight: 500; opacity: .85; }
+.status .live-share.high { color: var(--stall); opacity: 1; font-weight: 600; }
+.status .live-share.outlier { color: var(--fail); opacity: 1; font-weight: 700; }
 
 .chart-wrap {
   position: relative;

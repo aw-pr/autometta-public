@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
 # AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # live-share-smoke.sh: the aggregator predicts each stage role in the measure
-# the stage cells show. No auth, no network, no token spend.
+# the stage cells show, and puts the running dispatch's spend against that
+# prediction beside the phase. No auth, no network, no token spend.
 #
 # What it asserts, against a fixture cost log whose cached reads dwarf its
-# uncached tokens:
+# uncached tokens and a registry of agents the heartbeat calls alive:
 #
 #   1. A role predicts from the median uncached tokens (input plus output) its
 #      model has spent per dispatch here, never the processed median.
 #   2. It counts only the samples that carry an uncached split.
 #   3. A model with no history here falls back to the middle of the per-model
 #      medians in that role, and says so.
-#   4. A repo with no history predicts nothing rather than a zero.
+#   4. A working stage shows its worker's live uncached tokens as a share of
+#      that prediction.
+#   5. A verifying stage counts only the running dispatch, never an earlier
+#      settled attempt, and reads high from twice the median.
+#   6. Only the heartbeat's own flag makes a share an outlier.
+#   7. On a panel, the verifier furthest past its own prediction speaks for
+#      the stage, and an SDK reading wins over the heartbeat sample.
+#   8. A waiting phase, a settled stage and an agent with no reading show no
+#      share at all.
+#   9. The web stage table draws the share inside the status, coloured by its
+#      level, with a title that says it is not completion, and sorts the
+#      column by status alone.
+#  10. A repo with no history predicts nothing rather than a zero.
 #
 # Exit 0 on all-pass, 1 on any assertion failure.
 set -euo pipefail
@@ -72,6 +85,46 @@ stages:
     verifier: "Never <never@local>"
 YAML
 cp "$repo/state/state.yaml" "$empty/state/state.yaml"
+cat >> "$repo/state/state.yaml" <<YAML
+  - id: 03-working
+    status: in_progress
+    worker: "$opus"
+    verifier: "$sol"
+    worker_pid: 4999901
+  - id: 04-verifying
+    status: in_progress
+    worker: "$opus"
+    verifier: "$sol"
+    verifier_pid: 4999902
+  - id: 05-outlier
+    status: in_progress
+    worker: "$terra"
+    verifier: "$sol"
+    worker_pid: 4999903
+  - id: 06-panel
+    status: in_progress
+    worker: "$opus"
+    verifier: "$sol"
+    verifier_pid: 4999904
+  - id: 07-waiting
+    status: in_progress
+    worker: "$opus"
+    verifier: "$sol"
+  - id: 08-no-reading
+    status: in_progress
+    worker: "$opus"
+    verifier: "$sol"
+    worker_pid: 4999908
+YAML
+
+# Process ids above the platform maximum, so no real process can answer to
+# them; the heartbeat's alive list is what keeps them on the board.
+mkdir -p "$repo/state/active-agents"
+agent() {
+  local pid="$1" stage_id="$2" role="$3" identity="$4" extra="${5:-}"
+  printf '{"pid":%s,"stage_id":"%s","role":"%s","family":"claude","identity":"%s","card_path":"stage-cards/%s.md","log_path":"","started_at":"%s","working_dir":"%s"%s}\n' \
+    "$pid" "$stage_id" "$role" "$identity" "$stage_id" "$now" "$repo" "$extra" > "$repo/state/active-agents/$pid.json"
+}
 
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 row() {
@@ -95,6 +148,30 @@ row verifier "$sol"  63000  7000
 # but must not count as an uncached sample.
 printf '{"ts":"%s","repo":"repo","stage_id":"history","role":"worker","identity":"%s","total_tokens":9000000,"cost_usd_est":1.0,"result":"pass"}\n' \
   "$now" "$opus" >> "$repo/state/cost-log.jsonl"
+
+# An earlier verifier attempt on 04 settled at the median; the running one
+# must not inherit it.
+printf '{"ts":"%s","repo":"repo","stage_id":"04-verifying","role":"verifier","identity":"%s","input_tokens":54000,"cached_input_tokens":5000000,"output_tokens":6000,"cost_usd_est":1.0,"result":"fail"}\n' \
+  "$now" "$sol" >> "$repo/state/cost-log.jsonl"
+
+agent 4999901 03-working   worker   "$opus"
+agent 4999902 04-verifying verifier "$sol"
+agent 4999903 05-outlier   worker   "$terra"
+agent 4999904 06-panel     verifier "$sol"
+agent 4999905 06-panel     verifier "Never <never@local>" ',"live_input_tokens":60000,"live_output_tokens":6000'
+agent 4999907 07-waiting   worker   "$opus"
+agent 4999908 08-no-reading worker  "$opus"
+cat > "$repo/state/heartbeat.json" <<JSON
+{"checked_at":"$now","entries":[
+ {"pid":4999901,"alive":true,"flags":[],"live_total_tokens":5120000,"live_uncached_tokens":120000,"live_uncached_input_tokens":100000},
+ {"pid":4999902,"alive":true,"flags":[],"live_total_tokens":5150000,"live_uncached_tokens":150000,"live_uncached_input_tokens":140000},
+ {"pid":4999903,"alive":true,"flags":["token-outlier"],"live_total_tokens":9500000,"live_uncached_tokens":1500000,"live_uncached_input_tokens":1400000},
+ {"pid":4999904,"alive":true,"flags":[],"live_total_tokens":2030000,"live_uncached_tokens":30000,"live_uncached_input_tokens":25000},
+ {"pid":4999905,"alive":true,"flags":[],"live_total_tokens":100,"live_uncached_tokens":10,"live_uncached_input_tokens":5},
+ {"pid":4999907,"alive":true,"flags":[],"live_total_tokens":5090000,"live_uncached_tokens":90000,"live_uncached_input_tokens":80000},
+ {"pid":4999908,"alive":true,"flags":[]}
+]}
+JSON
 
 payload="$("$script_dir/aggregate-dashboard.sh" --repo "$repo" 2>/dev/null)"
 [[ -n "$payload" ]] || { echo "FAIL: aggregator produced nothing" >&2; exit 1; }
@@ -123,7 +200,82 @@ check "and says the basis is the role" \
 check "with no sample count of its own" \
   "$(eq null "$(field "$(stage 02-new-models) | .estimate.worker.samples")")"
 
-printf '== 4. no history predicts nothing ==\n' >&2
+printf '== 4. a working stage shows its worker against the prediction ==\n' >&2
+check "120,000 of a typical 300,000 reads 40%" \
+  "$(eq 40 "$(field "$(stage 03-working) | .live_share.percent")")"
+check "the share names the worker" \
+  "$(eq worker "$(field "$(stage 03-working) | .live_share.role")")"
+check "it carries both figures it divided" \
+  "$(eq "120000/300000" "$(field "$(stage 03-working) | .live_share | \"\(.live_uncached_tokens)/\(.estimate_uncached_tokens)\"")")"
+check "and the basis and sample count behind the prediction" \
+  "$(eq "model/5" "$(field "$(stage 03-working) | .live_share | \"\(.basis)/\(.samples)\"")")"
+check "below twice the median it reads normal" \
+  "$(eq normal "$(field "$(stage 03-working) | .live_share.level")")"
+
+printf '== 5. a verifying stage counts only the running dispatch ==\n' >&2
+check "150,000 of a typical 60,000 reads 250%, without the settled attempt" \
+  "$(eq 250 "$(field "$(stage 04-verifying) | .live_share.percent")")"
+check "past twice the median it reads high" \
+  "$(eq high "$(field "$(stage 04-verifying) | .live_share.level")")"
+
+printf '== 6. only the heartbeat makes an outlier ==\n' >&2
+check "a flagged dispatch reads outlier" \
+  "$(eq outlier "$(field "$(stage 05-outlier) | .live_share.level")")"
+check "at 1,500% of its typical 100,000" \
+  "$(eq 1500 "$(field "$(stage 05-outlier) | .live_share.percent")")"
+
+printf '== 7. a panel shows the verifier furthest past its own prediction ==\n' >&2
+check "the SDK verifier at 66,000 of 60,000 speaks for the stage" \
+  "$(eq 110 "$(field "$(stage 06-panel) | .live_share.percent")")"
+check "named by its own identity, on the role's prediction" \
+  "$(eq "Never <never@local>/role" "$(field "$(stage 06-panel) | .live_share | \"\(.identity)/\(.basis)\"")")"
+
+printf '== 8. no phase, no reading, no share ==\n' >&2
+check "a waiting stage shows no share" \
+  "$(eq null "$(field "$(stage 07-waiting) | .live_share")")"
+check "an agent with no reading shows no share" \
+  "$(eq null "$(field "$(stage 08-no-reading) | .live_share")")"
+check "a settled stage shows no share" \
+  "$(eq null "$(field "$(stage 01-known-pair) | .live_share")")"
+
+printf '== 9. the web stage table draws the share inside the status ==\n' >&2
+web="$(printf '%s' "$payload" | AUTOMETTA_DASHBOARD_JS="$script_dir/../dashboard/dashboard.js" node -e '
+const fs = require("fs"), vm = require("vm");
+const repo = JSON.parse(fs.readFileSync(0, "utf8"));
+const context = vm.createContext({ window: { location: { protocol: "http:" } }, document: {} });
+const source = fs.readFileSync(process.env.AUTOMETTA_DASHBOARD_JS, "utf8");
+vm.runInContext(source.slice(0, source.lastIndexOf("  var first =")) + `
+  window.captureStages = function (repos) {
+    var captured;
+    renderPagedTable = function (id, headers, rows) { captured = { headers: headers, rows: rows }; };
+    renderStageOrder = function () {};
+    renderStagesTable(repos);
+    return captured;
+  };
+})();`, context);
+const table = context.window.captureStages([repo]);
+const column = table.headers.indexOf("Status");
+const out = {};
+table.rows.forEach(function (row) {
+  const cell = row.cells[column];
+  out[row.key.split("/").pop()] = { html: cell.html, text: cell.html.replace(/<[^>]*>/g, ""), sort: cell.sort };
+});
+process.stdout.write(JSON.stringify(out));
+' 2>&1)" || { printf '  FAIL: the stage table did not render (%s)\n' "$web" >&2; fail=1; web='{}'; }
+cell() { printf '%s' "$web" | jq -r --arg id "$1" ".[\$id].$2"; }
+check "a working stage reads 'working (40%)'" "$(eq "working (40%)" "$(cell 03-working text)")"
+check "a high share is marked high" \
+  "$([[ "$(cell 04-verifying html)" == *'class="live-share high"'* ]] && echo ok || cell 04-verifying html)"
+check "an outlier share is marked outlier" \
+  "$([[ "$(cell 05-outlier html)" == *'class="live-share outlier"'* ]] && echo ok || cell 05-outlier html)"
+check "the title says it is not completion" \
+  "$([[ "$(cell 03-working html)" == *'not completion'* ]] && echo ok || cell 03-working html)"
+check "the title gives both figures and the basis" \
+  "$([[ "$(cell 03-working html)" == *'120,000 uncached tokens so far this dispatch, against a typical 300,000 (median of 5 Opus worker dispatches here)'* ]] && echo ok || cell 03-working html)"
+check "a waiting stage reads 'waiting' alone" "$(eq waiting "$(cell 07-waiting text)")"
+check "the share does not move the column sort" "$(eq working "$(cell 03-working sort)")"
+
+printf '== 10. no history predicts nothing ==\n' >&2
 payload="$("$script_dir/aggregate-dashboard.sh" --repo "$empty" 2>/dev/null)"
 check "an empty repo predicts no worker figure" \
   "$(eq null "$(field "$(stage 01-known-pair) | .estimate.worker")")"
