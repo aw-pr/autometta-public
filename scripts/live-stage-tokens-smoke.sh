@@ -4,8 +4,13 @@
 # The payload is shaped like the emergence-lab --repo seam on 2026-10-11: a
 # live CLI agent carries stage_tokens and a burn series but no live_usage,
 # and an in-flight stage's settled figures come only from spend.by_stage.
-# The web dashboard's stage token cells and the TUI's run, agents and detail
-# panes are each driven directly. No auth, no network, no token spend.
+# The web dashboard's stage cells and the TUI's run, agents and detail panes
+# are each driven directly. No auth, no network, no token spend.
+#
+# Re-frozen 2026-11-12 with the operator's approval: the web half had come to
+# test stageTokenCells, which nothing drew once the table moved to uncached
+# role cells. It now drives the cells renderStagesTable draws, in the
+# uncached measure those cells show. The TUI half is unchanged.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -20,70 +25,73 @@ fail() {
 now_epoch="$(date -u +%s)"
 
 # AUTOMETTA-CONTRACT-BEGIN card=stage-cards/150-the-table-ticks-while-it-burns.md
-# 1. Web: an in-flight stage's token cells add the live figure to the running
-#    role's column and to the total, marked live; settled stages are as before.
+# 1. Web: an in-flight stage's drawn role and total cells add the live
+#    uncached figure to whatever has settled, marked live; settled stages are
+#    as before, an SDK reading wins, and an agent with no reading marks nothing.
 command -v node >/dev/null 2>&1 || fail "150: node is required for the dashboard assertions"
 node --check "$repo_root/dashboard/dashboard.js" || fail "150: dashboard.js does not parse"
 AUTOMETTA_DASHBOARD_JS="$repo_root/dashboard/dashboard.js" NOW="$now_epoch" node <<'NODE' || fail "150: the stages table does not tick"
 const fs = require("fs");
 const source = fs.readFileSync(process.env.AUTOMETTA_DASHBOARD_JS, "utf8");
 const defs = source.match(/\n  function \w+\([^)]*\) \{[\s\S]*?\n  \}(?=\n)/g) || [];
-if (!defs.some((d) => /\n  function stageTokenCells\(repo, stage\) \{/.test(d))) {
-  console.error("150: dashboard.js defines no top-level stageTokenCells(repo, stage)");
-  process.exit(1);
+for (const signature of ["stageRoleCell(repo, stage, role)", "stageUsageTotal(repo, stage)"]) {
+  if (!defs.some((d) => d.startsWith("\n  function " + signature + " {"))) {
+    console.error("150: dashboard.js defines no top-level " + signature);
+    process.exit(1);
+  }
 }
 const api = new Function("state", "charts", "document", "window",
-  defs.join("\n") + "\nreturn { stageTokenCells: stageTokenCells };")({}, {}, {}, {});
+  defs.join("\n") + "\nreturn { stageRoleCell: stageRoleCell, stageUsageTotal: stageUsageTotal };")({}, {}, {}, {});
 const html = (c) => (c && typeof c === "object" && c.html != null) ? String(c.html) : String(c == null ? "" : c);
-const text = (c) => html(c).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 const isLive = (c) => /class="[^"]*\blive\b[^"]*"/.test(html(c));
-const now = Number(process.env.NOW);
 const problems = [];
-const cellsOf = (repo, stage) => {
-  const cells = api.stageTokenCells(repo, stage);
-  if (!Array.isArray(cells) || cells.length !== 3) {
-    problems.push("stageTokenCells must return [worker, verifier, total] for " + stage.id);
-    return [null, null, null];
-  }
-  return cells;
-};
+const cellsOf = (repo, stage) =>
+  [api.stageRoleCell(repo, stage, "worker"), api.stageRoleCell(repo, stage, "verifier"), api.stageUsageTotal(repo, stage)];
 
 const working = { id: "03-working", status: "in_progress", tokens: 0, worker_tokens: null, verifier_tokens: null };
-const workerRepo = { name: "lab", spend: { by_stage: [], failures: [] }, stages: [working],
-  agents: [{ stage_id: "03-working", role: "worker", stage_tokens: 8151781, stage_tokens_status: "counted", live_usage: null }] };
+const workerRepo = { name: "lab", spend: { by_stage: [], failures: [], role_usage: [] }, stages: [working],
+  agents: [{ stage_id: "03-working", role: "worker", stage_tokens: 8151781, stage_tokens_status: "counted", live_usage: null,
+             live_total_tokens: 8151781, live_uncached_tokens: 151781, live_uncached_input_tokens: 120000 }] };
 let [w, v, t] = cellsOf(workerRepo, working);
-if (!/8,151,781/.test(text(w)) || !isLive(w)) problems.push("a live worker's column should read 8,151,781 marked live, got '" + text(w) + "'");
-if (isLive(v)) problems.push("the idle verifier column must not be marked live");
-if (!/8,151,781/.test(text(t)) || !isLive(t)) problems.push("the total should include the live worker figure, marked live, got '" + text(t) + "'");
+if (w.sort !== 151781 || !isLive(w) || !/151,781 uncached tokens/.test(html(w)))
+  problems.push("a live worker's cell should count 151,781 uncached marked live, got " + w.sort);
+if (isLive(v)) problems.push("the idle verifier cell must not be marked live");
+if (t.sort !== 151781 || !isLive(t)) problems.push("the total should include the live worker figure, marked live, got " + t.sort);
 
 const verifying = { id: "02-verifying", status: "in_progress", tokens: 0, worker_tokens: null, verifier_tokens: null };
 const done = { id: "01-done", status: "completed", tokens: 20715099, worker_tokens: 17619762, verifier_tokens: 3095337 };
-const verifierRepo = { name: "lab", spend: { by_stage: [{ stage_id: "02-verifying", tokens: 2477447 }], failures: [] },
+const verifierRepo = { name: "lab", spend: { by_stage: [], failures: [], role_usage: [
+    { stage_id: "02-verifying", role: "worker", input_tokens: 2000000, cached_input_tokens: 15000000, output_tokens: 477447 },
+    { stage_id: "01-done", role: "worker", input_tokens: 600000, cached_input_tokens: 17000000, output_tokens: 19762 },
+    { stage_id: "01-done", role: "verifier", input_tokens: 90000, cached_input_tokens: 3000000, output_tokens: 5337 }] },
   stages: [done, verifying],
-  agents: [{ stage_id: "02-verifying", role: "verifier", stage_tokens: 2500000, stage_tokens_status: "counted", live_usage: null }] };
+  agents: [{ stage_id: "02-verifying", role: "verifier", stage_tokens: 2500000, stage_tokens_status: "counted", live_usage: null,
+             live_total_tokens: 2500000, live_uncached_tokens: 500000, live_uncached_input_tokens: 450000 }] };
 [w, v, t] = cellsOf(verifierRepo, verifying);
-if (!/2,500,000/.test(text(v)) || !isLive(v)) problems.push("a live verifier's column should read 2,500,000 marked live, got '" + text(v) + "'");
-if (isLive(w)) problems.push("the finished worker's column must not be marked live");
-if (!/4,977,447/.test(text(t)) || !isLive(t)) problems.push("the total should be settled 2,477,447 plus live 2,500,000, got '" + text(t) + "'");
+if (v.sort !== 500000 || !isLive(v)) problems.push("a live verifier's cell should count 500,000 marked live, got " + v.sort);
+if (w.sort !== 2477447 || isLive(w)) problems.push("the finished worker's cell should keep its settled 2,477,447 unmarked, got " + w.sort);
+if (t.sort !== 2977447 || !isLive(t)) problems.push("the total should be settled 2,477,447 plus live 500,000, got " + t.sort);
 
 [w, v, t] = cellsOf(verifierRepo, done);
-if (!/17,619,762/.test(text(w)) || !/3,095,337/.test(text(v)) || !/20,715,099/.test(text(t)))
-  problems.push("a completed stage must keep its recorded figures, got " + [w, v, t].map(text).join(" / "));
+if (w.sort !== 619762 || v.sort !== 95337 || t.sort !== 715099)
+  problems.push("a completed stage must keep its recorded figures, got " + [w.sort, v.sort, t.sort].join(" / "));
 if ([w, v, t].some(isLive)) problems.push("a completed stage must carry no live mark");
 
-const sdkRepo = { name: "lab", spend: { by_stage: [], failures: [] }, stages: [working],
+const sdkRepo = { name: "lab", spend: { by_stage: [], failures: [], role_usage: [] }, stages: [working],
   agents: [{ stage_id: "03-working", role: "worker", stage_tokens: 99, stage_tokens_status: "counted",
+             live_total_tokens: 5000, live_uncached_tokens: 400, live_uncached_input_tokens: 300,
              live_usage: { input_tokens: 1000, output_tokens: 234, updated_at: "2026-10-11T12:00:00Z" } }] };
 [w, v, t] = cellsOf(sdkRepo, working);
-if (!/1,234/.test(text(w)) || !isLive(w)) problems.push("an SDK figure should win over the transcript total, got '" + text(w) + "'");
+if (w.sort !== 1234 || !isLive(w)) problems.push("an SDK reading should win over the heartbeat and transcript, got " + w.sort);
 
-const waitingRepo = { name: "lab", spend: { by_stage: [], failures: [] }, stages: [working],
+const waitingRepo = { name: "lab", spend: { by_stage: [], failures: [], role_usage: [] }, stages: [working],
   agents: [{ stage_id: "03-working", role: "worker", stage_tokens: null, stage_tokens_status: "waiting", live_usage: null }] };
 [w, v, t] = cellsOf(waitingRepo, working);
-if ([w, v, t].some(isLive)) problems.push("an agent with no figure yet must not be marked live");
+if ([w, v, t].some(isLive)) problems.push("an agent with no reading yet must not be marked live");
+if (w.sort !== 0) problems.push("an agent with no reading yet must add nothing, got " + w.sort);
 
-if (!/function renderStagesTable\(repos\) \{[\s\S]*?stageTokenCells\(/.test(source))
-  problems.push("renderStagesTable does not use stageTokenCells");
+if (!/function renderStagesTable\(repos\) \{[\s\S]*?stageRoleCell\([\s\S]*?stageUsageTotal\(/.test(source))
+  problems.push("renderStagesTable does not draw stageRoleCell and stageUsageTotal");
 if (problems.length) { console.error("150: " + problems.join("; ")); process.exit(1); }
 NODE
 # 2. TUI: the run row totals settled plus live, the agents row shows the

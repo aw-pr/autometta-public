@@ -197,7 +197,7 @@
     // Absent is the other case and stays truthful: a repo with no cost log
     // really has spent nothing, carries no state_error, and still counts zero.
     if (spend.state_error) {
-      return { worker: null, verifier: null, total: null, logged: false, unavailable: true };
+      return { worker: null, verifier: null, total: null };
     }
     var worker = Number(stage.worker_tokens || 0);
     var verifier = Number(stage.verifier_tokens || 0);
@@ -216,10 +216,10 @@
         else if (row.role === "verifier") verifier += n;
       });
       return {worker: unknown.worker ? null : worker, verifier: unknown.verifier ? null : verifier,
-        total: unknown.worker || unknown.verifier ? null : worker + verifier, logged: true};
+        total: unknown.worker || unknown.verifier ? null : worker + verifier};
     }
     if (total || worker || verifier) {
-      return { worker: worker, verifier: verifier, total: total || worker + verifier, logged: false };
+      return { worker: worker, verifier: verifier, total: total || worker + verifier };
     }
     (spend.by_stage || []).forEach(function (row) {
       if (row.stage_id === stage.id) logged += Number(row.tokens || 0);
@@ -231,7 +231,7 @@
       else worker += lost;
     });
     total = logged || worker + verifier;
-    return { worker: worker, verifier: verifier, total: total, logged: total > 0 };
+    return { worker: worker, verifier: verifier, total: total };
   }
 
   function liveAgentTokens(agent) {
@@ -252,17 +252,6 @@
       return isFinite(heartbeatTokens) ? heartbeatTokens : null;
     }
     return null;
-  }
-
-  // The predicted figure sits in brackets after the actual one, so a queued
-  // stage reads "0 (~1.2M)" and a finished one shows how far it strayed.
-  function estimateSuffix(estimate, role) {
-    if (!estimate || estimate[role] == null) return "";
-    var basis = estimate.basis === "model"
-      ? "median of this model's past dispatches in this repo"
-      : "no history for this model here: median across models in the role";
-    return ' <span class="est" title="predicted: ' + esc(basis) + '">(~' +
-      compactTokens(estimate[role]) + ")</span>";
   }
 
   // One rate per model across the visible repos and both roles, weighted by
@@ -294,13 +283,11 @@
     var costs = rates.map(function (r) { return r.cost_usd_per_min; })
       .filter(function (c) { return c != null; }).sort(function (a, b) { return a - b; });
     var mid = costs.length ? costs[Math.floor(costs.length / 2)] : null;
-    var byIdentity = Object.create(null);
     rates.forEach(function (r) {
       r.relative = (mid && r.cost_usd_per_min != null) ? r.cost_usd_per_min / mid : null;
       r.heat = r.relative == null ? "" : r.relative >= 1.5 ? "hot" : r.relative <= 0.67 ? "cool" : "warm";
-      byIdentity[r.identity] = r;
     });
-    return { list: rates, byIdentity: byIdentity };
+    return rates;
   }
 
   function burnBadge(rate) {
@@ -312,42 +299,6 @@
       " (" + rate.samples + " dispatches)";
     return ' <span class="burn-rate ' + esc(rate.heat) + '" title="' + esc(title) + '">' +
       compactTokens(rate.tokens_per_min) + "/min</span>";
-  }
-
-  function identityCell(identity, rates) {
-    if (!identity) return shortIdentity(identity);
-    return { html: esc(shortIdentity(identity)) + burnBadge(rates.byIdentity[identity]), sort: shortIdentity(identity) };
-  }
-
-  function stageTokenCells(repo, stage) {
-    var spend = stageSpend(repo, stage);
-    var liveByRole = { worker: 0, verifier: 0 };
-    var hasLive = { worker: false, verifier: false };
-    (repo.agents || []).forEach(function (agent) {
-      if (agent.stage_id !== stage.id ||
-          !Object.prototype.hasOwnProperty.call(liveByRole, agent.role)) return;
-      var tokens = liveAgentTokens(agent);
-      if (tokens == null) return;
-      liveByRole[agent.role] += tokens;
-      hasLive[agent.role] = true;
-    });
-    var liveTotal = liveByRole.worker + liveByRole.verifier;
-    var mark = spend.logged ? "*" : "";
-    var estimate = stage.estimate || null;
-    var spendTitle = spend.unavailable
-      ? ' title="' + esc((repo.spend || {}).state_error) + '"' :
-        spend.logged ? ' title="Recorded dispatch totals, including earlier attempts and cached reads"' : "";
-    return ["worker", "verifier", "total"].map(function (role) {
-      var live = role === "total" ? hasLive.worker || hasLive.verifier : hasLive[role];
-      var extra = role === "total" ? liveTotal : liveByRole[role];
-      var value = spend[role];
-      if (live) value = Number(value || 0) + extra;
-      return {
-        html: '<span' + (live ? ' class="live"' : "") + spendTitle + ">" +
-          fmtInt(value) + mark + "</span>" + estimateSuffix(estimate, role),
-        cls: "num", sort: value
-      };
-    });
   }
 
   // Standard-speed credit equivalents, not debits or included subscription usage.
@@ -470,7 +421,7 @@
     return ' <span class="usage-muted role-effort" title="' + esc(title) + '">(' + value + ')</span>';
   }
 
-  function stageRoleCell(repo, stage, role, tokenCell) {
+  function stageRoleCell(repo, stage, role) {
     var rows = roleUsage(repo, stage, role);
     var complete = rows.length && rows.every(function (r) {
       return r.input_tokens != null && r.cached_input_tokens != null && r.output_tokens != null;
@@ -1392,7 +1343,6 @@
     repos.forEach(function (r) { byName[r.name] = r; });
     var cells = rows.map(function (row) {
       var s = row.stage;
-      var tokenCells = stageTokenCells(byName[row.repo] || {}, s);
       var cardPath = s.card || ("stage-cards/" + s.id + ".md");
       // The same answer the TUI's detail pane gives: the card is the prompt the
       // worker was handed, so "why did it do that" is usually read from it
@@ -1406,8 +1356,8 @@
         row.repo,
         { html: '<span class="caret">\u25b8</span> ' + esc(s.id), sort: s.id },
         { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
-        stageRoleCell(byName[row.repo] || {}, s, "worker", tokenCells[0]),
-        stageRoleCell(byName[row.repo] || {}, s, "verifier", tokenCells[1]),
+        stageRoleCell(byName[row.repo] || {}, s, "worker"),
+        stageRoleCell(byName[row.repo] || {}, s, "verifier"),
         stageUsageTotal(byName[row.repo] || {}, s),
         s.started_at || "",
         s.completed_at || ""
@@ -1548,7 +1498,7 @@
   }
 
   function renderBurnTable(repos) {
-    var rates = modelBurnRates(repos).list.sort(function (a, b) {
+    var rates = modelBurnRates(repos).sort(function (a, b) {
       return (b.cost_usd_per_min || 0) - (a.cost_usd_per_min || 0);
     });
     var rows = rates.map(function (r) {

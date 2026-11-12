@@ -62,7 +62,7 @@ AUTOMETTA_DASHBOARD_JS="$script_dir/../dashboard/dashboard.js" node <<'JS'
 const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
 const context = vm.createContext({window:{location:{protocol:'http:'}}, document:{}});
 const source = fs.readFileSync(process.env.AUTOMETTA_DASHBOARD_JS,'utf8');
-vm.runInContext(source.slice(0,source.lastIndexOf('  var first =')) + '\nwindow.test = {creditEquivalent, stageRoleCell, stageTokenCells, stageUsageDetails, subscriptionText, roleTokenSplit, stageUsageTotal, roleEffortLabel};})();',context);
+vm.runInContext(source.slice(0,source.lastIndexOf('  var first =')) + '\nwindow.test = {creditEquivalent, stageRoleCell, stageUsageDetails, subscriptionText, roleTokenSplit, stageUsageTotal, roleEffortLabel};})();',context);
 const api = context.window.test;
 const effortCard = {card_text:'- **Worker effort:** high\n- **Verifier effort:** medium'};
 assert.match(api.roleEffortLabel(effortCard,'worker'),/\(high\)/);
@@ -78,19 +78,17 @@ assert.equal(api.creditEquivalent({...row,auth_route:'api'}),null);
 assert.equal(api.creditEquivalent({...row,output_tokens:null}),null);
 const repo = {spend:{role_usage:[row],model_rates:[{identity:row.identity,role:'worker',median_uncached_tokens:2500000}]}};
 const stage = {id:'test',worker:row.identity,worker_tokens:1000,tokens:1000,estimate:{worker:5000000}};
-let cells = api.stageTokenCells(repo,stage);
-const html = api.stageRoleCell(repo,stage,'worker',cells[0]).html;
+const html = api.stageRoleCell(repo,stage,'worker').html;
 assert.match(html,/>2M</);
 assert.match(html,/~2.5M/);
 assert.match(html,/\+10M cache \(91%\)/);
 assert.match(html,/325.0 credits eq/);
 assert.match(api.stageUsageDetails(repo,stage),/Subscription impact unavailable/);
 assert.doesNotMatch(api.stageUsageDetails(repo,stage),/0 pp/);
-assert.equal(api.stageRoleCell(repo,stage,'worker',cells[0]).sort,2000000);
+assert.equal(api.stageRoleCell(repo,stage,'worker').sort,2000000);
 const unknown = {spend:{role_usage:[{...row,input_tokens:null,cached_input_tokens:null,output_tokens:null,total_tokens:null}]}};
-cells = api.stageTokenCells(unknown,stage);
-assert.equal(cells[0].sort,null);
-assert.match(api.stageRoleCell(unknown,stage,'worker',cells[0]).html,/Breakdown unavailable/);
+assert.equal(api.stageRoleCell(unknown,stage,'worker').sort,null);
+assert.match(api.stageRoleCell(unknown,stage,'worker').html,/Breakdown unavailable/);
 const live = {...repo,agents:[{stage_id:'test',role:'worker',live_total_tokens:5000000,live_uncached_tokens:100000,live_uncached_input_tokens:50000}]};
 assert.equal(api.roleTokenSplit(live,stage,'worker').uncached,2100000);
 assert.equal(api.roleTokenSplit(live,stage,'worker').cached,14900000);
@@ -105,7 +103,7 @@ const sdk = api.roleTokenSplit({...repo,agents:[{stage_id:'test',role:'worker',l
 assert.equal(sdk.live,true);
 assert.equal(sdk.uncached,2001234,'an SDK reading adds its input plus output');
 assert.equal(sdk.cached,null,'an SDK reading carries no cache reads, so the cached share is unknown');
-assert.doesNotMatch(api.stageRoleCell({spend:{role_usage:[row]}},stage,'worker',cells[0]).html,/~5M/,
+assert.doesNotMatch(api.stageRoleCell({spend:{role_usage:[row]}},stage,'worker').html,/~5M/,
   'a total-token prediction must never appear beside uncached actuals');
 console.log('PASS cache-aware credit equivalents, unknown history, compact role rendering and numeric sorting');
 JS

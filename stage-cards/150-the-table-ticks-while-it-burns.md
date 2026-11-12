@@ -135,7 +135,7 @@ The verifier will check each of these. Failure of any one is a failure of the st
 ## Contract test
 
 - **Test file:** scripts/live-stage-tokens-smoke.sh
-- **Assertions digest:** `sha256:6a16655011ef80689fcff949e895863caa9dacf03b8aac9f78506f7f9cf275ff`
+- **Assertions digest:** `sha256:5e5ea9740187b5aa86b3d3c3a64ebdc3e12312a7d7b9f11440b974031aaf1085`
 
 The orchestrator authored the frozen block on 2026-10-11 from the
 emergence-lab `--repo` seam of that afternoon. It fails today at its first
@@ -144,6 +144,17 @@ on the `n/a` agents row. A throwaway reference implementation (not
 committed) passed every block, and with deliverable 4's two fixture edits
 kept `tui-smoke.sh`, `agent-burn-smoke.sh`, `agent-activity-smoke.sh` and
 both dashboard smokes green.
+
+Re-frozen on 2026-11-12 with the operator's approval. The stages table had
+since moved to uncached role cells (`stageRoleCell`, `stageUsageTotal`), so
+`stageTokenCells` was still built on every refresh but never drawn, and the
+original web assertions tested that unused function. The web half now drives
+the drawn cells in the uncached measure they show, live from the heartbeat's
+paired sample or an SDK reading, and keeps this card's rules: settled plus
+live, marked live, settled stages unchanged, an SDK reading wins, and an
+agent with no reading adds and marks nothing. The TUI half is unchanged. The
+2026-10-11 digest was
+`6a16655011ef80689fcff949e895863caa9dacf03b8aac9f78506f7f9cf275ff`.
 
 ## Out of scope
 

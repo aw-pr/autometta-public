@@ -172,12 +172,14 @@ For a CLI dispatch it instead uses the transcript total and the agent's `burn`
 object, or shows `waiting` / `n/a` when no count is available rather than
 treating absence as zero.
 
-While a stage is in flight, its stages-table role column adds that live SDK or
-transcript figure to the settled figure, and the total column does the same.
-Both cells carry a `live` label. A role without a figure adds and marks
-nothing. These sums are display only: the settled source, unavailable title
-and cost-log `*` mark are unchanged, and the charts continue to use settled
-figures only.
+While a stage is in flight, its stages-table role column adds the live
+uncached figure to the settled one, and the total column does the same. The
+figure is the SDK's input plus output when present, else the heartbeat's
+paired uncached sample; a transcript's processed total never reaches these
+cells. Both cells carry a `live` label. A role whose agent has no reading yet
+adds and marks nothing. An SDK reading carries no cache reads, so its role
+shows no cached share until it settles. These sums are display only, and the
+charts continue to use settled figures only.
 
 The run totals strip above the Per stage table shows each visible repo's current
 run, completed-stage count, settled cost and token total. Tokens come from

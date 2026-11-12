@@ -153,8 +153,6 @@ table.stages th { color: var(--muted); font-weight: 500; }
 }
 .sort-controls button:disabled { opacity: .4; cursor: default; }
 table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
-table.stages td.num .live { color: var(--accent); font-weight: 600; }
-table.stages .est { color: var(--muted); font-size: 0.8rem; }
 #panel-models .panel-note { margin-top: 2.5rem; }
 .burn-rate {
   font-size: 0.72rem;
@@ -167,12 +165,6 @@ table.stages .est { color: var(--muted); font-size: 0.8rem; }
 .burn-rate.hot { color: var(--fail); border-color: var(--fail); }
 .burn-rate.warm { color: var(--stall); border-color: var(--stall); }
 .burn-rate.cool { color: var(--accent); border-color: var(--accent); }
-table.stages td.num .live::after {
-  content: " live";
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 500;
-}
 
 .burn-cell {
   display: grid;
