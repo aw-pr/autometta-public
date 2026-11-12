@@ -47,6 +47,7 @@ One line per memory file. Keep entries <=150 chars: `- [Title](file.md): one-lin
 - [Sweep stage design](decision-sweep-stage.md): opt-in parallel exploration, synthesis as worker, worktrees; design only, not built (stage 20).
 - [Remote monitoring contract](decision-remote-monitoring.md): hosted routines file PRs only; no dispatch authority; three surfaces - stage 21.
 - [Codex SDK runs on the subscription](project-codex-sdk-subscription-auth.md): openai-codex reuses chatgpt auth.json; openai-agents are key-only.
+- [Branch archive 2026-11-12](project-branch-archive-2026-11-12.md): pruned branches, incl. ledger wip_branch refs, are in a bundle.
 
 ## Adopter findings
 
