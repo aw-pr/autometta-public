@@ -681,6 +681,7 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
           samples: ($model_rows | length),
           median_tokens: ([$model_rows[] | dispatch_tokens] | median | round),
           median_uncached_tokens: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null) | .input_tokens + .output_tokens] | median),
+          uncached_samples: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null)] | length),
           tokens_per_min: ([$timed[] | dispatch_tokens * 60 / .wall_clock_s] | median |
             if . == null then null else round end),
           cost_usd_per_min: ([$timed[] | dispatch_cost * 60 / .wall_clock_s] | median)}]),
@@ -797,30 +798,27 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson vendor_files_current "$vendor_files_current" --argjson vendor_drifted "$vendor_drifted" \
     --argjson build_check "$build_check" '
     input as $spend |
-    # A stage estimate is the median the named model has spent in that role
-    # before; a model this repo has never run falls back to the role median
-    # across models, and a role with no history at all stays null rather than
-    # guessing a zero.
+    # A stage estimate is the median uncached tokens (input plus output) the
+    # named model has spent per dispatch in that role here, the same measure
+    # the stage cells show. A model with no history here falls back to the
+    # middle of the per-model medians in that role, and a role with no
+    # history at all stays null rather than guessing a zero.
     ($spend.model_rates // []) as $rates |
     def role_median($role):
-      [$rates[] | select(.role == $role) | .median_tokens] | sort |
+      [$rates[] | select(.role == $role and .median_uncached_tokens != null) | .median_uncached_tokens] | sort |
       if length == 0 then null else .[(length / 2) | floor] end;
     def role_estimate($identity; $role):
-      if $identity == null then null else
-        ([$rates[] | select(.identity == $identity and .role == $role)][0]) as $hit |
-        if $hit != null then {tokens: $hit.median_tokens, basis: "model", samples: $hit.samples}
-        else (role_median($role)) as $fallback |
-          if $fallback == null then null else {tokens: $fallback, basis: "role", samples: 0} end
-        end
+      ([$rates[] | select(.identity == $identity and .role == $role and .median_uncached_tokens != null)][0]) as $hit |
+      if $hit != null then {uncached_tokens: $hit.median_uncached_tokens, basis: "model", samples: $hit.uncached_samples}
+      else (role_median($role)) as $fallback |
+        if $fallback == null then null else {uncached_tokens: $fallback, basis: "role", samples: null} end
       end;
     ($stages | map(. as $stage |
       role_estimate($stage.worker; "worker") as $w |
       role_estimate($stage.verifier; "verifier") as $v |
-      . + {estimate: (if $w == null and $v == null then null else
-        {worker: ($w.tokens // null), verifier: ($v.tokens // null),
-         total: (($w.tokens // 0) + ($v.tokens // 0)),
-         basis: (if ($w.basis // "model") == "model" and ($v.basis // "model") == "model"
-                 then "model" else "role" end)} end)})) as $stages |
+      . + {estimate: {worker: $w, verifier: $v,
+        total_uncached_tokens: (if $w == null or $v == null then null
+          else $w.uncached_tokens + $v.uncached_tokens end)}})) as $stages |
     (if $current_run_id == null then null else {
       id:$current_run_id,
       started_at:$current_run_started_at,

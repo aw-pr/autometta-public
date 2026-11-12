@@ -76,8 +76,9 @@ assert.equal(api.creditEquivalent(row),325);
 assert.equal(api.creditEquivalent({...row,identity:'unknown'}),null);
 assert.equal(api.creditEquivalent({...row,auth_route:'api'}),null);
 assert.equal(api.creditEquivalent({...row,output_tokens:null}),null);
-const repo = {spend:{role_usage:[row],model_rates:[{identity:row.identity,role:'worker',median_uncached_tokens:2500000}]}};
-const stage = {id:'test',worker:row.identity,worker_tokens:1000,tokens:1000,estimate:{worker:5000000}};
+const repo = {spend:{role_usage:[row]}};
+const stage = {id:'test',worker:row.identity,worker_tokens:1000,tokens:1000,
+  estimate:{worker:{uncached_tokens:2500000,basis:'model',samples:4},verifier:null,total_uncached_tokens:null}};
 const html = api.stageRoleCell(repo,stage,'worker').html;
 assert.match(html,/>2M</);
 assert.match(html,/~2.5M/);
@@ -103,7 +104,7 @@ const sdk = api.roleTokenSplit({...repo,agents:[{stage_id:'test',role:'worker',l
 assert.equal(sdk.live,true);
 assert.equal(sdk.uncached,2001234,'an SDK reading adds its input plus output');
 assert.equal(sdk.cached,null,'an SDK reading carries no cache reads, so the cached share is unknown');
-assert.doesNotMatch(api.stageRoleCell({spend:{role_usage:[row]}},stage,'worker').html,/~5M/,
-  'a total-token prediction must never appear beside uncached actuals');
+assert.doesNotMatch(api.stageRoleCell({spend:{role_usage:[row]}},{...stage,estimate:{worker:5000000}},'worker').html,/~5M/,
+  'a bare number is not an uncached estimate and must never appear beside uncached actuals');
 console.log('PASS cache-aware credit equivalents, unknown history, compact role rendering and numeric sorting');
 JS

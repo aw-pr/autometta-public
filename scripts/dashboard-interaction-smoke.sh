@@ -125,9 +125,9 @@ assert.equal(api.sortRows(renderedStages.rows, [{col: 6, dir: 'desc'}]).slice(0,
 assert.equal(renderedStages.headers[6], 'Started', 'the timestamp is labelled as start time');
 
 const numeric = api.stageRoleCell({spend: {
-  role_usage: [{stage_id: 's', role: 'worker', input_tokens: 10, cached_input_tokens: 0, output_tokens: 10}],
-  model_rates: [{identity: 'w', role: 'worker', median_uncached_tokens: 9000000}]}},
-  {id: 's', worker: 'w', tokens: 20, worker_tokens: 20}, 'worker');
+  role_usage: [{stage_id: 's', role: 'worker', input_tokens: 10, cached_input_tokens: 0, output_tokens: 10}]}},
+  {id: 's', worker: 'w', tokens: 20, worker_tokens: 20,
+   estimate: {worker: {uncached_tokens: 9000000, basis: 'model', samples: 3}}}, 'worker');
 assert.match(numeric.html, /~9M/, 'the fixture shows its prediction beside the actual');
 assert.equal(api.sortRows([[numeric], [{html: '100', sort: 100}]], [{col: 0, dir: 'asc'}])[0][0], numeric,
   'sort actual token counts, not predictions');

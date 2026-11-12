@@ -370,14 +370,11 @@
       input: unknown || !inputKnown || !cachedKnown ? null : input, live: live};
   }
 
-  function uncachedPrediction(repo, stage, role) {
-    var rates = ((repo.spend || {}).model_rates || []).filter(function (r) {
-      return r.role === role && r.median_uncached_tokens != null;
-    });
-    var match = rates.filter(function (r) { return r.identity === stage[role]; })[0];
-    if (match) return match.median_uncached_tokens;
-    var values = rates.map(function (r) { return r.median_uncached_tokens; }).sort(function (a, b) { return a - b; });
-    return values.length ? values[Math.floor(values.length / 2)] : null;
+  // The aggregator predicts each role once per stage, so every view that
+  // shows a prediction shows the same figure.
+  function uncachedPrediction(stage, role) {
+    var estimate = (stage.estimate || {})[role];
+    return estimate ? estimate.uncached_tokens : null;
   }
 
   function usageTokenMarkup(split, prediction) {
@@ -396,12 +393,11 @@
 
   function stageUsageTotal(repo, stage) {
     var w = roleTokenSplit(repo, stage, "worker"), v = roleTokenSplit(repo, stage, "verifier");
-    var wp = uncachedPrediction(repo, stage, "worker"), vp = uncachedPrediction(repo, stage, "verifier");
     var total = w.uncached == null || v.uncached == null ? null : w.uncached + v.uncached;
     return {html: '<div class="role-usage">' + usageTokenMarkup({uncached: total,
       cached: w.cached == null || v.cached == null ? null : w.cached + v.cached,
       input: w.input == null || v.input == null ? null : w.input + v.input, live: w.live || v.live},
-      wp == null || vp == null ? null : wp + vp) + '</div>', sort: total, cls: 'usage-total-cell'};
+      (stage.estimate || {}).total_uncached_tokens) + '</div>', sort: total, cls: 'usage-total-cell'};
   }
 
   function roleEffortLabel(stage, role) {
@@ -429,7 +425,7 @@
     var lines = ['<span class="role-model"><strong>' + esc(shortIdentity(stage[role])) + '</strong>' + roleEffortLabel(stage, role) + '</span>'];
     var split = roleTokenSplit(repo, stage, role);
     var count = split.uncached, live = split.live;
-    lines.push(usageTokenMarkup(split, uncachedPrediction(repo, stage, role)));
+    lines.push(usageTokenMarkup(split, uncachedPrediction(stage, role)));
     if (complete) {
       var credits = rows.map(creditEquivalent);
       if (credits.every(function (n) { return n != null; })) {

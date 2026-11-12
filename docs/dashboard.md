@@ -420,7 +420,12 @@ fleet. The freshness marker therefore names the transport it is on, and
           "tokens": 142672,
           "worker_tokens": 117339,
           "verifier_tokens": 25333,
-          "verifier_overall": "PASS"
+          "verifier_overall": "PASS",
+          "estimate": {
+            "worker": {"uncached_tokens": 98000, "basis": "model", "samples": 12},
+            "verifier": {"uncached_tokens": 61000, "basis": "role", "samples": null},
+            "total_uncached_tokens": 159000
+          }
         }
       ]
     }
@@ -451,6 +456,16 @@ fleet. The freshness marker therefore names the transport it is on, and
 The per-stage `tokens` / `worker_tokens` / `verifier_tokens` fields are
 **additive**: older `state.yaml` files without them parse to `0` /
 `null` and continue to render.
+
+A stage's `estimate` predicts each role in uncached tokens (input plus output,
+cache writes included) per dispatch: the median for that model in that role
+in this repo's cost log, counting only dispatches with an uncached split, with
+`basis: "model"` and that sample count. A model with no history here falls
+back to the middle of the per-model medians in the role, with `basis: "role"`
+and `samples: null`. A role with no history at all is `null`, and so is
+`total_uncached_tokens` unless both roles have a prediction. This is the
+`~predicted` figure the stage cells show; `spend.model_rates[].median_tokens`
+stays the processed median the Per model burn table shows.
 
 `agents` is the live registration joined to the matching heartbeat row by
 PID; `live_usage` is present only when the registry carries an SDK figure
