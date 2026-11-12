@@ -385,7 +385,7 @@
 
   function roleTokenSplit(repo, stage, role) {
     var rows = roleUsage(repo, stage, role);
-    var uncached = 0, cached = 0, input = 0, live = false, inputKnown = true;
+    var uncached = 0, cached = 0, input = 0, live = false, inputKnown = true, cachedKnown = true;
     var unknown = !!(repo.spend || {}).state_error;
     rows.forEach(function (r) {
       if (r.input_tokens == null || r.output_tokens == null || r.cached_input_tokens == null) unknown = true;
@@ -396,7 +396,17 @@
         (recorded.total > 0 && !recorded.worker && !recorded.verifier))) unknown = true;
     (repo.agents || []).forEach(function (a) {
       if (a.stage_id !== stage.id || a.role !== role) return;
+      // An agent with no reading yet adds and marks nothing: absence is not
+      // a figure, and a live "?" would hide what earlier attempts settled.
+      if (!a.live_usage && a.live_uncached_tokens == null && a.live_total_tokens == null) return;
       live = true;
+      if (a.live_usage) {
+        // An SDK verifier counts input and output as it goes but reports no
+        // cache reads, so its cached share stays unknown.
+        uncached += Number(a.live_usage.input_tokens || 0) + Number(a.live_usage.output_tokens || 0);
+        cachedKnown = false;
+        return;
+      }
       if (a.live_uncached_input_tokens == null) inputKnown = false;
       else input += a.live_uncached_input_tokens;
       // Both heartbeat fields describe the same sample. Mixing a newer
@@ -405,8 +415,8 @@
           a.live_uncached_tokens > a.live_total_tokens) unknown = true;
       else { uncached += a.live_uncached_tokens; cached += a.live_total_tokens - a.live_uncached_tokens; }
     });
-    return {uncached: unknown ? null : uncached, cached: unknown ? null : cached,
-      input: unknown || !inputKnown ? null : input, live: live};
+    return {uncached: unknown ? null : uncached, cached: unknown || !cachedKnown ? null : cached,
+      input: unknown || !inputKnown || !cachedKnown ? null : input, live: live};
   }
 
   function uncachedPrediction(repo, stage, role) {

@@ -98,6 +98,13 @@ assert.equal(api.stageUsageTotal(live,stage).sort,2100000);
 assert.match(api.stageUsageTotal(live,stage).html,/cache \(93%\)/);
 assert.doesNotMatch(api.stageUsageTotal({...repo,agents:[{stage_id:'test',role:'worker',live_total_tokens:5000000,live_uncached_tokens:100000}]},stage).html,/cache \(.*%/);
 assert.equal(api.roleTokenSplit({...repo,agents:[{stage_id:'test',role:'worker',live_total_tokens:5000000}]},stage,'worker').uncached,null);
+const waiting = api.roleTokenSplit({...repo,agents:[{stage_id:'test',role:'worker',live_usage:null}]},stage,'worker');
+assert.equal(waiting.live,false,'an agent with no reading yet must not mark the role live');
+assert.equal(waiting.uncached,2000000,'an agent with no reading yet must leave the settled figure showing');
+const sdk = api.roleTokenSplit({...repo,agents:[{stage_id:'test',role:'worker',live_usage:{input_tokens:1000,output_tokens:234}}]},stage,'worker');
+assert.equal(sdk.live,true);
+assert.equal(sdk.uncached,2001234,'an SDK reading adds its input plus output');
+assert.equal(sdk.cached,null,'an SDK reading carries no cache reads, so the cached share is unknown');
 assert.doesNotMatch(api.stageRoleCell({spend:{role_usage:[row]}},stage,'worker',cells[0]).html,/~5M/,
   'a total-token prediction must never appear beside uncached actuals');
 console.log('PASS cache-aware credit equivalents, unknown history, compact role rendering and numeric sorting');
