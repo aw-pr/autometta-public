@@ -153,8 +153,6 @@ table.stages th { color: var(--muted); font-weight: 500; }
 }
 .sort-controls button:disabled { opacity: .4; cursor: default; }
 table.stages td.num { text-align: right; font-variant-numeric: tabular-nums; }
-table.stages td.num .live { color: var(--accent); font-weight: 600; }
-table.stages .est { color: var(--muted); font-size: 0.8rem; }
 #panel-models .panel-note { margin-top: 2.5rem; }
 .burn-rate {
   font-size: 0.72rem;
@@ -167,12 +165,6 @@ table.stages .est { color: var(--muted); font-size: 0.8rem; }
 .burn-rate.hot { color: var(--fail); border-color: var(--fail); }
 .burn-rate.warm { color: var(--stall); border-color: var(--stall); }
 .burn-rate.cool { color: var(--accent); border-color: var(--accent); }
-table.stages td.num .live::after {
-  content: " live";
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 500;
-}
 
 .burn-cell {
   display: grid;
@@ -211,6 +203,9 @@ table.stages td.num .live::after {
 .status.working         { background: rgba(88,166,255,.15); color: var(--accent); }
 .status.verifying       { background: rgba(163,113,247,.15); color: #a371f7; }
 .status.pending         { background: rgba(110,118,129,.15); color: var(--pending); }
+.status .live-share { font-weight: 500; opacity: .85; }
+.status .live-share.high { color: var(--stall); opacity: 1; font-weight: 600; }
+.status .live-share.outlier { color: var(--fail); opacity: 1; font-weight: 700; }
 
 .chart-wrap {
   position: relative;

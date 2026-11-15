@@ -484,10 +484,17 @@ not garbage-collected automatically.
 The operator's orchestration chat performs this re-brief-and-requeue step
 (`scripts/phat-controller.sh`, `docs/tick-loop.md` section (k); the tick itself
 retries a dead worker once). It reads the verifier artefact and the
-`wip_commit` diff, decides with the operator whether the FAIL is a work defect
-or a card defect, and either appends a re-brief and requeues, or appends a
-`PROPOSED-AMENDMENT` block and requeues nothing. Only an operator turns a
-proposal into an actual criterion change.
+`wip_commit` diff and follows the recorded recovery policy: three total worker
+attempts by default, with diagnosis and repair before each requeue. It acts
+automatically within the agreed outcome, preserves failed artefacts and records
+actual dispatches in the card's Recovery log; resettable tick counters are not
+the total. `requeue-stage.sh --keep-budget` preserves all runtime gates. An
+orchestrator may correct a demonstrated harness bug with unchanged criteria,
+thresholds, coverage and independent evidence, recording old/new digests and
+production-shaped positive/negative proof. Changed requirements, relaxed
+acceptance, extra spend or a fourth attempt need explicit operator authority.
+A stricter existing operator limit wins. This is chat-managed recovery on
+failure hooks, not an unconditional model-retry loop in the tick.
 
 The same applies where there is no verifier artefact at all: a stage that went
 `stalled` because its worker exited without a dispatch envelope still has its
@@ -747,9 +754,9 @@ operator has to think to check.
 The fleet LaunchAgent currently sets `AUTOMETTA_ROOT` to the checkout, which is
 rule 1, so this exposure is live. Moving the tick onto the installed build is an
 operator decision, not a code change: it means deleting that key from
-the plist `install-launchagent.sh` rendered (`com.autometta.tick.<repo-slug>`;
-no script installs a `com.autometta.tick.fleet` job, though `status.sh` still
-looks for that label) and accepting that a fix is live only after a reinstall. Nothing in the repo repoints a running fleet.
+the plist `install-launchagent.sh` rendered (`com.autometta.tick.fleet`, the
+one tick agent per machine, which is also the label `status.sh` looks for)
+and accepting that a fix is live only after a reinstall. Nothing in the repo repoints a running fleet.
 
 ### Checking the split
 

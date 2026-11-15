@@ -837,6 +837,16 @@ def status_update_lines(state, inner_width):
     return lines
 
 
+def live_share(stage, active_role):
+    """The running dispatch's spend against a typical one, as the aggregator
+    computed it: ("40%", level), or None. Spend, not completion: half of all
+    dispatches finish past 100%."""
+    share = stage.get("live_share") or {}
+    if not active_role or share.get("role") != active_role or share.get("percent") is None:
+        return None
+    return "%d%%" % share["percent"], share.get("level") or "normal"
+
+
 def run_lines(state, inner_width):
     payload = state.payload
     lines = []
@@ -847,12 +857,15 @@ def run_lines(state, inner_width):
     rows = []
     for stage in stages:
         glyph, status, active_role = stage_state(payload, stage)
+        share = live_share(stage, active_role)
+        if share:
+            status = "%s %s" % (status, share[0])
         worker = identity_alias(stage.get("worker"))
         verifier = identity_alias(stage.get("verifier"))
         pair = "%s→%s" % (worker, verifier)
         rows.append(({"glyph": glyph, "id": stage.get("id") or "?", "role": status,
                       "pair": pair, "tokens": tick_tokens(stage_total(payload, stage.get("id")))},
-                     worker, verifier, active_role))
+                     worker, verifier, active_role, share))
 
     gap = 2
     indent = 2
@@ -866,7 +879,7 @@ def run_lines(state, inner_width):
     widths["id"] = max(1, inner_width - fixed)
     order = ["glyph", "id", "role", "pair", "tokens"]
 
-    for index, (cells, worker, verifier, active_role) in enumerate(rows):
+    for index, (cells, worker, verifier, active_role, share) in enumerate(rows):
         selected = state.focus == 2 and state.selection[2] == index
         if len(cells["id"]) > widths["id"]:
             stage_id = cells["id"]
@@ -893,6 +906,12 @@ def run_lines(state, inner_width):
             start = rendered.find(alias, rendered.find(cells["pair"]))
             if start >= 0:
                 spans.append((start, start + len(alias), ACTIVE))
+        # Only the heartbeat's outlier flag turns the share red, so the TUI
+        # never disagrees with the kill it may be about to make.
+        if share and share[1] == "outlier":
+            end = rendered.find(cells["role"]) + len(cells["role"])
+            if end >= len(cells["role"]):
+                spans.append((end - len(share[0]), end, ALERT))
         lines.append(content_line(rendered, spans))
     return lines
 

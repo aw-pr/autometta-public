@@ -26,7 +26,7 @@ const context = vm.createContext({
 });
 const source = fs.readFileSync(process.env.AUTOMETTA_DASHBOARD_JS, 'utf8');
 vm.runInContext(source.slice(0, source.lastIndexOf('  var first =')) + `
-  window.test = { state, charts, draw, chartCommon, stageTokenCells,
+  window.test = { state, charts, draw, chartCommon, stageRoleCell,
     stageRowsByRecency, tableHtml, bindSorters, sortControls, initialiseRepoSelection, saveRepoSelection, visibleRepos };
   window.test.captureStages = function (repos) {
     var table = renderPagedTable, order = renderStageOrder, captured;
@@ -124,7 +124,11 @@ assert.equal(api.sortRows(renderedStages.rows, [{col: 6, dir: 'desc'}]).slice(0,
   'the actual stage renderer pins all queued rows before applying date sorts');
 assert.equal(renderedStages.headers[6], 'Started', 'the timestamp is labelled as start time');
 
-const numeric = api.stageTokenCells({}, {tokens: 20, worker_tokens: 20, estimate: {worker: 9000000}})[0];
+const numeric = api.stageRoleCell({spend: {
+  role_usage: [{stage_id: 's', role: 'worker', input_tokens: 10, cached_input_tokens: 0, output_tokens: 10}]}},
+  {id: 's', worker: 'w', tokens: 20, worker_tokens: 20,
+   estimate: {worker: {uncached_tokens: 9000000, basis: 'model', samples: 3}}}, 'worker');
+assert.match(numeric.html, /~9M/, 'the fixture shows its prediction beside the actual');
 assert.equal(api.sortRows([[numeric], [{html: '100', sort: 100}]], [{col: 0, dir: 'asc'}])[0][0], numeric,
   'sort actual token counts, not predictions');
 const markup = api.tableHtml(['Repo', 'Tokens'], [], null, [{col: 1, dir: 'desc'}]);

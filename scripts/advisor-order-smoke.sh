@@ -87,6 +87,7 @@ check("sonnet 5.5 + fable 5.1 advisor passes", ok)
 
 check("identity names the minor version", m.identity_for_model("claude-sonnet-5-5").startswith("Claude Sonnet 5.5 (SDK)")
       and m.identity_for_model("claude-opus-5-5").startswith("Claude Opus 5.5 (SDK)")
+      and m.identity_for_model("claude-fable-5-2").startswith("Claude Fable 5.2 (SDK)")
       and m.identity_for_model("claude-fable-5-1").startswith("Claude Fable 5.1 (SDK)")
       and m.identity_for_model("claude-sonnet-5").startswith("Claude Sonnet 5 (SDK)"))
 

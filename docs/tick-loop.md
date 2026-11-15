@@ -342,7 +342,7 @@ The tick terminates the recorded worker wrapper and every descendant with TERM, 
 
 The next tick respects `consecutive_failure_cap` and halts the loop if exceeded.
 
-**Automatic retry.** After the budget, halt and pause checks, the tick retries a `stalled` worker once if its pid is absent or dead and neither `state/envelopes/<id>.json` nor `state/handoffs/<id>.json` exists. An empty stall marker qualifies; `dispatch_configuration_fault:*`, `run_worktree_failed`, `dispatch_base_tip_unresolved` and `card_missing` do not. It first calls `preserve_failed_work`, aborting on preservation failure, then `requeue-stage.sh --keep-budget` and records `auto_retries: 1` (absent means 0). This leaves budget and failure counters untouched; the pending stage still passes every ordinary dispatch gate, including quota reserve and schedule stop. An operator requeue resets `auto_retries` to 0. A second death, worker FAIL, verifier failure, deterministic fault or halt stays in its alert status and goes to the escalation folder for a decision.
+**Automatic retry.** After the budget, halt and pause checks, the tick retries a `stalled` worker once if its pid is absent or dead and neither `state/envelopes/<id>.json` nor `state/handoffs/<id>.json` exists. An empty stall marker qualifies; `dispatch_configuration_fault:*`, `run_worktree_failed`, `dispatch_base_tip_unresolved` and `card_missing` do not. It first calls `preserve_failed_work`, aborting on preservation failure, then `requeue-stage.sh --keep-budget` and records `auto_retries: 1` (absent means 0). This leaves budget and failure counters untouched; the pending stage still passes every ordinary dispatch gate, including quota reserve and schedule stop. An operator requeue resets `auto_retries` to 0. Before a mechanical retry, the tick checks card metadata `Recovery attempt` against `Recovery attempts` (defaults1 and3 for older cards); exhausted or malformed explicit values hold the retry. The orchestration chat advances the recorded attempt when authorising a repaired dispatch. This per-attempt field is not the recovery allowance: the standard orchestration-chat policy records three total worker attempts on the card, including mechanical retries, and preserves that count across requeues. Ordinary failed/verifier-failed episodes are diagnosed and repaired by that chat on failure hooks, under existing limits; the tick does not blindly restart them. A second death, worker FAIL, verifier failure, deterministic fault or halt stays in its alert status and goes to the escalation folder for a decision.
 
 **Verifier stall.** The same wall-clock rule and process-tree termination apply. A verifier process that has not written its output file within its declared budget plus grace is terminated before the stage is marked stalled. The transcript API-error rule applies only to Claude workers.
 
@@ -658,9 +658,16 @@ Readings older than `AI_QUOTA_STALE_SECONDS` (default 600 seconds) are stale.
 The Codex reader also accepts a sanitised `codex.json` in `AI_QUOTA_DIR`
 (default `~/.local/state/ai-quota`), using the same snapshot envelope as Claude.
 It selects the newer observation between that fresh snapshot and rollout logs.
-An account `account/rateLimits/read` response can therefore reveal a manual
-reset without spending tokens on a model turn. Preserve its actual fetch time;
-do not restamp cached data to make it appear fresh.
+When the newer of the two is stale or has passed a window reset, the reader
+asks `codex app-server` for `account/rateLimits/read` itself: the account
+answers without a model turn, so an idle account no longer holds the card that
+would have produced a fresh rollout reading. The answer is written to
+`codex.json`, so readers inside the staleness window reuse it rather than start
+another server. A missing, failing or slow (15 s) server leaves the older
+reading in place. `AUTOMETTA_CODEX_LIVE_READ=0` turns the live read off,
+`AUTOMETTA_CODEX_BIN` names the binary, and a fixture clock
+(`AI_QUOTA_NOW_EPOCH`) never triggers one. Preserve each reading's actual fetch
+time; do not restamp cached data to make it appear fresh.
 This is admission control, not a cash cap or a kill switch. Concurrent cards
 already admitted elsewhere and interactive sessions can also consume allowance.
 The serial viewer run admits one card at a time.

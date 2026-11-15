@@ -55,8 +55,9 @@ Usage:
   autometta failures (<repo-path> | --fleet) [--json]
   autometta first-attempts <repo-path> [--json] [--since <n>]
   autometta retro-grade [--last N] [--dry-run]
-  autometta install-launchagent <repo-path> [--interval N]
-  autometta uninstall-launchagent <repo-path>
+  autometta proposals <add|list|show|approve|reject|merge|card|land|dismiss|unlifted|lint> [args]
+  autometta install-launchagent [<repo-path>] [--interval N]
+  autometta uninstall-launchagent [<repo-path>]
   autometta uninstall-launchagent-phat-controller
   autometta install-homebrew-local [--dry-run]
   autometta auth status
@@ -210,16 +211,15 @@ case "$command_name" in
   retro-grade)
     run_script retro-grade.sh "$@"
     ;;
+  proposals)
+    run_script proposals.sh "$@"
+    ;;
   install-launchagent)
-    if [[ $# -lt 1 ]]; then
-      printf 'usage: autometta install-launchagent <repo-path> [--interval N]\n' >&2
-      exit 1
-    fi
     run_script install-launchagent.sh "$@"
     ;;
   uninstall-launchagent)
-    if [[ $# -ne 1 ]]; then
-      printf 'usage: autometta uninstall-launchagent <repo-path>\n' >&2
+    if [[ $# -gt 1 ]]; then
+      printf 'usage: autometta uninstall-launchagent [<repo-path>]\n' >&2
       exit 1
     fi
     run_script uninstall-launchagent.sh "$@"

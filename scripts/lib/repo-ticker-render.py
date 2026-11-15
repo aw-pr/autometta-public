@@ -217,6 +217,17 @@ def render_now(payload, width):
         elif tokens_status == "waiting":
             tokens_text = "tokens:waiting"
 
+        # The running dispatch's spend against a typical one, from the
+        # aggregator. "of typical" keeps it apart from the budget percentage
+        # beside it, and says it is spend rather than completion.
+        share_plain = share_display = None
+        share = (stages.get(stage_id) or {}).get("live_share") or {}
+        if share.get("role") == role and share.get("percent") is not None:
+            share_plain = "%d%% of typical" % share["percent"]
+            level = share.get("level")
+            share_display = (RED(share_plain) if level == "outlier"
+                             else YELLOW(share_plain) if level == "high" else share_plain)
+
         attempt_text = None
         if role == "verifier":
             stage = stages.get(stage_id) or {}
@@ -227,17 +238,21 @@ def render_now(payload, width):
 
         # Fixed display order (phase, agent, elapsed/budget never drop --
         # criteria 3/4 require them present); tokens is the first thing
-        # dropped when space runs out, attempt (only present while
-        # verifying, and the clearest sign a stage is near its retry cap)
-        # is dropped only if there is still not enough room after that.
-        columns = [
-            {"name": "phase", "min": len(phase), "weight": 0, "text": phase},
+        # dropped when space runs out, then the live share beside the
+        # phase, and attempt (only present while verifying, and the
+        # clearest sign a stage is near its retry cap) is dropped only if
+        # there is still not enough room after that.
+        columns = [{"name": "phase", "min": len(phase), "weight": 0, "text": phase}]
+        if share_plain:
+            columns.append({"name": "share", "min": len(share_plain), "weight": 0,
+                             "droppable": True, "drop_rank": 2, "text": share_display})
+        columns += [
             {"name": "identity", "min": len(identity), "weight": 0, "text": identity},
             {"name": "budget", "min": len(budget_plain), "weight": 0, "text": budget_display},
         ]
         if tokens_text:
             columns.append({"name": "tokens", "min": len(tokens_text), "weight": 0,
-                             "droppable": True, "drop_rank": 2, "text": tokens_text})
+                             "droppable": True, "drop_rank": 3, "text": tokens_text})
         if attempt_text:
             columns.append({"name": "attempt", "min": len(attempt_text), "weight": 0,
                              "droppable": True, "drop_rank": 1, "text": attempt_text})

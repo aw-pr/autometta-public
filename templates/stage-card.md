@@ -13,6 +13,7 @@ Stage card template, part of the dispatch-contract pattern library. Reusable in 
 - **Run branch:** <<autometta/stage-id>>
 - **Fixes:** <<stage-id this card repairs; optional, omit otherwise>>
 - **Supersedes:** <<stage-id this card replaces; optional, omit otherwise>>
+- **Proposal:** <<P-YYYYMMDD-xxxx id from memory/proposals.jsonl when this card lands an approved harness proposal; optional, omit otherwise>>
 
 <!--
 Dispatch happens in an ephemeral worktree cut from the base branch (`git worktree add ../<repo>-run-<stage-id> -b autometta/<stage-id> <base-branch>`), never in the shared checkout; on PASS the orchestrator fast-forward-merges the run branch back into the base branch (or pushes it, if base moved, and notes that in HANDOFF). Pin both fields to branch names, never commit SHAs. -->
@@ -23,6 +24,12 @@ Dispatch happens in an ephemeral worktree cut from the base branch (`git worktre
 - **Requires network:** <<true if any role must reach the network from a shell command it runs, for example a stage whose deliverable is itself an agent session; omit otherwise. Codex roles run under workspace-write, which denies the socket: an agent session started without this dies on "Unable to connect to API (FailedToOpenSocket)" before its first tool call. Unlike Requires GUI this keeps the filesystem sandbox and opens only the socket, so prefer it whenever the network is all that is missing.>>
 - **Requires agent home:** <<true if a role spawns an agent session that needs to write under the Claude home directory, for example the per-session directory Claude Code creates at startup; omit otherwise. Reads of $HOME are already permitted, so this grants write access only, to that one directory, and the sandbox mode is unchanged. Without it an SDK session dies on "EPERM ... mkdir '~/.claude/session-env/<session-id>'".>>
 - **Verifier panel:** false
+- **Recovery attempts:** 3
+- **Recovery attempt:** 1
+<!-- Three total worker attempts, including the initial one. Explicit operator
+limits override this default. Diagnose and repair before requeue; preserve
+failed evidence and append actual dispatches to a Recovery log. Existing
+budget/quota gates remain binding. See skills/autometta-escalations. -->
 <!--
 Optional dispatch gate. Omit the Gate line for an ungated stage. These are the
 only accepted forms; a prerequisite always uses its full stage id:

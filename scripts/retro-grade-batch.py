@@ -44,6 +44,7 @@ class StageRun:
     stage: Stage
     card_path: Path
     original_overall: str
+    repo: Path
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,7 +90,14 @@ def numbered(path: Path, text: str) -> str:
     return f"### {path}\n{body}\n"
 
 
-def deliverable_paths(card_path: Path) -> list[Path]:
+def deliverable_paths(card_path: Path, repo: Path) -> list[Path]:
+    """Repo-relative deliverable paths named in backticks under ## Deliverables.
+
+    Cards also backtick commands and tool paths (`/opt/homebrew/bin/python3`),
+    so an absolute path is never a deliverable, and a relative one is a
+    deliverable only if it exists under the graded repo, not under whatever
+    directory this script was started from.
+    """
     paths: list[Path] = []
     in_deliverables = False
     for line in read_text(card_path).splitlines():
@@ -102,9 +110,19 @@ def deliverable_paths(card_path: Path) -> list[Path]:
             if any(token in match for token in ("<", ">", "*", "$", " ")):
                 continue
             candidate = Path(match)
-            if candidate.is_file():
+            if candidate.is_absolute():
+                continue
+            if (repo / candidate).is_file():
                 paths.append(candidate)
     return sorted(set(paths))
+
+
+def deliverable_text(path: Path, repo: Path) -> str:
+    """Numbered file text, or a one-line marker when the file is not text."""
+    try:
+        return numbered(path, read_text(repo / path))
+    except UnicodeDecodeError:
+        return f"### {path}\n(binary file, not included)\n"
 
 
 def parse_state(path: Path = STATE) -> list[Stage]:
@@ -159,9 +177,11 @@ def card_for_stage(stage_id: str, repo: Path = AUTOMETTA_ROOT) -> Path:
     raise FileNotFoundError(f"stage card not found for {stage_id}")
 
 
-def original_overall(stage: Stage) -> str:
+def original_overall(stage: Stage, repo: Path = AUTOMETTA_ROOT) -> str:
     if stage.verifier_artefact:
         artefact = Path(stage.verifier_artefact)
+        if not artefact.is_absolute():
+            artefact = repo / artefact
         if artefact.is_file():
             data = json.loads(read_text(artefact))
             overall = data.get("overall")
@@ -184,7 +204,8 @@ def select_stage_runs(limit: int, state_path: Path = STATE, repo: Path = AUTOMET
             StageRun(
                 stage=stage,
                 card_path=card_for_stage(stage.stage_id, repo),
-                original_overall=original_overall(stage),
+                original_overall=original_overall(stage, repo),
+                repo=repo,
             )
         )
     if len(runs) != limit:
@@ -216,11 +237,11 @@ def static_rubric() -> str:
 
 def request_for_stage(run: StageRun, model: str) -> dict[str, Any]:
     stage_id = run.stage.stage_id
-    deliverables = deliverable_paths(run.card_path)
+    deliverables = deliverable_paths(run.card_path, run.repo)
     if deliverables:
-        deliverable_text = "\n".join(numbered(path, read_text(path)) for path in deliverables)
+        deliverables_block = "\n".join(deliverable_text(path, run.repo) for path in deliverables)
     else:
-        deliverable_text = "(no current deliverable files were found from backticked paths in the Deliverables section)\n"
+        deliverables_block = "(no current deliverable files were found from backticked paths in the Deliverables section)\n"
     variable = (
         "## Retro-grade target\n\n"
         f"- Stage id: `{stage_id}`\n"
@@ -229,7 +250,7 @@ def request_for_stage(run: StageRun, model: str) -> dict[str, Any]:
         "## Stage card with line numbers\n\n"
         f"{numbered(run.card_path, read_text(run.card_path))}\n"
         "## Current deliverable files with line numbers\n\n"
-        f"{deliverable_text}\n"
+        f"{deliverables_block}\n"
     )
     return {
         "custom_id": stage_id,

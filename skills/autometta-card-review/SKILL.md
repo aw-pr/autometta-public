@@ -55,12 +55,21 @@ attempt; it must not become a second implementation before the worker starts.
 - If the operator authorises a bounded attempt with incomplete new coverage,
   record precisely what is validated, defective or deferred, who supplies the
   remaining evidence, and what prevents PASS without it. Existing frozen tests
-  and criteria stay binding unless explicitly amended. A broken harness is
+  and criteria stay binding except demonstrated semantic-preserving harness
+  corrections under the recorded recovery policy, or explicit amendments. A broken harness is
   inadequate evidence, not a proven product failure. Never count skips as PASS
   or label an implementation card prose-only to evade the gate.
 - Once the card is actionable, hand it to the worker. Use the deterministic tick,
   heartbeat and shell state-change waits for monitoring; invoke a model for a
   concrete failure or decision. Do not spend model turns watching unchanged logs.
+
+## Recovery limit
+
+Record `Recovery attempts: 3` for a normal stage: initial attempt plus at most
+two diagnosed repairs, subject to existing spend/quota gates. A stricter
+operator limit overrides it. This is the orchestration-chat policy, not an
+automatic retry counter in the tick. The card's Recovery log preserves actual
+worker starts across requeues; missing evidence still prevents acceptance.
 
 ## 1. Interview, briefly
 

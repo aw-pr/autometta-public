@@ -2,7 +2,7 @@
 
 **Token-maxing is the gateway drug to AI psychosis. Autometta is a lightweight YOLO pattern library for headless agent orchestration on a single machine without constant human oversight. Worker agents code against requirement cards, verified by cross-family agents: Codex verifies Claude, and vice versa.**
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Release](https://img.shields.io/badge/release-v1.1.0-blue) ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey) ![Status](https://img.shields.io/badge/status-single--operator%20daily%20use-orange)
+![Runtime](https://img.shields.io/badge/runtime-bash%203.2%2B%20%7C%20python%203-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-91%20of%20101%20smokes%20passing-yellow) ![Status](https://img.shields.io/badge/status-single--operator%20daily%20use-orange)
 
 Autometta turns requirement cards into implemented, independently checked commits. It runs Claude Code and Codex CLI as worker and verifier pairs on one laptop. A cron-driven tick handles dispatch, budgets and recovery. The human writes the cards and takes the decisions the contract cannot.
 
@@ -91,7 +91,7 @@ The release history records how the contract grew:
 | 2026-09 | v1.0.0: typed fact ledger, guarded SDK verifier route, frozen card assertions and network preflight |
 | 2026-10 | v1.1.0: model-scoped reserve, live agent progress, stage dependency graph and Codex admission below full usage |
 
-Since the tag: the scheduled controller agent is retired, lifecycle notices and bounded native wake-ups replace it, and card-quality tooling (card lint, first-attempt rate, card-review and oracle skills) followed.
+Since the tag: the scheduled controller agent is retired, lifecycle notices and bounded native wake-ups replace it, and card-quality tooling (card lint, first-attempt rate, card-review and oracle skills) followed. Later still: one fleet tick agent per machine instead of one per repo, a harness proposals ledger decided at a weekly review (see the [learning log](docs/learning-log.md)), and a live readout of the running dispatch's spend against a typical one on the dashboard, TUI and ticker.
 
 Three experiments closed against adoption on the way. A resident SDK controller lost to cron plus tick: the SDK session could not create its own session directory inside the sandbox, and a resident process gives up restartability and outside observation for nothing. A worker SDK route was tried and parked: it could not reach its first tool call without widening the very scope the sandbox exists to hold. A terminal multiplexer was retired once the SDK transport covered what it was probing. The postmortems are under `docs/experiments/`. The SDK survives in one seat, the verifier, with a route guard: the raw Claude API SDK returns 429 on a subscription token while `claude -p` answers on the same one, so that pairing is sent back to the CLI (see [SDK verifiers](docs/sdk-verifier.md)). The bets did not change; the passes since v0.1 have been about making the loop remember what it learnt and refuse to lie about what it checked.
 
@@ -141,7 +141,7 @@ autometta init /path/to/target-repo
 git -C /path/to/target-repo status --short
 ```
 
-`init` creates local configuration and state, registers the repo and installs its LaunchAgent. Review the generated files, tracking policy, auth and budget before queueing anything. Do not force-add ignored runtime state or the local manifest. The [runbook](docs/runbook.md) covers card review, queueing and scheduling; [setup](docs/setup.md) covers the Linux cron path.
+`init` creates local configuration and state, registers the repo and installs or refreshes the machine's single fleet LaunchAgent, `com.autometta.tick.fleet`. Review the generated files, tracking policy, auth and budget before queueing anything. Do not force-add ignored runtime state or the local manifest. The [runbook](docs/runbook.md) covers card review, queueing and scheduling; [setup](docs/setup.md) covers the Linux cron path.
 
 Check the billing route for each family before dispatching:
 
@@ -171,7 +171,7 @@ After updating this checkout, rerun `scripts/install-homebrew-local.sh`, then `a
 | Adopt and operate it | [Runbook](docs/runbook.md), [setup](docs/setup.md), [command manual](MANUAL.md), [deployment](docs/deployment.md) |
 | Understand acceptance and ordering | [Verification](docs/verification.md), [worker envelope](docs/dispatch-envelope.md), [dependency graph](docs/dependency-graph.md) |
 | Watch health and spend | [Observability](docs/observability.md), [dashboard](docs/dashboard.md), [cost log](docs/cost-log.md), [budget drains](docs/budget.md) |
-| Extend verification or shared memory | [SDK verifiers](docs/sdk-verifier.md), [verifier panel](docs/verifier-panel.md), [fact ledger](docs/fact-ledger.md), [graph engineering](docs/graph-engineering.md) |
+| Extend verification or shared memory | [SDK verifiers](docs/sdk-verifier.md), [verifier panel](docs/verifier-panel.md), [fact ledger](docs/fact-ledger.md), [learning log](docs/learning-log.md), [graph engineering](docs/graph-engineering.md) |
 
 `docs/design/`, `docs/proposals/`, `docs/experiments/` and the dated incident records keep the reasoning and the results. A proposal is not evidence that a feature shipped. The vendor comparisons in [prior art](docs/prior-art.md) are context, not buying advice.
 

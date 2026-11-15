@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The fleet page never reads transcripts, so a running agent there carries
-# only the heartbeat's live_total_tokens. The stage cells, the run totals and
-# the agents table must still tick on that figure rather than read zero or
-# n/a. No auth, no network, no token spend.
+# only the heartbeat's reading. The stage cells must tick on its uncached
+# figure, and the agents table on its total, rather than read zero or n/a.
+# No auth, no network, no token spend.
 #
 # AUTOMETTA-CONTRACT-NONE reason=regression smoke for the fleet-view live token fallback
 set -euo pipefail
@@ -25,7 +25,7 @@ const api = new Function("state", "charts", "document", "window",
   defs.join("\n") + `
   var rendered;
   renderSimpleTable = function (id, headers, rows) { rendered = rows; };
-  return { stageTokenCells, burnCell, renderAgents, rows: function () { return rendered; } };
+  return { stageRoleCell, stageUsageTotal, burnCell, renderAgents, rows: function () { return rendered; } };
   `)({}, {}, {}, {});
 const html = (c) => (c && typeof c === "object" && c.html != null) ? String(c.html) : String(c == null ? "" : c);
 const text = (c) => html(c).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -34,19 +34,21 @@ const problems = [];
 
 const working = { id: "19-working", status: "in_progress", tokens: 0, worker_tokens: null, verifier_tokens: null };
 const fleetAgent = { stage_id: "19-working", role: "worker", stage_tokens: null, stage_tokens_status: null,
-  live_usage: null, live_total_tokens: 10612018 };
+  live_usage: null, live_total_tokens: 10612018, live_uncached_tokens: 412018, live_uncached_input_tokens: 300000 };
 const repo = { name: "promo-flow", spend: { by_stage: [], failures: [] }, stages: [working], agents: [fleetAgent] };
-const [w, v, t] = api.stageTokenCells(repo, working);
-if (!/10,612,018/.test(text(w)) || !isLive(w)) problems.push("worker cell should read 10,612,018 live, got '" + text(w) + "'");
+const w = api.stageRoleCell(repo, working, "worker");
+const v = api.stageRoleCell(repo, working, "verifier");
+const t = api.stageUsageTotal(repo, working);
+if (w.sort !== 412018 || !isLive(w)) problems.push("worker cell should count the heartbeat's 412,018 uncached live, got " + w.sort);
 if (isLive(v)) problems.push("the idle verifier must not be marked live");
-if (!/10,612,018/.test(text(t)) || !isLive(t)) problems.push("total should include the heartbeat figure, got '" + text(t) + "'");
+if (t.sort !== 412018 || !isLive(t)) problems.push("total should include the heartbeat's uncached figure, got " + t.sort);
 
 const burn = text(api.burnCell(fleetAgent));
 if (!/10\.6M/.test(burn) || /n\/a/.test(burn)) problems.push("agents table should show the heartbeat figure, got '" + burn + "'");
 
 const counted = Object.assign({}, fleetAgent, { stage_tokens: 2500000, stage_tokens_status: "counted" });
-const [cw] = api.stageTokenCells(Object.assign({}, repo, { agents: [counted] }), working);
-if (!/2,500,000/.test(text(cw))) problems.push("a transcript figure must still win over the heartbeat, got '" + text(cw) + "'");
+const cw = api.stageRoleCell(Object.assign({}, repo, { agents: [counted] }), working, "worker");
+if (cw.sort !== 412018) problems.push("a processed transcript total must not reach the uncached stage cell, got " + cw.sort);
 
 api.renderAgents([repo]);
 if (!html(api.rows()[0][7]).includes('<span class="burn-total">10.6M heartbeat</span>')) {

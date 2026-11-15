@@ -14,7 +14,7 @@ State and memory that agents need across sessions live **in the repo**, not in a
 
 ## What this repo is
 
-Autometta is a **pattern library**, not a runtime. v1.1.0: the contract, the loop and the operator surfaces are stable and in daily use; still one human, one machine. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-run-design`, `autometta-card-review`, `autometta-oracle`, `autometta-requeue`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
+Autometta is a **pattern library**, not a runtime. v1.1.0: the contract, the loop and the operator surfaces are stable and in daily use; still one human, one machine. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-run-design`, `autometta-card-review`, `autometta-oracle`, `autometta-requeue`, `autometta-escalations`, `autometta-weekly-review`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
 
 The repo extracts patterns from two prior projects (`fractals-from-the-90s` dispatch contract; `agentic-rag-kimble` pass 28-29 autonomous loop) and packages them for solo single-machine multi-agent CLI work. See `README.md` for the pitch and `docs/philosophy.md` for the long-form scope.
 
@@ -25,9 +25,18 @@ The repo extracts patterns from two prior projects (`fractals-from-the-90s` disp
 
 The operational roles are the tick (deterministic, including the mechanical
 recovery that used to need an agent) and the operator's orchestration chat,
-plus the worker and the verifier it dispatches. Anything the tick cannot decide
+plus the worker and the verifier it dispatches. The standard escalation recovery policy is three total worker attempts per stage
+(initial plus at most two diagnosed repairs), recorded on the card and bounded
+by existing budget/quota gates. The orchestration chat may fix implementation
+and demonstrated semantic-preserving harness defects automatically; changed
+requirements, relaxed acceptance or extra limits still need approval.
+Anything the tick cannot decide
 becomes an escalation in the escalations folder for the chat to work
-(`skills/autometta-escalations`). Claude Code and Codex lifecycle hooks deliver
+(`skills/autometta-escalations`). A diagnosis that implicates the harness
+itself is recorded as a proposal in `memory/proposals.jsonl`
+(`scripts/proposals.sh`) and decided once a week with the operator
+(`skills/autometta-weekly-review`, `docs/learning-log.md`); a proposal is
+never authority to edit the harness. Claude Code and Codex lifecycle hooks deliver
 new or changed escalations and lifecycle notices at session start, user prompts and after tools;
 PostToolUse checks are throttled to 15 seconds. Use the hook's evidence instead
 of a model-driven polling loop. Delivery is not acknowledgement or authority to
@@ -93,6 +102,7 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 - `skills/autometta-oracle/` - author a focused frozen contract test with proportionate proof, record its digest and any authorised supplemental evidence gates.
 - `skills/autometta-requeue/` - re-queue a stage safely after a FAIL, a dead agent or a stale run worktree.
 - `skills/autometta-escalations/` - work the operator's pending escalations from an orchestration chat.
+- `skills/autometta-weekly-review/` - once a week, decide the open harness proposals in `memory/proposals.jsonl` with the operator and card the approved ones (`docs/learning-log.md`).
 - `skills/phat-controller/` - a pointer: the role is retired, work the queue through `autometta-escalations`.
 
 ## Auth routes: subscription vs API key (agents: read this before any dispatch)

@@ -106,6 +106,8 @@ def identity_for_model(model: str) -> str:
     # the generic label, which is what claude-sonnet-5 and claude-opus-5 did
     # between the 2026-07-26 model bump and this fix -- a real verifier's work
     # filed under a name no shortlog can group.
+    if "fable-5-2" in model:
+        return f"Claude Fable 5.2 (SDK) <{model}@local>"
     if "fable-5-1" in model:
         return f"Claude Fable 5.1 (SDK) <{model}@local>"
     if "fable-5" in model:

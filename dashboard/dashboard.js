@@ -197,7 +197,7 @@
     // Absent is the other case and stays truthful: a repo with no cost log
     // really has spent nothing, carries no state_error, and still counts zero.
     if (spend.state_error) {
-      return { worker: null, verifier: null, total: null, logged: false, unavailable: true };
+      return { worker: null, verifier: null, total: null };
     }
     var worker = Number(stage.worker_tokens || 0);
     var verifier = Number(stage.verifier_tokens || 0);
@@ -216,10 +216,10 @@
         else if (row.role === "verifier") verifier += n;
       });
       return {worker: unknown.worker ? null : worker, verifier: unknown.verifier ? null : verifier,
-        total: unknown.worker || unknown.verifier ? null : worker + verifier, logged: true};
+        total: unknown.worker || unknown.verifier ? null : worker + verifier};
     }
     if (total || worker || verifier) {
-      return { worker: worker, verifier: verifier, total: total || worker + verifier, logged: false };
+      return { worker: worker, verifier: verifier, total: total || worker + verifier };
     }
     (spend.by_stage || []).forEach(function (row) {
       if (row.stage_id === stage.id) logged += Number(row.tokens || 0);
@@ -231,7 +231,7 @@
       else worker += lost;
     });
     total = logged || worker + verifier;
-    return { worker: worker, verifier: verifier, total: total, logged: total > 0 };
+    return { worker: worker, verifier: verifier, total: total };
   }
 
   function liveAgentTokens(agent) {
@@ -252,17 +252,6 @@
       return isFinite(heartbeatTokens) ? heartbeatTokens : null;
     }
     return null;
-  }
-
-  // The predicted figure sits in brackets after the actual one, so a queued
-  // stage reads "0 (~1.2M)" and a finished one shows how far it strayed.
-  function estimateSuffix(estimate, role) {
-    if (!estimate || estimate[role] == null) return "";
-    var basis = estimate.basis === "model"
-      ? "median of this model's past dispatches in this repo"
-      : "no history for this model here: median across models in the role";
-    return ' <span class="est" title="predicted: ' + esc(basis) + '">(~' +
-      compactTokens(estimate[role]) + ")</span>";
   }
 
   // One rate per model across the visible repos and both roles, weighted by
@@ -294,13 +283,11 @@
     var costs = rates.map(function (r) { return r.cost_usd_per_min; })
       .filter(function (c) { return c != null; }).sort(function (a, b) { return a - b; });
     var mid = costs.length ? costs[Math.floor(costs.length / 2)] : null;
-    var byIdentity = Object.create(null);
     rates.forEach(function (r) {
       r.relative = (mid && r.cost_usd_per_min != null) ? r.cost_usd_per_min / mid : null;
       r.heat = r.relative == null ? "" : r.relative >= 1.5 ? "hot" : r.relative <= 0.67 ? "cool" : "warm";
-      byIdentity[r.identity] = r;
     });
-    return { list: rates, byIdentity: byIdentity };
+    return rates;
   }
 
   function burnBadge(rate) {
@@ -312,42 +299,6 @@
       " (" + rate.samples + " dispatches)";
     return ' <span class="burn-rate ' + esc(rate.heat) + '" title="' + esc(title) + '">' +
       compactTokens(rate.tokens_per_min) + "/min</span>";
-  }
-
-  function identityCell(identity, rates) {
-    if (!identity) return shortIdentity(identity);
-    return { html: esc(shortIdentity(identity)) + burnBadge(rates.byIdentity[identity]), sort: shortIdentity(identity) };
-  }
-
-  function stageTokenCells(repo, stage) {
-    var spend = stageSpend(repo, stage);
-    var liveByRole = { worker: 0, verifier: 0 };
-    var hasLive = { worker: false, verifier: false };
-    (repo.agents || []).forEach(function (agent) {
-      if (agent.stage_id !== stage.id ||
-          !Object.prototype.hasOwnProperty.call(liveByRole, agent.role)) return;
-      var tokens = liveAgentTokens(agent);
-      if (tokens == null) return;
-      liveByRole[agent.role] += tokens;
-      hasLive[agent.role] = true;
-    });
-    var liveTotal = liveByRole.worker + liveByRole.verifier;
-    var mark = spend.logged ? "*" : "";
-    var estimate = stage.estimate || null;
-    var spendTitle = spend.unavailable
-      ? ' title="' + esc((repo.spend || {}).state_error) + '"' :
-        spend.logged ? ' title="Recorded dispatch totals, including earlier attempts and cached reads"' : "";
-    return ["worker", "verifier", "total"].map(function (role) {
-      var live = role === "total" ? hasLive.worker || hasLive.verifier : hasLive[role];
-      var extra = role === "total" ? liveTotal : liveByRole[role];
-      var value = spend[role];
-      if (live) value = Number(value || 0) + extra;
-      return {
-        html: '<span' + (live ? ' class="live"' : "") + spendTitle + ">" +
-          fmtInt(value) + mark + "</span>" + estimateSuffix(estimate, role),
-        cls: "num", sort: value
-      };
-    });
   }
 
   // Standard-speed credit equivalents, not debits or included subscription usage.
@@ -385,7 +336,7 @@
 
   function roleTokenSplit(repo, stage, role) {
     var rows = roleUsage(repo, stage, role);
-    var uncached = 0, cached = 0, input = 0, live = false, inputKnown = true;
+    var uncached = 0, cached = 0, input = 0, live = false, inputKnown = true, cachedKnown = true;
     var unknown = !!(repo.spend || {}).state_error;
     rows.forEach(function (r) {
       if (r.input_tokens == null || r.output_tokens == null || r.cached_input_tokens == null) unknown = true;
@@ -396,7 +347,17 @@
         (recorded.total > 0 && !recorded.worker && !recorded.verifier))) unknown = true;
     (repo.agents || []).forEach(function (a) {
       if (a.stage_id !== stage.id || a.role !== role) return;
+      // An agent with no reading yet adds and marks nothing: absence is not
+      // a figure, and a live "?" would hide what earlier attempts settled.
+      if (!a.live_usage && a.live_uncached_tokens == null && a.live_total_tokens == null) return;
       live = true;
+      if (a.live_usage) {
+        // An SDK verifier counts input and output as it goes but reports no
+        // cache reads, so its cached share stays unknown.
+        uncached += Number(a.live_usage.input_tokens || 0) + Number(a.live_usage.output_tokens || 0);
+        cachedKnown = false;
+        return;
+      }
       if (a.live_uncached_input_tokens == null) inputKnown = false;
       else input += a.live_uncached_input_tokens;
       // Both heartbeat fields describe the same sample. Mixing a newer
@@ -405,18 +366,32 @@
           a.live_uncached_tokens > a.live_total_tokens) unknown = true;
       else { uncached += a.live_uncached_tokens; cached += a.live_total_tokens - a.live_uncached_tokens; }
     });
-    return {uncached: unknown ? null : uncached, cached: unknown ? null : cached,
-      input: unknown || !inputKnown ? null : input, live: live};
+    return {uncached: unknown ? null : uncached, cached: unknown || !cachedKnown ? null : cached,
+      input: unknown || !inputKnown || !cachedKnown ? null : input, live: live};
   }
 
-  function uncachedPrediction(repo, stage, role) {
-    var rates = ((repo.spend || {}).model_rates || []).filter(function (r) {
-      return r.role === role && r.median_uncached_tokens != null;
-    });
-    var match = rates.filter(function (r) { return r.identity === stage[role]; })[0];
-    if (match) return match.median_uncached_tokens;
-    var values = rates.map(function (r) { return r.median_uncached_tokens; }).sort(function (a, b) { return a - b; });
-    return values.length ? values[Math.floor(values.length / 2)] : null;
+  // What the running dispatch has spent so far against a typical one, inside
+  // the phase it belongs to: "working (40%)". It is not completion, and the
+  // title says so, because half of all dispatches finish past 100%.
+  function liveShareMarkup(share) {
+    if (!share || share.percent == null) return "";
+    var who = shortIdentity(share.identity) + " " + share.role;
+    var basis = share.basis === "model"
+      ? "median of " + fmtInt(share.samples) + " " + who + " dispatches here"
+      : "no " + who + " history here, so the median across " + share.role + " models";
+    var title = fmtInt(share.live_uncached_tokens) + " uncached tokens so far this dispatch, against a typical " +
+      fmtInt(share.estimate_uncached_tokens) + " (" + basis + "). Spend against a typical dispatch, " +
+      "not completion: half of all dispatches finish past 100%." +
+      (share.level === "outlier" ? " The heartbeat has flagged this dispatch as a token outlier." : "");
+    return ' <span class="live-share ' + esc(share.level || "normal") + '" title="' + esc(title) + '">(' +
+      fmtInt(share.percent) + "%)</span>";
+  }
+
+  // The aggregator predicts each role once per stage, so every view that
+  // shows a prediction shows the same figure.
+  function uncachedPrediction(stage, role) {
+    var estimate = (stage.estimate || {})[role];
+    return estimate ? estimate.uncached_tokens : null;
   }
 
   function usageTokenMarkup(split, prediction) {
@@ -435,12 +410,11 @@
 
   function stageUsageTotal(repo, stage) {
     var w = roleTokenSplit(repo, stage, "worker"), v = roleTokenSplit(repo, stage, "verifier");
-    var wp = uncachedPrediction(repo, stage, "worker"), vp = uncachedPrediction(repo, stage, "verifier");
     var total = w.uncached == null || v.uncached == null ? null : w.uncached + v.uncached;
     return {html: '<div class="role-usage">' + usageTokenMarkup({uncached: total,
       cached: w.cached == null || v.cached == null ? null : w.cached + v.cached,
       input: w.input == null || v.input == null ? null : w.input + v.input, live: w.live || v.live},
-      wp == null || vp == null ? null : wp + vp) + '</div>', sort: total, cls: 'usage-total-cell'};
+      (stage.estimate || {}).total_uncached_tokens) + '</div>', sort: total, cls: 'usage-total-cell'};
   }
 
   function roleEffortLabel(stage, role) {
@@ -460,7 +434,7 @@
     return ' <span class="usage-muted role-effort" title="' + esc(title) + '">(' + value + ')</span>';
   }
 
-  function stageRoleCell(repo, stage, role, tokenCell) {
+  function stageRoleCell(repo, stage, role) {
     var rows = roleUsage(repo, stage, role);
     var complete = rows.length && rows.every(function (r) {
       return r.input_tokens != null && r.cached_input_tokens != null && r.output_tokens != null;
@@ -468,7 +442,7 @@
     var lines = ['<span class="role-model"><strong>' + esc(shortIdentity(stage[role])) + '</strong>' + roleEffortLabel(stage, role) + '</span>'];
     var split = roleTokenSplit(repo, stage, role);
     var count = split.uncached, live = split.live;
-    lines.push(usageTokenMarkup(split, uncachedPrediction(repo, stage, role)));
+    lines.push(usageTokenMarkup(split, uncachedPrediction(stage, role)));
     if (complete) {
       var credits = rows.map(creditEquivalent);
       if (credits.every(function (n) { return n != null; })) {
@@ -1382,7 +1356,6 @@
     repos.forEach(function (r) { byName[r.name] = r; });
     var cells = rows.map(function (row) {
       var s = row.stage;
-      var tokenCells = stageTokenCells(byName[row.repo] || {}, s);
       var cardPath = s.card || ("stage-cards/" + s.id + ".md");
       // The same answer the TUI's detail pane gives: the card is the prompt the
       // worker was handed, so "why did it do that" is usually read from it
@@ -1395,9 +1368,10 @@
                key: stageKey(row.repo, s.id), cells: [
         row.repo,
         { html: '<span class="caret">\u25b8</span> ' + esc(s.id), sort: s.id },
-        { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) + "</span>" },
-        stageRoleCell(byName[row.repo] || {}, s, "worker", tokenCells[0]),
-        stageRoleCell(byName[row.repo] || {}, s, "verifier", tokenCells[1]),
+        { html: '<span class="status ' + esc(s.status) + " " + esc(s.phase || "") + '">' + esc(s.phase || s.status) +
+            liveShareMarkup(s.live_share) + "</span>", sort: s.phase || s.status },
+        stageRoleCell(byName[row.repo] || {}, s, "worker"),
+        stageRoleCell(byName[row.repo] || {}, s, "verifier"),
         stageUsageTotal(byName[row.repo] || {}, s),
         s.started_at || "",
         s.completed_at || ""
@@ -1538,7 +1512,7 @@
   }
 
   function renderBurnTable(repos) {
-    var rates = modelBurnRates(repos).list.sort(function (a, b) {
+    var rates = modelBurnRates(repos).sort(function (a, b) {
       return (b.cost_usd_per_min || 0) - (a.cost_usd_per_min || 0);
     });
     var rows = rates.map(function (r) {

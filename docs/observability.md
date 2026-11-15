@@ -117,6 +117,14 @@ eight-poll history with `burn this run`. SDK figures retain the `LIVE` label.
 These figures refresh with the poll and are display only; they do not change
 the cost log, billing totals or state.
 
+A running stage's status in the run row also carries its live share, for
+example `WORKER 40%`: the running dispatch's uncached tokens as a share of the
+stage's estimate for that role, from the aggregator's `live_share` (see
+`docs/dashboard.md`, Live figures). It is spend against a typical dispatch,
+not completion, so half of all dispatches pass 100%. The percentage turns red
+only when the heartbeat has flagged the dispatch as a token outlier. A stage
+with no reading or no prediction shows its status alone.
+
 Card 74 replaced per-row process forks and repeated file scans in that seam,
 taking the measured per-repo read from 37 seconds to under one second; a
 five-second poll now represents a fresh snapshot rather than a queue of stale
@@ -163,12 +171,16 @@ It answers one question, "do I need to intervene?", in five sections:
 
 - `NOW`: the live stage, in full: stage id, phase (`worker running` /
   `verifying` / `landing` while a passed stage awaits integration), the
-  acting family and identity, elapsed against the card's declared
-  wall-clock budget, tokens spent on the stage so far, and, while verifying,
-  the attempt count against the cap. Elapsed against budget is real time
-  spent, not work done, and never clamps at 99% or 100%; a stage past its
-  budget reads `OVER BUDGET` with the true percentage. When nothing is
-  live, it reads `idle`.
+  running dispatch's live share (`40% of typical`, amber from 200%, red when
+  the heartbeat flags a token outlier), the acting family and identity,
+  elapsed against the card's declared wall-clock budget, tokens spent on the
+  stage so far, and, while verifying, the attempt count against the cap.
+  Elapsed against budget is real time spent, not work done, and never clamps
+  at 99% or 100%; a stage past its budget reads `OVER BUDGET` with the true
+  percentage. The live share is spend against a typical dispatch, not work
+  done either, and half of all dispatches pass 100%. A narrow pane drops the
+  token count first, then the live share. When nothing is live, it reads
+  `idle`.
 - `NEXT`: a counts line (stages done, outstanding, and how many of those are
   escalated), then the next few queued stages with the family that will
   work each.
@@ -409,11 +421,15 @@ is non-null, and stamps `dash_active_at` in `budget.json` when it does. It
 runs *after* the tick's dispatch decision, so a stage that goes pending to
 `in_progress` in this same tick gets its dash immediately rather than a
 tick late. `reap_idle_dash_sessions` then kills any `autometta-<slug>`
-session whose subscriber is disabled, whose slug matches no subscriber at
-all, or whose `dash_active_at` is older than
-`AUTOMETTA_DASH_IDLE_HOURS` (default 24). An operator who is actually
-attached always wins: a session with `tmux list-clients` output is never
-reaped. `last_tick_at` and `tick_count` advance on every tick regardless of
+viewer whose subscriber is disabled or retired (`<slug>.yaml.disabled`), or
+whose `dash_active_at` is older than `AUTOMETTA_DASH_IDLE_HOURS` (default
+24). An operator who is actually attached always wins: a session with
+`tmux list-clients` output is never reaped. The reaper only touches viewers
+it owns, by the same rule as `attach.sh`: the slug must belong to a
+registered subscriber. A session of your own that happens to start with
+`autometta-` (say `autometta-dash-run`) is left alone, and so, since it can
+no longer be told apart from one, is a viewer whose subscriber file was
+deleted outright; remove that one with `tmux kill-session`. `last_tick_at` and `tick_count` advance on every tick regardless of
 dispatch, which is why `state.yaml`'s mtime cannot serve as the idle signal
 and `dash_active_at` exists.
 

@@ -22,11 +22,13 @@ If the card declares `Verifier effort`, the panel applies it to every member. Th
 
 ## Panel composition (v1, fixed)
 
-| Panellist | Route | Identity |
+| Panellist | Route | Identity recorded |
 |---|---|---|
-| 0 | Claude Opus 5 via SDK | `Claude Opus 5 <claude-opus-5@local>` |
-| 1 | Claude Sonnet 5 via SDK | `Claude Sonnet 5 <claude-sonnet-5@local>` |
-| 2 | GPT-5.6 Sol via `codex exec --model gpt-5.6-sol` | `GPT-5.6 Sol <gpt-5-6-sol@local>` |
+| 0 | Claude Opus via SDK, `--model $AUTOMETTA_MODEL_OPUS` (currently `claude-opus-5-5`) | `Claude Opus 5 <claude-opus-5@local>` (a fixed label in `spawn-verifier-panel.sh`) |
+| 1 | Claude Sonnet via SDK, `--model $AUTOMETTA_MODEL_SONNET` (currently `claude-sonnet-5-5`) | `Claude Sonnet 5.5 <claude-sonnet-5-5@local>` |
+| 2 | Codex via `codex exec --model $AUTOMETTA_MODEL_CODEX` (currently `gpt-6.1-sol`) | `agent-whoami --model` for that model, currently `GPT-6.1 Sol <gpt-6-1-sol@local>` |
+
+The model ids come from `scripts/models.sh`, so a model bump there moves the panel with it.
 
 The two Claude panellists require `auth.claude.mode: api` in `.autometta.local.yaml`. If the API key is not available, the panel fails closed with an explicit error; it does not fall back to subscription or to a single verifier.
 

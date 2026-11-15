@@ -23,7 +23,6 @@ source "$script_dir/vendor-set.sh"
 source "$script_dir/escalations.sh"
 
 controller_home="$(autometta_controller_home)"
-subscribers_dir="$controller_home/subscribers"
 controller_log_dir="$controller_home/log"
 
 log() {
@@ -2340,9 +2339,22 @@ preserve_failed_work() {
   return 0
 }
 
+# Card metadata survives requeue, unlike the per-attempt auto_retries field.
+recovery_attempt_available() {
+  local card_path="$1" limit attempt
+  [[ -f "$card_path" ]] || return 0
+  limit="$(sed -n 's/^- \*\*Recovery attempts:\*\* //p' "$card_path")"
+  attempt="$(sed -n 's/^- \*\*Recovery attempt:\*\* //p' "$card_path")"
+  limit="${limit:-3}"
+  attempt="${attempt:-1}"
+  [[ "$limit" =~ ^[1-9][0-9]*$ && "$attempt" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ ${#limit} -le 6 && ${#attempt} -le 6 ]] || return 1
+  (( attempt < limit ))
+}
+
 auto_retry_dead_workers() {
   local repo_root="$1" state_yaml="$2"
-  local stage stage_id worker_pid marker reason wip_commit
+  local stage stage_id worker_pid marker reason wip_commit recovery_card
   if [[ -f "$repo_root/state/budget.json" ]] \
       && ! jq -e '.halted != true' "$repo_root/state/budget.json" >/dev/null 2>&1; then
     return 0
@@ -2361,6 +2373,11 @@ auto_retry_dead_workers() {
     case "$marker" in
       dispatch_configuration_fault:*|run_worktree_failed|dispatch_base_tip_unresolved|card_missing) continue ;;
     esac
+    recovery_card="$(stage_card_for_id "$repo_root" "$stage_id" "" || true)"
+    if ! recovery_attempt_available "$recovery_card"; then
+      log "stage ${stage_id} automatic retry held: recorded recovery allowance exhausted or invalid"
+      continue
+    fi
     reason="${marker:-worker ended without a usable envelope}"
     if ! preserve_failed_work "$repo_root" "$state_yaml" "$stage_id" "" "$reason" "stalled"; then
       log "stage ${stage_id} automatic retry skipped: preservation failed (${reason})"
@@ -3286,13 +3303,19 @@ ensure_tmux_viewer() {
   "$script_dir/attach.sh" --ensure "$repo_root" >/dev/null 2>&1 || true
 }
 
-# reap_idle_dash_sessions: kill autometta-<slug> tmux sessions that no
-# longer earn a live viewer — the repo is disabled, unsubscribed entirely,
-# or has had no current_stage (per dash_active_at) for more than
-# AUTOMETTA_DASH_IDLE_HOURS (default 24). An attached operator
-# always wins: tmux list-clients non-empty skips the session regardless of
-# the repo's state, exactly like ensure_tmux_viewer skips spawning one for
-# an idle repo.
+# reap_idle_dash_sessions: kill autometta-<slug> tmux viewers that no
+# longer earn a live session — the subscriber is disabled or retired
+# (<slug>.yaml.disabled), or the repo has had no current_stage (per
+# dash_active_at) for more than AUTOMETTA_DASH_IDLE_HOURS (default 24). An
+# attached operator always wins: tmux list-clients non-empty skips the
+# session regardless of the repo's state, exactly like ensure_tmux_viewer
+# skips spawning one for an idle repo.
+#
+# Only sessions this tool owns are candidates, by the same rule as
+# attach.sh's viewer_sessions: the slug must belong to a registered
+# subscriber, enabled or not. A session whose name merely shares the prefix
+# (an operator's own `autometta-dash-run`) is left alone; the cost is that a
+# viewer whose subscriber file was deleted outright is no longer reaped.
 reap_idle_dash_sessions() {
   if ! command -v tmux >/dev/null 2>&1; then
     return 0
@@ -3301,40 +3324,37 @@ reap_idle_dash_sessions() {
   local idle_seconds=$(( ${AUTOMETTA_DASH_IDLE_HOURS:-${PHAT_CONTROLLER_DASH_IDLE_HOURS:-24}} * 3600 ))
   local now_epoch
   now_epoch="$(date -u +%s)"
+  local registry
+  registry="$(sort_subscribers; list_disabled_subscribers)"
 
   local session
   while IFS= read -r session; do
     [[ -n "$session" ]] || continue
     [[ "$session" == autometta-* ]] || continue
 
-    if [[ -n "$(tmux list-clients -t "$session" 2>/dev/null)" ]]; then
-      continue
-    fi
-
     local slug="${session#autometta-}"
-    local matched_repo="" matched_enabled=""
-    local subscriber_file
-    for subscriber_file in "$subscribers_dir"/*.yaml; do
-      [[ -e "$subscriber_file" ]] || continue
-      [[ "$(basename "$subscriber_file")" == "template.yaml" ]] && continue
-      local candidate_repo
+    local matched_file="" matched_repo=""
+    local subscriber_file candidate_repo
+    while IFS= read -r subscriber_file; do
+      [[ -n "$subscriber_file" ]] || continue
       candidate_repo="$(read_subscriber_field "$subscriber_file" "repo_path")"
       [[ -n "$candidate_repo" ]] || continue
       if [[ "$(session_slug "$candidate_repo")" == "$slug" ]]; then
+        matched_file="$subscriber_file"
         matched_repo="$candidate_repo"
-        matched_enabled="$(read_subscriber_field "$subscriber_file" "enabled")"
         break
       fi
-    done
+    done <<< "$registry"
 
-    if [[ -z "$matched_repo" ]]; then
-      tmux kill-session -t "$session" 2>/dev/null || true
-      log "dash reaper: killed ${session} (no subscriber matches this slug, unsubscribed)"
+    [[ -n "$matched_repo" ]] || continue
+
+    if [[ -n "$(tmux list-clients -t "=$session" 2>/dev/null)" ]]; then
       continue
     fi
 
-    if [[ "$matched_enabled" != "true" ]]; then
-      tmux kill-session -t "$session" 2>/dev/null || true
+    if [[ "$matched_file" == *.yaml.disabled \
+        || "$(read_subscriber_field "$matched_file" "enabled")" != "true" ]]; then
+      tmux kill-session -t "=$session" 2>/dev/null || true
       log "dash reaper: killed ${session} (subscriber disabled: ${matched_repo})"
       continue
     fi
@@ -3346,7 +3366,7 @@ reap_idle_dash_sessions() {
       [[ "$last_active" =~ ^[0-9]+$ ]] || last_active=0
     fi
     if (( now_epoch - last_active > idle_seconds )); then
-      tmux kill-session -t "$session" 2>/dev/null || true
+      tmux kill-session -t "=$session" 2>/dev/null || true
       log "dash reaper: killed ${session} (idle >${idle_seconds}s, no current_stage: ${matched_repo})"
     fi
   done < <(tmux list-sessions -F '#S' 2>/dev/null || true)

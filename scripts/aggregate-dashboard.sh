@@ -680,7 +680,9 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
          {identity: ($model_rows[0].identity // "unknown"), role: ($model_rows[0].role // "unknown"),
           samples: ($model_rows | length),
           median_tokens: ([$model_rows[] | dispatch_tokens] | median | round),
-          median_uncached_tokens: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null) | .input_tokens + .output_tokens] | median),
+          median_uncached_tokens: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null) | .input_tokens + .output_tokens] | median |
+            if . == null then null else round end),
+          uncached_samples: ([$model_rows[] | select(.input_tokens != null and .output_tokens != null)] | length),
           tokens_per_min: ([$timed[] | dispatch_tokens * 60 / .wall_clock_s] | median |
             if . == null then null else round end),
           cost_usd_per_min: ([$timed[] | dispatch_cost * 60 / .wall_clock_s] | median)}]),
@@ -797,34 +799,63 @@ for subscriber_file in "$subscribers_dir"/*.yaml; do
     --argjson vendor_files_current "$vendor_files_current" --argjson vendor_drifted "$vendor_drifted" \
     --argjson build_check "$build_check" '
     input as $spend |
-    # A stage estimate is the median the named model has spent in that role
-    # before; a model this repo has never run falls back to the role median
-    # across models, and a role with no history at all stays null rather than
-    # guessing a zero.
+    # A stage estimate is the median uncached tokens (input plus output) the
+    # named model has spent per dispatch in that role here, the same measure
+    # the stage cells show. A model with no history here falls back to the
+    # middle of the per-model medians in that role, and a role with no
+    # history at all stays null rather than guessing a zero.
     ($spend.model_rates // []) as $rates |
     def role_median($role):
-      [$rates[] | select(.role == $role) | .median_tokens] | sort |
+      [$rates[] | select(.role == $role and .median_uncached_tokens != null) | .median_uncached_tokens] | sort |
       if length == 0 then null else .[(length / 2) | floor] end;
     def role_estimate($identity; $role):
-      if $identity == null then null else
-        ([$rates[] | select(.identity == $identity and .role == $role)][0]) as $hit |
-        if $hit != null then {tokens: $hit.median_tokens, basis: "model", samples: $hit.samples}
-        else (role_median($role)) as $fallback |
-          if $fallback == null then null else {tokens: $fallback, basis: "role", samples: 0} end
-        end
+      ([$rates[] | select(.identity == $identity and .role == $role and .median_uncached_tokens != null)][0]) as $hit |
+      if $hit != null then {uncached_tokens: $hit.median_uncached_tokens, basis: "model", samples: $hit.uncached_samples}
+      else (role_median($role)) as $fallback |
+        if $fallback == null then null else {uncached_tokens: $fallback, basis: "role", samples: null} end
       end;
+    # The live share is what the running dispatch has spent so far against
+    # that estimate, beside the phase it belongs to. It is per dispatch, so
+    # earlier attempts never count, and uncached on both sides. An SDK reading
+    # wins over the heartbeat sample, as in the stage cells. Each verifier on
+    # a panel is its own dispatch, so the stage shows whichever has spent the
+    # most of its own estimate. It is spend against a typical dispatch, not
+    # completion: half of all dispatches finish past 100 by definition, so
+    # "high" starts at twice the median and only the heartbeat says outlier.
+    def live_uncached:
+      if .live_usage != null then
+        ((.live_usage.input_tokens // 0) + (.live_usage.output_tokens // 0))
+      elif .live_uncached_tokens == null then null
+      elif .live_total_tokens != null and .live_uncached_tokens > .live_total_tokens then null
+      else .live_uncached_tokens end;
     ($stages | map(. as $stage |
       role_estimate($stage.worker; "worker") as $w |
       role_estimate($stage.verifier; "verifier") as $v |
-      . + {estimate: (if $w == null and $v == null then null else
-        {worker: ($w.tokens // null), verifier: ($v.tokens // null),
-         total: (($w.tokens // 0) + ($v.tokens // 0)),
-         basis: (if ($w.basis // "model") == "model" and ($v.basis // "model") == "model"
-                 then "model" else "role" end)} end)})) as $stages |
+      ({working: "worker", verifying: "verifier"}[$stage.phase // ""]) as $role |
+      . + {estimate: {worker: $w, verifier: $v,
+        total_uncached_tokens: (if $w == null or $v == null then null
+          else $w.uncached_tokens + $v.uncached_tokens end)},
+        live_share: (if $role == null then null else
+          [$agents[] | select(.stage_id == $stage.id and .role == $role) |
+            (.identity // $stage[$role]) as $identity |
+            live_uncached as $live |
+            role_estimate($identity; $role) as $estimate |
+            select($live != null and $estimate != null and $estimate.uncached_tokens > 0) |
+            (($live * 100 / $estimate.uncached_tokens) | round) as $percent |
+            {role: $role, identity: $identity, percent: $percent,
+             live_uncached_tokens: $live,
+             estimate_uncached_tokens: $estimate.uncached_tokens,
+             basis: $estimate.basis, samples: $estimate.samples,
+             level: (if ((.flags // []) | index("token-outlier")) != null then "outlier"
+                     elif $percent >= 200 then "high" else "normal" end)}] |
+          max_by(.percent) end)})) as $stages |
+    # The run carries the same stage objects as the board, estimate and live
+    # share included, so the TUI run panel reads what the web table reads.
+    (reduce $stages[] as $stage ({}; . + {($stage.id | tostring): $stage})) as $stage_by_id |
     (if $current_run_id == null then null else {
       id:$current_run_id,
       started_at:$current_run_started_at,
-      stages:$current_run_stages,
+      stages:[$current_run_stages[] | $stage_by_id[.id | tostring] // .],
       tokens_total: ([$current_run_stages[] as $stage |
         ([$spend.by_stage[]? | select(.stage_id == $stage.id)][0].tokens // $stage.tokens // 0)] |
         add // 0),

@@ -13,7 +13,7 @@ controller_home="$(autometta_controller_home)"
 default_interval=300
 
 usage() {
-  printf 'Usage: %s <repo_path> [--interval N]\n' "$(basename "$0")" >&2
+  printf 'Usage: %s [<repo_path>] [--interval N]\n' "$(basename "$0")" >&2
   exit 1
 }
 
@@ -72,12 +72,15 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
-if [[ $# -lt 1 ]]; then
-  usage
+repo_path=""
+if [[ $# -gt 0 && "$1" != --* ]]; then
+  if [[ ! -d "$1" ]]; then
+    printf 'MISSING repo %s\n' "$1" >&2
+    exit 1
+  fi
+  repo_path="$(resolve_path "$1")"
+  shift
 fi
-
-repo_path="$(resolve_path "$1")"
-shift
 interval="$default_interval"
 
 while [[ $# -gt 0 ]]; do
@@ -94,32 +97,26 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [[ ! -d "$repo_path" ]]; then
-  printf 'MISSING repo %s\n' "$repo_path" >&2
-  exit 1
-fi
 if [[ ! "$interval" =~ ^[0-9]+$ || "$interval" -lt 1 ]]; then
   printf 'invalid interval: %s\n' "$interval" >&2
   exit 1
 fi
 
-repo_slug="$(basename "$repo_path")"
-label="com.autometta.tick.${repo_slug}"
-if [[ ! "$label" =~ ^[A-Za-z0-9.-]+$ ]]; then
-  printf 'invalid LaunchAgent label from repo name: %s\n' "$label" >&2
-  exit 1
-fi
+label="com.autometta.tick.fleet"
 
-repo_template="$repo_path/.autometta/launchagent.plist.tpl"
 canonical_template="$autometta_root/templates/launchagent.plist.tpl"
 if [[ ! -f "$canonical_template" ]]; then
   printf 'MISSING canonical template %s\n' "$canonical_template" >&2
   exit 1
 fi
-if [[ ! -f "$repo_template" ]]; then
-  mkdir -p "$(dirname "$repo_template")"
-  cp "$canonical_template" "$repo_template"
-  printf 'PASS template copied %s\n' "$repo_template"
+template="$canonical_template"
+if [[ -n "$repo_path" ]]; then
+  template="$repo_path/.autometta/launchagent.plist.tpl"
+  if [[ ! -f "$template" ]]; then
+    mkdir -p "$(dirname "$template")"
+    cp "$canonical_template" "$template"
+    printf 'PASS template copied %s\n' "$template"
+  fi
 fi
 
 # Prefer the brew symlink (/opt/homebrew/bin/autometta or similar) over a
@@ -134,13 +131,13 @@ elif command -v autometta >/dev/null 2>&1; then
 else
   autometta_bin="$autometta_root/bin/autometta"
 fi
-log_dir="$repo_path/state/logs"
+log_dir="$controller_home/log"
 mkdir -p "$HOME/Library/LaunchAgents" "$log_dir"
 
 plist_file="$HOME/Library/LaunchAgents/${label}.plist"
 path_value="${AUTOMETTA_LAUNCHAGENT_PATH:-$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 
-replace_placeholder AUTOMETTA_HOME "$controller_home" < "$repo_template" \
+replace_placeholder AUTOMETTA_HOME "$controller_home" < "$template" \
   | replace_placeholder REPO_PATH "$controller_home" \
   | replace_placeholder LABEL "$label" \
   | replace_placeholder INTERVAL_SECONDS "$interval" \
@@ -151,6 +148,14 @@ replace_placeholder AUTOMETTA_HOME "$controller_home" < "$repo_template" \
 chmod 0644 "$plist_file"
 
 uid="$(id -u)"
+for legacy_plist in "$HOME/Library/LaunchAgents"/com.autometta.tick.*.plist; do
+  [[ -f "$legacy_plist" || -L "$legacy_plist" ]] || continue
+  [[ "$legacy_plist" != "$plist_file" ]] || continue
+  legacy_label="$(basename "$legacy_plist" .plist)"
+  launchctl bootout "gui/${uid}/${legacy_label}" 2>/dev/null || true
+  rm -f "$legacy_plist"
+  printf 'PASS removed legacy launchagent %s\n' "$legacy_label"
+done
 launchctl bootout "gui/${uid}/${label}" 2>/dev/null || true
 launchctl bootstrap "gui/${uid}" "$plist_file"
 remove_managed_cron_line

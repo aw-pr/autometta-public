@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Shared quota-window read and dispatch gate. The reader owns no credential and
-# makes no network request. Claude is a sanitised file contract; Codex is local
-# rollout evidence. Call quota_refresh_tick once, then pass its result onward.
+# Shared quota-window read and dispatch gate. The reader owns no credential.
+# Claude is a sanitised file contract; Codex is local rollout evidence, topped
+# up from `codex app-server` (no model turn) when that evidence is stale.
+# Call quota_refresh_tick once, then pass its result onward.
 
 quota_window_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # budget.sh is optional here: quota_reserve_settings only consults it (via

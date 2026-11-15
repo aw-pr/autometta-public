@@ -117,7 +117,7 @@ to one backing script.
 |---|---|
 | `autometta --version` | Print the resolved build SHA, root, resolution origin and checkout/installed state. In a checkout it uses Git; an installed build uses its `VERSION` stamp. This is distinct from the latest release tag. |
 | `autometta init-host` | One-time host setup: create the Autometta home (`~/.autometta` by default) and its subdirectories. |
-| `autometta init [repo-path]` | Run `init-host`, subscribe the repo and ensure a tmux viewer. Defaults to the current directory. On macOS subscription installs the LaunchAgent too. Review generated setup and commit files intended to be tracked; honour existing ignore rules and keep `.autometta.local.yaml` local. Check auth and budget before queueing. |
+| `autometta init [repo-path]` | Run `init-host`, subscribe the repo and ensure a tmux viewer. Defaults to the current directory. On macOS subscription installs or refreshes the fleet LaunchAgent too. Review generated setup and commit files intended to be tracked; honour existing ignore rules and keep `.autometta.local.yaml` local. Check auth and budget before queueing. |
 | `autometta subscribe [repo-path]` | Subscribe a repo to the controller without the full init flow. Defaults to the current directory. |
 | `autometta refresh-repo <repo-path> [--dry-run] [--adopt]` | Refresh one subscriber's vendored dispatch contract from the resolved Autometta root. It refuses dirty vendored paths and in-flight work; `--adopt` creates the vendor stamp for a first refresh. |
 | `autometta refresh-all-repos [--dry-run]` | Refresh the vendored dispatch contract across every enabled subscriber, naming every skip or refusal. |
@@ -137,8 +137,9 @@ to one backing script.
 | `autometta first-attempts <repo-path> [--json] [--since <n>]` | Report first-attempt outcomes by run from stage history and commit provenance. |
 | `autometta wake <enable\|disable\|status\|acknowledge> [options]` | Manage optional native idle wake-ups for orchestration chats. Active-chat lifecycle hooks are separate; see [the wake-up contract](docs/tick-loop.md#bounded-native-idle-wake-ups) for leases, caps and delivery requirements. |
 | `autometta retro-grade [--last N] [--dry-run]` | Build and optionally submit an Anthropic Message Batch that re-runs the current verifier rubric over recent completed stages. |
-| `autometta install-launchagent <repo-path> [--interval N]` | macOS: install a per-repo launchd LaunchAgent that runs the tick on an interval (seconds). |
-| `autometta uninstall-launchagent <repo-path>` | macOS: remove the per-repo LaunchAgent. |
+| `autometta proposals <verb> [args]` | The harness proposals ledger, `memory/proposals.jsonl`. `add` records a suggested harness change with its evidence; `list` shows open items; `approve`, `reject`, `merge`, `card` and `land` record the weekly review's decisions and the card and commit that followed; `unlifted` lists verifier `HARNESS:` lines across the subscriber registry that no proposal cites yet, and `dismiss` records one as outside the harness; `lint` gates the file. Every write needs the recording agent's identity (`--agent` or `$AUTOMETTA_AGENT`). See [learning log](docs/learning-log.md). |
+| `autometta install-launchagent [<repo-path>] [--interval N]` | macOS: install one fleet LaunchAgent, `com.autometta.tick.fleet`, once per machine. Subscribing a repo re-runs this idempotent installer; it removes legacy tick agents. The interval is in seconds (default 300). |
+| `autometta uninstall-launchagent [<repo-path>]` | macOS: without a repo, remove `com.autometta.tick.fleet`. With a repo, remove only its legacy tick agent and leave the fleet agent unaffected; the repo need not exist. A repo named `fleet` is refused. |
 | `autometta uninstall-launchagent-phat-controller` | macOS: unload and remove the retired phat-controller LaunchAgent. Safe to run when none is installed. |
 | `autometta install-homebrew-local [--dry-run]` | Render and install the local Homebrew tap from the working tree. Rerun after every `git pull` of this repo. |
 | `autometta auth status` | Per-family table: mode (`subscription`, `api`, or codex-only `local`), provenance (env, manifest, default), and ref status. Also prints which `op-refs.local.sh` was loaded, whether `op-fetch` is on PATH, and the sibling `CODEX_HOME` state. No token spend. |
@@ -535,19 +536,21 @@ See `docs/observability.md`.
 
 ## 7. Publish workflow
 
-Private development lives on `dev`; `publish` is a pointer on the same linear
-history that is fast-forwarded to `dev` when a batch is ready. A fail-closed
-git gate guards the public push.
+Private development lives on `dev`; `publish` is the curated, append-only
+public line. `scripts/publish-sync.sh` replays `dev`'s new commits onto it,
+stripping the declared private paths (`publishguard.privatefile`), and moves
+the `publish` ref forward. A fail-closed git gate guards the public push.
 
 - Install the publish-guard hooks: `scripts/install-guards.sh`. The pre-commit
   hook blocks committing real `op://` refs and other configured patterns
   (`.publish-guard.local`).
 - Publish is never a force-push. Under the default `publishguard.boundary=pr`
   the pre-push hook rejects any push to the public `main`; the flow is
-  `git switch publish && git merge --ff-only dev && git push origin publish
-  && git push public publish`, then a PR `publish -> main` on the forge
-  (`gh pr create --base main --head publish` when none is open) merged there.
-  Never `--no-verify`.
+  `scripts/publish-sync.sh` (read the dry-run plan), then
+  `scripts/publish-sync.sh --apply --on-conflict abort`, an audit of the new
+  public commits, `git push origin publish && git push public publish`, then
+  a PR `publish -> main` on the forge (`gh pr create --base main --head
+  publish` when none is open) merged there. Never `--no-verify`.
 
 Full model, including the `direct` boundary that keeps the `git publish`
 alias: `docs/PUBLISH-WORKFLOW.md` ("Normal publish"). The
