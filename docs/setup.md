@@ -12,7 +12,7 @@ Required commands:
 - `claude`
 - `python3`
 - `yq` (required: `scripts/tick.sh` uses it for atomic YAML writes)
-- `agent-whoami` (an external helper from `mcp-hub/scripts`; `tick.sh` attributes state-branch commits with it)
+- `agent-whoami` (an external helper from `mcp-hub/scripts`, the operator's tooling repo, which is not published; `tick.sh` attributes state-branch commits with it, so a public clone needs its own `agent-whoami` on `PATH` that prints a `Name <slug@local>` identity, including for `--model <id>`)
 - `op-fetch` (an external credential/environment wrapper) and `op` (the 1Password CLI; every dispatch is wrapped by `op-fetch`, see section 7)
 
 Optional: `tmux`, for the `autometta attach` viewer. `autometta check-deps` fails closed on any required command and warns on the optional one.
