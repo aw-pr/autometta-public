@@ -169,4 +169,6 @@ Return the standard envelope: status, the outputs of criteria 1 to 3, and the li
 
 ## Family-specific notes
 
+Readiness amendment (2026-11-15, card 174 recovery): `pipeline-pair-smoke.sh` and `envelope-migration-smoke.sh` leave the real DNS preflight active despite mocking agent dispatch. Both fail identically on the base and preserved candidate when DNS is denied. For these two regression commands only, use the isolated answering-resolver setup in `stage-cards/174-quota-unknown-holds-claude.md`, acceptance criterion 2. It changes only their fixture environment, not the smokes or production gate. Also run `scripts/network-fault-smoke.sh` in a fresh controller home without that override so production preflight rejection remains independently covered. No required assertion or regression is omitted, and all existing base-comparison rules still apply. Evidence and the original failure are retained under `state/uat/174-quota-unknown-holds-claude/attempt-1/`; harness proposal `P-20261115-14cc` records the permanent fixture repair.
+
 Codex verifier: every smoke in criteria 1 and 2 builds its fixtures under `mktemp -d` (`$TMPDIR`) and needs no network, so it runs inside the workspace-write sandbox. The new smoke sources `scripts/tick.sh` from the worktree under test, not from the Homebrew install.
