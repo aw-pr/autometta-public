@@ -34,23 +34,21 @@ costlog_family_for_identity() {
   agent_family_for_identity "$identity"
 }
 
-# Resolve the billing route (subscription | api) for a family in a repo.
-# Same resolution order as auth-route.sh, kept independent so the cost-log
-# records the route without re-running the op-fetch resolver:
-#   1. AUTOMETTA_<FAMILY>_MODE env override
-#   2. auth.<family>.mode in <repo>/.autometta.local.yaml
-#   3. default: subscription
-auth_route_for_family() {
+# Resolve the billing route (subscription | api | local) for one role of a
+# family in a repo. Delegates to auth-route.sh --print-mode --role, so the
+# cost-log records exactly the route the dispatch resolved (per-role env,
+# family env, per-role manifest key, family manifest key, subscription).
+# Any resolution failure records subscription.
+costlog_auth_route() {
   local repo_root="$1"
   local family="$2"
-  local override_var mode manifest
-  override_var="AUTOMETTA_$(printf '%s' "$family" | tr '[:lower:]' '[:upper:]')_MODE"
-  mode="${!override_var:-}"
-  manifest="$repo_root/.autometta.local.yaml"
-  if [[ -z "$mode" && -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
-    mode="$(yq -r ".auth.${family}.mode // \"\"" "$manifest" 2>/dev/null || true)"
-  fi
-  case "${mode:-subscription}" in
+  local role="$3"
+  local mode=""
+  local -a role_argv=()
+  case "$role" in worker|verifier) role_argv=( --role "$role" ) ;; esac
+  mode="$(REPO_ROOT="$repo_root" "$_costlog_script_dir/auth-route.sh" "$family" \
+    --print-mode ${role_argv[@]+"${role_argv[@]}"} 2>/dev/null)" || mode=""
+  case "$mode" in
     api)   printf 'api\n' ;;
     local) printf 'local\n' ;;
     *)     printf 'subscription\n' ;;
@@ -203,7 +201,7 @@ costlog_append() {
   local family tier auth_route repo_name out_file ts breakdown
   family="$(costlog_family_for_identity "$identity")"
   tier="$(tier_for_identity "$identity")"
-  auth_route="$(auth_route_for_family "$repo_root" "$family")"
+  auth_route="$(costlog_auth_route "$repo_root" "$family" "$role")"
   repo_name="$(basename "$repo_root")"
   out_file="$repo_root/state/cost-log.jsonl"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

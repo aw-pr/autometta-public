@@ -33,7 +33,7 @@ A tick is a single non-interactive invocation of `autometta tick`, which delegat
    verifier N is live, the tick may dispatch worker N+1 and record both
    flights by stage id. It never starts a third stage.
 5. Updates `state.yaml` and `budget.json` atomically. "Atomically" means: write to a temp file in the same directory, then `mv` into place. The `mv` is the atomicity primitive on POSIX filesystems given same-directory restraint.
-6. Snapshots the state update onto the `autometta/state` ref, using the per-agent author attribution from the global dev rules. It does this with git plumbing and never checks the branch out: see (j).
+6. Snapshots the state update onto the `autometta/state` ref, authored as `Phat Controller <phat-controller@local>`: the loop writes the snapshot, not a model, and `agent-whoami` would name whichever family's config it fell through to. The committer is whatever git is configured with. It does this with git plumbing and never checks the branch out: see (j).
 7. Exits. The next tick is the next cron fire.
 
 A tick makes one transition per stage, not two transitions on the same stage
@@ -600,6 +600,8 @@ integration:
   pushed: true
   recorded_at: 2026-08-23T14:02:11Z
 ```
+
+The tick pushes the run branch to `origin` only on a `git-push-check` `PUSH` verdict (`push_awaiting_run_branch`, the only push the tick makes). Any other verdict, a failed push or a missing helper records `pushed: false`, and the tick log line says `push held` with the reason, so a run branch whose `origin` is public or watched by a pipeline waits for a human.
 
 `autometta status` prints an `awaiting integration` line per outstanding stage under the repo's row. `phat-controller merge-awaiting` remains the route for a parked branch that can later be merged cleanly.
 

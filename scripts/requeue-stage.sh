@@ -193,18 +193,16 @@ fi
 for agent_file in "$repo_root"/state/active-agents/*.json; do
   [ -f "$agent_file" ] || continue
   card_path="$(jq -r '.card_path // ""' "$agent_file")"
-  case "$card_path" in
-    *"$stage_id"*)
-      pid="$(jq -r '.pid // 0' "$agent_file")"
-      if [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null || true
-        sleep 1
-        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
-        echo "requeue: killed live agent pid $pid for $stage_id"
-      fi
-      rm -f "$agent_file"
-      ;;
-  esac
+  if [ -n "$card_path" ] && [ "$(basename "$card_path" .md)" = "$stage_id" ]; then
+    pid="$(jq -r '.pid // 0' "$agent_file")"
+    if [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      sleep 1
+      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+      echo "requeue: killed live agent pid $pid for $stage_id"
+    fi
+    rm -f "$agent_file"
+  fi
 done
 
 # Trap 1: purge every per-stage artefact the tick could misread as progress.

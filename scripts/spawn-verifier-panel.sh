@@ -35,6 +35,17 @@ POLL_INTERVAL=10
 
 log_msg() { printf '%s\n' "$1" >&2; }
 
+# sed_replacement_escape <value>: the value escaped for the replacement side
+# of an `s|...|...|` expression, so a backslash, an ampersand or the `|`
+# delimiter in an identity or path reaches the prompt verbatim.
+sed_replacement_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//&/\\&}"
+  value="${value//|/\\|}"
+  printf '%s' "$value"
+}
+
 extract_stage_id() {
   local card_path="$1"
   local base
@@ -226,10 +237,10 @@ main() {
   local tmpl="$repo_root/templates/verifier-prompt.md"
   [[ -f "$tmpl" ]] || tmpl="$autometta_root/templates/verifier-prompt.md"
   codex_prompt="$(sed \
-    -e "s|<<stage-id>>|${stage_id}|g" \
-    -e "s|<<stage-card-path>>|${card_path}|g" \
-    -e "s|<<artefact-path>>|${p2_out}|g" \
-    -e "s|<<verifier-tier>>|${PANELLIST_CODEX}|g" \
+    -e "s|<<stage-id>>|$(sed_replacement_escape "$stage_id")|g" \
+    -e "s|<<stage-card-path>>|$(sed_replacement_escape "$card_path")|g" \
+    -e "s|<<artefact-path>>|$(sed_replacement_escape "$p2_out")|g" \
+    -e "s|<<verifier-tier>>|$(sed_replacement_escape "$PANELLIST_CODEX")|g" \
     -e "s|<<orchestrator-identity>>|spawn-verifier-panel.sh|g" \
     -e "s|<<family-specific-notes-or-none>>|Write the verifier artefact JSON to the artefact-path shown above. stdin redirect already applied.|g" \
     "$tmpl")"

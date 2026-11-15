@@ -61,7 +61,7 @@ below. Historical rows are retained without backfilling.
 | `role` | string | `worker` or `verifier`. Historical rows may contain `phat-controller`, the retired scheduled role. |
 | `identity` | string | The full agent identity string from the stage card / state. |
 | `tier` | string | Capability tier derived from the identity (`T0`, `T1`, `T2`, `T4`, `T5`), matching the agent-orchestrator tier table. Supplies the fallback rate when the model has no explicit rate. |
-| `auth_route` | string | `subscription`, `api`, or `local` (codex only), resolved the same way as the dispatch (env override, then `.autometta.local.yaml`, then subscription default). |
+| `auth_route` | string | `subscription`, `api`, or `local` (codex only), resolved per role, the same way the dispatch resolves it (`scripts/auth-route.sh --print-mode --role`): per-role env override `AUTOMETTA_<FAMILY>_MODE_<ROLE>`, family env override `AUTOMETTA_<FAMILY>_MODE`, per-role manifest key `auth.<family>.<role>.mode`, family manifest key `auth.<family>.mode`, then subscription. A resolution failure records `subscription`. |
 | `input_tokens` | int or null | Fresh (non-cached) input tokens. Cache-creation (write) tokens are folded in here, see below. Null when no full breakdown was recovered. |
 | `cached_input_tokens` | int or null | Input tokens served from the prompt cache (the cache-read count). Null when no full breakdown was recovered. |
 | `output_tokens` | int or null | Generated output tokens. Null when no full breakdown was recovered. |

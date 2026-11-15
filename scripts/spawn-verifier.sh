@@ -69,6 +69,17 @@ verifier_family() {
   agent_family_for_identity "$identity"
 }
 
+# sed_replacement_escape <value>: the value escaped for the replacement side
+# of an `s|...|...|` expression, so a backslash, an ampersand or the `|`
+# delimiter in an identity or path reaches the prompt verbatim.
+sed_replacement_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//&/\\&}"
+  value="${value//|/\\|}"
+  printf '%s' "$value"
+}
+
 render_prompt() {
   local repo_root="$1"
   local card_path="$2"
@@ -83,22 +94,18 @@ render_prompt() {
     template_path="$script_dir/../templates/verifier-prompt.md"
   fi
 
-  # family_notes carries free text the worker wrote and may contain sed's
-  # delimiter, an ampersand, or a backslash. Flatten to one line and escape
-  # before it goes into a replacement.
+  # family_notes carries free text the worker wrote, so flatten it to one
+  # line; every value is escaped before it goes into a replacement.
   family_notes="${family_notes//$'\n'/ }"
-  family_notes="${family_notes//\\/\\\\}"
-  family_notes="${family_notes//&/\\&}"
-  family_notes="${family_notes//|/\\|}"
 
   local rendered
   rendered="$(sed \
-    -e "s|<<stage-id>>|${stage_id}|g" \
-    -e "s|<<stage-card-path>>|${card_path}|g" \
-    -e "s|<<artefact-path>>|${artefact_path}|g" \
-    -e "s|<<verifier-tier>>|${verifier_identity}|g" \
+    -e "s|<<stage-id>>|$(sed_replacement_escape "$stage_id")|g" \
+    -e "s|<<stage-card-path>>|$(sed_replacement_escape "$card_path")|g" \
+    -e "s|<<artefact-path>>|$(sed_replacement_escape "$artefact_path")|g" \
+    -e "s|<<verifier-tier>>|$(sed_replacement_escape "$verifier_identity")|g" \
     -e "s|<<orchestrator-identity>>|phat-controller|g" \
-    -e "s|<<family-specific-notes-or-none>>|${family_notes}|g" \
+    -e "s|<<family-specific-notes-or-none>>|$(sed_replacement_escape "$family_notes")|g" \
     "$template_path")"
 
   # The fact slice can contain arbitrary prompt-readable text and newlines.

@@ -606,29 +606,6 @@ stage_card_for_id() {
       fi
     done < <(compgen -G "$search_path" || true)
   done < <(manifest_patterns "$repo_root" "$manifest_path")
-
-  if [[ -z "$card" ]]; then
-    local -a fallback_candidates=(
-      "$repo_root/stage-cards/${stage_id}.md" \
-      "$repo_root/stage-cards"/*"${stage_id}"*.md
-    )
-    # Legacy fallback for subscribers that used the former common layout.
-    fallback_candidates+=(
-      "$repo_root/docs/stages/${stage_id}.md" \
-      "$repo_root/docs/stages"/*"${stage_id}"*.md
-    )
-    # Legacy fallback for Autometta's former self-host layout.
-    fallback_candidates+=(
-      "$repo_root/examples/self-host/${stage_id}.md" \
-      "$repo_root/examples/self-host"/*"${stage_id}"*.md
-    )
-    for candidate in "${fallback_candidates[@]}"; do
-      if [[ -f "$candidate" ]]; then
-        card="$candidate"
-        break
-      fi
-    done
-  fi
   printf '%s\n' "$card"
 }
 
@@ -1841,6 +1818,29 @@ state_branch_stage_normalized() {
   fi
 }
 
+# push_awaiting_run_branch <repo_root> <run_branch>: the only push the tick
+# makes. The estate's push policy lives in git-push-check, so the run branch
+# goes to origin only on its PUSH verdict; anything else, or a missing
+# helper, holds the push for a human. Prints `pushed`, or `held: <reason>`
+# and returns non-zero.
+push_awaiting_run_branch() {
+  local repo_root="$1" run_branch="$2" verdict
+  if ! command -v git-push-check >/dev/null 2>&1; then
+    printf 'held: git-push-check is not on PATH\n'
+    return 1
+  fi
+  verdict="$(cd "$repo_root" && git-push-check origin "$run_branch" 2>&1 | tail -n1 || true)"
+  if [[ "${verdict%%$'\t'*}" != PUSH ]]; then
+    printf 'held: git-push-check said %s\n' "${verdict:-nothing}"
+    return 1
+  fi
+  if ! (cd "$repo_root" && git push origin "$run_branch" >/dev/null 2>&1); then
+    printf 'held: verdict PUSH but git push origin %s failed\n' "$run_branch"
+    return 1
+  fi
+  printf 'pushed\n'
+}
+
 commit_state_branch() {
   local repo_root="$1"
   local index_file
@@ -1913,14 +1913,11 @@ commit_state_branch() {
     local -a commit_argv=( commit-tree "$tree" )
     [[ -n "$parent" ]] && commit_argv+=( -p "$parent" )
     commit_argv+=( -m "autometta: tick state update" -m "$body" )
-    # Author is the agent identity when the helper resolves it, per the
-    # global attribution rules; committer stays whatever git is configured
-    # with. A missing helper is not worth failing a tick over, so the
-    # snapshot falls back to the configured identity for both.
-    local ident
-    if ident="$(agent-whoami 2>/dev/null)" && [[ "$ident" =~ ^(.+)[[:space:]]\<(.+)\>$ ]]; then
-      export GIT_AUTHOR_NAME="${BASH_REMATCH[1]}" GIT_AUTHOR_EMAIL="${BASH_REMATCH[2]}"
-    fi
+    # The loop writes the snapshot, not a model, so it is authored as the
+    # loop. agent-whoami would name whichever family's config it falls
+    # through to (whoever launched the cron), a wrong but plausible author.
+    # The committer stays whatever git is configured with.
+    export GIT_AUTHOR_NAME="Phat Controller" GIT_AUTHOR_EMAIL="phat-controller@local"
     local commit
     commit="$(git "${commit_argv[@]}")"
     [[ -n "$commit" ]] || exit 1
@@ -3028,11 +3025,12 @@ _process_verifier_artefact() {
           rebased:*) push_note="stage ${stage_id}: rebased ${run_branch} could not fast-forward ${base_branch}; ${run_branch} left standing" ;;
           *) push_note="stage ${stage_id}: ${base_branch} moved since dispatch; ${run_branch} left standing" ;;
         esac
-        if (cd "$repo_root" && git push origin "$run_branch" >/dev/null 2>&1); then
+        local push_result
+        if push_result="$(push_awaiting_run_branch "$repo_root" "$run_branch")"; then
           pushed=true
           push_note="${push_note}, pushed to origin/${run_branch} for manual integration"
         else
-          push_note="${push_note}; push to origin also failed, integrate locally"
+          push_note="${push_note}; push held (${push_result#held: }), integrate locally"
         fi
         record_stage_integration "$state_yaml" "$stage_id" \
           "$(integration_record awaiting "$base_branch" "$run_branch" "$run_tip" "$pushed")"

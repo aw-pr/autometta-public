@@ -80,6 +80,17 @@ worker_family() {
   agent_family_for_identity "$identity"
 }
 
+# sed_replacement_escape <value>: the value escaped for the replacement side
+# of an `s|...|...|` expression, so a backslash, an ampersand or the `|`
+# delimiter in an identity or path reaches the prompt verbatim.
+sed_replacement_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//&/\\&}"
+  value="${value//|/\\|}"
+  printf '%s' "$value"
+}
+
 render_prompt() {
   local work_dir="$1"
   local card_path="$2"
@@ -93,13 +104,14 @@ render_prompt() {
     template_path="$script_dir/../templates/worker-prompt.md"
   fi
 
+  family_notes="${family_notes//$'\n'/ }"
   sed \
-    -e "s|<<worker-tier>>|${worker_identity}|g" \
-    -e "s|<<project-name>>|${project_name}|g" \
+    -e "s|<<worker-tier>>|$(sed_replacement_escape "$worker_identity")|g" \
+    -e "s|<<project-name>>|$(sed_replacement_escape "$project_name")|g" \
     -e "s|<<orchestrator-identity>>|phat-controller|g" \
-    -e "s|<<stage-card-path>>|${card_path}|g" \
-    -e "s|<<stage-id>>|${stage_id}|g" \
-    -e "s|<<family-specific-notes-or-none>>|${family_notes}|g" \
+    -e "s|<<stage-card-path>>|$(sed_replacement_escape "$card_path")|g" \
+    -e "s|<<stage-id>>|$(sed_replacement_escape "$stage_id")|g" \
+    -e "s|<<family-specific-notes-or-none>>|$(sed_replacement_escape "$family_notes")|g" \
     "$template_path"
 }
 
