@@ -352,8 +352,8 @@ it is fatal.
 
 Which cloud model the verifier reaches is the card's business, not this key's:
 a role's declared identity names its weights (`Codex GPT-5.6 Terra` dispatches
-to `gpt-5.6-terra`), and an identity naming none of Sol, Terra or Luna falls
-back to `AUTOMETTA_MODEL_CODEX`.
+to `gpt-5.6-terra`), and an identity that `codex_cloud_model_for_identity` in
+`scripts/models.sh` does not recognise falls back to `AUTOMETTA_MODEL_CODEX`.
 
 Local weights are a real step down in capability from a frontier verifier. Prefer this route for stages whose acceptance is mechanical (smoke scripts, `bash -n`, fixture comparisons) and keep a frontier verifier for judgement-heavy criteria: a FAIL from a weaker verifier still blocks the merge, but a PASS is only as trustworthy as the acceptance commands it actually ran. `gpt-oss:120b` is the measured default (77% FAIL recall against a 10-stage benchmark, tied for best of eight candidates measured; see `docs/verifier-bake-off.md`); `qwen3-coder:30b` is faster but effectively a rubber stamp (15% FAIL recall) and should not be substituted for the default without accepting that trade. Cold model load is on the order of a minute; warm dispatches are faster.
 
