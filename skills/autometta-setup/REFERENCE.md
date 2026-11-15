@@ -83,7 +83,7 @@ git add <worker deliverables>
 git commit --author="$(agent-whoami)" -m "refactor: extract precompute_fft_window from render loop"
 
 git add <orchestrator metadata like a PLAN file>
-git commit --author="Claude Opus 4.8 <claude-opus-4-8@local>" -m "plan: refactor-fft-precompute landed at <sha>"
+git commit --author="$(agent-whoami --model '<orchestrator model id>')" -m "plan: refactor-fft-precompute landed at <sha>"
 ```
 
 If a verifier artefact is committed (depends on whether the repo tracks `state/`), use Sonnet's author string for that commit.
