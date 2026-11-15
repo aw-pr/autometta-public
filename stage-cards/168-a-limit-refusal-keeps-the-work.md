@@ -49,6 +49,7 @@ A worker that exits without a dispatch envelope and whose log matches a provider
 - `scripts/usage-error-smoke.sh` (it calls `handle_limit_refusal` directly)
 - `scripts/limit-refusal-keeps-work-smoke.sh` (the frozen oracle)
 - `scripts/reap-worktrees.sh` (lines 100 to 200, read only: how a preserved worktree is judged)
+- `schemas/state.yaml.json` (the strict stage-field schema)
 - `docs/lessons.md` (the last two "Headless gotcha" sections, for style)
 
 Do not read anything else unless you need to; keep your context lean.
@@ -77,13 +78,15 @@ All files listed here must be created or modified. Paths are relative to repo ro
 
    Name both constants in that one section. Use the next free number, since another card may add a gotcha first.
 
+5. `schemas/state.yaml.json`: declare `limit_rewinds` as an optional integer with minimum 0 under stage properties. Keep `additionalProperties: false` and all existing field types unchanged.
+
 ## Constraints
 
 - `scripts/limit-refusal-keeps-work-smoke.sh` is frozen: make it pass, do not edit it.
 - `handle_limit_refusal` keeps its four-argument contract, and the verifier's refusal branch in `_process_repo_locked` is unchanged. `scripts/usage-error-smoke.sh` calls it directly.
 - An instant refusal records no failure, consumes no attempt, does not count toward the rewind bound, and leaves the run worktree standing. That is today's behaviour, and the 2026-08-16 incident it fixed must not come back.
 - `preserve_failed_work`'s signature and behaviour are unchanged; reuse it, do not copy its git surgery.
-- Do not change `scripts/requeue-stage.sh`, `scripts/reap-worktrees.sh`, the verifier phase, or any `verifier_*` stage field. Card 166, queued before this one, edits `requeue-stage.sh` and the worker-dispatch path. Keep the two cards independent so either can land first. `limit_rewinds` is therefore not reset by a requeue; say so in the gotcha.
+- Do not change `scripts/requeue-stage.sh`, `scripts/reap-worktrees.sh`, the verifier phase, or any `verifier_*` stage field. Card 166 also edits `requeue-stage.sh` and the worker-dispatch path. Keep the two cards independent so either can land first. `limit_rewinds` is therefore not reset by a requeue; say so in the gotcha.
 - Token accounting for a rewound exit is unchanged: a rewound exit is still not accounted, which is out of scope here.
 - Offline only. The smokes work under `mktemp -d`. Nothing touches `~/.autometta`, a subscriber, or this repo's own `state/`. Do not run `autometta tick`.
 - No git commands in the main checkout; the tick commits on PASS. The smokes run git only inside their own temporary repositories.
@@ -105,6 +108,8 @@ The verifier will check each of these. Failure of any one is a failure of the st
    - **(10)** `USAGE_LIMIT_INSTANT_SECONDS` is 60 and `USAGE_LIMIT_MAX_REWINDS` is 2.
    - **(11)** One headless gotcha in `docs/lessons.md` names both constants.
 
+   - **(12)** The strict stage schema declares the new `limit_rewinds` counter as an integer with minimum 0.
+
    Base: red at the first preservation assertion (`(1) the rewind did not pin the attempt's tracked deliverable on a wip/07-limited-attempt-N ref`).
 2. **Worker and verifier:** `scripts/usage-error-smoke.sh`, `scripts/auto-retry-smoke.sh`, `scripts/preserve-failed-work-smoke.sh`, `scripts/preserve-stays-inside-smoke.sh`, `scripts/run-worktree-state-symlink-smoke.sh`, `scripts/landing-dispatch-smoke.sh`, `scripts/requeue-reset-smoke.sh` and `scripts/pipeline-pair-smoke.sh` each exit 0. The last takes under a minute on the base (37 s) and drives the pipeline path's own `ensure_run_worktree` calls. Base: all green.
 3. **Verifier:** `bash -n scripts/tick.sh` and `bash -n scripts/usage-limit.sh` pass. `shellcheck -S warning scripts/tick.sh scripts/usage-limit.sh` reports no warning beyond the base's two: SC2034 `unit` at `tick.sh:652` and SC2154 `autometta_vendor_stamp_name` at `tick.sh:3211`. Line numbers may move; the findings may not. Base: exactly those two.
@@ -115,10 +120,12 @@ Baseline note, unchanged from base and not a criterion: `scripts/retry-after-rea
 ## Contract test
 
 - **Test file:** scripts/limit-refusal-keeps-work-smoke.sh
-- **Assertions digest:** sha256:227b31d35274e978eea8a99e2994a5658de0c386bbbf0bbeb6039a641f216a43
+- **Assertions digest:** sha256:cc319b2d9266f7ee641145c543fb126b33b8e1d1eab178ae729899af5d5e66eb
 - **Oracle proof:** red on `dev` at `8c2675d`. Status `pending`, no failure and the pause all hold today, so the first failure is `(1) the rewind did not pin the attempt's tracked deliverable on a wip/07-limited-attempt-N ref`. A non-fatal diagnostic run showed 25 red assertions across (1), (2), (3), (5), (6), (7), (8), (10) and (11). (4), (9) and the 60-second cases of (5) are regression checks and are green on the base. A throwaway reference in a scratch worktree passed every assertion, three runs in a row. It added the two constants, an elapsed-only instant check, preserve-then-rewind with a `limit_rewinds` counter, the ordered refusal checks in `ensure_run_worktree`, and a stub gotcha. With it, the eight smokes of criterion 2 stayed green. Two mutants of that reference were each caught. One also required a log of at most 512 bytes and failed at `(4) an instant codex refusal was not rewound to pending (status stalled)`. The other used `<` for the bound and failed at `(5) a codex refusal 60s after dispatch was not rewound to pending`. The reference worktree was then removed. Refusal lines carry no reset clock, so every pause is the one-hour fallback and no assertion depends on the time of day.
 
 Resume check (2026-11-15, dispatch baseline `3052ba3`): the unchanged oracle was rerun and is red at `(1) the rewind did not pin the attempt's tracked deliverable on a wip/07-limited-attempt-N ref`. Its digest still matches. The earlier reference proof and cross-family cold read above are retained; no scope or assertion changed. Cards 169 and 172 are now completed and merged. Serial dispatch keeps this card behind the already queued 173, 174 and 170; the worker and verifier must run the acceptance regressions on their actual dispatch base.
+
+Readiness correction before first dispatch (2026-11-15): Codex claims closure found that stage objects use `additionalProperties: false`, but the draft omitted the new counter from the schema. Deliverable 5 and frozen case (12) now require its typed declaration without relaxing schema strictness. The original preservation assertions are unchanged; the old digest is retained in commit `49b2fc5`. The added check is red against the production schema and separately green against a minimal copy declaring the counter; wrong type, negative minimum and a permissive stage schema are rejected. The prior full-reference and Codex cold-read evidence still cover the unchanged preservation core.
 
 ## Cold read
 

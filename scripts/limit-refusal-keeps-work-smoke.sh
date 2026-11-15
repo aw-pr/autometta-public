@@ -362,6 +362,20 @@ awk '/^## / { in_section = ($0 ~ /^## Headless gotcha [0-9]+: /); has_instant = 
      END { exit !found }' \
   "$script_dir/../docs/lessons.md" \
   || fail "(11) no headless gotcha in docs/lessons.md names both USAGE_LIMIT_INSTANT_SECONDS and USAGE_LIMIT_MAX_REWINDS"
+# (12) The counter remains valid under the strict state schema.
+if ! python3 - "$script_dir/../schemas/state.yaml.json" <<'SCHEMA'
+import json
+import sys
+schema = json.load(open(sys.argv[1]))
+stage = schema["properties"]["stages"]["items"]
+counter = stage["properties"].get("limit_rewinds", {})
+assert counter.get("type") == "integer", "limit_rewinds must be an integer"
+assert counter.get("minimum") == 0, "limit_rewinds must reject negative values"
+assert stage.get("additionalProperties") is False, "stage fields must remain strict"
+SCHEMA
+then
+  fail "(12) limit_rewinds is absent or invalid in the strict state schema"
+fi
 # AUTOMETTA-CONTRACT-END
 
 printf 'PASS limit refusal keeps work smoke\n'
