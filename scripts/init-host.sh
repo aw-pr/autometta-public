@@ -154,7 +154,7 @@ else
 fi
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  printf 'PASS macOS host uses per-repo LaunchAgents; run autometta subscribe <repo> to install one\n'
+  printf 'PASS macOS host uses one fleet LaunchAgent (com.autometta.tick.fleet); autometta subscribe <repo> installs or refreshes it\n'
 else
   printf 'PASS non-macOS host keeps cron heartbeat fallback\n'
 fi
