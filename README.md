@@ -141,7 +141,7 @@ autometta init /path/to/target-repo
 git -C /path/to/target-repo status --short
 ```
 
-`init` creates local configuration and state, registers the repo and installs its LaunchAgent. Review the generated files, tracking policy, auth and budget before queueing anything. Do not force-add ignored runtime state or the local manifest. The [runbook](docs/runbook.md) covers card review, queueing and scheduling; [setup](docs/setup.md) covers the Linux cron path.
+`init` creates local configuration and state, registers the repo and installs or refreshes the machine's single fleet LaunchAgent, `com.autometta.tick.fleet`. Review the generated files, tracking policy, auth and budget before queueing anything. Do not force-add ignored runtime state or the local manifest. The [runbook](docs/runbook.md) covers card review, queueing and scheduling; [setup](docs/setup.md) covers the Linux cron path.
 
 Check the billing route for each family before dispatching:
 

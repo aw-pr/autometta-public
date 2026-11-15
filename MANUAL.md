@@ -117,7 +117,7 @@ to one backing script.
 |---|---|
 | `autometta --version` | Print the resolved build SHA, root, resolution origin and checkout/installed state. In a checkout it uses Git; an installed build uses its `VERSION` stamp. This is distinct from the latest release tag. |
 | `autometta init-host` | One-time host setup: create the Autometta home (`~/.autometta` by default) and its subdirectories. |
-| `autometta init [repo-path]` | Run `init-host`, subscribe the repo and ensure a tmux viewer. Defaults to the current directory. On macOS subscription installs the LaunchAgent too. Review generated setup and commit files intended to be tracked; honour existing ignore rules and keep `.autometta.local.yaml` local. Check auth and budget before queueing. |
+| `autometta init [repo-path]` | Run `init-host`, subscribe the repo and ensure a tmux viewer. Defaults to the current directory. On macOS subscription installs or refreshes the fleet LaunchAgent too. Review generated setup and commit files intended to be tracked; honour existing ignore rules and keep `.autometta.local.yaml` local. Check auth and budget before queueing. |
 | `autometta subscribe [repo-path]` | Subscribe a repo to the controller without the full init flow. Defaults to the current directory. |
 | `autometta refresh-repo <repo-path> [--dry-run] [--adopt]` | Refresh one subscriber's vendored dispatch contract from the resolved Autometta root. It refuses dirty vendored paths and in-flight work; `--adopt` creates the vendor stamp for a first refresh. |
 | `autometta refresh-all-repos [--dry-run]` | Refresh the vendored dispatch contract across every enabled subscriber, naming every skip or refusal. |

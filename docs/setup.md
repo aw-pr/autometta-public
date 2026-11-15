@@ -102,7 +102,8 @@ It also creates a gitignored `.autometta.local.yaml` manifest that points back
 to the installed Autometta root. If `tmux` is installed, it also starts a
 detached read-only viewer named `autometta-<project-name>`.
 
-On macOS, subscription also installs the repository's LaunchAgent. Review
+On macOS, subscription also installs or refreshes the machine's one fleet
+LaunchAgent, `com.autometta.tick.fleet` (see [scheduling](#4-scheduling)). Review
 configuration, authentication and budget before queueing any work.
 
 Review the generated setup and commit the files intended to be tracked by the

@@ -754,9 +754,9 @@ operator has to think to check.
 The fleet LaunchAgent currently sets `AUTOMETTA_ROOT` to the checkout, which is
 rule 1, so this exposure is live. Moving the tick onto the installed build is an
 operator decision, not a code change: it means deleting that key from
-the plist `install-launchagent.sh` rendered (`com.autometta.tick.<repo-slug>`;
-no script installs a `com.autometta.tick.fleet` job, though `status.sh` still
-looks for that label) and accepting that a fix is live only after a reinstall. Nothing in the repo repoints a running fleet.
+the plist `install-launchagent.sh` rendered (`com.autometta.tick.fleet`, the
+one tick agent per machine, which is also the label `status.sh` looks for)
+and accepting that a fix is live only after a reinstall. Nothing in the repo repoints a running fleet.
 
 ### Checking the split
 

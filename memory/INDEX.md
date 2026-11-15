@@ -30,7 +30,7 @@ One line per memory file. Keep entries <=150 chars: `- [Title](file.md): one-lin
 - [Agent observability registry](decision-agent-observability-registry.md): active-agents registry, heartbeat watchdog, ticker; loop-independent.
 - [Audit cards budget shorter](decision-audit-card-budgets-shorter.md): audit-only cards (written deliverables) budget 20-30 min wall-clock, not 60.
 - [Auth route toggle](decision-auth-route-toggle.md): per-family subscription/api mode in .autometta.local.yaml; refs in op-refs; op-fetch wrapper.
-- [LaunchAgent over cron on macOS](decision-launchagent-over-cron-on-macos.md): per-repo LaunchAgents keep GUI-session keychain credentials available.
+- [LaunchAgent over cron on macOS](decision-launchagent-over-cron-on-macos.md): one fleet LaunchAgent keeps GUI-session keychain credentials available.
 - [MCP-served stage cards](decision-mcp-cards.md): MCP not HTTP, git SHAs not server versions, filesystem fallback; design-only until multi-machine.
 - [Orchestrator commits on verifier PASS](decision-orchestrator-commits-on-verifier-pass.md): the worker never commits; FAIL leaves the tree.
 - [Per-role, per-family SDK transport](decision-per-role-family-sdk-transport.md): card 28; Codex verifier SDK reuses CODEX_HOME auth.
