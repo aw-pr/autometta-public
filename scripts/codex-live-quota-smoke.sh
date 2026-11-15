@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# AUTOMETTA-CONTRACT-NONE reason=regression suite; no stage card freezes it
 # Offline proof that a stale Codex reading is refreshed from `codex app-server`
 # without a model turn, published for the next reader, and left alone when fresh.
 set -euo pipefail
