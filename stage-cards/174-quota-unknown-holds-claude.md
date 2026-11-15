@@ -4,17 +4,17 @@
 
 - **Authored:** 2026-11-15
 - **Orchestrator:** Claude Opus 5.5 <claude-opus-5-5@local>
-- **Worker:** Claude Opus 5.5 <claude-opus-5-5@local>
+- **Worker:** Claude Sonnet 5.5 <claude-sonnet-5-5@local>
 - **Verifier:** GPT-6.1 Sol <gpt-6-1-sol@local>
 - **Base branch:** dev
 - **Run branch:** autometta/174-quota-unknown-holds-claude
 - **Worker effort:** medium
-- **Verifier effort:** high
+- **Verifier effort:** medium
 - **Verifier panel:** false
 - **Recovery attempts:** 3
-- **Recovery attempt:** 1
+- **Recovery attempt:** 2
 - **Dispatch:** serial
-- **Pairing rationale:** operator asked to maximise Claude spend; cross-family kept by a Codex verifier; serial, so no alternation needed. A small, offline change to the quota gate's unknown branch, the reader's overage flag, two log lines and one doc paragraph: Opus at medium is ample, and Sol at high checks the frozen smoke plus fifteen regression smokes from a workspace-write seat that needs no network.
+- **Pairing rationale:** narrow evidence repair under the recorded recovery policy. Claude Sonnet 5.5 restores the preserved Opus implementation; GPT-6.1 Sol independently reruns every original acceptance criterion. Both roles use medium effort, remain cross-family and dispatch serially. Attempt 1 passed the frozen quota behaviour, syntax and scope; only two offline regression fixtures reached the real resolver.
 - **Open decisions:** none
 - **Cold read:** done 2026-11-15; see Cold read below for the family and findings.
 
@@ -32,7 +32,7 @@ Re-verified on `dev` at `8c2675d` with the frozen smoke below: a 700 s old snaps
 - Drain (`~/.autometta/drain.json`): token caps lifted until 22:25 GMT (its reason names a one-shot that extends it to 03:00 GMT 2026-11-16), `ignore_reserve: false`. The drain lifts token caps only; it does not bypass the quota-window check. Only an `--ignore-reserve` drain, `percent: 0`, `action: observe` or `off`, `AUTOMETTA_IGNORE_RESERVE=1` on a manual spawn, or a stage's `reserve_exempt` would admit through an unknown reading, and this card keeps all five.
 - Live Claude snapshot: fresh (62 s old), 5-hour 18%, Weekly 64%, Weekly (Fable) 43%. The tick logs for 2026-11-01 to 11-15 (16 files, about 3,500 readings) contain no Claude `unknown` reading at all, so no dispatch in that period would have been held. After landing, behaviour changes only while the exporter's snapshot is stale or malformed: Claude dispatch waits a tick or two instead of proceeding. If the exporter stops altogether (app quit, token expired), every Claude dispatch holds until it resumes, with a log line each tick.
 
-**Landing is not deployment.** The fleet tick runs the installed Homebrew keg, not this checkout. Reinstalling the keg (`scripts/install-homebrew-local.sh`) after this lands is a separate operator step; until then the live tick keeps failing open.
+**Deployment is separate from packaging.** The orchestrator checks the effective fleet root independently of the Homebrew package. This card changes neither root selection nor host configuration.
 
 **One judgement taken without the operator.** `snapshot absent` keeps admitting. The frozen blocks of cards 124 (`session-window-smoke.sh`), 135 (`reserve-schedule-smoke.sh`) and 138a (`quota-window-smoke.sh`) assert that a Claude `snapshot absent` reading admits, and an absent file means a host with no exporter (a fresh host, a fixture home), not an exporter that has gone quiet. Holding on absent as well would need those three contracts amended, which is an operator decision outside this card.
 
@@ -80,16 +80,35 @@ The verifier will check each of these. Failure of any one is a failure of the st
 
    ```sh
    root="$PWD"
+   failed=0
    for s in quota-window session-window reserve-schedule reserve-default model-window \
             codex-card-quota codex-live-quota quota-pace budget-cap pipeline-pair \
             landing-dispatch envelope-migration phat-controller spend-authority-dropped \
             subscription-usage; do
-     home="$(mktemp -d)"
-     ( cd "$home" && env -u AUTOMETTA_HOME PHAT_CONTROLLER_HOME="$home" \
-         bash "$root/scripts/$s-smoke.sh" ) >/dev/null 2>&1 \
-       && echo "PASS $s" || echo "FAIL $s"
+     smoke_home="$(mktemp -d)"
+     smoke_path="$PATH"
+     case "$s" in
+       pipeline-pair|envelope-migration)
+         mkdir "$smoke_home/resolver"
+         printf '#!/bin/sh\necho 192.0.2.1\n' > "$smoke_home/resolver/dig"
+         chmod +x "$smoke_home/resolver/dig"
+         smoke_path="$smoke_home/resolver:$PATH"
+         ;;
+     esac
+     if ( cd "$smoke_home" && env -u AUTOMETTA_HOME \
+           PHAT_CONTROLLER_HOME="$smoke_home" PATH="$smoke_path" \
+           bash "$root/scripts/$s-smoke.sh" ) >"$smoke_home/result.log" 2>&1; then
+       echo "PASS $s"
+     else
+       echo "FAIL $s (evidence: $smoke_home/result.log)"
+       cat "$smoke_home/result.log"
+       failed=1
+     fi
    done
+   test "$failed" -eq 0
    ```
+
+   The answering resolver is scoped only to the two offline fixture smokes that mock dispatch but leave the real preflight active. It uses a reserved documentation address, makes no network call and changes neither smoke nor the production preflight. Also run `bash scripts/network-fault-smoke.sh` in its own isolated controller home without this resolver override; it must pass its existing positive and negative production-preflight cases. Every original regression must still exit 0.
 
    The throwaway home goes in `PHAT_CONTROLLER_HOME`, not `AUTOMETTA_HOME`: `budget-cap-smoke.sh` sets its own `PHAT_CONTROLLER_HOME` fixture and reads its tick log there, which an inherited `AUTOMETTA_HOME` would override (it then fails "tick log records the completed-worker exemption" on the base). Base: all fifteen green this way (about three minutes in total). Not a criterion: `dependency-graph-smoke.sh` is red on the base with `ModuleNotFoundError: No module named 'jsonschema'`, an environment gap unchanged from base.
 3. **Verifier:** `bash -n scripts/tick.sh scripts/quota-window.sh` passes; `python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' scripts/quota-window.py` passes; `shellcheck scripts/quota-window.sh` reports nothing beyond the base's four notes (SC1091 twice on the `source` lines, SC2015, SC2034; line numbers may move).
@@ -128,6 +147,18 @@ The reader found no frozen block of another card that the change breaks, and not
 - **Worker wall-clock:** 30 minutes
 - **Verifier wall-clock:** 25 minutes
 - **Spend basis:** similar to card 148 (one gate branch plus docs), about 0.6M tokens across both roles, most of it the verifier's regression run. Preparation spent on this card: one orchestrator session (about 40 minutes, including the reference and mutation checks) plus one Codex cold read.
+
+## Recovery log
+
+- **Attempt 1:** worker dispatched 2026-11-15T19:14:18Z on `da249c7bd1f059ae0450df3e0ac7c276487a194d`; verifier FAIL at 19:25:47Z. One worker dispatch, 743,421 worker plus 1,011,521 verifier tokens, 1,754,942 total. Work is pinned at `3d6c47d4fd9e9e06ed9b1554e3d5e373b43eda96` on `wip/174-quota-unknown-holds-claude-attempt-1`. Envelope, FAIL artefact, both logs, original card, state row and source patch are preserved at `state/uat/174-quota-unknown-holds-claude/attempt-1/`.
+- **Diagnosis:** card/test-environment defect, not an established implementation regression. On both the exact dispatch base and preserved candidate, `pipeline-pair` and `envelope-migration` fail with a resolver stub returning exit 10 and pass with an answering fixture resolver. Every frozen assertion and the quota oracle digest are unchanged. Criterion 2 now supplies that local resolver only to these two fixture tests; the separate `network-fault` smoke still checks production rejection and admission. No production network bypass is added.
+- **Next attempt:** 2 of 3, Sonnet worker and Sol verifier at medium effort; plan about 1.5-2M cached-inclusive tokens and 15-25 minutes including the tick cadence. Existing caps, quota, pause and failure gates apply; no halt or failure counter is cleared. A further failure must be diagnosed before the final allowed attempt. No changed success threshold, omitted evidence or widened implementation scope is authorised.
+
+## Repair re-brief (2026-11-15, attempt 2)
+
+Restore the preserved implementation before doing any new design. The orchestrator archived its four-file diff as `state/uat/174-quota-unknown-holds-claude/attempt-1/source.patch`; the dispatch-owned state symlink makes that readable in your new worktree. Run `patch -p1 < state/uat/174-quota-unknown-holds-claude/attempt-1/source.patch`. This edits only the four original deliverables and retains intervening non-overlapping work. If a hunk cannot apply, stop with a partial envelope naming the conflict; do not overwrite current-base changes or alter the oracle. Do not run git mutations.
+
+No new production behaviour is requested. Rerun the frozen quota smoke, the corrected fifteen-smoke loop, the separate network-fault smoke, syntax and ShellCheck, and review the full scoped diff. All original criteria still need independent evidence, even where attempt 1 passed. Do not edit regression smokes or their frozen blocks to make them pass. The verifier reads the archived FAIL and confirms the fixture-only DNS correction before judging the unchanged implementation.
 
 ## Dispatch envelope
 
