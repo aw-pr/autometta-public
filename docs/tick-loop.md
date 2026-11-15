@@ -727,8 +727,15 @@ Claude before starting any new card that names a subscription Claude worker or
 verifier, so a Codex worker cannot commit the queue to a Claude verifier after
 the session line has already been crossed.
 
-Explicit zero or `action: off` disables that reserve; unknown Claude readings
-retain the existing fail-open behaviour. Scheduled reserve and curfew settings
+Explicit zero or `action: off` disables that reserve. Under a hold reserve, a
+Claude reading the tick cannot trust holds Claude dispatch: a stale snapshot
+(older than `AI_QUOTA_STALE_SECONDS`), a malformed one, or a reader that failed
+holds that card for the tick with a `reading unknown: <reason> ... held` log
+line and no pause, so dispatch resumes on the first tick with a fresh reading.
+Only `snapshot absent` (a host with no exporter) admits, as do reserve off,
+`action: observe` and an `--ignore-reserve` drain. A Claude window reported
+above 100% is kept as a known, exhausted reading and holds to its reset like
+any other window inside the reserve. Scheduled reserve and curfew settings
 are unchanged. A model-scoped window, keyed `<period>-<name>` such as
 `weekly-fable`, holds only seats whose model id has that name as a hyphen-delimited
 segment. An unnamed seat sees every window. The mandate template retains those
@@ -780,8 +787,9 @@ avoids): with the curfew armed, the tick reads the clock on every fire and,
 outside the declared window, refuses to start a *new* worker at all.
 
 The stop is a separate gate sitting above the reserve, and it deliberately
-reads no quota. The reserve is reading-driven: it binds only when a known
-window is near exhaustion, and an unknown reading fails open by design. That
+reads no quota. The reserve is reading-driven: it binds when a known window
+is near exhaustion or a Claude reading is stale or malformed, and an absent
+snapshot or an unknown codex reading on the legacy reserve policy admits. That
 is right for a guard against spending the last of a window and useless as a
 stop, because the case a stop exists for -- an overnight run that must not
 still be dispatching at nine the next morning -- is exactly the case where

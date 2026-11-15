@@ -201,7 +201,7 @@ terminate_process_tree() {
 }
 
 quota_log_tick_readings() {
-  local family reading status summary
+  local family reading status summary unknown_reason
   for family in claude codex; do
     reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
     status="$(printf '%s' "$reading" | jq -r '.status')"
@@ -209,7 +209,12 @@ quota_log_tick_readings() {
       summary="$(printf '%s' "$reading" | jq -r '[.windows[] | "\(.label) \(.utilization)% used, resets \(.resets_at // "unknown")"] | join("; ")')"
       log "quota ${family}: ${summary} (source $(printf '%s' "$reading" | jq -r '.source'))"
     else
-      log "quota ${family}: unknown ($(printf '%s' "$reading" | jq -r '.reason // "reader failed"')); dispatch remains fail-open"
+      unknown_reason="$(printf '%s' "$reading" | jq -r '.reason // "reader failed"')"
+      if [[ "$family" == claude && "$unknown_reason" != "snapshot absent" ]]; then
+        log "quota ${family}: unknown (${unknown_reason}); Claude dispatch held under a hold reserve"
+      else
+        log "quota ${family}: unknown (${unknown_reason}); dispatch remains fail-open"
+      fi
     fi
   done
 }
@@ -224,8 +229,11 @@ quota_log_tick_readings() {
 QUOTA_GATE_RESOLVED_WINDOW="default"
 
 # quota_gate_family_dispatch <repo> claude|codex <description> [model]
-# Returns 1 only after recording a pause at the published reset. Zero covers
-# outside-reserve, reserve off, observe and every unknown reading.
+# Returns 1 after recording a pause at the published reset, or, for a Claude
+# reading that is stale, malformed or unreadable under a hold reserve, after
+# logging a hold for this tick only (there is no reset to pause to). Zero
+# covers outside-reserve, reserve off, observe, an absent Claude snapshot and
+# an unknown codex reading on the legacy reserve policy.
 quota_gate_family_dispatch() {
   local repo_root="$1" family="$2" what="$3" model="${4:-}"
   local settings reserve action window reading mandate_path curfew reserve_window
@@ -257,6 +265,10 @@ quota_gate_family_dispatch() {
       log "quota ${what} (${family}): ${QUOTA_GATE_REASON} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); dispatch proceeds"
     fi
     return 0
+  fi
+  if [[ -z "$QUOTA_GATE_RESET" ]]; then
+    log "quota ${what} (${family}${model:+ model ${model}}): ${QUOTA_GATE_REASON} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); no dispatch this tick"
+    return 1
   fi
   budget_pause_until "$repo_root" "$QUOTA_GATE_RESET" \
     "quota reserve: ${family} ${QUOTA_GATE_WINDOW}${model:+ for ${model}}; resets at $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"

@@ -101,7 +101,7 @@ def read_snapshot(family: str) -> dict[str, Any]:
         return unknown(family, "snapshot malformed")
     fetched_epoch = parse_time(payload.get("fetched_at"))
     source = payload.get("source")
-    windows = sanitise_windows(payload.get("windows"), allow_overage=family == "codex")
+    windows = sanitise_windows(payload.get("windows"), allow_overage=True)
     if fetched_epoch is None or not isinstance(source, str) or not source or windows is None:
         return unknown(family, "snapshot malformed")
     try:

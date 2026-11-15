@@ -339,8 +339,9 @@ quota_gate_codex_reading() {
 # it pauses nothing and writes nothing, because the caller is a person who
 # will read the refusal, not a loop that must remember to resume. Returns 1
 # with QUOTA_GATE_REASON when a known window of this family is inside a hold
-# reserve, 0 otherwise, including every unknown reading (fail-open, as the
-# tick). Two escapes, both explicit and both named in the log line:
+# reserve, or when a Claude reading is stale, malformed or unreadable under a
+# hold reserve (as the tick); 0 otherwise, including an absent Claude snapshot
+# and an unknown codex reading on the legacy reserve policy. Two escapes, both explicit and both named in the log line:
 #   AUTOMETTA_IGNORE_RESERVE=1  the operator means to spend the window.
 #   AUTOMETTA_RESERVE_GATED=1   set by tick.sh on its own spawn calls, which
 #                               have already passed the gate this tick and
@@ -418,7 +419,10 @@ quota_spawn_family_reserve_permits() {
   if quota_gate_reading "$reading" "$reserve" "$action" "$model" "$reserve_window"; then
     return 0
   fi
-  QUOTA_GATE_REASON="${QUOTA_GATE_REASON} (${window:-default} schedule); resets $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+  QUOTA_GATE_REASON="${QUOTA_GATE_REASON} (${window:-default} schedule)"
+  if [[ -n "$QUOTA_GATE_RESET" ]]; then
+    QUOTA_GATE_REASON="${QUOTA_GATE_REASON}; resets $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
+  fi
   return 1
 }
 
@@ -444,8 +448,8 @@ quota_schedule_curfew_window() {
 # QUOTA_SCHEDULE_STOP_REASON carrying the reason the caller logs.
 #
 # This deliberately does not read the quota. The reserve below is a
-# reading-driven hold: it binds only when a known window is near exhaustion,
-# and every unknown reading fails open. That is right for a guard against
+# reading-driven hold: it binds when a known window is near exhaustion or a
+# Claude reading is stale or malformed, and an absent snapshot admits. That is right for a guard against
 # spending the last of a window and useless as a stop, because the case the
 # stop exists for -- an overnight run that must not still be dispatching at
 # nine the next morning -- is exactly the case where the reading is healthy
@@ -489,9 +493,12 @@ quota_schedule_permits_dispatch() {
 }
 
 # quota_gate_reading <reading-json> <reserve-percent> <action> [model] [window-label]
-# Returns 1 only when a known window is inside a non-zero hold reserve and has
-# a future reset. Unknown, zero and observe all fail open with an explicit
-# QUOTA_GATE_REASON. The caller owns budget_pause_until and logging.
+# Returns 1 when a known window is inside a non-zero hold reserve and has a
+# future reset, or when a Claude reading is unknown for any reason but
+# "snapshot absent" under a hold reserve; that hold leaves QUOTA_GATE_RESET
+# empty, so the caller holds for this tick rather than pausing. An absent
+# Claude snapshot, any unknown codex reading, zero and observe admit with an
+# explicit QUOTA_GATE_REASON. The caller owns budget_pause_until and logging.
 quota_gate_reading() {
   local reading="$1" reserve="$2" action="$3" model="${4:-}" reserve_window="${5:-}" now
   QUOTA_GATE_WINDOW=""; QUOTA_GATE_RESET=""; QUOTA_GATE_REASON=""
@@ -504,6 +511,12 @@ quota_gate_reading() {
   if [[ "$status" != "known" ]]; then
     reason="$(printf '%s' "$reading" | jq -r '.reason // "reading unknown"' 2>/dev/null || printf 'reading unknown')"
     QUOTA_GATE_REASON="reading unknown: $reason"
+    local reading_family
+    reading_family="$(printf '%s' "$reading" | jq -r '.family // ""' 2>/dev/null || true)"
+    if [[ "$reading_family" == claude && "$reason" != "snapshot absent" && "$action" == hold ]]; then
+      QUOTA_GATE_REASON="reading unknown: $reason; held under a ${reserve}% hold reserve"
+      return 1
+    fi
     return 0
   fi
   local binding
