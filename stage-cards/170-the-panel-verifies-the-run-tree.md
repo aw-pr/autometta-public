@@ -4,17 +4,17 @@
 
 - **Authored:** 2026-11-15
 - **Orchestrator:** Claude Opus 5.5 <claude-opus-5-5@local>
-- **Worker:** Claude Opus 5.5 <claude-opus-5-5@local>
-- **Verifier:** GPT-6.1 Sol <gpt-6-1-sol@local>
+- **Worker:** GPT-6.1 Sol <gpt-6-1-sol@local>
+- **Verifier:** Claude Sonnet 5.5 <claude-sonnet-5-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/170-the-panel-verifies-the-run-tree
-- **Worker effort:** high
-- **Verifier effort:** high
+- **Worker effort:** medium
+- **Verifier effort:** medium
 - **Verifier panel:** false
 - **Recovery attempts:** 3
-- **Recovery attempt:** 1
+- **Recovery attempt:** 2
 - **Dispatch:** serial
-- **Pairing rationale:** operator asked to maximise Claude spend; cross-family kept by a Codex verifier; serial, so no alternation needed. The change spans the two spawn scripts, the tick's verifier spend recording and two docs, and moves the panel from a synchronous call to a background process, so the worker runs at high effort.
+- **Pairing rationale:** approved narrow repair: a Codex worker fixes the malformed-JSON vote parser in the preserved Claude implementation; an independent Claude Sonnet verifier executes all original functional and process-group checks from its existing unsandboxed route. Both roles are medium and remain cross-family. The Codex worker supplies parser probes and cheap regressions; the Claude verifier supplies the unchanged host-process oracle. No new sandbox exemption, GUI declaration, API route or provider spend allowance is requested.
 - **Open decisions:** none
 - **Cold read:** done 2026-11-15; see Cold read below for the family and findings.
 
@@ -76,7 +76,7 @@ Do not read anything else unless you need to; keep your context lean.
 
 The verifier will check each of these. Failure of any one is a failure of the stage.
 
-1. **Worker and verifier:** `scripts/panel-run-tree-smoke.sh` exits 0 and prints `PASS: panel-run-tree-smoke` (about 50 s; its stub panellists take 30 s). Its frozen cases, each a fixture subscriber whose stage has a returned worker and a run worktree holding the worker's change, driven through the real `_process_repo_locked`: (A) votes PASS, PASS, FAIL on routes set only by `AUTOMETTA_CLAUDE_MODE_VERIFIER=api` and `AUTOMETTA_CODEX_MODE_VERIFIER=api`; (B) FAIL, FAIL, PASS, (C) PASS plus two crashes and (D) PASS, FAIL and a crash, all three on family routes. For each, the fire that dispatches the panel returns in under 15 s, does not halt the repo, and leaves the stage `in_progress` with `verifier_artefact: state/verifiers/<id>.json` and a live `verifier_pid` that leads its own process group and is registered in `state/active-agents/` with the run worktree as `working_dir`; `state.yaml` and `budget.json` are byte-identical while the panel runs; each panellist is dispatched once into the run worktree, and the Codex one gets an `--add-dir` grant on the subscriber's `state`; in (A) the Claude panellists get `ANTHROPIC_API_KEY` and the Codex one `OPENAI_API_KEY`; the synthesis reads PASS, FAIL, FAIL with quorum 1 of 2 and "no quorum", and FAIL with "tie". The next fire lands (A) with the worker's change on `dev`, leaves (B), (C) and (D) `verifier_failed` with the repo not halted, and logs no dispatch-configuration fault; in (A) and (B) `tokens_spent`, the stage's `verifier_tokens` and the cost-log verifier row all read 3000 (three 1000-token panellists, the Codex one also leaving a transcript keyed by the run worktree). A panel with no Claude API route still fails the spawn in under 15 s with no panellist started and no `verifier_pid`. `spawn-verifier-panel.sh <card> <repo> --read-only` prints a PASS synthesis with exit 0 and a FAIL one with exit 1, and writes neither `state.yaml`, `budget.json` nor the canonical artefact. `docs/verifier-panel.md` mentions the run worktree, the background and `AUTOMETTA_PANEL_POLL_INTERVAL`; neither it nor `schemas/verifier-panel.json` mentions `verifier_panel_no_quorum`, and the schema no longer says `pass_count >= fail_count`. Base: red, first at (A) `dispatching the panel halted the repo (dispatch-configuration-fault)`; the preflight and read-only cases are green on the base.
+1. **Verifier (Claude on repair attempt 2):** `scripts/panel-run-tree-smoke.sh` exits 0 and prints `PASS: panel-run-tree-smoke` (about 50 s; its stub panellists take 30 s). Its frozen cases, each a fixture subscriber whose stage has a returned worker and a run worktree holding the worker's change, driven through the real `_process_repo_locked`: (A) votes PASS, PASS, FAIL on routes set only by `AUTOMETTA_CLAUDE_MODE_VERIFIER=api` and `AUTOMETTA_CODEX_MODE_VERIFIER=api`; (B) FAIL, FAIL, PASS, (C) PASS plus two crashes and (D) PASS, FAIL and a crash, all three on family routes. For each, the fire that dispatches the panel returns in under 15 s, does not halt the repo, and leaves the stage `in_progress` with `verifier_artefact: state/verifiers/<id>.json` and a live `verifier_pid` that leads its own process group and is registered in `state/active-agents/` with the run worktree as `working_dir`; `state.yaml` and `budget.json` are byte-identical while the panel runs; each panellist is dispatched once into the run worktree, and the Codex one gets an `--add-dir` grant on the subscriber's `state`; in (A) the Claude panellists get `ANTHROPIC_API_KEY` and the Codex one `OPENAI_API_KEY`; the synthesis reads PASS, FAIL, FAIL with quorum 1 of 2 and "no quorum", and FAIL with "tie". The next fire lands (A) with the worker's change on `dev`, leaves (B), (C) and (D) `verifier_failed` with the repo not halted, and logs no dispatch-configuration fault; in (A) and (B) `tokens_spent`, the stage's `verifier_tokens` and the cost-log verifier row all read 3000 (three 1000-token panellists, the Codex one also leaving a transcript keyed by the run worktree). A panel with no Claude API route still fails the spawn in under 15 s with no panellist started and no `verifier_pid`. `spawn-verifier-panel.sh <card> <repo> --read-only` prints a PASS synthesis with exit 0 and a FAIL one with exit 1, and writes neither `state.yaml`, `budget.json` nor the canonical artefact. `docs/verifier-panel.md` mentions the run worktree, the background and `AUTOMETTA_PANEL_POLL_INTERVAL`; neither it nor `schemas/verifier-panel.json` mentions `verifier_panel_no_quorum`, and the schema no longer says `pass_count >= fail_count`. Base: red, first at (A) `dispatching the panel halted the repo (dispatch-configuration-fault)`; the preflight and read-only cases are green on the base.
 2. **Worker and verifier:** `scripts/effort-flags-smoke.sh`, `scripts/verifier-route-matrix-smoke.sh` and `scripts/envelope-migration-smoke.sh` each exit 0. Base: all green. `envelope-migration-smoke.sh` passes the tick's network preflight and writes the tick log under the controller home: a sandboxed seat runs it with a `dig` stub first on `PATH` (a script that prints `192.0.2.1`) and `AUTOMETTA_HOME` pointed at a temp dir, and says so in its evidence. The frozen smoke sets up both itself.
 3. **Verifier:** `bash -n` passes on `scripts/spawn-verifier-panel.sh`, `scripts/spawn-verifier.sh` and `scripts/tick.sh`, and `shellcheck -S warning` on them reports only the base's warnings (SC1007 in `spawn-verifier-panel.sh`, SC2046 in `spawn-verifier.sh`, SC2034 and SC2154 in `tick.sh`).
 4. **Verifier:** by reading `git diff dev`: any `scripts/tick.sh` change is confined to how a panel artefact's spend is recorded; the background panel has no write to `state.yaml` or `budget.json`; the foreground preflight still exits non-zero on a missing API key or Codex API home; the Codex panellist's state grant comes from calling `codex_state_argv_for_repo`, not a copied path; an invalid `AUTOMETTA_PANEL_POLL_INTERVAL` falls back to 10; a panellist that misses the deadline or writes an unreadable artefact counts as no vote.
@@ -92,13 +92,25 @@ The verifier will check each of these. Failure of any one is a failure of the st
 - A local (Ollama) Codex verifier route for the panel; `auth-route.sh codex --role verifier` printing `local` is treated as today.
 - The panel's composition, its model choice and its cost.
 - The single verifier, worker dispatch, and every other finding in the review (verdict binding, budget reads, tail rebase, locks and process handling are separate cards).
-- Deploying the change. The live fleet tick runs the installed Homebrew keg, not this checkout; reinstalling the keg after this lands is a separate operator step.
+- Host deployment or packaging changes. The orchestrator verifies the effective fleet root independently of the installed package.
 
 ## Budget
 
 - **Worker wall-clock:** 60 minutes
 - **Verifier wall-clock:** 30 minutes
 - **Spend basis:** about twice card 164 (1.2M to 1.5M tokens across both roles): two scripts and a background-process design. Preparation spent: about 45 minutes of orchestrator time and one 89k-token Codex cold read.
+
+## Repair re-brief (2026-11-15, operator approved)
+
+Attempt 1 was a single worker dispatch at 2026-11-15T19:31:35Z on `671a651bd4f0a51fc4b3b7e4edf104bf6194f8c9`; 3,453,443 worker and 684,687 verifier tokens, total 4,138,130. Its work is pinned at `384d29105c27602677e4ac2bea08bc09587fe46d`, `wip/170-the-panel-verifies-the-run-tree-attempt-1`. Original card, envelope, FAIL, logs, state row and the five-file source patch are preserved at `state/uat/170-the-panel-verifies-the-run-tree/attempt-1/`.
+
+Classification: implementation defect in `panellist_vote`, plus a judging-seat capability defect. The parser suppresses a failing jq status and accepts partial PASS output from corrupt input. The exact original function returns PASS for a complete PASS object followed by trailing garbage, a truncated second object or an extra object. It must count all three as no vote. Accept only one fully parsed JSON object with overall PASS or FAIL; a parse error, multiple documents, missing file, missing vote or invalid vote is no vote. Do not change majority, quorum, routes, paths or accounting. Valid PASS and FAIL still vote as before. An isolated one-function reference passes nine positive/negative parser probes; that is feasibility evidence, not a production change.
+
+Restore the preserved five-file implementation by applying `patch -p1 < state/uat/170-the-panel-verifies-the-run-tree/attempt-1/source.patch`; it retains intervening non-overlapping work. Stop and report any conflicting hunk instead of overwriting the current base. Fix only `scripts/spawn-verifier-panel.sh` beyond that restored implementation. The worker reproduces the malformed-input defect before and after the fix, runs the three criterion-2 regressions plus syntax/ShellCheck, and records any denied host capability without claiming a pass. The independent Claude verifier runs the unchanged complete frozen panel smoke, all original regressions, syntax, scope and malformed-input probes. The sole evidence-seat change is that only the host-capable verifier must execute the ps-dependent criterion 1; no functional assertion or threshold is removed or weakened.
+
+The Codex verifier in attempt 1 could not run `/bin/ps -o pgid=`, with `Operation not permitted`, so scenario A stopped before the full A-D proof. Do not stub ps, fake process groups, label this as a GUI card, widen a sandbox or change any frozen assertion. The proposed Claude verifier already runs unsandboxed through the existing route and must independently produce the missing host proof.
+
+Operator approved on 2026-11-15. Record Recovery attempt 2 of 3 on the live card and sync both identities under the repo lock before `requeue-stage.sh --keep-budget`. Budget, quota, pause and failure gates stay unchanged. Estimate 1.5-2.5M cached-inclusive tokens and 15-25 minutes including tick cadence. Stop at a new failure for diagnosis before any third attempt. Repair-revision and dispatch details must be recorded before requeue; this is the approved repair brief.
 
 ## Dispatch envelope
 
@@ -121,3 +133,7 @@ Read by GPT-6.1 Sol (Codex, read-only sandbox), 2026-11-15, against the first dr
 7. Ties, reason prefixes, the supervisor's process group and registration, the foreground preflight, FAIL accounting and the read-only FAIL exit code were unasserted: scenario (D) and assertions for each were added. Deadline expiry, malformed panellist artefacts and an invalid poll interval stay with the verifier's reading (criterion 4); a copied state grant would pass the smoke, so criterion 4 also has the verifier check the helper is called.
 8. The docs assertions now also require the background and `AUTOMETTA_PANEL_POLL_INTERVAL`; the Cost section's accuracy is criterion 4 reading.
 9. Metadata and section disagreed on the cold read: this section.
+
+## Recovery log
+
+- Attempt 1: dispatched 2026-11-15T19:31:35Z on `671a651bd4f0a51fc4b3b7e4edf104bf6194f8c9`; verifier FAIL due to malformed JSON counting as a vote and missing host process proof. Evidence: `state/uat/170-the-panel-verifies-the-run-tree/attempt-1/`; WIP `384d29105c27602677e4ac2bea08bc09587fe46d`. Repair: this approved brief restores that WIP and scopes parser repair to the worker, with independent full host verification. Next attempt: 2 of 3; dispatch timestamp/base will be recorded by the tick. Estimate 1.5-2.5M cached-inclusive tokens; existing gates unchanged.
