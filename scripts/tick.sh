@@ -882,13 +882,24 @@ PY
     return 1
   fi
 
+  # Render guard: a failed or empty YAML render must not replace the state.
+  # Callers often run this where errexit is suspended, so refuse explicitly.
+  if ! yq -P '.' "$tmp_json" > "$tmp_yaml" || [[ ! -s "$tmp_yaml" ]]; then
+    log "state_apply_json: yq render of new state failed or was empty; ${state_yaml} left untouched"
+    rm -f "$cur_json" "$tmp_json" "$tmp_yaml"
+    return 1
+  fi
+
   # state.yaml is gitignored and the state branch cannot persist it, so this
   # rolling backup is its only recovery point. Snapshot the prior good copy
   # before replacing it.
   cp -p "$state_yaml" "${state_yaml}.bak" 2>/dev/null || true
 
-  yq -P '.' "$tmp_json" > "$tmp_yaml"
-  mv "$tmp_yaml" "$state_yaml"
+  if ! mv "$tmp_yaml" "$state_yaml"; then
+    log "state_apply_json: could not move the rendered state over ${state_yaml}"
+    rm -f "$cur_json" "$tmp_json" "$tmp_yaml"
+    return 1
+  fi
   if [[ "$lifecycle_changed" == changed ]]; then
     python3 "$script_dir/lib/lifecycle_events.py" state "$(dirname "$(dirname "$state_yaml")")" \
       "$cur_json" "$tmp_json" 2>/dev/null || true
@@ -3221,8 +3232,16 @@ process_repo() {
   warn_if_vendor_stale "$repo_root" || true
   profile_lap "$profile_repo" "vendor-stale"
 
-  local rc=0
-  _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
+  # Never `_process_repo_locked ... || rc=$?`: bash suspends errexit for a
+  # function called in a condition, all the way down through every subshell
+  # it starts, so a failing step would carry on to dispatch. The subshell
+  # keeps errexit live inside and confines its exit to this repo's fire.
+  local rc=0 caller_errexit=false
+  [[ "$-" != *e* ]] || caller_errexit=true
+  set +e
+  ( set -e; _process_repo_locked "$repo_root" "$manifest_path" )
+  rc=$?
+  [[ "$caller_errexit" != true ]] || set -e
   profile_lap "$profile_repo" "dispatch"
 
   escalations_scan "$repo_root" || true
@@ -3286,9 +3305,19 @@ warn_if_vendor_stale() {
 # Best-effort: walk the per-agent liveness registry and surface stalls /
 # overruns into state/heartbeat.json. Never fatal; the heartbeat itself
 # is a watchdog, not a gate.
+#
+# The build check is controller-wide, so one fire computes it once. Each
+# subscriber runs in its own subshell (see main), where a variable set here
+# would not outlive the subscriber, so main names a file the first
+# subscriber's result is shared through.
 heartbeat_build_check_json=""
+heartbeat_build_check_share=""
 refresh_heartbeat_build_check() {
   [[ -n "$heartbeat_build_check_json" ]] && return 0
+  if [[ -n "$heartbeat_build_check_share" && -s "$heartbeat_build_check_share" ]]; then
+    heartbeat_build_check_json="$(cat "$heartbeat_build_check_share" 2>/dev/null || true)"
+    [[ -n "$heartbeat_build_check_json" ]] && return 0
+  fi
   heartbeat_build_check_json="$("$script_dir/heartbeat.sh" --build-check-json 2>/dev/null || true)"
   if ! printf '%s' "$heartbeat_build_check_json" | jq -e '
     (.status == "current" or .status == "stale" or .status == "unreadable") and
@@ -3298,6 +3327,9 @@ refresh_heartbeat_build_check() {
     (.checked_at | type == "string")' >/dev/null 2>&1; then
     heartbeat_build_check_json="$(jq -nc --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       '{status:"unreadable",stale:false,installed_sha:null,checkout_sha:null,checked_at:$checked_at}')"
+  fi
+  if [[ -n "$heartbeat_build_check_share" ]]; then
+    printf '%s\n' "$heartbeat_build_check_json" > "$heartbeat_build_check_share" 2>/dev/null || true
   fi
 }
 
@@ -3483,6 +3515,16 @@ _process_repo_locked() {
   local state_yaml="$repo_root/state/state.yaml"
 
   if ! ensure_yq_or_halt "$repo_root"; then
+    return 1
+  fi
+
+  # Budget-integrity guard: never dispatch against a budget that cannot be
+  # read. A missing, empty or corrupt budget.json reads as "no cap hit" to
+  # every jq comparison, so it would otherwise lift every cap at once. The
+  # file is left exactly as found (not repaired, moved or recreated) and
+  # this repo sits out every fire until the operator restores it.
+  if ! budget_readable "$repo_root"; then
+    log "budget-integrity: $(budget_file "$repo_root") is missing, empty or not a JSON object; dispatch refused (manual recovery required)"
     return 1
   fi
 
@@ -4217,6 +4259,8 @@ main() {
   subscriber_list="$(sort_subscribers)"
   profile_lap "global" "subscriber-sort"
 
+  heartbeat_build_check_share="$(mktemp "${TMPDIR:-/tmp}/autometta-build-check.XXXXXX" 2>/dev/null || true)"
+
   local subscriber_file
   while IFS= read -r subscriber_file; do
     [[ -n "$subscriber_file" ]] || continue
@@ -4232,8 +4276,22 @@ main() {
       log "invalid repo_path in ${subscriber_file}"
       continue
     fi
-    process_repo "$repo_path" "$manifest_path"
+    # One subscriber's failure must not end the fleet fire, and process_repo
+    # must not run in a condition (see process_repo), so it runs in a
+    # subshell with errexit live. The subshell's profile laps do not reach
+    # this shell, so the clock is re-marked after it.
+    local repo_rc
+    set +e
+    ( set -e; process_repo "$repo_path" "$manifest_path" )
+    repo_rc=$?
+    set -e
+    profile_reset
+    if (( repo_rc != 0 )); then
+      log "subscriber ${repo_path} fire ended with rc=${repo_rc}; continuing with the next subscriber"
+    fi
   done <<< "$subscriber_list"
+  [[ -z "$heartbeat_build_check_share" ]] || rm -f "$heartbeat_build_check_share"
+  heartbeat_build_check_share=""
 
   if [[ -f "$controller_home/wakeups/state.json" ]]; then
     python3 "$script_dir/lib/wakeups.py" flush </dev/null 2>/dev/null || true

@@ -10,8 +10,41 @@ json_check() {
   python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$1"
 }
 
+# json_object_check: the file exists, is non-empty and holds exactly one JSON
+# document, which is an object. Stricter than json_check because jq reads a
+# truncated, empty, array or null budget as something other than an error,
+# and every cap comparison then quietly answers "not hit".
+json_object_check() {
+  [[ -s "$1" ]] || return 1
+  jq -n -e '[inputs] | length == 1 and (.[0] | type == "object")' "$1" >/dev/null 2>&1
+}
+
 budget_file() {
   printf '%s/state/budget.json\n' "$1"
+}
+
+# budget_readable: the one test for "this budget can be trusted". Every
+# function below that reads or writes budget.json refuses by an explicit
+# return when it fails, because its callers run it inside a condition where
+# errexit does not stop anything.
+budget_readable() {
+  json_object_check "$(budget_file "$1")"
+}
+
+# _budget_replace_from: move a freshly written temp file over budget.json only
+# when it is itself a readable budget; otherwise remove it and leave the
+# budget exactly as it was.
+_budget_replace_from() {
+  local tmp_path="$1" budget_path="$2"
+  if ! json_object_check "$tmp_path"; then
+    rm -f "$tmp_path"
+    printf 'budget: refusing to replace %s with a failed write\n' "$budget_path" >&2
+    return 1
+  fi
+  if ! mv "$tmp_path" "$budget_path"; then
+    rm -f "$tmp_path"
+    return 1
+  fi
 }
 
 budget_read() {
@@ -29,10 +62,17 @@ budget_write_atomic() {
   shift 2
   local budget_path tmp_path
   budget_path="$(budget_file "$repo_root")"
+  if ! budget_readable "$repo_root"; then
+    printf 'budget_write_atomic: %s is missing or unreadable; not writing\n' "$budget_path" >&2
+    return 1
+  fi
   tmp_path="${budget_path}.tmp.$$"
-  jq "$@" "$jq_filter" "$budget_path" > "$tmp_path"
-  json_check "$tmp_path"
-  mv "$tmp_path" "$budget_path"
+  if ! jq "$@" "$jq_filter" "$budget_path" > "$tmp_path"; then
+    rm -f "$tmp_path"
+    printf 'budget_write_atomic: jq failed on %s; not writing\n' "$budget_path" >&2
+    return 1
+  fi
+  _budget_replace_from "$tmp_path" "$budget_path"
 }
 
 # ---------------------------------------------------------------------------
@@ -289,8 +329,16 @@ budget_check_caps() {
   BUDGET_CHECK_LAST_HIT=""
   BUDGET_CHECK_ALL_HITS=""
 
+  # Neither 0 (dispatch), 1 (cap hit, which would halt by rewriting the file)
+  # nor 2 (already halted): an unreadable budget is its own answer, and
+  # budget_gate_dispatch's fail-closed arm refuses on it.
+  if ! budget_readable "$repo_root"; then
+    printf 'budget_check_caps: %s is missing or unreadable\n' "$budget_path" >&2
+    return 3
+  fi
+
   local halted token_hit wall_hit tick_hit idle_hit fail_hit token_cap
-  halted="$(jq -r '.halted // false' "$budget_path")"
+  halted="$(jq -r '.halted // false' "$budget_path")" || return 3
 
   if [[ "$halted" == "true" ]]; then
     return 2
@@ -524,8 +572,12 @@ budget_ensure_window() {
   local repo_root="$1"
   local budget_path today stored
   budget_path="$(budget_file "$repo_root")"
+  if ! budget_readable "$repo_root"; then
+    printf 'budget_ensure_window: %s is missing or unreadable; not writing\n' "$budget_path" >&2
+    return 1
+  fi
   today="$(date -u +%F)"
-  stored="$(jq -r '.window_started_at // empty' "$budget_path")"
+  stored="$(jq -r '.window_started_at // empty' "$budget_path")" || return 1
   if [[ "$stored" == "$today" ]]; then
     return 0
   fi
@@ -556,7 +608,7 @@ budget_ensure_window() {
         (if .consecutive_failures >= .consecutive_failure_cap then "failure-cap" else empty end)
       ] | join(" ")
     ' "$budget_path")"
-    budget_record_breach "$repo_root" "window-reset" "$over"
+    budget_record_breach "$repo_root" "window-reset" "$over" || return 1
   fi
 
   local tmp_path jq_filter
@@ -580,9 +632,12 @@ budget_ensure_window() {
     # window, do not zero live counters out from under an in-progress run.
     jq_filter='.window_started_at = $today'
   fi
-  jq --arg today "$today" "$jq_filter" "$budget_path" > "$tmp_path"
-  json_check "$tmp_path"
-  mv "$tmp_path" "$budget_path"
+  if ! jq --arg today "$today" "$jq_filter" "$budget_path" > "$tmp_path"; then
+    rm -f "$tmp_path"
+    printf 'budget_ensure_window: jq failed on %s; not writing\n' "$budget_path" >&2
+    return 1
+  fi
+  _budget_replace_from "$tmp_path" "$budget_path" || return 1
   if [[ "$recovered" == "true" ]]; then
     printf 'budget_ensure_window: new window (%s) for %s, auto-resetting halted/at-cap budget (caps unchanged); breach carried over: %s, lifetime tokens %s\n' \
       "$today" "$repo_root" "${over:-none}" \
@@ -700,7 +755,7 @@ budget_halt() {
     | .halted_at = $ts
     | .halt_logged_at = null
     | .halt_logged_reason = null
-  ' --arg reason "$reason" --arg reasons "$reasons" --arg ts "$ts"
+  ' --arg reason "$reason" --arg reasons "$reasons" --arg ts "$ts" || return 1
   if [[ "$previous_halt" != "$(jq -nc --arg reason "$reason" '[true, $reason]')" ]]; then
     python3 "$budget_script_dir/lib/lifecycle_events.py" halt "$repo_root" 2>/dev/null || true
   fi

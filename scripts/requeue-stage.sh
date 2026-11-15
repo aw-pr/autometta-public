@@ -233,7 +233,11 @@ yq -o=json '.' "$state_yaml" | jq --arg id "$stage_id" '
           | .stall_marker = null
           | .worker_envelope = null
         else . end ]' > "$tmp_json"
-yq -P '.' "$tmp_json" > "$tmp_yaml"
+if ! yq -P '.' "$tmp_json" > "$tmp_yaml" || [ ! -s "$tmp_yaml" ]; then
+  rm -f "$tmp_json" "$tmp_yaml"
+  echo "requeue: yq render of the reset state failed or was empty; $state_yaml left untouched" >&2
+  exit 1
+fi
 mv "$tmp_yaml" "$state_yaml"
 rm -f "$tmp_json"
 
