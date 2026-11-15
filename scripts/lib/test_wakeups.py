@@ -335,6 +335,32 @@ class WakeupTests(unittest.TestCase):
         self.assertIsNone(state["owners"][str(self.repo)]["pending"])
         self.assertEqual(len(state["attempts"]), 1)
 
+    def test_busy_fleet_and_repo_take_turns_across_restarts(self):
+        fleet = wakeups.register(self.state, "fleet", "claude", "fleet-chat", self.now - 100)
+        self.state["owners"] = {"fleet": fleet, str(self.repo): self.owner}
+        for n, expected in enumerate(["fleet", str(self.repo), "fleet", str(self.repo)]):
+            now = self.now + n * 121
+            events = [self.event(f"repo-{n}", at=now - 20),
+                      self.event(f"fleet-{n}", at=now - 20, repo=self.other)]
+            self.dispatch(events, now)
+            self.assertEqual(self.state["attempts"][-1]["scope"], expected)
+            self.assertEqual(len(self.state["attempts"]), n + 1)
+            self.state["owners"][expected]["pending"] = None
+            wakeups.save(self.state)
+            self.state = wakeups.load()
+
+    def test_multiple_scopes_do_not_give_one_chat_extra_priority(self):
+        self.owner["last_sent"] = self.now - 121
+        wakeups.register(self.state, "fleet", "codex", "chat", self.now - 100,
+                         self.socket_path)
+        other = wakeups.register(self.state, str(self.other), "claude", "other-chat", self.now - 100)
+        events = [self.event(), self.event(1, repo=self.root / "third"),
+                  self.event(2, repo=self.other)]
+        self.dispatch(events)
+        self.assertEqual(self.state["attempts"][-1]["scope"], str(self.other))
+        self.assertIsNotNone(other["pending"])
+        self.assertIsNone(self.owner["pending"])
+
     def test_global_cooldown_prevents_a_fleet_wide_burst(self):
         other = wakeups.register(self.state, str(self.other), "claude", "other-chat", self.now - 100)
         self.dispatch([self.event(), self.event(1, repo=self.other)])

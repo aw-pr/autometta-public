@@ -468,8 +468,11 @@ The broker runs once at the end of the existing fleet tick. Worker and verifier
 starts and finishes, stalled or failed stages, integration outcomes and run
 completion or halts qualify. The first event waits ten seconds for batching,
 then events for the same card share a row with their transitions and latest
-outcome. A retry start does not hide an earlier stalled or failed transition. Delivery is normally
-at the next eligible tick; a long tick adds its own runtime to that latency.
+outcome. Eligible chats take turns by their most recent delivery, oldest first,
+so a busy fleet owner cannot repeatedly take the slot ahead of repo owners.
+A chat owning multiple scopes shares one place in that ordering. A retry start
+does not hide an earlier stalled or failed transition. Delivery is normally at
+the next eligible tick; a long tick adds its own runtime to that latency.
 
 - **Claude Code:** native
   [`asyncRewake`](https://code.claude.com/docs/en/hooks#command-hook-fields)

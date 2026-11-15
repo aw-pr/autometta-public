@@ -241,7 +241,14 @@ def dispatch(state, events, now):
             grouped.setdefault(scope, []).append(record)
         except (KeyError, TypeError, ValueError):
             continue
-    for scope, owner in owners.items():
+    # Fixed registration order lets a busy owner consume every global slot.
+    last_sent_by_chat = {}
+    for owner in owners.values():
+        chat = (owner["family"], owner["session"])
+        last_sent_by_chat[chat] = max(last_sent_by_chat.get(chat, 0), owner["last_sent"])
+    ordered = sorted(owners.items(), key=lambda item:
+                     last_sent_by_chat[(item[1]["family"], item[1]["session"])])
+    for scope, owner in ordered:
         owner["seen"] = {key: seen_at for key, seen_at in owner["seen"].items() if now - seen_at <= MAX_AGE}
         events = grouped.get(scope, [])
         same_chat = [o for o in owners.values()
