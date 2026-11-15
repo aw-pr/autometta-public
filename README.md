@@ -2,7 +2,7 @@
 
 **Token-maxing is the gateway drug to AI psychosis. Autometta is a lightweight YOLO pattern library for headless agent orchestration on a single machine without constant human oversight. Worker agents code against requirement cards, verified by cross-family agents: Codex verifies Claude, and vice versa.**
 
-![License](https://img.shields.io/badge/license-MIT-green) ![Release](https://img.shields.io/badge/release-v1.1.0-blue) ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-lightgrey) ![Status](https://img.shields.io/badge/status-single--operator%20daily%20use-orange)
+![Runtime](https://img.shields.io/badge/runtime-bash%203.2%2B%20%7C%20python%203-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-91%20of%20101%20smokes%20passing-yellow) ![Status](https://img.shields.io/badge/status-single--operator%20daily%20use-orange)
 
 Autometta turns requirement cards into implemented, independently checked commits. It runs Claude Code and Codex CLI as worker and verifier pairs on one laptop. A cron-driven tick handles dispatch, budgets and recovery. The human writes the cards and takes the decisions the contract cannot.
 
