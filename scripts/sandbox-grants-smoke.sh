@@ -101,16 +101,23 @@ printf '== 3b. the agent-home grant is separate, and write-only ==\n' >&2
 # did not. So the grant adds write access to one directory and no new sight of
 # anything, which is why it is not gated behind the network grant and does not
 # widen the sandbox mode.
-check "an agent-home card gets --add-dir for the claude home" \
-  "$(eq "--add-dir $HOME/.claude" "$(home_argv_of true workspace-write)")"
+# The grant creates session-env under an existing Claude home, so HOME points
+# at a fixture and the real Claude home is never touched.
+fixture_home="$tmp_root/agent-home"
+mkdir -p "$fixture_home/.claude"
+fixture_home_argv_of() {
+  ( export HOME="$fixture_home"; unset CLAUDE_CONFIG_DIR; home_argv_of "$@" )
+}
+check "an agent-home card gets --add-dir for the claude session-env directory" \
+  "$(eq "--add-dir $fixture_home/.claude/session-env" "$(fixture_home_argv_of true workspace-write)")"
 check "a card that does not ask gets nothing" \
-  "$(eq "" "$(home_argv_of false workspace-write)")"
+  "$(eq "" "$(fixture_home_argv_of false workspace-write)")"
 check "danger-full-access needs no add-dir, it can already write" \
-  "$(eq "" "$(home_argv_of true danger-full-access)")"
+  "$(eq "" "$(fixture_home_argv_of true danger-full-access)")"
 check "read-only does not gain a writable home" \
-  "$(eq "" "$(home_argv_of true read-only)")"
+  "$(eq "" "$(fixture_home_argv_of true read-only)")"
 check "the network grant does not imply the home grant" \
-  "$(eq "" "$(home_argv_of "" workspace-write)")"
+  "$(eq "" "$(fixture_home_argv_of "" workspace-write)")"
 
 printf '== 4. both spawners read the field off a real card ==\n' >&2
 card="$tmp_root/91-a-card.md"

@@ -2230,6 +2230,16 @@ force_add_card_deliverables() {
   done < <(card_deliverable_paths "$card_path")
 }
 
+# The hooks directory the operator's checkout runs, as an absolute path. Git
+# resolves a relative core.hooksPath (husky's .husky/_, a tracked .githooks)
+# inside whichever worktree it runs in, so pinning core.hooksPath to this keeps
+# a tick-side git command in a run worktree off hooks the worker could have
+# edited there. An unset or absolute core.hooksPath resolves as git would.
+operator_hooks_path() {
+  local repo_root="$1"
+  git -C "$repo_root" rev-parse --path-format=absolute --git-path hooks 2>/dev/null
+}
+
 # Preserve a verifier-FAILed attempt before the stage is released. The worker
 # diff is committed on the run branch and pinned on a per-attempt wip branch,
 # so requeue can remove the ephemeral run branch without orphaning useful work.
@@ -2244,6 +2254,10 @@ force_add_card_deliverables() {
 # a verifier FAIL would be untrue. scripts/phat-controller.sh passes
 # ("worker_envelope_missing_after_exit", "stalled"). The index-safe git
 # surgery below is the part that must not be duplicated.
+#
+# Every git command here runs with core.hooksPath pinned to the operator's
+# hooks directory (operator_hooks_path), so a worker that edits a tracked
+# relative hooks directory in its worktree cannot get the tick to run it.
 preserve_failed_work() {
   local repo_root="$1" state_yaml="$2" stage_id="$3" artefact_abs="$4"
   local reason_override="${5:-}" reason_label="${6:-verifier FAIL}"
@@ -2264,6 +2278,17 @@ preserve_failed_work() {
     log "stage ${stage_id} ${reason_label}: no run worktree to preserve; left standing as before"
     return 1
   fi
+  local operator_hooks config_index
+  operator_hooks="$(operator_hooks_path "$repo_root")" || operator_hooks=""
+  if [[ -z "$operator_hooks" ]]; then
+    log "stage ${stage_id} ${reason_label}: cannot resolve the operator's git hooks directory; preservation skipped and worktree left standing"
+    return 1
+  fi
+  config_index="${GIT_CONFIG_COUNT:-0}"
+  [[ "$config_index" =~ ^[0-9]+$ ]] || config_index=0
+  local -x GIT_CONFIG_COUNT=$((config_index + 1))
+  local -x "GIT_CONFIG_KEY_${config_index}=core.hooksPath"
+  local -x "GIT_CONFIG_VALUE_${config_index}=${operator_hooks}"
   if [[ "$(git -C "$work_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)" != "$run_branch" ]]; then
     log "stage ${stage_id} ${reason_label}: ${work_dir} is not on ${run_branch}; preservation skipped and worktree left standing"
     return 1
