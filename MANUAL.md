@@ -536,19 +536,21 @@ See `docs/observability.md`.
 
 ## 7. Publish workflow
 
-Private development lives on `dev`; `publish` is a pointer on the same linear
-history that is fast-forwarded to `dev` when a batch is ready. A fail-closed
-git gate guards the public push.
+Private development lives on `dev`; `publish` is the curated, append-only
+public line. `scripts/publish-sync.sh` replays `dev`'s new commits onto it,
+stripping the declared private paths (`publishguard.privatefile`), and moves
+the `publish` ref forward. A fail-closed git gate guards the public push.
 
 - Install the publish-guard hooks: `scripts/install-guards.sh`. The pre-commit
   hook blocks committing real `op://` refs and other configured patterns
   (`.publish-guard.local`).
 - Publish is never a force-push. Under the default `publishguard.boundary=pr`
   the pre-push hook rejects any push to the public `main`; the flow is
-  `git switch publish && git merge --ff-only dev && git push origin publish
-  && git push public publish`, then a PR `publish -> main` on the forge
-  (`gh pr create --base main --head publish` when none is open) merged there.
-  Never `--no-verify`.
+  `scripts/publish-sync.sh` (read the dry-run plan), then
+  `scripts/publish-sync.sh --apply --on-conflict abort`, an audit of the new
+  public commits, `git push origin publish && git push public publish`, then
+  a PR `publish -> main` on the forge (`gh pr create --base main --head
+  publish` when none is open) merged there. Never `--no-verify`.
 
 Full model, including the `direct` boundary that keeps the `git publish`
 alias: `docs/PUBLISH-WORKFLOW.md` ("Normal publish"). The
