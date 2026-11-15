@@ -1687,23 +1687,35 @@ pipeline_prepare_tail_rebase() {
     return 1
   fi
 
-  local had_changes=false stash_sha="" rebase_rc=0
-  [[ -n "$tail_paths" ]] && had_changes=true
-  if [[ "$had_changes" == "true" ]]; then
-    git -C "$work_dir" stash push -u -m "autometta pipeline ${tail_stage}" -- \
-      . ':(exclude)state' >/dev/null 2>&1 || rebase_rc=$?
-    stash_sha="$(git -C "$work_dir" rev-parse -q --verify refs/stash 2>/dev/null || true)"
+  local tail_head saved_sha="" rebase_rc=0
+  tail_head="$(git -C "$work_dir" rev-parse -q --verify HEAD 2>/dev/null)" || rebase_rc=1
+  if (( rebase_rc == 0 )); then
+    git -C "$work_dir" add -A -- . ':(exclude)state' >/dev/null 2>&1 || rebase_rc=$?
   fi
   if (( rebase_rc == 0 )); then
-    git -C "$work_dir" reset --hard "$base_branch" >/dev/null 2>&1 || rebase_rc=$?
-  fi
-  if (( rebase_rc == 0 )) && [[ "$had_changes" == "true" ]]; then
-    git -C "$work_dir" stash pop --index >/dev/null 2>&1 || rebase_rc=$?
+    saved_sha="$(git -C "$work_dir" stash create "autometta pipeline ${tail_stage}" 2>/dev/null)" \
+      || rebase_rc=$?
   fi
   if (( rebase_rc != 0 )); then
-    git -C "$work_dir" reset --hard "$old_base" >/dev/null 2>&1 || true
-    if [[ -n "$stash_sha" ]]; then
-      git -C "$work_dir" stash apply --index "$stash_sha" >/dev/null 2>&1 || true
+    pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" \
+      "pipeline-rebase-conflict" "tail-rebase-failed"
+    return 1
+  fi
+
+  if [[ -n "$saved_sha" ]]; then
+    git -C "$work_dir" reset --hard HEAD >/dev/null 2>&1 || rebase_rc=$?
+  fi
+  if (( rebase_rc == 0 )); then
+    git -C "$work_dir" rebase "$base_branch" >/dev/null 2>&1 || rebase_rc=$?
+  fi
+  if (( rebase_rc == 0 )) && [[ -n "$saved_sha" ]]; then
+    git -C "$work_dir" stash apply --index "$saved_sha" >/dev/null 2>&1 || rebase_rc=$?
+  fi
+  if (( rebase_rc != 0 )); then
+    git -C "$work_dir" rebase --abort >/dev/null 2>&1 || true
+    git -C "$work_dir" reset --hard "$tail_head" >/dev/null 2>&1 || true
+    if [[ -n "$saved_sha" ]]; then
+      git -C "$work_dir" stash apply --index "$saved_sha" >/dev/null 2>&1 || true
     fi
     pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" \
       "pipeline-rebase-conflict" "tail-rebase-failed"

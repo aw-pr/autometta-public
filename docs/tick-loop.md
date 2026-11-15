@@ -200,8 +200,11 @@ the head resolves.
 Landing is strict queue order. If N fails, dev has not moved and N+1 follows the
 ordinary fast-forward path. If N passes, the tick compares the actual changed
 file names in N's landed commit with N+1's tracked and untracked work. A
-file-disjoint tail is stashed, reset onto the new base, and restored before its
-verifier runs. Any overlap or restore conflict halts with
+file-disjoint tail has its uncommitted and untracked work saved privately (never
+on the shared stash list), any commits its worker made rebased onto the new base,
+and that work restored before its verifier runs. If the rebase or the restore
+fails, the tail is put back as the worker left it, on its own commit with its
+work restored, before the tick escalates. Any overlap or restore conflict halts with
 `controller-escalation`; the tick does not resolve a conflict. A failure in
 either member drops the current pair to serial but does not disable pairing for
 the repo. Only a claim collision found from the actual diffs or a tail rebase
