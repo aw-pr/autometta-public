@@ -60,6 +60,10 @@ publication, deployment, force-push or merge-conflict authority follows from
 this policy. Readiness/reference work is still charged to preparation; changing
 models, chats or run IDs does not reset the same stage allowance.
 
+When the operator leaves the chat to attend a run alone, the `yolo` skill
+governs: it keeps this policy, says which of the decisions below may be taken
+without them, and parks the rest.
+
 
 ## Procedure
 

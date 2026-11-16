@@ -14,7 +14,7 @@ State and memory that agents need across sessions live **in the repo**, not in a
 
 ## What this repo is
 
-Autometta is a **pattern library**, not a runtime. v1.1.0: the contract, the loop and the operator surfaces are stable and in daily use; still one human, one machine. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-run-design`, `autometta-card-review`, `autometta-oracle`, `autometta-requeue`, `autometta-escalations`, `autometta-weekly-review`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
+Autometta is a **pattern library**, not a runtime. v1.1.0: the contract, the loop and the operator surfaces are stable and in daily use; still one human, one machine. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-run-design`, `autometta-card-review`, `autometta-oracle`, `autometta-requeue`, `autometta-escalations`, `autometta-weekly-review`, `yolo`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
 
 The repo extracts patterns from two prior projects (`fractals-from-the-90s` dispatch contract; `agentic-rag-kimble` pass 28-29 autonomous loop) and packages them for solo single-machine multi-agent CLI work. See `README.md` for the pitch and `docs/philosophy.md` for the long-form scope.
 
@@ -103,6 +103,7 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 - `skills/autometta-requeue/` - re-queue a stage safely after a FAIL, a dead agent or a stale run worktree.
 - `skills/autometta-escalations/` - work the operator's pending escalations from an orchestration chat.
 - `skills/autometta-weekly-review/` - once a week, decide the open harness proposals in `memory/proposals.jsonl` with the operator and card the approved ones (`docs/learning-log.md`).
+- `skills/yolo/` - attend a queued run with the operator away: caps and stop time agreed in one prompt, a written standing authority, a hard stop at a stage's third failed attempt, and a decision log whose lessons go to the proposals ledger.
 - `skills/phat-controller/` - a pointer: the role is retired, work the queue through `autometta-escalations`.
 
 ## Auth routes: subscription vs API key (agents: read this before any dispatch)
