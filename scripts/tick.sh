@@ -1093,12 +1093,19 @@ costlog_emit_worker() {
 # Emit one verifier cost-log line. Reads the verifier identity and
 # verifier_started_at from state.yaml; the caller supplies the result
 # (pass|fail from the artefact, or aborted when a verifier died without one).
+# An optional fifth argument names the transcript directory; an empty one
+# reads the verifier log alone.
 costlog_emit_verifier() {
   local repo_root="$1"
   local state_yaml="$2"
   local stage_id="$3"
   local result="$4"
-  local verifier_identity verifier_log started start_epoch now_epoch wall
+  local verifier_identity verifier_log started start_epoch now_epoch wall transcript_dir
+  if [[ $# -ge 5 ]]; then
+    transcript_dir="$5"
+  else
+    transcript_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  fi
   verifier_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
     '.stages[] | select(.id == $id) | .verifier // empty')"
   [[ -n "$verifier_identity" ]] || return 0
@@ -1115,7 +1122,7 @@ costlog_emit_verifier() {
     start_epoch=0
   fi
   costlog_append "$repo_root" "$stage_id" verifier "$verifier_identity" "$verifier_log" "$wall" "$result" \
-    "$(worktree_path_for_stage "$repo_root" "$stage_id")" "$start_epoch" || true
+    "$transcript_dir" "$start_epoch" || true
 }
 
 # Stage ids end up in jq filters, yq selectors, log paths, and on-disk
@@ -3090,6 +3097,11 @@ consume_verifier_artefact() {
   verifier_identity_acct="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
     '.stages[] | select(.id == $id) | .verifier // empty')"
   verifier_family_acct="$(costlog_family_for_identity "$verifier_identity_acct")"
+  # A panel's synthesis log carries the sum of its three panellists. Any one
+  # panellist's transcript in the run worktree would be charged alone.
+  if jq -e 'has("panellists")' "$repo_root/$artefact" >/dev/null 2>&1; then
+    verifier_work_dir_acct=""
+  fi
   budget_account_tokens_from_dispatch "$repo_root" "$verifier_log_path" "verifier" \
     "$verifier_work_dir_acct" "$verifier_start_epoch" "$verifier_family_acct" || true
   stage_snapshot_tokens "$repo_root" "$state_yaml" "$stage_id" "$verifier_log_path" "verifier" \
@@ -3099,7 +3111,7 @@ consume_verifier_artefact() {
     PASS) verifier_result="pass" ;;
     *)    verifier_result="fail" ;;
   esac
-  costlog_emit_verifier "$repo_root" "$state_yaml" "$stage_id" "$verifier_result"
+  costlog_emit_verifier "$repo_root" "$state_yaml" "$stage_id" "$verifier_result" "$verifier_work_dir_acct"
   _process_verifier_artefact "$repo_root" "$state_yaml" "$stage_id" "$artefact" "$manifest_path"
 
   local pair_head pair_tail

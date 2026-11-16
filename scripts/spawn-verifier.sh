@@ -579,7 +579,7 @@ main() {
       exit 1
     fi
     log_msg "verifier: panel mode enabled — delegating to spawn-verifier-panel.sh"
-    exec "$panel_script" "$card_path" "$repo_root"
+    exec "$panel_script" "$card_path" "$repo_root" --work-dir "$work_dir"
   fi
 
   local verifier_identity stage_id family log_path artefact_path pid prompt

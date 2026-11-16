@@ -70,7 +70,7 @@
     "overall": {
       "type": "string",
       "enum": ["PASS", "FAIL"],
-      "description": "Majority vote result. PASS when pass_count >= fail_count and quorum met."
+      "description": "Synthesised result. PASS only with quorum met and a strict PASS majority (more PASS than FAIL votes); a FAIL majority, a missing quorum or a tie is FAIL, with the reason at the start of additional_findings."
     },
     "panellists": {
       "type": "array",
@@ -109,7 +109,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["required", "achieved"],
-      "description": "Quorum tracking. required=2 for N=3. If achieved < required the stage stalls with verifier_panel_no_quorum.",
+      "description": "Quorum tracking. required=2 for N=3. If achieved < required the synthesis is FAIL with reason no quorum.",
       "properties": {
         "required": {
           "type": "integer",
