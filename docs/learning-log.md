@@ -27,6 +27,12 @@ middle one.
    `additional_findings`, and the chat lifts it into the ledger citing the
    artefact. Recording costs one shell command and no model turn. Nothing
    acts on a proposal when it is written.
+   A chat left to attend a run alone (`skills/yolo`) records a second sort
+   of lesson before it hands back: what its own guidance lacked or got
+   wrong, and what it parked for want of authority. Those take a `yolo:`
+   title prefix, target `skills/yolo/SKILL.md`, and cite the run log entry
+   that shows the decision. The operator's overrulings at the morning
+   debrief are recorded the same way.
 2. **Once a week, review.** The operator opens an orchestration chat and
    runs `skills/autometta-weekly-review`: lift any `HARNESS:` line the week
    missed (`proposals.sh unlifted`; a stage that passed never escalates, so
@@ -97,7 +103,9 @@ artefact's `ran_at`; a stage re-verified since then is listed again.
 `kind` is one of `script`, `skill`, `template`, `schema`, `doc`, `policy`.
 `target` is one or more repo-relative paths in the autometta checkout, never
 absolute. `evidence` is one or more references a reviewer can open: stage
-ids, escalation ids, facts subjects, paths with an anchor, commit SHAs. A
+ids, escalation ids, unattended run log ids with an entry number
+(`20261116T2200Z-promo-flow#4`, a file under `$AUTOMETTA_HOME/yolo/`), facts
+subjects, paths with an anchor, commit SHAs. A
 proposal with no evidence is refused at the gate; one whose evidence does
 not say what it claims is held or rejected at the review.
 
@@ -122,6 +130,10 @@ regression coverage.
 - `$AUTOMETTA_HOME/escalations/`: this episode's decision, worked and acked
   during the week (`docs/tick-loop.md`, Escalations). An escalation is often
   the evidence for a proposal; it is not the proposal.
+- `$AUTOMETTA_HOME/yolo/`: one decision log per unattended run, written by
+  the attending chat before each action (`skills/yolo`). It is the evidence
+  for a `yolo:` proposal and the operator's morning reading; like an
+  escalation, it is not the proposal.
 - `docs/incidents/*-run-lessons-log.md`: the narrative. Keep writing it when
   a run deserves the paragraph; the ledger holds the actionable line.
 - `memory/retro-grade-*.md`: rubric drift, a separate weekly advisory

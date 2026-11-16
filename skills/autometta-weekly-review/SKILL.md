@@ -57,6 +57,13 @@ one-line report and ends.
    best-evidenced id as the survivor and `scripts/proposals.sh merge <dup>
    --into <survivor> --note "<why they are one>"` the rest. Do this before
    recommending anything: a cluster of five is one decision, not five.
+   Proposals whose title starts `yolo:` came from an unattended run
+   (`skills/yolo`) and cite a run log under `$AUTOMETTA_HOME/yolo/`. Read the
+   cited entry, including its `would have asked` line, and cluster them
+   together first: the same park or the same missing guidance on several
+   nights is one change to that skill. A `yolo:` item of kind `policy` asks
+   to widen what an unattended chat may do alone, so it needs the operator's
+   yes quoted like any other policy item.
 4. **Check each cluster against the ledger.** `scripts/facts-query.sh
    --predicate failed-criterion` and `--predicate caused-by` show whether
    the mechanism has recurred since it was first proposed and whether a
