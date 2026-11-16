@@ -37,6 +37,19 @@ USAGE_LIMIT_RESET_GRACE_SECONDS=900
 # park dispatch for longer than one complete window plus margin.
 USAGE_LIMIT_MAX_PAUSE_SECONDS=21600
 
+# A worker exit is an instant refusal, rewound with its run worktree left as
+# it was, only when its log was last written within this many seconds of
+# started_at (inclusive). A later match may be the worker's own output, so its
+# work is pinned on a wip ref before any rewind. Log size is not part of the
+# bound: a codex log opens with a multi-kilobyte echo of the prompt.
+# shellcheck disable=SC2034 # read by tick.sh, which sources this file
+USAGE_LIMIT_INSTANT_SECONDS=60
+
+# How many non-instant limit exits one stage may be pinned and rewound before
+# the next takes the ordinary missing-envelope path and counts as a failure.
+# shellcheck disable=SC2034 # read by tick.sh, which sources this file
+USAGE_LIMIT_MAX_REWINDS=2
+
 # usage_limit_hit <log_path> [completion_signal]
 # Exit 0 and print the first matching line when the log carries a refusal.
 # Exit 1 otherwise (including a missing log or a completed role). Provider

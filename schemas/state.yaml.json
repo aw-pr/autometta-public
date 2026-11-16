@@ -172,6 +172,11 @@
             "pattern": "^wip/[0-9]{2,}[a-z]*-[a-z0-9-]+-attempt-[1-9][0-9]*$",
             "description": "Append-only local branch pinning wip_commit for the latest verifier-FAILed attempt. Requeue and retention never delete wip refs."
           },
+          "limit_rewinds": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Count of worker exits that matched a provider limit message later than USAGE_LIMIT_INSTANT_SECONDS after started_at and were rewound to pending after their work was pinned on a wip ref. Absent means 0. Once it reaches USAGE_LIMIT_MAX_REWINDS, a further such exit takes the ordinary missing-envelope path. Instant refusals are not counted, and a requeue does not reset it."
+          },
           "worker_pid": {
             "type": ["integer", "null"],
             "description": "OS pid of the dispatched worker process, if applicable. Null for sub-agent dispatches that run in-harness."

@@ -692,6 +692,24 @@ PY
 # fault, so the halt can name the real cause instead of only its category.
 INSTANT_DISPATCH_FAULT_REASON=""
 
+# log_written_seconds_after_start <log_path> <started_at>
+# Print the seconds from a role's start (ISO 8601 or epoch) to its log's last
+# write, which may be negative. Returns 1 when either time cannot be read.
+log_written_seconds_after_start() {
+  local log_path="$1" started_at="$2" started_epoch log_epoch
+  if [[ "$started_at" =~ ^[0-9]+$ ]]; then
+    started_epoch="$started_at"
+  else
+    started_epoch="$(stage_started_epoch "$started_at" 2>/dev/null || true)"
+  fi
+  [[ "$started_epoch" =~ ^[0-9]+$ ]] || return 1
+  if ! log_epoch="$(stat -f '%m' "$log_path" 2>/dev/null)"; then
+    log_epoch="$(stat -c '%Y' "$log_path" 2>/dev/null || true)"
+  fi
+  [[ "$log_epoch" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$((log_epoch - started_epoch))"
+}
+
 # A dead dispatch with no completion artefact is a configuration fault only
 # when the remaining evidence agrees: it ended almost immediately, produced a
 # tiny log, and that log contains a CLI usage, executable, or auth-route error.
@@ -710,18 +728,8 @@ is_instant_dispatch_configuration_fault() {
   [[ "$log_size" =~ ^[0-9]+$ ]] || return 1
   (( log_size > 0 && log_size <= 512 )) || return 1
 
-  local started_epoch log_epoch elapsed
-  if [[ "$started_at" =~ ^[0-9]+$ ]]; then
-    started_epoch="$started_at"
-  else
-    started_epoch="$(stage_started_epoch "$started_at" 2>/dev/null || true)"
-  fi
-  [[ "$started_epoch" =~ ^[0-9]+$ ]] || return 1
-  if ! log_epoch="$(stat -f '%m' "$log_path" 2>/dev/null)"; then
-    log_epoch="$(stat -c '%Y' "$log_path" 2>/dev/null || true)"
-  fi
-  [[ "$log_epoch" =~ ^[0-9]+$ ]] || return 1
-  elapsed=$((log_epoch - started_epoch))
+  local elapsed
+  elapsed="$(log_written_seconds_after_start "$log_path" "$started_at")" || return 1
   (( elapsed >= 0 && elapsed <= 2 )) || return 1
 
   # `failed to resolve` and `op exit N` are op-fetch's two shapes for a
@@ -2054,17 +2062,70 @@ worktree_dir_for_branch() {
   return 0
 }
 
+# run_worktree_holds_unpinned_work: return 0, after logging why, when
+# removing this stage's run worktree and run branch would lose work. Removal
+# is `git worktree remove --force`, `rm -rf` and `git branch -D`, so a stage
+# rewound with its tree still dirty would lose the whole attempt at
+# re-dispatch, as promo-flow stage 35 did on 2026-10-22. Uncommitted work is pinned on a wip
+# ref first; anything that cannot be pinned keeps the worktree standing.
+# Log output goes to stderr: the caller's stdout carries only the path.
+run_worktree_holds_unpinned_work() {
+  local repo_root="$1" stage_id="$2" base_branch="$3"
+  local run_branch work_dir status unpinned
+  run_branch="$(run_branch_for_stage "$stage_id")"
+  work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  if [[ -d "$work_dir" ]]; then
+    if [[ -e "$work_dir/state" && ! -L "$work_dir/state" ]]; then
+      log "ensure_run_worktree: ${work_dir}/state is a real directory, not the shared state link; left standing for ${stage_id}"
+      return 0
+    fi
+    if ! status="$(git -C "$work_dir" status --porcelain -- . ':(exclude)state' 2>/dev/null)"; then
+      log "ensure_run_worktree: cannot read git status in ${work_dir}; left standing for ${stage_id}"
+      return 0
+    fi
+    if [[ -n "$status" ]] \
+       && ! preserve_failed_work "$repo_root" "$repo_root/state/state.yaml" "$stage_id" "" \
+              "unpreserved work found at re-dispatch" "re-dispatch" >&2; then
+      log "ensure_run_worktree: uncommitted work in ${work_dir} could not be pinned; left standing for ${stage_id}"
+      return 0
+    fi
+  fi
+  if git -C "$repo_root" rev-parse --verify --quiet "refs/heads/${run_branch}" >/dev/null 2>&1; then
+    local -a keep=()
+    local ref
+    while IFS= read -r ref; do
+      [[ -n "$ref" ]] && keep+=("^$ref")
+    done < <(git -C "$repo_root" for-each-ref --format='%(refname)' "refs/heads/wip/${stage_id}-attempt-*" 2>/dev/null)
+    if ! unpinned="$(git -C "$repo_root" rev-list --count "refs/heads/${run_branch}" \
+                       "^${base_branch}" ${keep[@]+"${keep[@]}"} 2>/dev/null)"; then
+      log "ensure_run_worktree: cannot tell whether ${run_branch} holds commits outside ${base_branch}; left standing for ${stage_id}"
+      return 0
+    fi
+    if [[ "$unpinned" != 0 ]]; then
+      log "ensure_run_worktree: ${run_branch} holds ${unpinned} commit(s) reachable from neither ${base_branch} nor a wip/${stage_id}-attempt-* ref; left standing for ${stage_id}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 # ensure_run_worktree: remove any worktree/branch left standing by a prior
 # attempt at this stage, cut a fresh one from base_branch, and link its
 # state/ to the shared repo_root/state/ (state.yaml, budget.json, logs,
 # handoffs, verifier artefacts all stay centralised; only code deliverables
 # live in the worktree). Prints the worktree path on success, prints
 # nothing and returns non-zero on failure.
+#
+# It refuses, removing nothing, when the prior attempt left work it cannot
+# pin first (see run_worktree_holds_unpinned_work).
 ensure_run_worktree() {
   local repo_root="$1" stage_id="$2" base_branch="$3"
   local run_branch work_dir
   run_branch="$(run_branch_for_stage "$stage_id")"
   work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  if run_worktree_holds_unpinned_work "$repo_root" "$stage_id" "$base_branch"; then
+    return 1
+  fi
   remove_run_worktree "$repo_root" "$stage_id"
   (
     cd "$repo_root"
@@ -3857,25 +3918,63 @@ _process_repo_locked() {
           return 0
         fi
 
-        # Provider refusal: the worker exited immediately without attempting
-        # the stage. Rewind it to pending so the next unpaused tick dispatches
-        # it fresh, rather than counting a failure for work never done. The
-        # run worktree is left standing to be reused.
+        # Provider refusal: the worker exited without a dispatch envelope and
+        # its log matches a provider limit message. Rewind it to pending so
+        # the next unpaused tick dispatches it fresh, rather than counting a
+        # failure for work never done. The run worktree is not reused: the
+        # next dispatch re-cuts it from the base branch.
+        #
+        # Only an exit whose log was last written within
+        # USAGE_LIMIT_INSTANT_SECONDS of started_at is a refusal that never
+        # started, rewound untouched and uncounted. The pattern is broad, so a
+        # later match may be the worker's own output (promo-flow stage 35,
+        # 2026-10-22, lost 72 minutes of work that way). Its work is pinned
+        # on a wip ref before the rewind, at most USAGE_LIMIT_MAX_REWINDS
+        # times per stage; after that, or if the work cannot be pinned, the
+        # exit takes the ordinary missing-envelope path below.
         #
         # Gated on the absence of a dispatch envelope. A worker that finished
         # its stage has written one, and a stage whose subject matter is rate
         # limiting would otherwise match the refusal pattern from its own
         # output, get rewound, and loop forever losing completed work.
         if [[ ! -f "$expected_worker_envelope" ]] \
-           && handle_limit_refusal "$repo_root" "$current_stage" worker "$worker_log_path"; then
-          state_apply_json "$state_yaml" \
-            '(.stages[] | select(.id == $id)).status = "pending"
-             | (.stages[] | select(.id == $id)).worker_pid = null
-             | (.stages[] | select(.id == $id)).started_at = null
-             | .current_stage = null' \
-            --arg id "$current_stage"
-          commit_state_branch "$repo_root"
-          return 0
+           && usage_limit_hit "$worker_log_path" >/dev/null; then
+          local limit_elapsed limit_when limit_rewinds limit_rewind=false
+          limit_elapsed="$(log_written_seconds_after_start "$worker_log_path" "$started_at")" \
+            || limit_elapsed=""
+          limit_when="${limit_elapsed:+${limit_elapsed}s}"
+          limit_when="${limit_when:-an unknown time} after dispatch"
+          if [[ "$limit_elapsed" =~ ^-?[0-9]+$ ]] \
+             && (( limit_elapsed >= 0 && limit_elapsed <= USAGE_LIMIT_INSTANT_SECONDS )); then
+            limit_rewind=true
+          else
+            limit_rewinds="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
+              '.stages[] | select(.id == $id) | .limit_rewinds // 0')"
+            [[ "$limit_rewinds" =~ ^[0-9]+$ ]] || limit_rewinds="$USAGE_LIMIT_MAX_REWINDS"
+            if (( limit_rewinds >= USAGE_LIMIT_MAX_REWINDS )); then
+              log "stage ${current_stage} worker matched a provider limit ${limit_when}, but ${limit_rewinds} limit rewinds is the bound (USAGE_LIMIT_MAX_REWINDS); not rewound"
+            elif ! preserve_failed_work "$repo_root" "$state_yaml" "$current_stage" "" \
+                   "provider limit message ${limit_when}, no dispatch envelope" \
+                   "provider limit"; then
+              log "stage ${current_stage} worker matched a provider limit ${limit_when}, but its work could not be pinned; not rewound"
+            else
+              state_apply_json "$state_yaml" \
+                '(.stages[] | select(.id == $id)).limit_rewinds = $n' \
+                --arg id "$current_stage" --argjson n "$((limit_rewinds + 1))"
+              limit_rewind=true
+            fi
+          fi
+          if [[ "$limit_rewind" == true ]] \
+             && handle_limit_refusal "$repo_root" "$current_stage" worker "$worker_log_path"; then
+            state_apply_json "$state_yaml" \
+              '(.stages[] | select(.id == $id)).status = "pending"
+               | (.stages[] | select(.id == $id)).worker_pid = null
+               | (.stages[] | select(.id == $id)).started_at = null
+               | .current_stage = null' \
+              --arg id "$current_stage"
+            commit_state_branch "$repo_root"
+            return 0
+          fi
         fi
 
         if [[ ! -f "$expected_worker_envelope" ]] \
