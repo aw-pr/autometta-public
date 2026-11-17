@@ -915,6 +915,21 @@ PY
   rm -f "$cur_json" "$tmp_json"
 }
 
+verifier_attempt_cap_for_stage() {
+  state_json "$1" | jq -er --arg id "$2" '
+    [.stages[] | select(.id == $id)]
+    | if length != 1 then error("stage not unique") else .[0] end
+    | if has("verifier_attempt_cap") then
+        .verifier_attempt_cap as $cap
+        | if ($cap | type) == "number" and $cap >= 1 and $cap <= 1000
+             and ($cap | floor) == $cap
+             and ((.verifier_attempt_cap_reason // "") | type) == "string"
+             and ((.verifier_attempt_cap_reason // "") | test("\\S"))
+          then $cap else error("invalid verifier attempt cap or missing approval reason") end
+      else 3 end'
+}
+
+
 # stage_snapshot_tokens: parse a worker/verifier log for its token count
 # and snapshot it onto the matching stage entry in state.yaml. Sets one of
 # worker_tokens / verifier_tokens (per $4) and recomputes .tokens as the
@@ -4221,6 +4236,10 @@ _process_repo_locked() {
       # attempts and stall the stage when the cap is reached so a human can
       # look at it.
       local verifier_attempts verifier_attempt_cap=3
+      if ! verifier_attempt_cap="$(verifier_attempt_cap_for_stage "$state_yaml" "$current_stage")"; then
+        log "invalid verifier attempt cap for ${current_stage}; no dispatch"
+        return 1
+      fi
       verifier_attempts="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_attempts // 0')"
       if (( verifier_attempts >= verifier_attempt_cap )); then
         log "verifier attempt cap (${verifier_attempt_cap}) reached for ${current_stage} without artefact, marking stalled"
