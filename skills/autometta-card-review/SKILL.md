@@ -151,6 +151,10 @@ or UI work as worker; a judgement-heavy verification as verifier). Keep the
 pin when it does; do not trade it down by default. Then
 `scripts/add-stage.sh <<repo>> <<card>>`.
 
+A check this review needed that lint does not make, a lint pass that
+`add-stage.sh` then refused, or a template heading that misled the author
+is a harness lesson: record it with `autometta-learning-log`.
+
 ## Done when
 
 - `Open decisions: none` on the card.

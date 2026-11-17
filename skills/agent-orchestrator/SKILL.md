@@ -193,6 +193,10 @@ a later failure with nobody woken. Check `scripts/wakeups.sh status` before
 relying on them. A chat asked to attend a run with the operator away follows
 the `yolo` skill, which adds a bounded backstop check-in for that reason.
 
+A halt, a harness-caused failure, a workaround or a signal that never came is
+recorded as it happens in the proposals ledger with `autometta-learning-log`,
+so the weekly review can tune it out.
+
 ---
 
 ## Delegation adapter (harness mechanics)

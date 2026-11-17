@@ -144,3 +144,7 @@ Queue the cards with `add-stage.sh` in gate order, confirm the ticker's
 NEXT section shows the intended order, and hand the queue to the tick and
 the operator's escalation chat. The design session's remaining job is feedback, re-briefs
 and landing-boundary commits, not driving dispatches by hand.
+
+Where the harness got in the way of the design (a gate it cannot express, a
+spend basis the caps cannot hold, a pairing a script refuses), record it with
+`autometta-learning-log` before handing over.

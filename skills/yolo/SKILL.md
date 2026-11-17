@@ -263,7 +263,9 @@ entry per decision, **written before you act** and completed afterwards:
 - options considered, the decision and the line of this skill it rests on;
 - outcome, filled in once known;
 - `would have asked: <the question>` wherever you would have checked with
-  the operator had they been there.
+  the operator had they been there;
+- `proposal: <id>` when the entry taught the harness something, recorded
+  there and then (see Recording what the run taught).
 
 ## Hand-back
 
@@ -271,16 +273,18 @@ When the run ends, or at the operator's first prompt, put a summary at the
 top of the log and give it in the chat: what landed, with commits; what is
 parked, each with the decision needed and your recommendation; attempts used
 per stage; spend against each cap (`state/cost-log.jsonl`); every halt cleared
-and why; any cap change or drain still in force; and how each event reached
-you (wake-up, backstop or not at all).
+and why; any cap change or drain still in force; how each event reached
+you (wake-up, backstop or not at all); and the proposal ids recorded.
 
 ## Recording what the run taught
 
-Before handing back, write the lessons to the proposals ledger
-(`docs/learning-log.md`), so the weekly review can improve the next
-unattended run. A harness lesson is recorded as step 7 of the escalations
-skill describes. A lesson about attending unattended takes a `yolo:` title
-prefix and cites the log entry:
+Record each lesson in the proposals ledger as it happens, following
+`autometta-learning-log`, so the weekly review can tune out the halts and
+failures that cost the night. Do not save them for the hand-back: a session
+limit or a dropped wake-up can end your attendance first. At the hand-back,
+run that skill's sweep, lint and commit, and list the ids in the summary. A
+harness lesson is recorded as that skill describes. A lesson about attending
+unattended takes a `yolo:` title prefix and cites the log entry:
 
 ```sh
 scripts/proposals.sh add --agent "$(agent-whoami --model '<your model id>')" \
