@@ -31,17 +31,40 @@ one-line report and ends.
 
 ## Procedure
 
-1. **Lift what the week missed, then list what is open.** A verifier's
+1. **Commit, lift, census, then list.** Chats record proposals as they go
+   (`autometta-learning-log`, which also sets the field conventions this
+   review relies on). If `git status --short memory/proposals.jsonl` shows
+   lines the week left uncommitted, lint and commit them as that skill
+   describes, so the review starts from a committed ledger. A verifier's
    `HARNESS:` line reaches the ledger only when the chat lifts it, and a
-   stage that passed never escalates, so start with `scripts/proposals.sh
+   stage that passed never escalates, so continue with `scripts/proposals.sh
    unlifted`: one line per uncited `HARNESS:` finding across the subscriber
    registry (repo, stage, artefact, text). Lift each that names a harness
    path with `scripts/proposals.sh add ... --repo <repo> --stage <stage>
    --evidence <artefact>#additional_findings`. One that names only the
    subscriber's own files is project scope: say so to the operator and, on
    their agreement, record `scripts/proposals.sh dismiss --repo <repo>
-   --stage <stage> --evidence <artefact> --note "<why>"`. Then
-   `scripts/proposals.sh list` prints proposed, approved and carded items
+   --stage <stage> --evidence <artefact> --note "<why>"`.
+   Then census the week's escalations, so a halt or failure that no chat
+   recorded still reaches the review:
+
+   ```sh
+   cutoff="$(python3 -c 'import datetime as d; print((d.datetime.now(d.timezone.utc) - d.timedelta(days=7)).strftime("%Y%m%dT%H%M%SZ"))')"
+   for f in "${AUTOMETTA_HOME:-$HOME/.autometta}"/escalations/processed/*.md; do
+     id="$(basename "$f" .md)"; [[ "$id" > "$cutoff" ]] || continue
+     awk -v id="$id" '/^---$/ { n++; next } n == 1 && /^repo:/ { r = $2 } n == 1 && /^kind:/ { k = $2 }
+       n == 2 && NF { gsub(/"/, "", r); gsub(/"/, "", k); sub(/.*\//, "", r); printf "%s\t%s\t%s\t%s\n", k, r, $0, id; exit }' "$f"
+   done | sort
+   ```
+
+   Each line is kind, repo, headline and escalation id. Open every halt,
+   and every kind that repeats on one repo, and read its ack note. Where
+   neither the note nor `scripts/proposals.sh list --status all` shows a
+   proposal for the cause, record one with `autometta-learning-log`, citing
+   the escalation ids, or tell the operator why it needs none (a cap that
+   stopped the run exactly where they agreed). A cause recurring across
+   repos is one proposal with every id as evidence.
+   Then `scripts/proposals.sh list` prints proposed, approved and carded items
    oldest first, one per line: id, status, kind, stage and title. Items
    already `approved` or `carded` from an earlier week are followed up in
    step 6 before any new decision is made.
@@ -102,8 +125,9 @@ one-line report and ends.
    clusters merged, cards queued with their stage ids, items held and why,
    and the quota picture for the coming overnight windows (`autometta auth
    status`, the dashboard's allowance readings). Then
-   `scripts/proposals.sh lint` as the last command, so a bad write is found
-   now rather than by the next person.
+   `scripts/proposals.sh lint`, so a bad write is found now rather than by
+   the next person, and commit the ledger as `autometta-learning-log`
+   describes.
 
 ## Running the approved cards overnight
 

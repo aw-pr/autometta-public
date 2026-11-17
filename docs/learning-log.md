@@ -42,7 +42,9 @@ middle one.
 2. **Once a week, review.** The operator opens an orchestration chat and
    runs `skills/autometta-weekly-review`: lift any `HARNESS:` line the week
    missed (`proposals.sh unlifted`; a stage that passed never escalates, so
-   nothing else would surface its line), list open items, read the
+   nothing else would surface its line), census the week's processed
+   escalations so a halt or failure no chat recorded is still raised, list
+   open items, read the
    evidence, merge duplicates into one cause, check the fact ledger for
    recurrence, recommend one decision per cluster, record the operator's
    yes or no. Approved items go to `autometta-run-design`,
