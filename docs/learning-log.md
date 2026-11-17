@@ -20,9 +20,15 @@ and then the decisions and the card and commit that followed. The schema is
 The loop has three beats on different days, and the human sits at the
 middle one.
 
-1. **During runs, record.** The orchestration chat, on acking an
-   escalation whose diagnosis implicated the harness, writes a `proposed`
-   event (`skills/autometta-escalations`, step 7). A verifier that noticed a
+1. **During runs, record.** Every orchestration chat records as it goes,
+   following `skills/autometta-learning-log`: where each kind of
+   observation belongs, what earns a line (halts, harness-caused failures,
+   workarounds, late or missing signals, checks that lied, missing
+   guidance), how to write and commit it, and how to record a recurrence.
+   The other orchestration skills point there at the moment they meet a
+   lesson; on acking an escalation whose diagnosis implicated the harness,
+   for instance, the chat writes a `proposed` event
+   (`skills/autometta-escalations`, step 7). A verifier that noticed a
    harness defect while verifying writes a `HARNESS:` line in its
    `additional_findings`, and the chat lifts it into the ledger citing the
    artefact. Recording costs one shell command and no model turn. Nothing
