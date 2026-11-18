@@ -188,7 +188,7 @@ budget_host_token_cap() {
   fi
 }
 
-# budget_drain_active <repo-root>: succeed (0) when a drain is in force for
+# budget_drain_active <repo-root> [--read-only]: succeed (0) when a drain is in force for
 # this repo, printing the cap it grants. Fails (1) and prints nothing
 # otherwise.
 #
@@ -196,7 +196,8 @@ budget_host_token_cap() {
 # run: the first caller past expires_at moves drain.json aside to
 # drain.expired.json and reports no drain. That is the whole reason a drain
 # cannot silently become the permanent setting -- there is no path where the
-# file keeps binding after its own clock.
+# file keeps binding after its own clock. Advisory callers use --read-only to
+# ignore an expired drain without retiring it or acquiring a mutation lock.
 budget_drain_active() {
   local repo_root="${1:-}"
   local drain_path drain_json
@@ -212,6 +213,7 @@ budget_drain_active() {
   local now
   now="$(date -u +%s)"
   if (( now >= expires )); then
+    [[ "${2:-}" != "--read-only" ]] || return 1
     budget_drain_lock_acquire || return 1
     if [[ ! -f "$drain_path" ]]; then
       budget_drain_lock_release
@@ -252,13 +254,13 @@ budget_drain_active() {
   return 0
 }
 
-# budget_effective_token_cap <repo-root>: the cap that actually binds, as a
+# budget_effective_token_cap <repo-root> [--read-only]: the cap that actually binds, as a
 # positive integer. Every token comparison in this file goes through it, so
 # there is one resolution order rather than one per call site.
 budget_effective_token_cap() {
   local repo_root="$1"
   local drain_cap
-  if drain_cap="$(budget_drain_active "$repo_root" 2>/dev/null)" && [[ -n "$drain_cap" ]]; then
+  if drain_cap="$(budget_drain_active "$repo_root" "${2:-}" 2>/dev/null)" && [[ -n "$drain_cap" ]]; then
     printf '%s' "$drain_cap"
     return 0
   fi

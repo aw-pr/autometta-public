@@ -139,6 +139,21 @@ all you can use, say so in the card's Surfacing concern.
 
 ## 4. Lint, then queue
 
+Before queue review, run `scripts/readiness-headroom.sh REPO CARD BATCH RETRY`.
+Use nonnegative integer token estimates: CARD is one worker/verifier attempt,
+BATCH is the planned batch including CARD (use CARD for a standalone stage),
+and RETRY is additional estimated demand from the permitted retries. These
+estimates and the retry allowance are distinct from recorded window spend,
+which the helper reads from `state/budget.json`.
+
+Report the effective cap, recorded spend, remaining headroom and all three
+shortfalls to the operator before queue review. A nonzero exit means the
+comparison is unavailable or invalid; unknown spend must not be treated as
+zero. A valid shortfall is informational success, not dispatch authority.
+Only the operator can authorise a cap change or a drain; this read-only
+comparison changes neither caps nor queue admission. Reduce the proposed
+scope or obtain that authority if the plan requires more headroom.
+
 `scripts/card-lint.sh --strict <<card>>` must exit 0. It catches unfilled
 placeholders, an open decision, a same-family pairing with no rationale,
 missing budget lines or headings, Inputs that do not exist, deliverables
