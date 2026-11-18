@@ -963,12 +963,13 @@ role_started_epoch() {
 # park the loop and report success (0); otherwise report 1 and let the caller
 # treat the death normally.
 #
-# A refusal means the work was never attempted: the CLI printed one line and
-# exited clean, having burned no tokens. Counting that as a stage failure is
-# what turned an exhausted window into two stalled stages and a halted fleet
-# on 2026-08-16. So this records no failure, consumes no attempt, leaves the
+# A refusal is not a stage failure, even when the dispatch used tokens before
+# hitting the limit. The caller accounts that usage before clearing its PID.
+# Counting the refusal as a stage failure turned an exhausted window into two
+# stalled stages and a halted fleet on 2026-08-16. This records no failure,
+# consumes no attempt, leaves the
 # stage status and its run worktree exactly as they were, and only sets a
-# pause. The stage is re-dispatched untouched after the reset.
+# pause. The stage is re-dispatched after the reset.
 #
 # Backs off one hour when the refusal carries no parseable reset time.
 handle_limit_refusal() {
@@ -1146,6 +1147,33 @@ costlog_emit_verifier() {
   fi
   costlog_append "$repo_root" "$stage_id" verifier "$verifier_identity" "$verifier_log" "$wall" "$result" \
     "$transcript_dir" "$start_epoch" || true
+}
+
+# Receipts use the original state values, before a rewind or PID clear. They
+# remain stable on replay and differ for a fresh process on the same stage.
+account_interrupted_role() {
+  local repo_root="$1" state_yaml="$2" stage_id="$3" role="$4" result="$5"
+  local stage identity pid started start_field dispatch_id start_epoch wall=0
+  stage="$(state_json "$state_yaml" | jq -c --arg id "$stage_id" \
+    '.stages[] | select(.id == $id)')" || return 1
+  start_field=started_at
+  [[ "$role" != verifier ]] || start_field=verifier_started_at
+  identity="$(jq -r --arg role "$role" '.[$role] // empty' <<<"$stage")"
+  pid="$(jq -r --arg field "${role}_pid" '.[$field] // empty' <<<"$stage")"
+  started="$(jq -r --arg field "$start_field" '.[$field] // empty' <<<"$stage")"
+  if [[ -z "$pid" || -z "$started" || -z "$identity" ]]; then
+    log "cannot account interrupted ${stage_id}/${role}: missing PID, original start or identity"
+    return 1
+  fi
+  dispatch_id="${stage_id}:${role}:${pid}:${started}"
+  start_epoch="$(role_started_epoch "$state_yaml" "$stage_id" "$role")"
+  if (( start_epoch > 0 )); then
+    wall=$(( $(date -u +%s) - start_epoch ))
+    (( wall >= 0 )) || wall=0
+  fi
+  costlog_append "$repo_root" "$stage_id" "$role" "$identity" \
+    "$repo_root/state/logs/${stage_id}-${role}.log" "$wall" "$result" \
+    "$(worktree_path_for_stage "$repo_root" "$stage_id")" "$start_epoch" "$dispatch_id"
 }
 
 # Stage ids end up in jq filters, yq selectors, log paths, and on-disk
@@ -3954,7 +3982,7 @@ _process_repo_locked() {
         # output, get rewound, and loop forever losing completed work.
         if [[ ! -f "$expected_worker_envelope" ]] \
            && usage_limit_hit "$worker_log_path" >/dev/null; then
-          local limit_elapsed limit_when limit_rewinds limit_rewind=false
+          local limit_elapsed limit_when limit_rewinds=0 limit_rewind=false limit_preserved=false
           limit_elapsed="$(log_written_seconds_after_start "$worker_log_path" "$started_at")" \
             || limit_elapsed=""
           limit_when="${limit_elapsed:+${limit_elapsed}s}"
@@ -3973,20 +4001,21 @@ _process_repo_locked() {
                    "provider limit"; then
               log "stage ${current_stage} worker matched a provider limit ${limit_when}, but its work could not be pinned; not rewound"
             else
-              state_apply_json "$state_yaml" \
-                '(.stages[] | select(.id == $id)).limit_rewinds = $n' \
-                --arg id "$current_stage" --argjson n "$((limit_rewinds + 1))"
+              limit_preserved=true
               limit_rewind=true
             fi
           fi
-          if [[ "$limit_rewind" == true ]] \
-             && handle_limit_refusal "$repo_root" "$current_stage" worker "$worker_log_path"; then
+          if [[ "$limit_rewind" == true ]]; then
+            account_interrupted_role "$repo_root" "$state_yaml" "$current_stage" worker refused || return 1
+            handle_limit_refusal "$repo_root" "$current_stage" worker "$worker_log_path" || return 1
             state_apply_json "$state_yaml" \
               '(.stages[] | select(.id == $id)).status = "pending"
                | (.stages[] | select(.id == $id)).worker_pid = null
                | (.stages[] | select(.id == $id)).started_at = null
+               | if $preserved then (.stages[] | select(.id == $id)).limit_rewinds = $n else . end
                | .current_stage = null' \
-              --arg id "$current_stage"
+              --arg id "$current_stage" --argjson preserved "$limit_preserved" \
+              --argjson n "$((limit_rewinds + 1))"
             commit_state_branch "$repo_root"
             return 0
           fi
@@ -4190,7 +4219,9 @@ _process_repo_locked() {
         # the next unpaused tick re-dispatches it, but do not consume one of
         # its three attempts and do not record a failure. The worker's output
         # is untouched and still waiting to be verified.
-        if handle_limit_refusal "$repo_root" "$current_stage" verifier "$stale_verifier_log_path"; then
+        if usage_limit_hit "$stale_verifier_log_path" >/dev/null; then
+          account_interrupted_role "$repo_root" "$state_yaml" "$current_stage" verifier refused || return 1
+          handle_limit_refusal "$repo_root" "$current_stage" verifier "$stale_verifier_log_path" || return 1
           state_apply_json "$state_yaml" \
             '(.stages[] | select(.id == $id)).verifier_pid = null' \
             --arg id "$current_stage"
@@ -4217,14 +4248,10 @@ _process_repo_locked() {
         stale_verifier_identity_acct="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
           '.stages[] | select(.id == $id) | .verifier // empty')"
         stale_verifier_family_acct="$(costlog_family_for_identity "$stale_verifier_identity_acct")"
-        budget_account_tokens_from_dispatch "$repo_root" "$stale_verifier_log_path" "verifier" \
-          "$stale_work_dir_acct" "$stale_start_epoch" "$stale_verifier_family_acct" || true
+        account_interrupted_role "$repo_root" "$state_yaml" "$current_stage" verifier aborted || return 1
         # Per-stage snapshot (stage 11).
         stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$stale_verifier_log_path" "verifier" \
           "$stale_work_dir_acct" "$stale_start_epoch" "$stale_verifier_family_acct"
-        # Cost-log: a verifier died without an artefact. Record its spend
-        # against this stage with result=aborted before we re-dispatch.
-        costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "aborted"
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).verifier_pid = null' \
           --arg id "$current_stage"

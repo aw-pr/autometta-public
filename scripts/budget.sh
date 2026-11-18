@@ -870,6 +870,20 @@ budget_add_tokens() {
   ' --arg n "$tokens"
 }
 
+# Keep the receipt and both counters in one replacement. The receipt survives
+# window resets and also contains the row needed to repair a missing ledger.
+budget_record_dispatch_charge() {
+  local repo_root="$1" dispatch_id="$2" row="$3"
+  budget_write_atomic "$repo_root" '
+    if (.dispatch_charges // {} | has($id)) then .
+    else
+      .tokens_spent = ((.tokens_spent // 0) + ($row.total_tokens // 0))
+      | .lifetime_tokens_spent = ((.lifetime_tokens_spent // 0) + ($row.total_tokens // 0))
+      | .dispatch_charges[$id] = $row
+    end
+  ' --arg id "$dispatch_id" --argjson row "$row"
+}
+
 # budget_transcript_dir: map a dispatch working directory to the Claude Code
 # transcript directory for that cwd. Claude Code slugifies the absolute path
 # by replacing every non-alphanumeric character with '-'.
@@ -886,9 +900,10 @@ budget_transcript_dir() {
 #
 # Codex's final `tokens used` log value is fresh input plus output. It omits
 # cached input, so it is not the dispatch total and cannot drive the budget.
-# Session `token_count` events carry the full cumulative breakdown. For every
-# session started in work_dir at or after since_epoch, take the last cumulative
-# value and sum the sessions. input_tokens includes cached_input_tokens in the
+# Session `token_count` and `token_usage_record` events carry cumulative usage.
+# With a dispatch start, select the first session started in work_dir at or
+# after since_epoch, then take its last valid cumulative value. Unscoped legacy
+# callers retain the sum of matching sessions. input_tokens includes cached_input_tokens in the
 # Codex event, so subtract cached input for the cost-log triple before returning
 # it. The three returned fields still sum to total_tokens.
 #
@@ -929,9 +944,25 @@ def epoch(value):
         return None
 
 
+def coherent(usage):
+    if not isinstance(usage, dict):
+        return None
+    values = [usage.get("input_tokens"), usage.get("cached_input_tokens", 0),
+              usage.get("output_tokens")]
+    if any(type(n) is not int or n < 0 for n in values):
+        return None
+    total_input, cached_input, output = values
+    if cached_input > total_input:
+        return None
+    if "total_tokens" in usage:
+        total = usage["total_tokens"]
+        if type(total) is not int or total != total_input + output:
+            return None
+    return total_input - cached_input, cached_input, output
+
+
 seen_paths = set()
-inp = cached = out = 0
-found = False
+sessions = []
 
 for raw_root in roots_raw.split(":"):
     if not raw_root:
@@ -962,8 +993,12 @@ for raw_root in roots_raw.split(":"):
                         rec = json.loads(line)
                     except ValueError:
                         continue
+                    if not isinstance(rec, dict):
+                        continue
                     if rec.get("type") == "session_meta":
                         payload = rec.get("payload") or {}
+                        if not isinstance(payload, dict):
+                            break
                         started = epoch(payload.get("timestamp") or rec.get("timestamp"))
                         matched = payload.get("cwd") == work_dir
                         if since and (started is None or started < since):
@@ -971,33 +1006,31 @@ for raw_root in roots_raw.split(":"):
                         if not matched:
                             break
                         continue
-                    if not matched or rec.get("type") != "event_msg":
+                    if not matched:
                         continue
                     payload = rec.get("payload") or {}
-                    if payload.get("type") != "token_count":
+                    if not isinstance(payload, dict):
                         continue
-                    info = payload.get("info") or {}
-                    usage = info.get("total_token_usage")
-                    if isinstance(usage, dict):
-                        last = usage
+                    usage = None
+                    if rec.get("type") == "event_msg" and payload.get("type") == "token_count":
+                        info = payload.get("info") or {}
+                        if isinstance(info, dict):
+                            usage = info.get("total_token_usage")
+                    elif rec.get("type") == "token_usage_record" or payload.get("type") == "token_usage_record":
+                        usage = payload.get("thread_token_usage")
+                    valid = coherent(usage)
+                    if valid is not None:
+                        last = valid
 
-            if last is None:
-                continue
-            try:
-                total_input = int(last["input_tokens"])
-                cached_input = int(last.get("cached_input_tokens", 0) or 0)
-                output = int(last["output_tokens"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if min(total_input, cached_input, output) < 0 or cached_input > total_input:
-                continue
-            inp += total_input - cached_input
-            cached += cached_input
-            out += output
-            found = True
+            if matched:
+                sessions.append((started or 0, path, last))
 
-if found:
-    print(f"{inp} {cached} {out}" + (" 0" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
+if sessions:
+    selected = [min(sessions, key=lambda item: (item[0], item[1]))] if since else sessions
+    valid = [item[2] for item in selected if item[2] is not None]
+    if valid:
+        inp, cached, out = (sum(values) for values in zip(*valid))
+        print(f"{inp} {cached} {out}" + (" 0" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
 PY
 }
 
