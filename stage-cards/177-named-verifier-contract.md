@@ -4,19 +4,19 @@
 
 - **Authored:** 2026-11-18
 - **Orchestrator:** GPT-6.1 Sol <gpt-6-1-sol@local>
-- **Worker:** GPT-6.2 Astra <gpt-6-2-astra@local>
-- **Verifier:** Claude Opus 5.5 <claude-opus-5-5@local>
+- **Worker:** GPT-6.1 Sol <gpt-6-1-sol@local>
+- **Verifier:** Claude Sonnet 5.5 <claude-sonnet-5-5@local>
 - **Base branch:** dev
 - **Run branch:** autometta/177-named-verifier-contract
 - **Proposal:** P-20261111-96f9
-- **Worker effort:** high
-- **Verifier effort:** high
+- **Worker effort:** medium
+- **Verifier effort:** medium
 - **Verifier panel:** false
 - **Recovery attempts:** 3
-- **Recovery attempt:** 1
+- **Recovery attempt:** 2
 - **Dispatch:** serial
 - **Path claims:** scripts/check-contract-test-gate.sh, templates/verifier-prompt.md, scripts/spawn-verifier.sh, scripts/spawn-verifier-panel.sh, scripts/verify-sdk.py, docs/dispatch-contract.md
-- **Pairing rationale:** Premium Codex worker and independent Claude verifier as approved for this harness batch. The worker must reconcile existing callers and archived formats. Verification requires judgement about the evidence from the normal entry points. Run one card at a time because the changes affect shared harness behaviour.
+- **Pairing rationale:** Narrow compatibility repair on six independently verified deliverables. Codex and Claude remain separate seats at medium effort. The original criteria and frozen oracle govern acceptance.
 - **Open decisions:** none
 - **Cold read:** Claude Sonnet, pooled read-only review on 2026-11-18. Findings and resolutions below.
 - **Related proposal:** P-20261118-499d
@@ -91,3 +91,13 @@ Write the worker evidence to `state/envelopes/177-named-verifier-contract.json`.
 ## Family-specific notes
 
 Run offline fixtures locally. A missing or skipped required result prevents acceptance.
+
+## Recovery log
+
+Attempt 1 started 2026-11-18 20:48:49 UTC from `d63459b`. Worker PASS, independent verifier FAIL on compatibility with earlier frozen dispatch smokes. Three functional criteria passed. The tick preserved the exact failed work at `9d136b0ccc2868675a17e40c93b4257fdadb24c2`. Archived evidence is under `state/uat/177-named-verifier-contract/attempt-1/`. The attempt used 3,394,760 cache-inclusive tokens. Attempt 2 is authorised as a narrow repair, with two lifetime worker attempts left including this one.
+
+## Repair brief for attempt 2
+
+Restore only the six numbered deliverables from the preserved commit, using `git show <wip>:<path>` to recover each file. Leave the card, runtime state and frozen tests intact. Against the preserved implementation, reproduce the failure of a section-less or explicit no-oracle fixture outside Git or with an unborn HEAD. Preserve the established dispatch behaviour where the card has no executable oracle and no revision exists for a change gate. Keep real worktree checking where applicable, and fail closed for missing, malformed or mismatched *named* oracles. Check whether the shared checker alone can resolve it. Keep the repair diff relative to the preserved commit as small as the evidence allows.
+
+Both seats run the existing named oracle and SDK schema-path smoke. The independent verifier also runs all six regression scripts under `scripts/`: `effort-flags-smoke.sh`, `mcp-isolation-smoke.sh`, `small-dispatch-fixes-smoke.sh`, `state-writable-smoke.sh`, `claude-chrome-smoke.sh` and `local-route-smoke.sh`. Use each script's offline fixtures; record actual exit codes. Where a worker sandbox cannot exercise host process inspection or a socket, state the gap in the envelope and have the independent verifier run that command. Compare named, legacy and unrelated-dirty-candidate cases. A wider diff requires full independent re-verification. The first verifier's FAIL and frozen digest remain in evidence.
