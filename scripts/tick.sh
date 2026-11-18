@@ -4374,6 +4374,12 @@ main() {
   # Failure becomes explicit unknown data and never blocks the queue.
   quota_refresh_tick || true
   quota_log_tick_readings
+  local clearance
+  if clearance="$(python3 "$script_dir/quota-window.py" observe-claude-reset <<<"$AUTOMETTA_QUOTA_TICK_JSON")"; then
+    [[ -z "$clearance" ]] || log "$clearance"
+  else
+    log "could not record the Claude five-hour window observation"
+  fi
   profile_lap "global" "quota"
 
   sweep_controller_log_retention

@@ -11,6 +11,11 @@ import time
 
 
 RETENTION_SECONDS = 7 * 86400
+QUOTA_CLEARED = "quota_window_cleared"
+
+
+def fleet_broadcast(record):
+    return record.get("repo") == "fleet" and record.get("kind") == QUOTA_CLEARED
 
 
 def home():
@@ -24,13 +29,13 @@ def home():
 
 def emit(repo, kind, episode, stage="", **details):
     try:
-        repo = str(Path(repo).resolve())
+        repo = "fleet" if repo is None else str(Path(repo).resolve())
         key = hashlib.sha256(json.dumps([repo, kind, episode, stage]).encode()).hexdigest()
         directory = home() / "lifecycle-events"
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         path = directory / (key + ".json")
         if path.exists():
-            return
+            return path
         record = dict(id=key, repo=repo, kind=kind, stage=stage,
                       created_at=datetime.now(timezone.utc).isoformat(), **details)
         fd, temporary = tempfile.mkstemp(dir=directory, prefix=".event-")
@@ -49,6 +54,7 @@ def emit(repo, kind, episode, stage="", **details):
         for old in directory.glob("*.json"):
             if old.stat().st_mtime < cutoff:
                 old.unlink(missing_ok=True)
+        return path
     except Exception:
         pass
 
@@ -62,7 +68,7 @@ def records(repos):
             if path.stat().st_mtime < cutoff:
                 continue
             record = json.loads(path.read_text())
-            if (record["repo"] in allowed and isinstance(record.get("created_at"), str)
+            if ((record["repo"] in allowed or fleet_broadcast(record)) and isinstance(record.get("created_at"), str)
                     and isinstance(record.get("id"), str) and isinstance(record.get("kind"), str)):
                 notices.append(dict(record, path=str(path), record_type="lifecycle"))
         except (OSError, ValueError, KeyError, TypeError):

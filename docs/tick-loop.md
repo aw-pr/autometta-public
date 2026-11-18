@@ -439,6 +439,14 @@ The same hooks deliver routine lifecycle notices after pending escalations:
   integration. Run membership uses `run_id`; historic failures in another run
   do not hide completion. Superseded members need no work; pending, active or
   failed members prevent a finished notice. Legacy records form a separate group.
+- A fleet-wide `quota_window_cleared` notice when Claude's five-hour session
+  was observed at 100% or above and a later reading falls below 100% at or
+  after that window's advertised reset. The tick uses VibeMenu's existing
+  snapshot and checks its observation time. Readings older than ten minutes,
+  future readings and unavailable data leave the last observation in place.
+  The next reset time can be empty. One notice covers each observed reset,
+  including when the fleet has no queued work. Each chat checks its own
+  run, reserve and stop time before resuming.
 
 `scripts/lib/lifecycle_events.py` publishes complete JSON files atomically under
 `$AUTOMETTA_HOME/lifecycle-events/`, with deterministic episode ids. Events last
@@ -459,7 +467,10 @@ session from `CODEX_THREAD_ID`. Add `--fleet` to register a fleet fallback, or
 `--repo <path>` for a particular enabled subscriber. Claude and Codex primary
 chats can also register automatically at startup or their next genuine user
 prompt once the host is enabled. A repo owner takes precedence over a fleet
-owner, so one event never fans out to both. A live owner is not silently replaced.
+owner for repo events. A quota clearance is visible in every repo and can wake
+each already registered chat once, subject to the same cooldown, expiry and
+caps. The tick keeps the window observation across restarts without recording
+which chats are waiting for quota. A live owner is not silently replaced.
 Explicit registration accepts `claude|codex` and `--session <id>`; Codex requires
 the owning local server's socket, discovered from its process ancestry or
 provided with `--socket <path>`. There is no fallback to another daemon.

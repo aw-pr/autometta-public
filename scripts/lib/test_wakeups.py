@@ -102,6 +102,20 @@ class WakeupTests(unittest.TestCase):
         self.assertIsNotNone(fleet["pending"])
         self.assertEqual(len(self.state["attempts"]), 2)
 
+    def test_quota_broadcast_reaches_each_chat_once_within_fleet_limits(self):
+        wakeups.register(self.state, "fleet", "codex", "chat", self.now - 100, self.socket_path)
+        other = wakeups.register(self.state, str(self.other), "claude", "other-chat", self.now - 100)
+        event = self.event(repo="fleet", kind="quota_window_cleared", stage="")
+        jobs = self.dispatch([event])
+        self.assertEqual([job["session"] for job in jobs], ["chat"])
+        self.assertIsNone(other["pending"])
+        self.owner["pending"] = None
+        self.dispatch([event], self.now + wakeups.COOLDOWN)
+        self.assertIn("quota_window_cleared", other["pending"]["message"])
+        other["pending"] = None
+        self.dispatch([event], self.now + 2 * wakeups.COOLDOWN)
+        self.assertEqual(len(self.state["attempts"]), 2)
+
     def test_coalescing_keeps_role_transitions_and_latest_card_outcome(self):
         events = [self.event(), self.event(1, at=self.now - 15, kind="stage_landed"),
                   self.event(2, kind="verifier_started"), self.event(3, kind="worker_finished")]

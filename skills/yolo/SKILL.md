@@ -182,6 +182,10 @@ With carry-over agreed:
   the gap: a turn that fires while the session is exhausted is refused and
   the chain ends there. A chat on another family keeps its backstop and
   adds the one-shot.
+- A fleet `quota_window_cleared` notice can arrive before dispatch. If
+  carry-over is agreed and you are still attending, check your own run,
+  reserve and stop time. Keep the scheduled check-in while dispatch is
+  outstanding. Other runs receive the same notice.
 - A wake-up on the first dispatch after the reset may reach you sooner. Treat
   it as the same check-in and cancel the timer.
 - **At the check-in** confirm `paused_until` has cleared and a dispatch has
