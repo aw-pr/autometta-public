@@ -11,6 +11,7 @@ import time
 
 
 RETENTION_SECONDS = 7 * 86400
+CATCHUP_SECONDS = 15 * 60
 QUOTA_CLEARED = "quota_window_cleared"
 
 
@@ -76,11 +77,79 @@ def records(repos):
     return sorted(notices, key=lambda item: (item["created_at"], item["id"]))
 
 
+def actionable(record):
+    return (record.get("kind") in ("stage_blocked", "run_blocked", "stage_awaiting_integration", "stage_finished")
+            or str(record.get("result", "")).lower() in ("fail", "partial", "unknown", "failed", "verifier_failed", "stalled"))
+
+
+def completed_history(notices, now):
+    """Select old, closed evidence without treating an unrelated run as closure."""
+    landed = {}
+    finished = {}
+    dated = []
+    for record in notices:
+        if record.get("record_type") != "lifecycle":
+            continue
+        try:
+            stamp = datetime.fromisoformat(record["created_at"].replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                continue
+            created = stamp.timestamp()
+        except (ValueError, TypeError):
+            continue
+        dated.append((record, created))
+        key = (record["repo"], record.get("run_id"), record.get("stage"))
+        if record["kind"] == "stage_landed":
+            landed[key] = max(landed.get(key, float("-inf")), created)
+        if record["kind"] == "run_finished" and record.get("run_id"):
+            run = key[:2]
+            finished[run] = max(finished.get(run, float("-inf")), created)
+    closed = set()
+    for record, created in dated:
+        if fleet_broadcast(record):
+            continue
+        if created > now - CATCHUP_SECONDS:
+            continue
+        key = (record["repo"], record.get("run_id"), record.get("stage"))
+        stage_closed = bool(record.get("stage")) and landed.get(key, float("-inf")) >= created
+        run_closed = bool(record.get("run_id")) and finished.get(key[:2], float("-inf")) >= created
+        if (record["kind"] in ("stage_landed", "run_finished") or stage_closed
+                or (run_closed and not actionable(record))):
+            closed.add(record["path"])
+    return closed
+
+
+def history_summary(notices):
+    repos = {record["repo"] for record in notices}
+    runs = {(record["repo"], record.get("run_id") or record["id"])
+            for record in notices if record["kind"] == "run_finished"}
+    stages = {(record["repo"], record.get("run_id"), record.get("stage"))
+              for record in notices if record["kind"] == "stage_landed"}
+    return (f"Catch-up: summarised {len(notices)} completed-history lifecycle notice(s) across "
+            f"{len(repos)} project(s): {len(runs)} finished run(s), {len(stages)} landed stage(s). "
+            f"Historical detail remains in {home() / 'lifecycle-events'}.")
+
+
 def agent_event(repo, doc, finished=False):
     try:
         _agent_event(repo, doc, finished)
     except Exception:
         pass
+
+
+def agent_run_id(repo, doc, stage):
+    if doc.get("run_id"):
+        return doc["run_id"]
+    try:
+        import yaml
+    except ImportError:
+        return None
+    try:
+        state = yaml.safe_load((Path(repo) / "state/state.yaml").read_text())
+        return next((item.get("run_id") for item in state.get("stages", [])
+                     if item.get("id") == stage), None)
+    except (OSError, ValueError, TypeError, AttributeError, yaml.YAMLError):
+        return None
 
 
 def _agent_event(repo, doc, finished):
@@ -116,7 +185,8 @@ def _agent_event(repo, doc, finished):
         summary += "; process exited without a fresh verdict; success is unconfirmed"
     emit(repo, f'{role}_{"finished" if finished else "started"}', episode, stage,
          summary=summary, result=result, evidence=evidence,
-         card=doc.get("card_path"), agent_id=episode, outcome=doc.get("outcome"))
+         card=doc.get("card_path"), agent_id=episode, outcome=doc.get("outcome"),
+         run_id=agent_run_id(repo, doc, stage))
 
 
 def stage_changes(repo, before, after):
@@ -131,6 +201,7 @@ def stage_changes(repo, before, after):
             emit(repo, "stage_blocked", [stage.get("started_at"), stage.get("verifier_started_at"), status],
                  stage["id"], summary=f"Stage needs attention: {status}",
                  result=status,
+                 run_id=stage.get("run_id"),
                  evidence=str(Path(repo) / "state/state.yaml"))
         if status != "completed":
             continue
@@ -145,7 +216,7 @@ def stage_changes(repo, before, after):
         else:
             kind, summary = "stage_finished", "Stage completed; integration was not recorded"
         emit(repo, kind, [stage.get("started_at"), stage.get("completed_at"), commit, outcome],
-             stage["id"], summary=summary, commit=commit, integration=outcome,
+             stage["id"], summary=summary, commit=commit, integration=outcome, run_id=stage.get("run_id"),
              evidence=str(Path(repo) / "state/state.yaml"))
     def finished(items):
         return any(s.get("status") == "completed" for s in items) and all(

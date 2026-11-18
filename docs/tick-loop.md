@@ -393,10 +393,17 @@ Claude Code and Codex orchestration chats receive advisory context through
 `SessionStart`, `UserPromptSubmit` and `PostToolUse`. The legacy invocation
 without `--live` still prints a plain-text snapshot for manual use.
 
-The reader uses the hook payload's working directory, filtered to the deepest
-enabled subscriber containing that directory. Outside a subscriber it shows
-the fleet. It delivers only new or changed pending files, oldest first, at most
-ten per invocation; overflow remains unseen until a later eligible hook.
+The reader uses the hook payload's physical working directory, filtered to the
+deepest enabled subscriber containing that directory. Outside a subscriber,
+routine lifecycle evidence belongs to the current Git project, including a
+linked worktree. A directory outside any Git project receives the enabled
+subscriber fleet view. Fleet quota notices remain visible in every scope.
+Pending escalation visibility retains its existing rule: the matching
+subscriber, or the fleet outside subscribers. The `--repos` reader used by
+the native wake broker retains that rule; `--lifecycle-repos` supplies the
+active chat's lifecycle scope.
+The reader delivers only new or changed pending files, oldest first, at most
+ten detailed records per invocation; overflow remains unseen until a later eligible hook.
 Tool-triggered checks are throttled to once per 15 seconds. Session starts and
 user prompts bypass the throttle. Compaction and clear re-deliver pending items
 to restore context; an ordinary resume preserves the delivery record.
@@ -452,12 +459,32 @@ The same hooks deliver routine lifecycle notices after pending escalations:
 `$AUTOMETTA_HOME/lifecycle-events/`, with deterministic episode ids. Events last
 seven days; later writes collect expired files. This preserves intermediate
 transitions even when a conversation misses the entire dispatch. It does not
-backfill historical runs. Hook scope follows the enabled subscriber registry,
-including when the pending-escalation folder does not exist. Session delivery
-deduplicates both kinds of record, shares the ten-item cap and 15-second tool
-throttle, and restores context after compaction or clear. Escalations take
-priority; each group is oldest first. Evidence paths point to runtime records
-or logs. Lifecycle notices need no acknowledgement and never change policy.
+backfill historical runs. Lifecycle scope is resolved even when the
+pending-escalation folder does not exist. New stage transitions carry their
+run identity when available. Agent events use their registration's run identity
+or the current stage's recorded run identity when available.
+Session delivery deduplicates both kinds of record and shares the ten-item
+cap and 15-second tool throttle.
+
+On first delivery, startup, compaction or clear, catch-up condenses closed
+lifecycle history older than 15 minutes into one brief account of the notice,
+project, finished-run and landed-stage counts. The first invocation after an
+upgrade also applies this to an already-open chat with a partially drained
+delivery cache. All condensed rows are marked seen together. A later landing
+closes earlier stage evidence only within the same project, stage and run
+identity. A finished run can fold its routine notices; it cannot hide an
+unresolved stage failure or awaiting integration. Missing run identities form
+a separate legacy group and never borrow closure from another run finishing.
+Unconfirmed or unresolved evidence stays detailed. Fleet quota broadcasts are
+never folded into completed history.
+
+Pending escalations take priority, followed during catch-up by outstanding
+failures and integrations, then routine notices. Each group is oldest first.
+Recent events and subsequent fresh changes retain detailed delivery and normal
+pagination. Compaction and clear restore pending context; unchanged user
+prompts remain quiet. Evidence paths point to runtime records or logs.
+Lifecycle notices need no acknowledgement and never change policy. Catch-up
+does not alter native wake reservations or ownership.
 
 ### Bounded native idle wake-ups
 
