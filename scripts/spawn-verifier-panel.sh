@@ -159,6 +159,21 @@ panellist_vote() {
 # Set by run_panel: PASS, FAIL, NO_QUORUM or TIE.
 PANEL_OUTCOME=""
 
+render_panel_prompt() {
+  local card_path="$1" work_dir="$2" stage_id="$3" artefact_path="$4"
+  local tmpl="$work_dir/templates/verifier-prompt.md"
+  [[ -f "$tmpl" ]] || tmpl="$script_dir/../templates/verifier-prompt.md"
+  sed \
+    -e "s|<<stage-id>>|$(sed_replacement_escape "$stage_id")|g" \
+    -e "s|<<stage-card-path>>|$(sed_replacement_escape "$card_path")|g" \
+    -e "s|<<artefact-path>>|$(sed_replacement_escape "$artefact_path")|g" \
+    -e "s|<<verifier-tier>>|$(sed_replacement_escape "$PANELLIST_CODEX")|g" \
+    -e "s|<<orchestrator-identity>>|spawn-verifier-panel.sh|g" \
+    -e "s|<<family-specific-notes-or-none>>|Write the verifier artefact JSON to the artefact-path shown above. stdin redirect already applied.|g" \
+    "$tmpl"
+  printf '\n\n%s\n' "$PANEL_CONTRACT_CONTEXT"
+}
+
 # run_panel: dispatch the three panellists, wait for them until the deadline,
 # tally, and write the synthesis. Writes only panellist artefacts and logs,
 # the synthesis artefact and (when synth_log is non-empty) one usage line in
@@ -208,16 +223,7 @@ run_panel() {
   # Panellist 2: Codex via CLI. The verifier prompt tells Codex to write the
   # JSON artefact directly to p2_out.
   local codex_prompt
-  local tmpl="$repo_root/templates/verifier-prompt.md"
-  [[ -f "$tmpl" ]] || tmpl="$PANEL_AUTOMETTA_ROOT/templates/verifier-prompt.md"
-  codex_prompt="$(sed \
-    -e "s|<<stage-id>>|$(sed_replacement_escape "$stage_id")|g" \
-    -e "s|<<stage-card-path>>|$(sed_replacement_escape "$card_path")|g" \
-    -e "s|<<artefact-path>>|$(sed_replacement_escape "$p2_out")|g" \
-    -e "s|<<verifier-tier>>|$(sed_replacement_escape "$PANELLIST_CODEX")|g" \
-    -e "s|<<orchestrator-identity>>|spawn-verifier-panel.sh|g" \
-    -e "s|<<family-specific-notes-or-none>>|Write the verifier artefact JSON to the artefact-path shown above. stdin redirect already applied.|g" \
-    "$tmpl")"
+  codex_prompt="$(render_panel_prompt "$card_path" "$work_dir" "$stage_id" "$p2_out")"
 
   if [[ -n "$PANEL_CODEX_HOME_OVERRIDE" ]]; then
     # shellcheck disable=SC2086
@@ -413,6 +419,11 @@ main() {
 
   local stage_id
   stage_id="$(extract_stage_id "$card_path")"
+  PANEL_CONTRACT_CONTEXT="$(cd "$work_dir" && python3 "$script_dir/verify-sdk.py" --contract-context "$card_path")" || {
+    render_panel_prompt "$card_path" "$work_dir" "$stage_id" "state/verifiers/${stage_id}.panel/codex.json"
+    log_msg "required contract check failed; panel dispatch stopped before acceptance"
+    exit 1
+  }
   local effort
   effort="$(sed -n 's/^- \*\*Verifier effort:\*\* //p' "$card_path" | head -n1)"
 

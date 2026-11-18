@@ -9,6 +9,8 @@ import glob
 import json
 import os
 from pathlib import Path
+import shlex
+import subprocess
 import sys
 import tempfile
 from typing import Any
@@ -405,6 +407,39 @@ def build_static_block(verifier_identity: str = VERIFIER_IDENTITY) -> str:
     )
 
 
+def contract_check_context(card: Path) -> tuple[str, int]:
+    """Execute the installed checker in the subscriber tree, without providers."""
+    root = Path.cwd().resolve()
+    checker = AUTOMETTA_ROOT / "scripts" / "check-contract-test-gate.sh"
+    argv = [str(checker), "--verify-card", str(card.resolve())]
+    command = f"cd {shlex.quote(str(root))} && {shlex.join(argv)}"
+    try:
+        result = subprocess.run(argv, cwd=root, text=True, capture_output=True)
+        code = result.returncode
+        evidence = result.stdout + result.stderr
+    except OSError as exc:
+        code = 1
+        evidence = str(exc)
+    receipt = (
+        "## Required contract check (dispatch override)\n\n"
+        "This installed-checker command supersedes every repo-relative checker "
+        "instruction above, including older vendored --worktree instructions. "
+        "Use the supplied card and subscriber worktree. A missing or failing "
+        "required check prohibits overall PASS. This checks the frozen digest; "
+        "run the card's acceptance commands separately.\n\n"
+        f"- Contract check: {'PASS' if code == 0 else 'FAIL'}\n"
+        f"- Subscriber root: `{root}`\n"
+        f"- Command: `{command}`\n"
+        f"- Checker exit: {code}\n\n"
+        "Executed checker evidence:\n\n```text\n"
+        f"{evidence.rstrip()}\n```\n\n"
+        "Record the command, checker exit, checked test path, declared and actual "
+        "digests (or explicit no-oracle result), and routed PASS/FAIL in "
+        "additional_findings. Missing evidence prevents PASS.\n"
+    )
+    return receipt, code
+
+
 def build_variable_block(
     stage_id: str,
     card: Path,
@@ -414,6 +449,12 @@ def build_variable_block(
     worker_notes: str | None = None,
 ) -> str:
     """Return the per-stage, non-cached portion of the prompt."""
+    contract_context, contract_exit = contract_check_context(card)
+    if contract_exit:
+        # All SDK transports use this builder, including those without tools.
+        # Stop before any model can return an accepted PASS on a failed check.
+        print(contract_context, flush=True)
+        raise RuntimeError("required contract check failed; overall PASS prohibited")
     artefact_sections = collect_artefact_sections(artefacts)
     if not artefact_sections:
         artefact_sections = "(no artefacts matched the supplied glob)\n"
@@ -440,6 +481,7 @@ def build_variable_block(
         f"- Verifier identity: `{verifier_identity}`\n"
         f"- Verifier invocation: `scripts/verify-sdk.py --stage-id {stage_id} "
         f"--card {card} --artefact-glob <redacted> --out {out}`\n\n"
+        f"{contract_context}\n"
         f"{partial_section}"
         "## Stage card with line numbers\n\n"
         f"{numbered(card, read_text(card))}\n"
@@ -649,4 +691,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--contract-context":
+        context, code = contract_check_context(Path(sys.argv[2]))
+        print(context)
+        raise SystemExit(code)
     raise SystemExit(main())

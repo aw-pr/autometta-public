@@ -201,14 +201,27 @@ The digest is a fingerprint of the exact assertion lines between the markers. Be
 
 ### The gate
 
-`scripts/check-contract-test-gate.sh` is the mechanical enforcement. It runs in two places:
+`scripts/check-contract-test-gate.sh` is the mechanical enforcement. Its standalone verbs are:
 
-Its candidate set is the union of test paths named by stage cards and staged `scripts/*-smoke.sh` files; every other staged path is skipped regardless of which marker text it contains.
+| Invocation | What it checks | Empty change set |
+|---|---|---|
+| `print <test-file>` | Prints the frozen block's `sha256:` digest | Not applicable |
+| No arguments, or `--staged` | Changed candidates in the index against HEAD | Exit 2 |
+| `--worktree` | Changed candidates in the working tree and index, plus untracked candidates | Exit 2 |
+| `--verify-card <card>` | The supplied card's named oracle, then the worktree change gate | Exit 0 if the named check succeeds |
 
-- **At verification (primary).** The verifier runs `check-contract-test-gate.sh` against the working tree as part of acceptance. For every staged contract test it recomputes the assertion-block digest and compares it to the digest declared in the matching card. A mismatch that was not re-recorded in the card in the same change is a FAIL.
-- **At commit (backstop).** The orchestrator can chain the same script into pre-commit alongside the publish-guard scan. Because the orchestrator is the only party that commits (step 7), a single mechanical check at commit time covers every stage that lands.
+Changed candidates are test paths named by stage cards and `scripts/*-smoke.sh` files. Other changed paths are skipped regardless of marker text. The combined command also checks the named oracle when it is unchanged or committed: the test must exist in the subscriber worktree, carry one complete block owned by the supplied card, and have a printed digest equal to the card's valid declaration. Explicit `None` cards remain valid, as do legacy prose cards without a Contract test section. For these no-oracle cards only, the change gate is not applicable outside a Git worktree or before HEAD exists. Malformed declarations, missing tests, wrong owners, digest mismatches and invalid unrelated changed candidates fail. Only the standalone worktree gate's exit 2 for an empty change set is accepted by the combined command; real checker errors fail.
 
-The gate fires only on assertion changes, never on scaffolding. A worker that reshapes a fixture, renames a helper, or moves an import leaves the frozen block untouched, the digest unchanged, and the gate silent. Only a change to the assertions themselves trips it. That precision is the point: a gate that fired on every test edit would be disarmed by habit within a week.
+- **At verification (primary).** Use the checker shipped beside the effective verifier scripts, rather than assuming a subscriber has a current repo-local checker. Execute in the subscriber's run worktree with the actual stage card, quoting both paths:
+
+  ```sh
+  cd '/path/to/subscriber worktree' && '/path/to/autometta/scripts/check-contract-test-gate.sh' --verify-card '/path/to/stage-cards/NN-foo.md'
+  ```
+
+  The card may live in the subscriber's main checkout; the named test is always read from the run worktree. Single and panel CLI prompts preserve subscriber prose and append this command with an executed receipt that explicitly supersedes stale repo-relative instructions. CLI verifiers repeat the command independently. All SDK transports use the shared per-stage context builder, which supplies the command, exit code and observed digest evidence to verifiers without a shell. These paths and results stay outside the cacheable rubric. A failed required check stops dispatch or SDK context construction before a PASS can be accepted. Record the command, exit code, test path, declared and actual digests, and routed result in the verifier artefact; missing evidence prevents PASS.
+- **At commit (backstop).** The orchestrator can chain the staged gate into pre-commit alongside the publish-guard scan. Because the orchestrator is the only party that commits (step 7), this covers every stage that lands.
+
+Scaffolding changes that preserve the frozen block keep its digest unchanged and pass. The freeze check does not execute assertions: run the card's acceptance commands separately.
 
 To regenerate the digest after a deliberate assertion change, run `scripts/check-contract-test-gate.sh print <test-file>` and paste the result into the card's `Assertions digest` line, in the same commit as the assertion change. The gate then sees a matching digest and a card that moved with the test, and passes.
 

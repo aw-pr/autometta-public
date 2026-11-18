@@ -28,6 +28,8 @@ IFS=$'\n\t'
 #       Exit non-zero on the first violation.
 #   check-contract-test-gate.sh --worktree
 #       Compare the working tree and index with HEAD, plus untracked candidates.
+#   check-contract-test-gate.sh --verify-card <card>
+#       Verify the named oracle even when unchanged, then gate worktree changes.
 
 MARKER_BEGIN='AUTOMETTA-CONTRACT-BEGIN'
 MARKER_END='AUTOMETTA-CONTRACT-END'
@@ -129,25 +131,125 @@ cmd_print() {
   digest_block < "$1"
 }
 
+cmd_verify_card() {
+  [ "$#" -eq 1 ] || die "usage: check-contract-test-gate.sh --verify-card <card>"
+  local rc=0 named_rc=0
+  python3 - "$1" "$0" <<'PY' || named_rc=$?
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+card = Path(sys.argv[1]).resolve()
+root = Path.cwd().resolve()
+
+def fail(message):
+    print(f"contract-gate: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+if not card.is_file():
+    fail(f"stage card does not exist: {card}")
+text = card.read_text(encoding="utf-8")
+sections = re.findall(r"^## Contract tests?[ \t]*\r?$(.*?)(?=^## |\Z)", text,
+                      re.MULTILINE | re.DOTALL | re.IGNORECASE)
+if len(sections) > 1:
+    fail("more than one Contract test section")
+if not sections:
+    # Older prose-only cards predate the optional Contract test section.
+    print("contract-gate: named oracle NONE (no Contract test section)")
+    raise SystemExit(2)
+else:
+    section = sections[0]
+    fields = {}
+    for key in ("Test file", "Assertions digest"):
+        values = re.findall(r"^\s*-?\s*" + key + r":\s*(.*?)\s*$",
+                            section.replace("*", "").replace("`", ""), re.MULTILINE)
+        if len(values) > 1:
+            fail(f"duplicate {key} declaration")
+        fields[key] = values[0] if values else ""
+    test = fields["Test file"]
+    declared = fields["Assertions digest"]
+    none = re.compile(r"None(?:\s*\([^\n]*\)|\s*[:\-].*)?\.?", re.IGNORECASE)
+    if none.fullmatch(test or section.strip().replace("`", "")):
+        if declared and not none.fullmatch(declared):
+            fail("no-oracle card declares an assertions digest")
+        print("contract-gate: named oracle NONE (explicit no-oracle card)")
+        raise SystemExit(2)
+    else:
+        if not test or "," in test or "<<" in test:
+            fail("missing or malformed Test file declaration")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", declared):
+            fail("missing or malformed Assertions digest declaration")
+        test = re.sub(r"\s+\([^)]*\)\s*$", "", test)
+        path = (root / test).resolve()
+        if Path(test).is_absolute() or not path.is_relative_to(root):
+            fail(f"test must be relative to the subscriber root: {test}")
+        if not path.is_file():
+            fail(f"named oracle does not exist: {test}")
+        lines = path.read_text(encoding="utf-8").splitlines()
+        begins = [i for i, line in enumerate(lines) if "AUTOMETTA-CONTRACT-BEGIN" in line]
+        ends = [i for i, line in enumerate(lines) if "AUTOMETTA-CONTRACT-END" in line]
+        if len(begins) != 1 or len(ends) != 1 or begins[0] >= ends[0]:
+            fail(f"{test}: expected one complete frozen assertion block")
+        if any("AUTOMETTA-CONTRACT-NONE" in line for line in lines):
+            fail(f"{test}: named oracle cannot opt out of its frozen block")
+        owners = re.findall(r"\bcard=(\S+)", lines[begins[0]])
+        if len(owners) != 1:
+            fail(f"{test}: marker needs one card=<path>")
+        expected = card
+        if not card.is_relative_to(root):
+            # A dispatch may read its card from the subscriber's main checkout.
+            result = subprocess.run(["git", "-C", str(card.parent), "rev-parse", "--show-toplevel"],
+                                    text=True, capture_output=True)
+            if result.returncode:
+                fail("external stage card is not in a subscriber checkout")
+            expected = root / card.relative_to(Path(result.stdout.strip()).resolve())
+        if (root / owners[0]).resolve() != expected.resolve():
+            fail(f"{test}: marker belongs to {owners[0]}, not the supplied card")
+        result = subprocess.run(["bash", sys.argv[2], "print", str(path)],
+                                text=True, capture_output=True)
+        actual = result.stdout.strip()
+        print(f"contract-gate: named oracle {test}; declared={declared}; actual={actual}")
+        if result.returncode or actual != declared:
+            fail(f"{test}: named oracle digest mismatch")
+PY
+  case "$named_rc" in
+    0|2) ;;
+    *) return "$named_rc" ;;
+  esac
+  if [ "$named_rc" -eq 2 ] && {
+    [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" != true ] ||
+      ! git rev-parse --verify HEAD >/dev/null 2>&1
+  }; then
+    printf 'contract-gate: no oracle and no worktree revision; change gate not applicable\n'
+    return 0
+  fi
+  (cmd_gate worktree) || rc=$?
+  case "$rc" in
+    0|2) printf 'contract-gate: combined card and worktree check PASS\n' ;;
+    *) return "$rc" ;;
+  esac
+}
+
 cmd_gate() {
   local mode="$1" changed untracked f card recomputed declared violations=0 declarations naming_card naming_cards content
 
   case "$mode" in
     staged)
-      changed="$(git diff --cached --name-only --diff-filter=ACM)"
+      changed="$(git diff --cached --name-only --diff-filter=ACM)" || return $?
       content=staged_content
       ;;
     worktree)
-      changed="$(git diff HEAD --name-only --diff-filter=ACM)"
+      changed="$(git diff HEAD --name-only --diff-filter=ACM)" || return $?
       content=working_content
       ;;
     *) die "internal error: unknown gate mode $mode" ;;
   esac
 
-  declarations="$(test_file_declarations "$content")"
+  declarations="$(test_file_declarations "$content")" || return $?
 
   if [ "$mode" = worktree ]; then
-    untracked="$(git ls-files --others --exclude-standard)"
+    untracked="$(git ls-files --others --exclude-standard)" || return $?
     while IFS= read -r f; do
       [ -n "$f" ] || continue
       naming_card="$(printf '%s\n' "$declarations" | awk -F'\t' -v f="$f" '$1 == f { print $2; exit }')"
@@ -256,7 +358,8 @@ main() {
     print)        shift; cmd_print "$@" ;;
     ""|--staged)  cmd_gate staged ;;
     --worktree)    cmd_gate worktree ;;
-    *)             die "unknown argument: $1 (use 'print <file>', --staged, or --worktree)" ;;
+    --verify-card) shift; cmd_verify_card "$@" ;;
+    *)             die "unknown argument: $1 (use 'print <file>', --staged, --worktree, or --verify-card <card>)" ;;
   esac
 }
 
