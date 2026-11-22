@@ -2,13 +2,13 @@
 
 **Token-maxing is the gateway drug to AI psychosis. Autometta is a lightweight YOLO pattern library for headless agent orchestration on a single machine without constant human oversight. Worker agents code against requirement cards, verified by cross-family agents: Codex verifies Claude, and vice versa.**
 
-![Runtime](https://img.shields.io/badge/runtime-bash%203.2%2B%20%7C%20python%203-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-91%20of%20101%20smokes%20passing-yellow) ![Status](https://img.shields.io/badge/status-single--operator%20daily%20use-orange)
+![Runtime](https://img.shields.io/badge/runtime-bash%203.2%2B%20%7C%20python%203-blue) ![License](https://img.shields.io/badge/license-MIT-green) ![Tests](https://img.shields.io/badge/tests-91%20of%20101%20passing%20on%202026--11--15-yellow) ![Status](https://img.shields.io/badge/status-single--operator%20daily%20use-orange)
 
 Autometta turns requirement cards into implemented, independently checked commits. It runs Claude Code and Codex CLI as worker and verifier pairs on one laptop. A cron-driven tick handles dispatch, budgets and recovery. The human writes the cards and takes the decisions the contract cannot.
 
 The interesting engineering problem is not getting an agent to write code. It is what happens after the agent says it is done. Autometta separates implementation from acceptance, keeps failed attempts, and records who wrote, who checked and who integrated every change. You read the brief, the checks and the commit, not a chat summary.
 
-[How it works](#how-it-works) · [The bets](#the-bets) · [How it got here](#how-it-got-here) · [What it taught us](#what-it-taught-us) · [Evidence and limits](#evidence-and-limits) · [Get started](#get-started) · [Documentation](#documentation)
+[How it works](#how-it-works) · [How it learns](#how-it-learns) · [The bets](#the-bets) · [How it got here](#how-it-got-here) · [What it taught us](#what-it-taught-us) · [Evidence and limits](#evidence-and-limits) · [Get started](#get-started) · [Documentation](#documentation)
 
 ![Autometta fleet dashboard showing repository activity and spend](docs/images/dashboard.png)
 
@@ -62,6 +62,51 @@ The automated layer is a short-lived tick run by macOS launchd or Linux cron. It
 
 A verifier PASS is not the same as integration. If a run branch cannot land cleanly the work waits as `awaiting integration` for the operator. Mechanical recovery is the tick's job. Decisions go to the operator's orchestration chat through lifecycle hooks, with optional idle wake-ups that are batched and rate-limited. There is no scheduled controller agent; that experiment is covered below.
 
+## How it learns
+
+A run that goes wrong usually says something about the harness, not only about the card. Those lessons used to sit in prose incident logs, where nothing could list them or tell which had been acted on. Since November 2026 they go through a loop of their own, built from the same parts as everything else.
+
+```mermaid
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 30, "rankSpacing": 44, "padding": 12, "wrappingWidth": 240}}}%%
+flowchart LR
+  classDef store fill:#e9e9ec,stroke:#55585e,stroke-width:1.5px,color:#15171a
+  classDef op fill:#dbe4f2,stroke:#3b5b8a,stroke-width:1.5px,color:#13213a
+  classDef worker fill:#e4ecda,stroke:#5e7a3a,stroke-width:1.5px,color:#1e2b11
+  classDef pass fill:#d4ead8,stroke:#2f7a46,stroke-width:2px,color:#0f3b1d
+
+  RUN[("Runs<br/>halts · failed attempts · workarounds")]:::store
+  PROP["Proposal<br/>one ledger line, with evidence"]:::op
+  REVIEW["Weekly review<br/>the operator decides"]:::op
+  CARD["Stage card<br/>frozen test, red first"]:::op
+  PAIR["Worker and verifier<br/>opposite families"]:::worker
+  LAND["Landed<br/>proposal closed against the commit"]:::pass
+
+  RUN --> PROP --> REVIEW --> CARD --> PAIR --> LAND
+  LAND -.-> RUN
+```
+
+1. **Record.** While a run is in flight, any orchestration chat that meets a halt, a harness-caused failure, a workaround or a check that lied writes one line to the proposals ledger, citing evidence a reviewer can open. A verifier that notices a harness defect flags it in its report and the chat lifts it across. Recording is one shell command and no model turn. Nothing acts on a proposal when it is written.
+2. **Review.** Once a week the operator opens a chat and works the open items: merge duplicates into one cause, check whether the mechanism recurred, decide. A proposal is a note to that review, never authority to change anything. Only an approval recorded with the operator's own words lets one become a card.
+3. **Run.** An approved change is a stage card like any other: a contract test frozen before dispatch and proven red, a worker in one family, a verifier in the other. When it lands, the proposal is closed against the commit.
+
+The harness is not allowed to edit itself. It writes down what it noticed, a human chooses, and the change then has to pass the same gate as any other work.
+
+The ledger opened on 2026-11-08. Two weeks in, on 2026-11-22:
+
+| Proposals | Count |
+| --- | --- |
+| Recorded | 91 |
+| Merged into another proposal as the same cause | 11 |
+| Landed | 13: nine through seven stage cards, four as direct fixes the operator approved in chat |
+| Rejected | 0 |
+| Still open | 67 |
+
+Two approval rounds have gone all the way round. On 18 November six proposals became [cards 175 to 178](stage-cards/) and all four had landed within two hours. On 22 November three more became cards 179 to 181 and landed in a little over an hour. They fixed things the loop had got wrong about itself: usage from an interrupted dispatch that went uncounted, a verifier's finish time taken from the verifier's own clock, a card's explicit serial flag ignored once it also declared path claims, budget headroom that nobody checked before queueing a batch.
+
+It was not clean. Five of the seven cards passed verification at the first attempt. Card 177 was rejected once by its verifier and card 180 twice before it landed on the third attempt. Another harness card from the same week, 183, reached the three-attempt limit with three worker passes and three independent rejections, and is parked with the work preserved. With 67 items undecided, recording is running well ahead of review, and two weeks is too short to say whether the fixed mechanisms stay fixed.
+
+The ledger file stays in the private working repo. The [schema](schemas/proposals-ledger.json), the [command](scripts/proposals.sh), the [recording](skills/autometta-learning-log/SKILL.md) and [review](skills/autometta-weekly-review/SKILL.md) skills and every resulting card and commit are public, and each card names the proposal it answers. The [learning log](docs/learning-log.md) has the design, including why there is no automatic probe step.
+
 ## The bets
 
 Made early, on purpose, and unchanged since.
@@ -91,13 +136,21 @@ The release history records how the contract grew:
 | 2026-09 | v1.0.0: typed fact ledger, guarded SDK verifier route, frozen card assertions and network preflight |
 | 2026-10 | v1.1.0: model-scoped reserve, live agent progress, stage dependency graph and Codex admission below full usage |
 
-Since the tag: the scheduled controller agent is retired, lifecycle notices and bounded native wake-ups replace it, and card-quality tooling (card lint, first-attempt rate, card-review and oracle skills) followed. Later still: one fleet tick agent per machine instead of one per repo, a harness proposals ledger decided at a weekly review (see the [learning log](docs/learning-log.md)), and a live readout of the running dispatch's spend against a typical one on the dashboard, TUI and ticker.
+Since the tag:
+
+- **Controller retired.** The scheduled controller agent is gone. Lifecycle notices and bounded native wake-ups replace it.
+- **Card quality.** Card lint, a first-attempt rate, and the card-review and oracle skills.
+- **One tick agent per machine**, instead of one per repo.
+- **A learning loop.** Harness lessons go to a proposals ledger and are decided at a weekly review. See [How it learns](#how-it-learns).
+- **Failing closed.** An unreadable budget file refuses that repo's dispatch. An unknown Claude quota reading holds Claude dispatch. A provider limit that lands mid-run pins the work on a branch before the stage is rewound. An interrupted dispatch is charged once.
+- **Spend, before and after.** A headroom report at card preparation compares the card and batch estimates with the remaining budget. The dashboard, TUI and ticker show the running dispatch's spend against a typical one. A run summary can be rendered at a finish or a halt.
+- **Unattended runs.** The `yolo` skill attends a queued run with the operator away: caps and a stop time agreed up front, a hard stop at a stage's third failed attempt, and a decision log to read in the morning.
 
 Three experiments closed against adoption on the way. A resident SDK controller lost to cron plus tick: the SDK session could not create its own session directory inside the sandbox, and a resident process gives up restartability and outside observation for nothing. A worker SDK route was tried and parked: it could not reach its first tool call without widening the very scope the sandbox exists to hold. A terminal multiplexer was retired once the SDK transport covered what it was probing. The postmortems are under `docs/experiments/`. The SDK survives in one seat, the verifier, with a route guard: the raw Claude API SDK returns 429 on a subscription token while `claude -p` answers on the same one, so that pairing is sent back to the CLI (see [SDK verifiers](docs/sdk-verifier.md)). The bets did not change; the passes since v0.1 have been about making the loop remember what it learnt and refuse to lie about what it checked.
 
 ## What it taught us
 
-The [lessons](docs/lessons.md) file records twenty-two headless gotchas, each with the incident, the failure mode and the fix. The ones worth knowing before your first overnight run:
+The [lessons](docs/lessons.md) file records twenty-three headless gotchas, each with the incident, the failure mode and the fix. The ones worth knowing before your first overnight run:
 
 - **The only safety failed silently while everything looked green.** The budget cap was checked once per tick, not at the point of spend. One repo burned 149 times its token cap in a day, every stage passed, the work was good, and the daily reset zeroed the evidence by morning. The cap now guards the spawn and a breach log survives the reset. A safety belongs at the action it guards, not at the top of the loop that eventually performs it.
 - **A worker can die at 21 seconds and leave a zero-byte log.** A Claude worker in a subshell got SIGHUP when the launchd tick exited. Codex, with no subshell, was fine. Fix is `disown` plus `AbandonProcessGroup`, and the heartbeat now treats a silent log as a stall.

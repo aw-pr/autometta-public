@@ -15,6 +15,11 @@ and then the decisions and the card and commit that followed. The schema is
 `schemas/proposals-ledger.json`; the gate and the only writer is
 `scripts/proposals.sh` (`autometta proposals`).
 
+The ledger is private-tier: the file stays off the public mirror, and much
+of its evidence points at runs in private repositories. The schema, the
+script, the skills and every card and commit that results are published,
+and each card carries the id of the proposal it answers.
+
 ## The weekly cycle
 
 The loop has three beats on different days, and the human sits at the
@@ -85,6 +90,50 @@ leave that out, deliberately:
   recurred. The review reads them before closing an item as `landed`, and a
   cause that stopped recurring on its own is a reason to `reject`, not to
   card.
+
+## The first fortnight
+
+The ledger opened on 2026-11-08. On 2026-11-22 it held 91 proposals: 13
+landed, 11 merged into another proposal as the same cause, 67 still open and
+none rejected. Two approval rounds had completed the cycle, nine proposals
+through seven cards:
+
+| Approved | Card | What changed | Proposals | Attempts |
+| --- | --- | --- | --- | --- |
+| 2026-11-18 | [175](../stage-cards/175-bounded-hook-history.md) | A finished run's notices are collapsed in an active chat instead of replayed | 1 | 1 |
+| 2026-11-18 | [176](../stage-cards/176-interrupted-dispatch-spend.md) | Usage from a quota-refused worker or an aborted Codex verifier is counted, once | 2 | 1 |
+| 2026-11-18 | [177](../stage-cards/177-named-verifier-contract.md) | The verifier checks the named frozen contract from the subscriber worktree, even when the test is unchanged | 2 | 2 |
+| 2026-11-18 | [178](../stage-cards/178-readiness-headroom.md) | Card preparation compares the spend estimate with the remaining token budget | 1 | 1 |
+| 2026-11-22 | [179](../stage-cards/179-serial-claims.md) | An explicit serial flag holds when the card also declares path claims | 1 | 1 |
+| 2026-11-22 | [180](../stage-cards/180-verifier-clock.md) | A verdict is timed from the harness's own observation of the finished verifier | 1 | 3 |
+| 2026-11-22 | [181](../stage-cards/181-scoped-headroom.md) | The headroom report resolves relative and equivalent repo paths | 1 | 1 |
+
+The first round went from approval to the last landing in about ninety
+minutes, the second in a little over an hour. Card 180 fixes a fault the
+ledger's own tooling depended on: `unlifted` had been reading the completion
+time a verifier wrote into its own report.
+
+Four more proposals landed without a card, as direct fixes the operator
+approved in chat, which the record allows (`landed` from `approved`). Those
+had no frozen test and no cross-family verifier, so they say nothing about
+the gate.
+
+What the fortnight does and does not show:
+
+- **Recording gets used.** Ninety-one lines in fourteen days, from several
+  repositories, at one shell command each.
+- **Review is the constraint.** Sixty-seven items are undecided. Recording
+  is running well ahead of the weekly sitting.
+- **The review has not yet said no.** Every decision so far is an approval
+  or a merge. Until a `rejected` event exists, the claim that the review
+  filters proposals rests on the 67 it has left alone.
+- **The gate did its job on harness changes too.** The verifier rejected
+  card 177 once and card 180 twice before either landed. A change to the
+  harness got no easier a passage than a change to a subscriber.
+- **Whether it helped is still open.** Two weeks is too short for the fact
+  ledger to show a mechanism staying fixed. The recurrence check described
+  under "Why this shape" is the test, and it has not yet been run against
+  these seven.
 
 ## The record
 
