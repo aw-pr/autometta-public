@@ -815,6 +815,8 @@ pc_resume_to_verifier() {
        | (.stages[] | select(.id == $id)).worker_pid = null
        | (.stages[] | select(.id == $id)).verifier_pid = null
        | (.stages[] | select(.id == $id)).verifier_started_at = null
+       | (.stages[] | select(.id == $id)).verifier_completed_at = null
+       | (.stages[] | select(.id == $id)).verifier_completed_receipt = null
        | (.stages[] | select(.id == $id)).verifier_artefact = null
        | .current_stage = $id' \
       --arg id "$stage_id"; then

@@ -281,6 +281,21 @@ Per [`decision-verifier-handoff-naming`](../memory/decision-verifier-handoff-nam
 }
 ```
 
+`ran_at` is the reported time: the verifier model writes it, and it can precede
+the file by minutes. The observed time is `verifier_completed_at` in the stage
+record, a UTC ISO timestamp the tick stamps in `consume_verifier_artefact` the
+first time it sees that dispatch's verifier finished, for PASS and FAIL alike
+and for an orphan found by the in-progress scan. Once a dispatch has its
+first receipt, every later consume leaves the whole receipt and stamp untouched,
+even if the report bytes are replaced at the same path; a fresh verifier dispatch, a requeue and a
+resume-to-verifier reset it. `verifier_completed_receipt` records the dispatch
+(`attempts:started_at`), the artefact, the report's `ran_at` and the SHA-256 of
+the report bytes it was taken from. The reader accepts it only when the stage's
+current dispatch and the bytes on disk both match, so a receipt is never bound
+to a replaced report or a later dispatch. Finding freshness
+(`proposals.sh unlifted`) and report chronology use the observed time; a
+report without a matching receipt falls back to its own `ran_at`.
+
 The tick reads this file when promoting a stage from `in_progress` to
 `completed` or `failed`, but only after the verifier PID recorded for that same
 stage is no longer live. The artefact is output, not a process-completion

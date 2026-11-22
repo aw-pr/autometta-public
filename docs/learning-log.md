@@ -106,7 +106,11 @@ so `proposals.sh unlifted` stops listing it without a proposal that would
 never be approved. `unlifted` treats a line as lifted once a `proposed` or
 `dismissed` event under the same repo cites its artefact
 (`state/verifiers/<file>.json`, optionally with an anchor) after the
-artefact's `ran_at`; a stage re-verified since then is listed again.
+artefact's completion time; a stage re-verified since then is listed again.
+That time is the harness's own observation of the finished verifier
+(`verifier_completed_at` in the stage record) when its
+`verifier_completed_receipt` names the report on disk, and the report's
+`ran_at` otherwise (a legacy report, or one rewritten after it was observed).
 
 `kind` is one of `script`, `skill`, `template`, `schema`, `doc`, `policy`.
 `target` is one or more repo-relative paths in the autometta checkout, never

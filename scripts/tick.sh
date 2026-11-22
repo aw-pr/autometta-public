@@ -3209,6 +3209,30 @@ _process_verifier_artefact() {
   log "stage ${stage_id} PASS: committed worker output as ${commit_sha:-unknown} with --author=${worker_identity}"
 }
 
+# Record when the harness first saw this dispatch's verifier finish. The report's
+# own ran_at is model-authored and can precede the file by minutes, so
+# freshness and chronology use this observation instead. The receipt names the
+# dispatch (attempt and start) and the report it was taken from; a replay of
+# the same dispatch keeps its first receipt untouched, even if the report bytes
+# are replaced afterwards (the reader then rejects the mismatched digest); only a
+# new dispatch records its own first receipt.
+stamp_verifier_completion() {
+  local repo_root="$1" state_yaml="$2" stage_id="$3" artefact="$4"
+  local reported_at digest
+  reported_at="$(jq -r '.ran_at // empty' "$repo_root/$artefact" 2>/dev/null || true)"
+  digest="$(shasum -a 256 < "$repo_root/$artefact" 2>/dev/null | awk '{print $1}')"
+  state_apply_json "$state_yaml" \
+    '(.stages[] | select(.id == $id)) |= (
+       ((.verifier_attempts // 0 | tostring) + ":" + (.verifier_started_at // "")) as $dispatch
+       | if (.verifier_completed_at // "") != "" and .verifier_completed_receipt.dispatch == $dispatch
+         then .
+         else .verifier_completed_at = $now
+              | .verifier_completed_receipt = {dispatch: $dispatch, artefact: $artefact, reported_at: ($reported // null), sha256: $digest}
+         end)' \
+    --arg id "$stage_id" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg artefact "$artefact" --arg reported "$reported_at" --arg digest "$digest" || true
+}
+
 # Consume one completed verifier artefact using the same accounting and
 # pipeline-resolution sequence whether it is the displayed current stage or
 # an in-progress stage found by the verdict backstop.
@@ -3216,6 +3240,8 @@ consume_verifier_artefact() {
   local repo_root="$1" state_yaml="$2" stage_id="$3" artefact="$4" manifest_path="$5"
   local verifier_log_path verifier_work_dir_acct verifier_start_epoch
   local verifier_identity_acct verifier_family_acct verifier_overall verifier_result
+
+  stamp_verifier_completion "$repo_root" "$state_yaml" "$stage_id" "$artefact"
 
   verifier_log_path="$repo_root/state/logs/${stage_id}-verifier.log"
   verifier_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$stage_id")"
@@ -4340,7 +4366,9 @@ _process_repo_locked() {
       # can estimate verifier wall-clock when the artefact lands next tick.
       state_apply_json "$state_yaml" \
         '(.stages[] | select(.id == $id)).verifier_attempts = ((.stages[] | select(.id == $id) | .verifier_attempts // 0) + 1)
-         | (.stages[] | select(.id == $id)).verifier_started_at = $now' \
+         | (.stages[] | select(.id == $id)).verifier_started_at = $now
+         | (.stages[] | select(.id == $id)).verifier_completed_at = null
+         | (.stages[] | select(.id == $id)).verifier_completed_receipt = null' \
         --arg id "$current_stage" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       local verifier_work_dir
       verifier_work_dir="$(worktree_path_for_stage "$repo_root" "$current_stage")"

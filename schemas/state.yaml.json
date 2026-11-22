@@ -240,6 +240,22 @@
             "format": "date-time",
             "description": "ISO 8601 timestamp of verifier dispatch, stamped by tick.sh immediately before spawn_verifier_for_stage. Null before the verifier is dispatched."
           },
+          "verifier_completed_at": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "UTC ISO 8601 time at which the harness first observed this dispatch's verifier finished, stamped by consume_verifier_artefact() in tick.sh for PASS and FAIL alike. Distinct from the report's own ran_at, which the verifier model writes and which may precede the file by minutes: ran_at is the reported time, this is the observed time. A replay of the same dispatch keeps the first stamp; a fresh dispatch, a requeue and a resume reset it to null."
+          },
+          "verifier_completed_receipt": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "description": "Provenance of verifier_completed_at: which dispatch and which report it was taken from. proposals.sh uses the observed time only when artefact, dispatch, sha256 and reported_at match the stage's current dispatch and the report on disk; otherwise it falls back to that report's ran_at.",
+            "properties": {
+              "dispatch": {"type": "string", "description": "verifier_attempts and verifier_started_at at observation, as attempts:started_at."},
+              "artefact": {"type": "string", "description": "Repo-relative verifier artefact path that was observed."},
+              "reported_at": {"type": ["string", "null"], "description": "The report's ran_at at observation, null when absent."},
+              "sha256": {"type": "string", "description": "SHA-256 of the report bytes observed. A report whose bytes differ is a different report and never inherits this stamp."}
+            }
+          },
           "notes": {
             "type": "string",
             "description": "Free-text annotation added by the orchestrator when hand-adjudicating a stage (for example a verifier false-negative overridden to PASS). Not written by tick.sh; present only where a human recorded a decision."
