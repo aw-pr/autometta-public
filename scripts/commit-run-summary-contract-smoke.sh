@@ -36,7 +36,7 @@ ensure_tmux_viewer() { :; }
 sweep_repo_retention() { :; }
 _process_repo_locked() {
   case "$transition" in
-    halt) printf '{"halted":true,"halted_at":"2026-11-22T08:05:00Z","halt_reason":"token-cap"}\n' >"$repo/state/budget.json" ;;
+    halt) printf '{"halted":true,"halted_at":"%s","halt_reason":"token-cap"}\n' "$halted_at" >"$repo/state/budget.json" ;;
     awaiting)
       printf '{"halted":false}\n' >"$repo/state/budget.json"
       state_apply_json "$repo/state/state.yaml" '.current_stage=null | .stages[0].status="completed" | .stages[0].integration={state:"awaiting"}' ;;
@@ -48,6 +48,7 @@ _process_repo_locked() {
 }
 fire() { transition="$1"; process_repo "$repo" "$manifest"; }
 tip() { git -C "$repo" rev-parse HEAD; }
+halted_at=2026-11-22T08:05:00Z
 fire halt
 [[ "$(tip)" == "$base" && ! -e "$repo/$path" ]]
 printf '{"halted":false}\n' >"$repo/state/budget.json"
@@ -90,6 +91,8 @@ jq -e '.outcome=="finished"' "$tmp/clone/$path" >/dev/null
 # Explicitly reject a configured publication target even when named in the manifest.
 git -C "$repo" switch -q publish
 printf 'base_branch: publish\nrun_history:\n  private_branch: publish\n' >"$manifest"
+run=run-20261122-091000
+halted_at=2026-11-22T09:15:00Z
 printf '{"current_stage":"01-live","stages":[{"id":"01-live","run_id":"%s","status":"in_progress","base_branch":"publish"}]}\n' "$run" >"$repo/state/state.yaml"
 fire halt
 [[ "$(tip)" == "$base" && "$(git -C "$repo" rev-parse dev)" == "$last" ]]
