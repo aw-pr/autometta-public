@@ -663,6 +663,47 @@ The tick pushes the run branch to `origin` only on a `git-push-check` `PUSH` ver
 
 **Reaping.** `scripts/reap-worktrees.sh` runs after every tick as part of `sweep_repo_retention`, and by hand with `--dry-run`. It removes a run worktree whose stage is finished with it, through `requeue-stage.sh --worktree-only` so that removal has one implementation. It refuses to remove a worktree whose stage is `in_progress`, one holding uncommitted work that is not the known `state/` symlink artefact (a verifier FAIL leaves the worker's diff uncommitted by design, and that diff is what the operator inspects), one whose run branch holds commits that are not on base, and one whose stage it cannot find in `state.yaml`. Those it reports instead, on every tick until someone deals with them. When a person merges an `awaiting` branch by hand, the next sweep notices the containment, closes the record out to `merged`, and collects the worktree.
 
+### Portable run summary
+
+At a finish or halt boundary, run `scripts/run-summary.sh REPO RUN_ID finished|halted`
+against the checkout holding the run evidence. The command uses Python 3 with
+PyYAML and emits one UTF-8 JSON object on stdout. It reads repository-local
+state and receipts. Unknown runs, unsafe identifiers and unsupported outcomes
+exit nonzero with empty stdout. The caller supplies the boundary outcome and
+can retain the result with the project history.
+
+Version 1 has four keys, `version` (the integer `1`), `run_id`, `outcome` and
+`stages`. The report preserves the order of the requested run's stages in
+`state.yaml`. Each entry has `id`, `status`, `verdict`, `worker_attempts`,
+`retries`, `total_tokens` and `landed_commit`. Logs, paths, identities,
+host timings, budget balances and free text are excluded.
+
+- Dispatch receipts come from `state/cost-log.jsonl` and the durable dispatch
+  charges in `state/budget.json`. Where both record the same dispatch ID, the
+  durable receipt supplies the total once. A receipt naming another run is
+  excluded. Untagged receipts must fit the stage's membership and UTC run
+  start from `run-YYYYMMDD-HHMMSS`, up to any recorded stage completion or
+  halt attributable to that run. The run start includes attempts that
+  predate a requeue's replacement of the worker start time. Overlapping
+  memberships can leave an untagged receipt ambiguous.
+- `worker_attempts` counts attributed worker receipts, and `retries` counts
+  those beyond the first. `total_tokens` sums cache-inclusive worker and
+  verifier totals across those receipts, including failed dispatches. A
+  legacy row without a total can supply a complete input, cached input and
+  output breakdown. Missing evidence, ambiguous attribution and explicitly
+  unknown usage produce `null` for the affected measures.
+- `verdict` is `PASS` or `FAIL` from a stage-matched independent verifier
+  report that can be tied to the run. The stage's artefact reference, an
+  explicit run ID, and recorded verification times provide that link.
+  Missing or ambiguous verdict evidence yields `null`.
+- A merged integration supplies `landed_commit` from `rebased_tip`, then
+  `head`, then the stage's recorded commit. Legacy completed stages without
+  integration evidence can supply their recorded commit. Awaiting integration
+  yields `null` for the landed commit even when the verdict is `PASS`.
+
+The renderer performs no writes and makes no Git, network or model calls.
+Identical evidence and arguments produce identical bytes.
+
 ## (k) The controller is retired
 
 The tick loop dispatches and verifies. On 2026-08-24 an interactive
