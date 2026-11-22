@@ -255,7 +255,7 @@ Autometta ships the canonical `repo-publish-workflow` guard at `scripts/git-hook
 bash scripts/install-guards.sh
 ```
 
-That installs the four hooks from `scripts/git-hooks/` (`pre-commit`, `commit-msg`, `pre-merge-commit`, `pre-push`) into `.git/hooks/` and seeds a gitignored `.publish-guard.local` from `.publish-guard.local.example`. Set the per-repo gate config once (see `docs/PUBLISH-WORKFLOW.md` for the full list of `publishguard.*` keys), then re-run `install-guards.sh` and it writes the `git publish` alias.
+That installs the five hooks from `scripts/git-hooks/` (`pre-commit`, `commit-msg`, `pre-merge-commit`, `pre-push`, `reference-transaction`) into `.git/hooks/` and seeds a gitignored `.publish-guard.local` from `.publish-guard.local.example`. The `reference-transaction` hook refuses any move of a protected branch to a commit that no other branch and no remote already holds, so it also covers cherry-pick, rebase and `--no-verify` routes that `pre-commit` never sees. Set the per-repo gate config once (see `docs/PUBLISH-WORKFLOW.md` for the full list of `publishguard.*` keys), then re-run `install-guards.sh` and it writes the `git publish` alias.
 
 Edit `.publish-guard.local` with the machine-specific values (home path, username, email). The pre-commit hook is toothless until that file carries real patterns, so a fresh clone is safe by default but unguarded against operator-specific leaks; never push from an unarmed clone.
 

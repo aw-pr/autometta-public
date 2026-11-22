@@ -24,7 +24,7 @@ rules.
 `<repo>/state/cost-log.jsonl`, alongside `budget.json` and `logs/`. Like the
 rest of `state/` runtime content it is gitignored (`state/**`), so it is a
 local on-disk record, not a committed artefact. A dashboard reads it directly
-from disk. It is append-only: the loop never rewrites earlier lines.
+from disk. Each write goes through a temporary file and an atomic replacement of the ledger: earlier complete lines are kept verbatim, and only an incomplete final line left by an older writer may be dropped.
 
 ## Schema
 
