@@ -9,11 +9,11 @@
 - **Base branch:** dev
 - **Run branch:** autometta/180-verifier-clock
 - **Proposal:** P-20261117-ed15
-- **Worker effort:** high
-- **Verifier effort:** high
+- **Worker effort:** medium
+- **Verifier effort:** medium
 - **Verifier panel:** false
 - **Recovery attempts:** 3
-- **Recovery attempt:** 1
+- **Recovery attempt:** 2
 - **Dispatch:** serial
 - **Gate:** stage-completed: 179-serial-claims
 - **Pairing rationale:** Sonnet implements the cross-run state handling. Codex independently checks timestamp provenance, replay and old records.
@@ -66,3 +66,15 @@ Preserve existing frozen tests, accepted digests, unrelated work and existing su
 ## Dispatch envelope
 
 Write the worker envelope under `state/envelopes/180-verifier-clock.json`. Record the independent verdict under `state/verifiers/180-verifier-clock.json`.
+
+## Recovery log
+
+1. Attempt 1 started 2026-11-22 09:01:46 UTC on 16121a2. Worker PASS, independent verifier FAIL on criteria 2 and 3. The verifier reproduced two false suppressions. Attempt cost 2,651,275 cache-inclusive tokens. WIP a5ea76ddfaca5454144e705f07a57097eed0a9d6 and archived evidence in `state/uat/180-verifier-clock/attempt-1/`. Attempt 2 is a narrow implementation repair with the same cross-family pair at medium effort.
+
+## Re-brief for attempt 2
+
+Adopt the nine preserved deliverables before editing. From the run worktree execute `git restore --source=a5ea76ddfaca5454144e705f07a57097eed0a9d6 --worktree -- docs/learning-log.md docs/tick-loop.md schemas/state.yaml.json scripts/phat-controller.sh scripts/proposals.sh scripts/requeue-reset-smoke.sh scripts/requeue-stage.sh scripts/tick.sh scripts/verifier-clock-smoke.sh`. Keep the current card and frozen oracle from dev.
+
+At first observation bind the receipt to the bytes of the report, e.g. a SHA-256 digest, and to the stage's current verifier dispatch (attempt and start). Validate both when choosing the observation in the freshness reader. Compute the digest and parse findings from the same bytes in the reader. Preserve the first observation on a genuine replay. A missing, incomplete or mismatched receipt uses the historical fallback. Treat a replacement after observation as a different report; replay of the same dispatch must never legitimise the replacement using the old stamp. Update the receipt schema, documentation and the non-frozen regression fixture to match.
+
+Both seats run the two original acceptance commands. The verifier independently repeats these controls through real consume and unlifted entry points in a temporary repo. After observing a future-ran_at report and dismissing its finding, show that an unchanged replay stays suppressed. Replace the file with different verdict/finding bytes at the same path and ran_at, and show the new finding is listed. Separately start from an unchanged report with its matched receipt, change only current attempt/start, and show the obsolete receipt is rejected. Exercise a receipt without a digest, a valid fresh dispatch and orphan consumption. Save reproducible commands and observed output under the stage UAT directory for attempt 2. Re-run reset and clock regressions for any shared-code changes. Apply all three original criteria.
