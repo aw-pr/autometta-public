@@ -1611,12 +1611,9 @@
     state.data = data;
     initialiseRepoSelection(data);
     var scoped = data.scope && data.scope !== "fleet";
-    document.title = scoped
-      ? "autometta - " + data.scope
-      : "autometta cost dashboard";
-    document.getElementById("page-title").textContent = scoped
-      ? "autometta - " + data.scope
-      : "autometta cost dashboard";
+    var title = scoped ? "Autometta Dashboard - " + data.scope : "Autometta Dashboard";
+    document.title = title;
+    document.getElementById("page-title").textContent = title;
     if (data.drain && data.drain.active) {
       document.getElementById("drain-banner").textContent =
         "DRAIN cap " + fmtInt(data.drain.cap) + ", expires " + data.drain.expires_at;

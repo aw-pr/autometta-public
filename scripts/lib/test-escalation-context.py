@@ -196,6 +196,46 @@ class EscalationContextTests(unittest.TestCase):
             self.assertIn("worker_finished", self.invoke("SessionStart", family=family, source="compact"))
         self.assertEqual(len(self.notices()), 2)
 
+    def test_idle_fleet_broadcasts_one_observed_claude_reset_across_repos(self):
+        registry = self.home / "subscribers"
+        registry.rename(self.root / "saved-subscribers")
+        registry.mkdir()
+        quota = self.root / "quota"
+        quota.mkdir()
+        reset = 2_000_000_000
+        env = dict(self.env, AI_QUOTA_DIR=str(quota), AI_QUOTA_STALE_SECONDS="21600",
+                   AUTOMETTA_CODEX_SESSIONS=str(self.root / "no-sessions"))
+
+        def tick(now, fetched, used, next_reset, label="5-hour"):
+            snapshot = dict(source="claude", fetched_at=fetched, windows=[
+                dict(key=label, label=label, utilization=used, resets_at=next_reset)])
+            (quota / "claude.json").write_text(json.dumps(snapshot))
+            subprocess.run([str(SCRIPTS / "tick.sh")], check=True, capture_output=True,
+                           env=dict(env, AI_QUOTA_NOW_EPOCH=str(now)), timeout=20)
+
+        tick(reset - 20, reset - 20, 0, reset)
+        tick(reset - 10, reset - 10, 100, reset)
+        tick(reset + 1, reset - 1, 16, None)
+        tick(reset + 30, reset + 30, 100, reset)
+        tick(reset + 600, reset + 599, 0, None, label="Weekly")
+        tick(reset + 700, reset + 40, 0, None)
+        tick(reset + 701, reset + 702, 0, None)
+        self.assertEqual(self.notices(), [])
+        tick(reset + 705, reset + 704, 16, None)
+        tick(reset + 710, reset + 709, 0, None)
+        notice, = self.notices()
+        self.assertEqual((notice["kind"], notice["repo"], notice["utilization"]),
+                         ("quota_window_cleared", "fleet", 16))
+        later = reset + 18_000
+        tick(later - 20, later - 20, 101, later)
+        tick(later + 5, later + 5, 0, None)
+        self.assertEqual(sorted(n["utilization"] for n in self.notices()), [0, 16])
+        registry.rmdir()
+        (self.root / "saved-subscribers").rename(registry)
+        for family, repo in (("claude", self.repo), ("codex", self.other)):
+            self.assertEqual(self.invoke(family=family, cwd=str(repo)).count('"kind": "quota_window_cleared"'), 2)
+            self.assertEqual(self.invoke(family=family, cwd=str(repo)), "")
+
     def test_notices_do_not_displace_escalations_and_overflow_is_delivered(self):
         self.write(summary="ACTION FIRST")
         for index in range(12):

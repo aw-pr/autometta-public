@@ -128,7 +128,7 @@ A human orchestrator (Claude Code session opened in the target repo) reads the o
 
 ### Step 5. Bank surprises in the Autometta repo (not the adopter)
 
-Every stage's surprises (good and bad) get banked as `feedback-*.md`, `decision-*.md`, or `project-*.md` entries in the **Autometta** repo, not in the adopter. This is deliberate: it keeps all dispatch-contract learnings in one place so the upstream patterns can evolve from real cross-repo data.
+Every stage's surprises (good and bad) get banked in the **Autometta** repo, not in the adopter. This is deliberate: it keeps all dispatch-contract learnings in one place so the upstream patterns can evolve from real cross-repo data. A surprise that asks for a harness change (a halt, a harness-caused failure, a workaround, a misleading template) is one line in the proposals ledger, recorded as it happens with `autometta-learning-log`, because that ledger is what the weekly review decides from. A decision or observation that asks for no change is a `feedback-*.md`, `decision-*.md`, or `project-*.md` entry, as below.
 
 Location convention:
 

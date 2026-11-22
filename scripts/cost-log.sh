@@ -34,23 +34,21 @@ costlog_family_for_identity() {
   agent_family_for_identity "$identity"
 }
 
-# Resolve the billing route (subscription | api) for a family in a repo.
-# Same resolution order as auth-route.sh, kept independent so the cost-log
-# records the route without re-running the op-fetch resolver:
-#   1. AUTOMETTA_<FAMILY>_MODE env override
-#   2. auth.<family>.mode in <repo>/.autometta.local.yaml
-#   3. default: subscription
-auth_route_for_family() {
+# Resolve the billing route (subscription | api | local) for one role of a
+# family in a repo. Delegates to auth-route.sh --print-mode --role, so the
+# cost-log records exactly the route the dispatch resolved (per-role env,
+# family env, per-role manifest key, family manifest key, subscription).
+# Any resolution failure records subscription.
+costlog_auth_route() {
   local repo_root="$1"
   local family="$2"
-  local override_var mode manifest
-  override_var="AUTOMETTA_$(printf '%s' "$family" | tr '[:lower:]' '[:upper:]')_MODE"
-  mode="${!override_var:-}"
-  manifest="$repo_root/.autometta.local.yaml"
-  if [[ -z "$mode" && -f "$manifest" ]] && command -v yq >/dev/null 2>&1; then
-    mode="$(yq -r ".auth.${family}.mode // \"\"" "$manifest" 2>/dev/null || true)"
-  fi
-  case "${mode:-subscription}" in
+  local role="$3"
+  local mode=""
+  local -a role_argv=()
+  case "$role" in worker|verifier) role_argv=( --role "$role" ) ;; esac
+  mode="$(REPO_ROOT="$repo_root" "$_costlog_script_dir/auth-route.sh" "$family" \
+    --print-mode ${role_argv[@]+"${role_argv[@]}"} 2>/dev/null)" || mode=""
+  case "$mode" in
     api)   printf 'api\n' ;;
     local) printf 'local\n' ;;
     *)     printf 'subscription\n' ;;
@@ -172,11 +170,82 @@ if matches:
 PY
 }
 
+# Prefer the budget receipt, otherwise recover a row written before its charge.
+costlog_dispatch_row() {
+  python3 - "$1/state/budget.json" "$1/state/cost-log.jsonl" "$2" <<'PY'
+import json
+import os
+import sys
+
+budget, ledger, dispatch_id = sys.argv[1:]
+with open(budget, encoding="utf-8") as fh:
+    row = json.load(fh).get("dispatch_charges", {}).get(dispatch_id)
+if row is None and os.path.exists(ledger):
+    with open(ledger, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                candidate = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(candidate, dict) and candidate.get("dispatch_id") == dispatch_id:
+                row = candidate
+                break
+if row is not None:
+    print(json.dumps(row))
+PY
+}
+
+# The tick holds the repo lock. Persist the receipt and charge before exposing
+# the row; any failed write leaves the original PID/start available for replay.
+costlog_store_dispatch() {
+  local repo_root="$1" dispatch_id="$2" row="$3"
+  budget_record_dispatch_charge "$repo_root" "$dispatch_id" "$row" || return 1
+  row="$(costlog_dispatch_row "$repo_root" "$dispatch_id")" || return 1
+  python3 - "$repo_root/state/cost-log.jsonl" "$dispatch_id" "$row" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path, dispatch_id, raw_row = sys.argv[1:]
+try:
+    with open(path, "rb") as fh:
+        lines = fh.readlines()
+except FileNotFoundError:
+    lines = []
+kept = []
+found = False
+for index, line in enumerate(lines):
+    try:
+        row = json.loads(line)
+    except ValueError:
+        # A killed legacy append may leave only its last line incomplete.
+        if index == len(lines) - 1 and not line.endswith(b"\n"):
+            continue
+        raise
+    if isinstance(row, dict) and row.get("dispatch_id") == dispatch_id:
+        found = True
+    kept.append(line if line.endswith(b"\n") else line + b"\n")
+if not found:
+    kept.append((raw_row + "\n").encode("utf-8"))
+fd, temporary = tempfile.mkstemp(prefix=".cost-log-", dir=os.path.dirname(path))
+try:
+    with os.fdopen(fd, "wb") as fh:
+        fh.writelines(kept)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+}
+
 # Append one cost-log line for a dispatched role.
 #
 # Args:
 #   repo_root stage_id role identity log_path wall_clock_s result
-#   [work_dir] [since_epoch]
+#   [work_dir] [since_epoch] [dispatch_id]
 #
 # work_dir/since_epoch are optional. When given, family selects the matching
 # Claude Code or Codex transcript reader. Both survive a killed role better
@@ -187,8 +256,9 @@ PY
 #         the loop's terminal verdict for this role)
 #
 # Non-fatal by contract: a missing log, an unparseable log, or a python error
-# logs a warning to stderr and returns 0 without aborting the tick. The
-# cost-log is observability, never a gate.
+# logs a warning to stderr and returns 0 without aborting the tick. An optional
+# dispatch_id couples interrupted-role accounting to a durable budget receipt;
+# failures then return nonzero so the tick retains the dispatch for recovery.
 costlog_append() {
   local repo_root="$1"
   local stage_id="$2"
@@ -199,11 +269,19 @@ costlog_append() {
   local result="${7:-unknown}"
   local work_dir="${8:-}"
   local since_epoch="${9:-0}"
+  local dispatch_id="${10:-}" row_json
+  if [[ -n "$dispatch_id" ]]; then
+    row_json="$(costlog_dispatch_row "$repo_root" "$dispatch_id")" || return 1
+    if [[ -n "$row_json" ]]; then
+      costlog_store_dispatch "$repo_root" "$dispatch_id" "$row_json"
+      return $?
+    fi
+  fi
 
   local family tier auth_route repo_name out_file ts breakdown
   family="$(costlog_family_for_identity "$identity")"
   tier="$(tier_for_identity "$identity")"
-  auth_route="$(auth_route_for_family "$repo_root" "$family")"
+  auth_route="$(costlog_auth_route "$repo_root" "$family" "$role")"
   repo_name="$(basename "$repo_root")"
   out_file="$repo_root/state/cost-log.jsonl"
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -273,10 +351,10 @@ costlog_append() {
     subscription_usage="$(python3 "$_costlog_script_dir/lib/subscription-usage.py" "$repo_root" "$log_path" "$role" "$family" "$since_epoch" 2>/dev/null)" || subscription_usage='null'
   fi
   mkdir -p "$repo_root/state"
-  if ! python3 - "$out_file" "$ts" "$repo_name" "$stage_id" "$role" "$identity" \
+  if ! row_json="$(python3 - "$out_file" "$ts" "$repo_name" "$stage_id" "$role" "$identity" \
       "$tier" "$auth_route" "$input_tokens" "$cached_tokens" "$output_tokens" \
       "$total_tokens" "$usage_status" "$wall_clock_s" "$result" "$rin" "$rcached" "$rout" \
-      "$adv_model" "$adv_tier" "$adv_in" "$adv_out" "$arin" "$arout" "${cache_writes:-null}" "$subscription_usage" "$model" <<'PY'
+      "$adv_model" "$adv_tier" "$adv_in" "$adv_out" "$arin" "$arout" "${cache_writes:-null}" "$subscription_usage" "$model" "$dispatch_id" <<'PY'
 import json
 import sys
 
@@ -284,7 +362,7 @@ import sys
  input_tokens, cached_tokens, output_tokens, total_tokens, usage_status,
  wall_clock_s, result,
  rin, rcached, rout,
- adv_model, adv_tier, adv_in, adv_out, arin, arout, cache_writes, subscription_usage, model) = sys.argv[1:]
+ adv_model, adv_tier, adv_in, adv_out, arin, arout, cache_writes, subscription_usage, model, dispatch_id) = sys.argv[1:]
 
 def optional_int(value):
     return None if value == "null" else int(value)
@@ -341,13 +419,22 @@ line = {
     "cache_hit_rate": round(cache_hit_rate, 4) if cache_hit_rate is not None else None,
     "result": result,
 }
-with open(out_file, "a", encoding="utf-8") as fh:
-    fh.write(json.dumps(line) + "\n")
+if dispatch_id:
+    line["dispatch_id"] = dispatch_id
+    print(json.dumps(line))
+else:
+    with open(out_file, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line) + "\n")
 PY
-  then
+  )"; then
     printf 'costlog_append: failed to write cost-log line for %s/%s (%s); skipping\n' \
       "$stage_id" "$role" "$identity" >&2
-    return 0
+    [[ -z "$dispatch_id" ]] && return 0
+    return 1
+  fi
+
+  if [[ -n "$dispatch_id" ]]; then
+    costlog_store_dispatch "$repo_root" "$dispatch_id" "$row_json" || return 1
   fi
 
   printf 'costlog_append: %s %s tier=%s route=%s usage=%s in=%s cached=%s out=%s total=%s result=%s\n' \

@@ -91,6 +91,8 @@ codex_local_model_for_identity() {
 # this dispatching exactly as it did.
 codex_cloud_model_for_identity() {
   case "$1" in
+    *GPT-6.2\ Astra*|*gpt-6.2-astra*|*gpt-6-2-astra@local*) printf 'gpt-6.2-astra' ;;
+    *GPT-6.2\ Sol*|*gpt-6.2-sol*|*gpt-6-2-sol@local*) printf 'gpt-6.2-sol' ;;
     *GPT-6\ Astra*|*gpt-6-astra*)     printf 'gpt-6-astra' ;;
     *GPT-6.1\ Sol*|*gpt-6.1-sol*|*gpt-6-1-sol@local*) printf 'gpt-6.1-sol' ;;
     *GPT-6\ Sol*|*gpt-6-sol*)         printf 'gpt-6-sol' ;;
@@ -426,6 +428,11 @@ codex_network_argv_for_card() {
 # ~/.claude/.credentials.json: a sandboxed role could always read it. What it
 # adds is write access, and only to that directory.
 #
+# The grant is <agent home>/session-env, not the whole agent home: its
+# settings.json hooks run in every later Claude session and its CLAUDE.md
+# steers the stage's own Claude verifier, so writing either is code execution
+# and verifier steering outside the sandbox.
+#
 # Emits nothing under danger-full-access, which can already write anywhere, and
 # nothing for a card that does not ask.
 codex_agent_home_argv_for_card() {
@@ -437,7 +444,9 @@ codex_agent_home_argv_for_card() {
     true|True|TRUE|yes|1)
       local agent_home="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
       [[ -d "$agent_home" ]] || return 0
-      AUTOMETTA_CODEX_AGENT_HOME_ARGV=(--add-dir "$agent_home")
+      local session_env="$agent_home/session-env"
+      mkdir -p "$session_env" || return 0
+      AUTOMETTA_CODEX_AGENT_HOME_ARGV=(--add-dir "$session_env")
       ;;
   esac
 }

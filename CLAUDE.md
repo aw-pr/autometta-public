@@ -14,7 +14,7 @@ State and memory that agents need across sessions live **in the repo**, not in a
 
 ## What this repo is
 
-Autometta is a **pattern library**, not a runtime. v1.1.0: the contract, the loop and the operator surfaces are stable and in daily use; still one human, one machine. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-run-design`, `autometta-card-review`, `autometta-oracle`, `autometta-requeue`, `autometta-escalations`, `autometta-weekly-review`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
+Autometta is a **pattern library**, not a runtime. v1.1.0: the contract, the loop and the operator surfaces are stable and in daily use; still one human, one machine. The repo contains prose (`README.md`, `docs/`), markdown templates, the skills under `skills/` (`agent-orchestrator`, `autometta-setup`, `autometta-run-design`, `autometta-card-review`, `autometta-oracle`, `autometta-requeue`, `autometta-escalations`, `autometta-learning-log`, `autometta-weekly-review`, `yolo`, `phat-controller`), a shared `memory/` store, and the bash scaffolding for the tick loop (`scripts/`, `schemas/`, `state/`). There is no build and no package manifest - do not invent one. The test suite is the set of `scripts/*-smoke.sh` contract tests, run through `scripts/check-contract-test-gate.sh`; a script change that touches a covered contract should extend or add a smoke.
 
 The repo extracts patterns from two prior projects (`fractals-from-the-90s` dispatch contract; `agentic-rag-kimble` pass 28-29 autonomous loop) and packages them for solo single-machine multi-agent CLI work. See `README.md` for the pitch and `docs/philosophy.md` for the long-form scope.
 
@@ -33,8 +33,8 @@ requirements, relaxed acceptance or extra limits still need approval.
 Anything the tick cannot decide
 becomes an escalation in the escalations folder for the chat to work
 (`skills/autometta-escalations`). A diagnosis that implicates the harness
-itself is recorded as a proposal in `memory/proposals.jsonl`
-(`scripts/proposals.sh`) and decided once a week with the operator
+itself is recorded, as it happens, as a proposal in `memory/proposals.jsonl`
+(`scripts/proposals.sh`, `skills/autometta-learning-log`) and decided once a week with the operator
 (`skills/autometta-weekly-review`, `docs/learning-log.md`); a proposal is
 never authority to edit the harness. Claude Code and Codex lifecycle hooks deliver
 new or changed escalations and lifecycle notices at session start, user prompts and after tools;
@@ -67,7 +67,7 @@ Decisions, not preferences. Diverging needs an explicit conversation, not a quie
 
 ## Headless gotchas to never re-learn
 
-Invariants when reviewing or writing scaffolding (full write-up lands in `docs/lessons.md`):
+Invariants when reviewing or writing scaffolding. This list is numbered on its own; `docs/lessons.md` has the full write-up of all twenty-three, and each item below names the lesson it comes from where the numbers differ:
 
 1. `codex exec` reads stdin after the prompt arg - always redirect `</dev/null` from any wrapping harness.
 2. Card-sync race across git worktrees - verifier and worker must see the same card content; serialise writes.
@@ -82,7 +82,8 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 11. `op read` can block forever on a macOS TCC prompt no one is there to answer, hanging an overnight dispatch with an empty log. `op-fetch` wraps every read in a watchdog (`OP_FETCH_TIMEOUT`, default 60s). The TCC grant does not survive a `brew upgrade 1password-cli`. See `docs/lessons.md` gotcha 11.
 12. `IFS=$'\n\t'` has no space in it, so an unquoted expansion of a space-joined flag string is a silent no-op split: `--effort high` reached the CLI as one option name containing a space and every Claude verifier with a declared effort died instantly (`error: unknown option '--effort high'`), burning all three `verifier_attempt_cap` retries. Multi-token argument lists travel in a bash array (`AUTOMETTA_EFFORT_ARGV`), expanded quoted, never through word splitting; `# shellcheck disable=SC2086` documents such an intent while hiding its failure. Codex was unaffected: clap attaches a short option's value, and codex trims the leading space, so its effort was honoured throughout. See `docs/lessons.md` gotcha 12.
 13. `codex exec --oss` refuses any Ollama model without thinking support (`"<model>" does not support thinking`), which as of codex-cli 0.149.1 leaves only the gpt-oss family usable on the free local route. `llama3.3:70b`, `llama4:scout`, `qwen3-coder:30b` and `devstral` are all refused, and the last four ran fine in the 2026-08-24 bake-off, so this is a CLI regression under a documented result rather than a standing limit. `codex_local_preflight` checked only that the model was *pulled*, so the failure landed after the stage was `in_progress`; it now reads the `Capabilities` block from `ollama show` and fails closed before the spawn, failing open only when that block cannot be read. See `docs/lessons.md` gotcha 19.
-14. A Claude dispatch started from launchd can block forever on a macOS TCC prompt: around its first edit, Claude Code touches the paths named in the user's permission rules, and a rule naming `~/Desktop`, `~/Documents` or `~/Downloads` raises a prompt that no one is there to answer. Every Claude Code release installs to a new versioned path, so each update re-arms it. Keep protected folders out of user-level rules; the tick kills a streaming dispatch silent for `AUTOMETTA_SILENCE_KILL_SECONDS` (default 1200). See `docs/lessons.md` gotcha 22.
+14. A Claude dispatch started from launchd can block forever on a macOS TCC prompt: around its first edit, Claude Code touches the paths named in the user's permission rules, and a rule naming `~/Desktop`, `~/Documents` or `~/Downloads` raises a prompt that no one is there to answer. Every Claude Code release installs to a new versioned path, so each update re-arms it. Keep protected folders out of user-level rules: that is the fix. The tick can also kill a streaming dispatch that stays silent for `AUTOMETTA_SILENCE_KILL_SECONDS`, but only when that is set above 0; the default is 0 (off), because quiet local compute can outlast any silence limit. See `docs/lessons.md` gotcha 22.
+15. A provider limit that lands mid-run must not cost the work. An exit with no envelope whose log matches a limit pattern is an instant refusal only if the log was last written within `USAGE_LIMIT_INSTANT_SECONDS` (60) of the stage's `started_at`; that one is rewound untouched. Anything later is pinned on a `wip/<stage>-attempt-N` ref before the rewind, at most `USAGE_LIMIT_MAX_REWINDS` (2) times per stage, after which the exit takes the ordinary missing-envelope path. `limit_rewinds` survives a requeue. See `docs/lessons.md` gotcha 23.
 
 ## Conventions specific to this repo
 
@@ -102,7 +103,9 @@ Invariants when reviewing or writing scaffolding (full write-up lands in `docs/l
 - `skills/autometta-oracle/` - author a focused frozen contract test with proportionate proof, record its digest and any authorised supplemental evidence gates.
 - `skills/autometta-requeue/` - re-queue a stage safely after a FAIL, a dead agent or a stale run worktree.
 - `skills/autometta-escalations/` - work the operator's pending escalations from an orchestration chat.
+- `skills/autometta-learning-log/` - where and how any orchestration chat records halts, harness-caused failures, workarounds and missing guidance as they happen, for the weekly review. Every other orchestration skill points here.
 - `skills/autometta-weekly-review/` - once a week, decide the open harness proposals in `memory/proposals.jsonl` with the operator and card the approved ones (`docs/learning-log.md`).
+- `skills/yolo/` - attend a queued run with the operator away: caps and stop time agreed in one prompt, a written standing authority, a hard stop at a stage's third failed attempt, and a decision log whose lessons go to the proposals ledger.
 - `skills/phat-controller/` - a pointer: the role is retired, work the queue through `autometta-escalations`.
 
 ## Auth routes: subscription vs API key (agents: read this before any dispatch)
@@ -117,7 +120,7 @@ Aligned to the `auth-route-security` skill. Every dispatch goes through `op-fetc
 - **Verify before dispatching**: `autometta auth status` (per-family table + op-fetch presence) and `autometta auth check <family>` (PASS / FAIL / subscription, with redacted credential, no token spend).
 - **Fail-closed**: missing `op-fetch`, unset `OP_REF_*`, or an unresolved `op://YOUR_VAULT/...` placeholder aborts the spawn before any token is spent.
 
-`scripts/auth-route.sh <family>` emits the `NAME=$OP_REF_NAME` pair (empty in subscription). `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` source `op-refs.sh`, call the resolver, then `op-fetch <pairs> -- codex exec ...` / `op-fetch <pairs> -- claude -p ...`. Subscription mode still goes through `op-fetch`, so any stray `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` in the parent shell is stripped rather than silently redirecting billing. Full surface in `docs/setup.md` section 7 and `README.md` section "Billing routes".
+`scripts/auth-route.sh <family>` emits the `NAME=$OP_REF_NAME` pair (empty in subscription). `scripts/spawn-worker.sh` and `scripts/spawn-verifier.sh` source `op-refs.sh`, call the resolver, then `op-fetch <pairs> -- codex exec ...` / `op-fetch <pairs> -- claude -p ...`. Subscription mode still goes through `op-fetch`, so any stray `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` in the parent shell is stripped rather than silently redirecting billing. Full surface in `docs/setup.md` section 7 and `MANUAL.md` section 5.
 
 ## Upgrading the local install (agents: read this when picking up a session)
 

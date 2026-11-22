@@ -58,6 +58,8 @@ choices and exceptions rather than extending this runbook.
    adjacent cards disjoint path claims only when they may safely pipeline; the
    queue rules are in [setup](setup.md#queueing-path-claims).
 
+   To check the token budget before queueing, run `scripts/readiness-headroom.sh REPO CARD BATCH RETRY`. It is read-only and takes token estimates for the card, the batch (which includes the card) and the retry allowance. It prints JSON with the cap, the spend, the headroom and the card, batch and with-retry shortfalls. It exits 1, with null figures, when recorded spend is unknown, and 2 on bad arguments. It is a script, not an `autometta` verb.
+
    When a card builds on earlier stages' landed code, declare them with
    `Depends on` and plan to queue parents first; existing `Gate` cards keep their
    status-only meaning and are not migrated. The

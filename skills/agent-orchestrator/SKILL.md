@@ -186,6 +186,17 @@ and complete the native trust review before relying on them.
 The tick still schedules work. A chat waking up does not change stage criteria,
 frozen contracts, auth routes, provider pairings or dispatch budgets.
 
+Wake-ups are best effort, not a guarantee of attention. The fleet shares one
+allowance (six an hour, 24 a day), a routine start spends it as a failure
+does, and an event older than 15 minutes is dropped, so a busy day can leave
+a later failure with nobody woken. Check `scripts/wakeups.sh status` before
+relying on them. A chat asked to attend a run with the operator away follows
+the `yolo` skill, which adds a bounded backstop check-in for that reason.
+
+A halt, a harness-caused failure, a workaround or a signal that never came is
+recorded as it happens in the proposals ledger with `autometta-learning-log`,
+so the weekly review can tune it out.
+
 ---
 
 ## Delegation adapter (harness mechanics)

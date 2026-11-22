@@ -75,6 +75,11 @@ stages:
     tokens: 3535273
     worker_envelope: partial
     verifier_started_at: "2026-08-31T22:25:12Z"
+    verifier_completed_at: "2026-08-31T22:40:00Z"
+    verifier_completed_receipt:
+      dispatch: "1:2026-08-31T22:25:12Z"
+      artefact: state/verifiers/42-the-stage-under-test.json
+      reported_at: "2026-08-31T22:45:00Z"
     stall_marker: "stalled after 4487s"
     wip_commit: 94570284f7f8dedb74a58916062deec4a2554b26
     wip_branch: wip/42-the-stage-under-test-attempt-1
@@ -106,7 +111,7 @@ done
 printf '== 2. the stage is a clean pending ==\n' >&2
 check "status is pending" "$(eq pending "$(field 42-the-stage-under-test status)")"
 check "verifier_attempts is 0" "$(eq 0 "$(field 42-the-stage-under-test verifier_attempts)")"
-for nulled in worker_pid verifier_pid started_at completed_at verifier_started_at stall_marker worker_envelope; do
+for nulled in worker_pid verifier_pid started_at completed_at verifier_started_at verifier_completed_at verifier_completed_receipt stall_marker worker_envelope; do
   check "$nulled is null" "$(eq null "$(field 42-the-stage-under-test "$nulled")")"
 done
 check "current_stage no longer points here" \

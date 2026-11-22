@@ -15,22 +15,41 @@ and then the decisions and the card and commit that followed. The schema is
 `schemas/proposals-ledger.json`; the gate and the only writer is
 `scripts/proposals.sh` (`autometta proposals`).
 
+The ledger is private-tier: the file stays off the public mirror, and much
+of its evidence points at runs in private repositories. The schema, the
+script, the skills and every card and commit that results are published,
+and each card carries the id of the proposal it answers.
+
 ## The weekly cycle
 
 The loop has three beats on different days, and the human sits at the
 middle one.
 
-1. **During runs, record.** The orchestration chat, on acking an
-   escalation whose diagnosis implicated the harness, writes a `proposed`
-   event (`skills/autometta-escalations`, step 7). A verifier that noticed a
+1. **During runs, record.** Every orchestration chat records as it goes,
+   following `skills/autometta-learning-log`: where each kind of
+   observation belongs, what earns a line (halts, harness-caused failures,
+   workarounds, late or missing signals, checks that lied, missing
+   guidance), how to write and commit it, and how to record a recurrence.
+   The other orchestration skills point there at the moment they meet a
+   lesson; on acking an escalation whose diagnosis implicated the harness,
+   for instance, the chat writes a `proposed` event
+   (`skills/autometta-escalations`, step 7). A verifier that noticed a
    harness defect while verifying writes a `HARNESS:` line in its
    `additional_findings`, and the chat lifts it into the ledger citing the
    artefact. Recording costs one shell command and no model turn. Nothing
    acts on a proposal when it is written.
+   A chat left to attend a run alone (`skills/yolo`) records a second sort
+   of lesson before it hands back: what its own guidance lacked or got
+   wrong, and what it parked for want of authority. Those take a `yolo:`
+   title prefix, target `skills/yolo/SKILL.md`, and cite the run log entry
+   that shows the decision. The operator's overrulings at the morning
+   debrief are recorded the same way.
 2. **Once a week, review.** The operator opens an orchestration chat and
    runs `skills/autometta-weekly-review`: lift any `HARNESS:` line the week
    missed (`proposals.sh unlifted`; a stage that passed never escalates, so
-   nothing else would surface its line), list open items, read the
+   nothing else would surface its line), census the week's processed
+   escalations so a halt or failure no chat recorded is still raised, list
+   open items, read the
    evidence, merge duplicates into one cause, check the fact ledger for
    recurrence, recommend one decision per cluster, record the operator's
    yes or no. Approved items go to `autometta-run-design`,
@@ -72,6 +91,50 @@ leave that out, deliberately:
   cause that stopped recurring on its own is a reason to `reject`, not to
   card.
 
+## The first fortnight
+
+The ledger opened on 2026-11-08. On 2026-11-22 it held 91 proposals: 13
+landed, 11 merged into another proposal as the same cause, 67 still open and
+none rejected. Two approval rounds had completed the cycle, nine proposals
+through seven cards:
+
+| Approved | Card | What changed | Proposals | Attempts |
+| --- | --- | --- | --- | --- |
+| 2026-11-18 | [175](../stage-cards/175-bounded-hook-history.md) | A finished run's notices are collapsed in an active chat instead of replayed | 1 | 1 |
+| 2026-11-18 | [176](../stage-cards/176-interrupted-dispatch-spend.md) | Usage from a quota-refused worker or an aborted Codex verifier is counted, once | 2 | 1 |
+| 2026-11-18 | [177](../stage-cards/177-named-verifier-contract.md) | The verifier checks the named frozen contract from the subscriber worktree, even when the test is unchanged | 2 | 2 |
+| 2026-11-18 | [178](../stage-cards/178-readiness-headroom.md) | Card preparation compares the spend estimate with the remaining token budget | 1 | 1 |
+| 2026-11-22 | [179](../stage-cards/179-serial-claims.md) | An explicit serial flag holds when the card also declares path claims | 1 | 1 |
+| 2026-11-22 | [180](../stage-cards/180-verifier-clock.md) | A verdict is timed from the harness's own observation of the finished verifier | 1 | 3 |
+| 2026-11-22 | [181](../stage-cards/181-scoped-headroom.md) | The headroom report resolves relative and equivalent repo paths | 1 | 1 |
+
+The first round went from approval to the last landing in about ninety
+minutes, the second in a little over an hour. Card 180 fixes a fault the
+ledger's own tooling depended on: `unlifted` had been reading the completion
+time a verifier wrote into its own report.
+
+Four more proposals landed without a card, as direct fixes the operator
+approved in chat, which the record allows (`landed` from `approved`). Those
+had no frozen test and no cross-family verifier, so they say nothing about
+the gate.
+
+What the fortnight does and does not show:
+
+- **Recording gets used.** Ninety-one lines in fourteen days, from several
+  repositories, at one shell command each.
+- **Review is the constraint.** Sixty-seven items are undecided. Recording
+  is running well ahead of the weekly sitting.
+- **The review has not yet said no.** Every decision so far is an approval
+  or a merge. Until a `rejected` event exists, the claim that the review
+  filters proposals rests on the 67 it has left alone.
+- **The gate did its job on harness changes too.** The verifier rejected
+  card 177 once and card 180 twice before either landed. A change to the
+  harness got no easier a passage than a change to a subscriber.
+- **Whether it helped is still open.** Two weeks is too short for the fact
+  ledger to show a mechanism staying fixed. The recurrence check described
+  under "Why this shape" is the test, and it has not yet been run against
+  these seven.
+
 ## The record
 
 One proposal is a sequence of events sharing an `id`:
@@ -92,12 +155,18 @@ so `proposals.sh unlifted` stops listing it without a proposal that would
 never be approved. `unlifted` treats a line as lifted once a `proposed` or
 `dismissed` event under the same repo cites its artefact
 (`state/verifiers/<file>.json`, optionally with an anchor) after the
-artefact's `ran_at`; a stage re-verified since then is listed again.
+artefact's completion time; a stage re-verified since then is listed again.
+That time is the harness's own observation of the finished verifier
+(`verifier_completed_at` in the stage record) when its
+`verifier_completed_receipt` names the report on disk, and the report's
+`ran_at` otherwise (a legacy report, or one rewritten after it was observed).
 
 `kind` is one of `script`, `skill`, `template`, `schema`, `doc`, `policy`.
 `target` is one or more repo-relative paths in the autometta checkout, never
 absolute. `evidence` is one or more references a reviewer can open: stage
-ids, escalation ids, facts subjects, paths with an anchor, commit SHAs. A
+ids, escalation ids, unattended run log ids with an entry number
+(`20261116T2200Z-promo-flow#4`, a file under `$AUTOMETTA_HOME/yolo/`), facts
+subjects, paths with an anchor, commit SHAs. A
 proposal with no evidence is refused at the gate; one whose evidence does
 not say what it claims is held or rejected at the review.
 
@@ -122,6 +191,10 @@ regression coverage.
 - `$AUTOMETTA_HOME/escalations/`: this episode's decision, worked and acked
   during the week (`docs/tick-loop.md`, Escalations). An escalation is often
   the evidence for a proposal; it is not the proposal.
+- `$AUTOMETTA_HOME/yolo/`: one decision log per unattended run, written by
+  the attending chat before each action (`skills/yolo`). It is the evidence
+  for a `yolo:` proposal and the operator's morning reading; like an
+  escalation, it is not the proposal.
 - `docs/incidents/*-run-lessons-log.md`: the narrative. Keep writing it when
   a run deserves the paragraph; the ledger holds the actionable line.
 - `memory/retro-grade-*.md`: rubric drift, a separate weekly advisory

@@ -201,7 +201,7 @@ terminate_process_tree() {
 }
 
 quota_log_tick_readings() {
-  local family reading status summary
+  local family reading status summary unknown_reason
   for family in claude codex; do
     reading="$(printf '%s' "$AUTOMETTA_QUOTA_TICK_JSON" | jq -c --arg family "$family" '.families[$family]')"
     status="$(printf '%s' "$reading" | jq -r '.status')"
@@ -209,7 +209,12 @@ quota_log_tick_readings() {
       summary="$(printf '%s' "$reading" | jq -r '[.windows[] | "\(.label) \(.utilization)% used, resets \(.resets_at // "unknown")"] | join("; ")')"
       log "quota ${family}: ${summary} (source $(printf '%s' "$reading" | jq -r '.source'))"
     else
-      log "quota ${family}: unknown ($(printf '%s' "$reading" | jq -r '.reason // "reader failed"')); dispatch remains fail-open"
+      unknown_reason="$(printf '%s' "$reading" | jq -r '.reason // "reader failed"')"
+      if [[ "$family" == claude && "$unknown_reason" != "snapshot absent" ]]; then
+        log "quota ${family}: unknown (${unknown_reason}); Claude dispatch held under a hold reserve"
+      else
+        log "quota ${family}: unknown (${unknown_reason}); dispatch remains fail-open"
+      fi
     fi
   done
 }
@@ -224,8 +229,11 @@ quota_log_tick_readings() {
 QUOTA_GATE_RESOLVED_WINDOW="default"
 
 # quota_gate_family_dispatch <repo> claude|codex <description> [model]
-# Returns 1 only after recording a pause at the published reset. Zero covers
-# outside-reserve, reserve off, observe and every unknown reading.
+# Returns 1 after recording a pause at the published reset, or, for a Claude
+# reading that is stale, malformed or unreadable under a hold reserve, after
+# logging a hold for this tick only (there is no reset to pause to). Zero
+# covers outside-reserve, reserve off, observe, an absent Claude snapshot and
+# an unknown codex reading on the legacy reserve policy.
 quota_gate_family_dispatch() {
   local repo_root="$1" family="$2" what="$3" model="${4:-}"
   local settings reserve action window reading mandate_path curfew reserve_window
@@ -257,6 +265,10 @@ quota_gate_family_dispatch() {
       log "quota ${what} (${family}): ${QUOTA_GATE_REASON} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); dispatch proceeds"
     fi
     return 0
+  fi
+  if [[ -z "$QUOTA_GATE_RESET" ]]; then
+    log "quota ${what} (${family}${model:+ model ${model}}): ${QUOTA_GATE_REASON} (${QUOTA_GATE_RESOLVED_WINDOW} schedule); no dispatch this tick"
+    return 1
   fi
   budget_pause_until "$repo_root" "$QUOTA_GATE_RESET" \
     "quota reserve: ${family} ${QUOTA_GATE_WINDOW}${model:+ for ${model}}; resets at $(date -u -r "$QUOTA_GATE_RESET" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' "$QUOTA_GATE_RESET")"
@@ -606,29 +618,6 @@ stage_card_for_id() {
       fi
     done < <(compgen -G "$search_path" || true)
   done < <(manifest_patterns "$repo_root" "$manifest_path")
-
-  if [[ -z "$card" ]]; then
-    local -a fallback_candidates=(
-      "$repo_root/stage-cards/${stage_id}.md" \
-      "$repo_root/stage-cards"/*"${stage_id}"*.md
-    )
-    # Legacy fallback for subscribers that used the former common layout.
-    fallback_candidates+=(
-      "$repo_root/docs/stages/${stage_id}.md" \
-      "$repo_root/docs/stages"/*"${stage_id}"*.md
-    )
-    # Legacy fallback for Autometta's former self-host layout.
-    fallback_candidates+=(
-      "$repo_root/examples/self-host/${stage_id}.md" \
-      "$repo_root/examples/self-host"/*"${stage_id}"*.md
-    )
-    for candidate in "${fallback_candidates[@]}"; do
-      if [[ -f "$candidate" ]]; then
-        card="$candidate"
-        break
-      fi
-    done
-  fi
   printf '%s\n' "$card"
 }
 
@@ -703,6 +692,24 @@ PY
 # fault, so the halt can name the real cause instead of only its category.
 INSTANT_DISPATCH_FAULT_REASON=""
 
+# log_written_seconds_after_start <log_path> <started_at>
+# Print the seconds from a role's start (ISO 8601 or epoch) to its log's last
+# write, which may be negative. Returns 1 when either time cannot be read.
+log_written_seconds_after_start() {
+  local log_path="$1" started_at="$2" started_epoch log_epoch
+  if [[ "$started_at" =~ ^[0-9]+$ ]]; then
+    started_epoch="$started_at"
+  else
+    started_epoch="$(stage_started_epoch "$started_at" 2>/dev/null || true)"
+  fi
+  [[ "$started_epoch" =~ ^[0-9]+$ ]] || return 1
+  if ! log_epoch="$(stat -f '%m' "$log_path" 2>/dev/null)"; then
+    log_epoch="$(stat -c '%Y' "$log_path" 2>/dev/null || true)"
+  fi
+  [[ "$log_epoch" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$((log_epoch - started_epoch))"
+}
+
 # A dead dispatch with no completion artefact is a configuration fault only
 # when the remaining evidence agrees: it ended almost immediately, produced a
 # tiny log, and that log contains a CLI usage, executable, or auth-route error.
@@ -721,18 +728,8 @@ is_instant_dispatch_configuration_fault() {
   [[ "$log_size" =~ ^[0-9]+$ ]] || return 1
   (( log_size > 0 && log_size <= 512 )) || return 1
 
-  local started_epoch log_epoch elapsed
-  if [[ "$started_at" =~ ^[0-9]+$ ]]; then
-    started_epoch="$started_at"
-  else
-    started_epoch="$(stage_started_epoch "$started_at" 2>/dev/null || true)"
-  fi
-  [[ "$started_epoch" =~ ^[0-9]+$ ]] || return 1
-  if ! log_epoch="$(stat -f '%m' "$log_path" 2>/dev/null)"; then
-    log_epoch="$(stat -c '%Y' "$log_path" 2>/dev/null || true)"
-  fi
-  [[ "$log_epoch" =~ ^[0-9]+$ ]] || return 1
-  elapsed=$((log_epoch - started_epoch))
+  local elapsed
+  elapsed="$(log_written_seconds_after_start "$log_path" "$started_at")" || return 1
   (( elapsed >= 0 && elapsed <= 2 )) || return 1
 
   # `failed to resolve` and `op exit N` are op-fetch's two shapes for a
@@ -893,19 +890,45 @@ PY
     return 1
   fi
 
+  # Render guard: a failed or empty YAML render must not replace the state.
+  # Callers often run this where errexit is suspended, so refuse explicitly.
+  if ! yq -P '.' "$tmp_json" > "$tmp_yaml" || [[ ! -s "$tmp_yaml" ]]; then
+    log "state_apply_json: yq render of new state failed or was empty; ${state_yaml} left untouched"
+    rm -f "$cur_json" "$tmp_json" "$tmp_yaml"
+    return 1
+  fi
+
   # state.yaml is gitignored and the state branch cannot persist it, so this
   # rolling backup is its only recovery point. Snapshot the prior good copy
   # before replacing it.
   cp -p "$state_yaml" "${state_yaml}.bak" 2>/dev/null || true
 
-  yq -P '.' "$tmp_json" > "$tmp_yaml"
-  mv "$tmp_yaml" "$state_yaml"
+  if ! mv "$tmp_yaml" "$state_yaml"; then
+    log "state_apply_json: could not move the rendered state over ${state_yaml}"
+    rm -f "$cur_json" "$tmp_json" "$tmp_yaml"
+    return 1
+  fi
   if [[ "$lifecycle_changed" == changed ]]; then
     python3 "$script_dir/lib/lifecycle_events.py" state "$(dirname "$(dirname "$state_yaml")")" \
       "$cur_json" "$tmp_json" 2>/dev/null || true
   fi
   rm -f "$cur_json" "$tmp_json"
 }
+
+verifier_attempt_cap_for_stage() {
+  state_json "$1" | jq -er --arg id "$2" '
+    [.stages[] | select(.id == $id)]
+    | if length != 1 then error("stage not unique") else .[0] end
+    | if has("verifier_attempt_cap") then
+        .verifier_attempt_cap as $cap
+        | if ($cap | type) == "number" and $cap >= 1 and $cap <= 1000
+             and ($cap | floor) == $cap
+             and ((.verifier_attempt_cap_reason // "") | type) == "string"
+             and ((.verifier_attempt_cap_reason // "") | test("\\S"))
+          then $cap else error("invalid verifier attempt cap or missing approval reason") end
+      else 3 end'
+}
+
 
 # stage_snapshot_tokens: parse a worker/verifier log for its token count
 # and snapshot it onto the matching stage entry in state.yaml. Sets one of
@@ -940,12 +963,13 @@ role_started_epoch() {
 # park the loop and report success (0); otherwise report 1 and let the caller
 # treat the death normally.
 #
-# A refusal means the work was never attempted: the CLI printed one line and
-# exited clean, having burned no tokens. Counting that as a stage failure is
-# what turned an exhausted window into two stalled stages and a halted fleet
-# on 2026-08-16. So this records no failure, consumes no attempt, leaves the
+# A refusal is not a stage failure, even when the dispatch used tokens before
+# hitting the limit. The caller accounts that usage before clearing its PID.
+# Counting the refusal as a stage failure turned an exhausted window into two
+# stalled stages and a halted fleet on 2026-08-16. This records no failure,
+# consumes no attempt, leaves the
 # stage status and its run worktree exactly as they were, and only sets a
-# pause. The stage is re-dispatched untouched after the reset.
+# pause. The stage is re-dispatched after the reset.
 #
 # Backs off one hour when the refusal carries no parseable reset time.
 handle_limit_refusal() {
@@ -1093,12 +1117,19 @@ costlog_emit_worker() {
 # Emit one verifier cost-log line. Reads the verifier identity and
 # verifier_started_at from state.yaml; the caller supplies the result
 # (pass|fail from the artefact, or aborted when a verifier died without one).
+# An optional fifth argument names the transcript directory; an empty one
+# reads the verifier log alone.
 costlog_emit_verifier() {
   local repo_root="$1"
   local state_yaml="$2"
   local stage_id="$3"
   local result="$4"
-  local verifier_identity verifier_log started start_epoch now_epoch wall
+  local verifier_identity verifier_log started start_epoch now_epoch wall transcript_dir
+  if [[ $# -ge 5 ]]; then
+    transcript_dir="$5"
+  else
+    transcript_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  fi
   verifier_identity="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
     '.stages[] | select(.id == $id) | .verifier // empty')"
   [[ -n "$verifier_identity" ]] || return 0
@@ -1115,7 +1146,34 @@ costlog_emit_verifier() {
     start_epoch=0
   fi
   costlog_append "$repo_root" "$stage_id" verifier "$verifier_identity" "$verifier_log" "$wall" "$result" \
-    "$(worktree_path_for_stage "$repo_root" "$stage_id")" "$start_epoch" || true
+    "$transcript_dir" "$start_epoch" || true
+}
+
+# Receipts use the original state values, before a rewind or PID clear. They
+# remain stable on replay and differ for a fresh process on the same stage.
+account_interrupted_role() {
+  local repo_root="$1" state_yaml="$2" stage_id="$3" role="$4" result="$5"
+  local stage identity pid started start_field dispatch_id start_epoch wall=0
+  stage="$(state_json "$state_yaml" | jq -c --arg id "$stage_id" \
+    '.stages[] | select(.id == $id)')" || return 1
+  start_field=started_at
+  [[ "$role" != verifier ]] || start_field=verifier_started_at
+  identity="$(jq -r --arg role "$role" '.[$role] // empty' <<<"$stage")"
+  pid="$(jq -r --arg field "${role}_pid" '.[$field] // empty' <<<"$stage")"
+  started="$(jq -r --arg field "$start_field" '.[$field] // empty' <<<"$stage")"
+  if [[ -z "$pid" || -z "$started" || -z "$identity" ]]; then
+    log "cannot account interrupted ${stage_id}/${role}: missing PID, original start or identity"
+    return 1
+  fi
+  dispatch_id="${stage_id}:${role}:${pid}:${started}"
+  start_epoch="$(role_started_epoch "$state_yaml" "$stage_id" "$role")"
+  if (( start_epoch > 0 )); then
+    wall=$(( $(date -u +%s) - start_epoch ))
+    (( wall >= 0 )) || wall=0
+  fi
+  costlog_append "$repo_root" "$stage_id" "$role" "$identity" \
+    "$repo_root/state/logs/${stage_id}-${role}.log" "$wall" "$result" \
+    "$(worktree_path_for_stage "$repo_root" "$stage_id")" "$start_epoch" "$dispatch_id"
 }
 
 # Stage ids end up in jq filters, yq selectors, log paths, and on-disk
@@ -1226,6 +1284,20 @@ pipeline_claims_require_serial() {
       . == "scripts/lib" or startswith("scripts/lib/")
       or ($member == "tail" and . == "scripts/tick.sh"))
   ' >/dev/null
+}
+
+pipeline_stage_declares_serial() {
+  local repo_root="$1" state_yaml="$2" stage_id="$3" manifest_path="$4"
+  local dispatch card_path
+  dispatch="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+    '[.stages[] | select(.id == $id)][0].dispatch // empty')"
+  if [[ -n "$dispatch" ]]; then
+    [[ "$dispatch" == "serial" ]]
+    return
+  fi
+  # Historic rows did not retain dispatch metadata at admission.
+  card_path="$(stage_card_for_id "$repo_root" "$stage_id" "$manifest_path")"
+  [[ -n "$card_path" ]] && grep -Fxq -- '- **Dispatch:** serial' "$card_path"
 }
 
 pipeline_record_pairing_failure() {
@@ -1439,6 +1511,14 @@ pipeline_try_dispatch_tail() {
 
   # No claims means serial by default and, deliberately, no pairing log.
   [[ "$(jq 'length' <<<"$head_claims")" != "0" && "$(jq 'length' <<<"$tail_claims")" != "0" ]] || return 1
+  if pipeline_stage_declares_serial "$repo_root" "$state_yaml" "$head_stage" "$manifest_path"; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: head ${head_stage} declares serial dispatch"
+    return 1
+  fi
+  if pipeline_stage_declares_serial "$repo_root" "$state_yaml" "$tail_stage" "$manifest_path"; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: tail ${tail_stage} declares serial dispatch"
+    return 1
+  fi
   pipeline_pairing_disabled_refresh "$state_yaml" || true
   head_failures="$(state_json "$state_yaml" | jq -r --arg id "$head_stage" \
     '[.stages[] | select(.id == $id)][0].pairing_failures // 0')"
@@ -1687,23 +1767,35 @@ pipeline_prepare_tail_rebase() {
     return 1
   fi
 
-  local had_changes=false stash_sha="" rebase_rc=0
-  [[ -n "$tail_paths" ]] && had_changes=true
-  if [[ "$had_changes" == "true" ]]; then
-    git -C "$work_dir" stash push -u -m "autometta pipeline ${tail_stage}" -- \
-      . ':(exclude)state' >/dev/null 2>&1 || rebase_rc=$?
-    stash_sha="$(git -C "$work_dir" rev-parse -q --verify refs/stash 2>/dev/null || true)"
+  local tail_head saved_sha="" rebase_rc=0
+  tail_head="$(git -C "$work_dir" rev-parse -q --verify HEAD 2>/dev/null)" || rebase_rc=1
+  if (( rebase_rc == 0 )); then
+    git -C "$work_dir" add -A -- . ':(exclude)state' >/dev/null 2>&1 || rebase_rc=$?
   fi
   if (( rebase_rc == 0 )); then
-    git -C "$work_dir" reset --hard "$base_branch" >/dev/null 2>&1 || rebase_rc=$?
-  fi
-  if (( rebase_rc == 0 )) && [[ "$had_changes" == "true" ]]; then
-    git -C "$work_dir" stash pop --index >/dev/null 2>&1 || rebase_rc=$?
+    saved_sha="$(git -C "$work_dir" stash create "autometta pipeline ${tail_stage}" 2>/dev/null)" \
+      || rebase_rc=$?
   fi
   if (( rebase_rc != 0 )); then
-    git -C "$work_dir" reset --hard "$old_base" >/dev/null 2>&1 || true
-    if [[ -n "$stash_sha" ]]; then
-      git -C "$work_dir" stash apply --index "$stash_sha" >/dev/null 2>&1 || true
+    pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" \
+      "pipeline-rebase-conflict" "tail-rebase-failed"
+    return 1
+  fi
+
+  if [[ -n "$saved_sha" ]]; then
+    git -C "$work_dir" reset --hard HEAD >/dev/null 2>&1 || rebase_rc=$?
+  fi
+  if (( rebase_rc == 0 )); then
+    git -C "$work_dir" rebase "$base_branch" >/dev/null 2>&1 || rebase_rc=$?
+  fi
+  if (( rebase_rc == 0 )) && [[ -n "$saved_sha" ]]; then
+    git -C "$work_dir" stash apply --index "$saved_sha" >/dev/null 2>&1 || rebase_rc=$?
+  fi
+  if (( rebase_rc != 0 )); then
+    git -C "$work_dir" rebase --abort >/dev/null 2>&1 || true
+    git -C "$work_dir" reset --hard "$tail_head" >/dev/null 2>&1 || true
+    if [[ -n "$saved_sha" ]]; then
+      git -C "$work_dir" stash apply --index "$saved_sha" >/dev/null 2>&1 || true
     fi
     pipeline_escalate_tail "$repo_root" "$state_yaml" "$tail_stage" \
       "pipeline-rebase-conflict" "tail-rebase-failed"
@@ -1829,6 +1921,29 @@ state_branch_stage_normalized() {
   fi
 }
 
+# push_awaiting_run_branch <repo_root> <run_branch>: the only push the tick
+# makes. The estate's push policy lives in git-push-check, so the run branch
+# goes to origin only on its PUSH verdict; anything else, or a missing
+# helper, holds the push for a human. Prints `pushed`, or `held: <reason>`
+# and returns non-zero.
+push_awaiting_run_branch() {
+  local repo_root="$1" run_branch="$2" verdict
+  if ! command -v git-push-check >/dev/null 2>&1; then
+    printf 'held: git-push-check is not on PATH\n'
+    return 1
+  fi
+  verdict="$(cd "$repo_root" && git-push-check origin "$run_branch" 2>&1 | tail -n1 || true)"
+  if [[ "${verdict%%$'\t'*}" != PUSH ]]; then
+    printf 'held: git-push-check said %s\n' "${verdict:-nothing}"
+    return 1
+  fi
+  if ! (cd "$repo_root" && git push origin "$run_branch" >/dev/null 2>&1); then
+    printf 'held: verdict PUSH but git push origin %s failed\n' "$run_branch"
+    return 1
+  fi
+  printf 'pushed\n'
+}
+
 commit_state_branch() {
   local repo_root="$1"
   local index_file
@@ -1901,14 +2016,11 @@ commit_state_branch() {
     local -a commit_argv=( commit-tree "$tree" )
     [[ -n "$parent" ]] && commit_argv+=( -p "$parent" )
     commit_argv+=( -m "autometta: tick state update" -m "$body" )
-    # Author is the agent identity when the helper resolves it, per the
-    # global attribution rules; committer stays whatever git is configured
-    # with. A missing helper is not worth failing a tick over, so the
-    # snapshot falls back to the configured identity for both.
-    local ident
-    if ident="$(agent-whoami 2>/dev/null)" && [[ "$ident" =~ ^(.+)[[:space:]]\<(.+)\>$ ]]; then
-      export GIT_AUTHOR_NAME="${BASH_REMATCH[1]}" GIT_AUTHOR_EMAIL="${BASH_REMATCH[2]}"
-    fi
+    # The loop writes the snapshot, not a model, so it is authored as the
+    # loop. agent-whoami would name whichever family's config it falls
+    # through to (whoever launched the cron), a wrong but plausible author.
+    # The committer stays whatever git is configured with.
+    export GIT_AUTHOR_NAME="Phat Controller" GIT_AUTHOR_EMAIL="phat-controller@local"
     local commit
     commit="$(git "${commit_argv[@]}")"
     [[ -n "$commit" ]] || exit 1
@@ -2015,17 +2127,70 @@ worktree_dir_for_branch() {
   return 0
 }
 
+# run_worktree_holds_unpinned_work: return 0, after logging why, when
+# removing this stage's run worktree and run branch would lose work. Removal
+# is `git worktree remove --force`, `rm -rf` and `git branch -D`, so a stage
+# rewound with its tree still dirty would lose the whole attempt at
+# re-dispatch, as promo-flow stage 35 did on 2026-10-22. Uncommitted work is pinned on a wip
+# ref first; anything that cannot be pinned keeps the worktree standing.
+# Log output goes to stderr: the caller's stdout carries only the path.
+run_worktree_holds_unpinned_work() {
+  local repo_root="$1" stage_id="$2" base_branch="$3"
+  local run_branch work_dir status unpinned
+  run_branch="$(run_branch_for_stage "$stage_id")"
+  work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  if [[ -d "$work_dir" ]]; then
+    if [[ -e "$work_dir/state" && ! -L "$work_dir/state" ]]; then
+      log "ensure_run_worktree: ${work_dir}/state is a real directory, not the shared state link; left standing for ${stage_id}"
+      return 0
+    fi
+    if ! status="$(git -C "$work_dir" status --porcelain -- . ':(exclude)state' 2>/dev/null)"; then
+      log "ensure_run_worktree: cannot read git status in ${work_dir}; left standing for ${stage_id}"
+      return 0
+    fi
+    if [[ -n "$status" ]] \
+       && ! preserve_failed_work "$repo_root" "$repo_root/state/state.yaml" "$stage_id" "" \
+              "unpreserved work found at re-dispatch" "re-dispatch" >&2; then
+      log "ensure_run_worktree: uncommitted work in ${work_dir} could not be pinned; left standing for ${stage_id}"
+      return 0
+    fi
+  fi
+  if git -C "$repo_root" rev-parse --verify --quiet "refs/heads/${run_branch}" >/dev/null 2>&1; then
+    local -a keep=()
+    local ref
+    while IFS= read -r ref; do
+      [[ -n "$ref" ]] && keep+=("^$ref")
+    done < <(git -C "$repo_root" for-each-ref --format='%(refname)' "refs/heads/wip/${stage_id}-attempt-*" 2>/dev/null)
+    if ! unpinned="$(git -C "$repo_root" rev-list --count "refs/heads/${run_branch}" \
+                       "^${base_branch}" ${keep[@]+"${keep[@]}"} 2>/dev/null)"; then
+      log "ensure_run_worktree: cannot tell whether ${run_branch} holds commits outside ${base_branch}; left standing for ${stage_id}"
+      return 0
+    fi
+    if [[ "$unpinned" != 0 ]]; then
+      log "ensure_run_worktree: ${run_branch} holds ${unpinned} commit(s) reachable from neither ${base_branch} nor a wip/${stage_id}-attempt-* ref; left standing for ${stage_id}"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 # ensure_run_worktree: remove any worktree/branch left standing by a prior
 # attempt at this stage, cut a fresh one from base_branch, and link its
 # state/ to the shared repo_root/state/ (state.yaml, budget.json, logs,
 # handoffs, verifier artefacts all stay centralised; only code deliverables
 # live in the worktree). Prints the worktree path on success, prints
 # nothing and returns non-zero on failure.
+#
+# It refuses, removing nothing, when the prior attempt left work it cannot
+# pin first (see run_worktree_holds_unpinned_work).
 ensure_run_worktree() {
   local repo_root="$1" stage_id="$2" base_branch="$3"
   local run_branch work_dir
   run_branch="$(run_branch_for_stage "$stage_id")"
   work_dir="$(worktree_path_for_stage "$repo_root" "$stage_id")"
+  if run_worktree_holds_unpinned_work "$repo_root" "$stage_id" "$base_branch"; then
+    return 1
+  fi
   remove_run_worktree "$repo_root" "$stage_id"
   (
     cd "$repo_root"
@@ -2218,6 +2383,16 @@ force_add_card_deliverables() {
   done < <(card_deliverable_paths "$card_path")
 }
 
+# The hooks directory the operator's checkout runs, as an absolute path. Git
+# resolves a relative core.hooksPath (husky's .husky/_, a tracked .githooks)
+# inside whichever worktree it runs in, so pinning core.hooksPath to this keeps
+# a tick-side git command in a run worktree off hooks the worker could have
+# edited there. An unset or absolute core.hooksPath resolves as git would.
+operator_hooks_path() {
+  local repo_root="$1"
+  git -C "$repo_root" rev-parse --path-format=absolute --git-path hooks 2>/dev/null
+}
+
 # Preserve a verifier-FAILed attempt before the stage is released. The worker
 # diff is committed on the run branch and pinned on a per-attempt wip branch,
 # so requeue can remove the ephemeral run branch without orphaning useful work.
@@ -2232,6 +2407,10 @@ force_add_card_deliverables() {
 # a verifier FAIL would be untrue. scripts/phat-controller.sh passes
 # ("worker_envelope_missing_after_exit", "stalled"). The index-safe git
 # surgery below is the part that must not be duplicated.
+#
+# Every git command here runs with core.hooksPath pinned to the operator's
+# hooks directory (operator_hooks_path), so a worker that edits a tracked
+# relative hooks directory in its worktree cannot get the tick to run it.
 preserve_failed_work() {
   local repo_root="$1" state_yaml="$2" stage_id="$3" artefact_abs="$4"
   local reason_override="${5:-}" reason_label="${6:-verifier FAIL}"
@@ -2252,6 +2431,17 @@ preserve_failed_work() {
     log "stage ${stage_id} ${reason_label}: no run worktree to preserve; left standing as before"
     return 1
   fi
+  local operator_hooks config_index
+  operator_hooks="$(operator_hooks_path "$repo_root")" || operator_hooks=""
+  if [[ -z "$operator_hooks" ]]; then
+    log "stage ${stage_id} ${reason_label}: cannot resolve the operator's git hooks directory; preservation skipped and worktree left standing"
+    return 1
+  fi
+  config_index="${GIT_CONFIG_COUNT:-0}"
+  [[ "$config_index" =~ ^[0-9]+$ ]] || config_index=0
+  local -x GIT_CONFIG_COUNT=$((config_index + 1))
+  local -x "GIT_CONFIG_KEY_${config_index}=core.hooksPath"
+  local -x "GIT_CONFIG_VALUE_${config_index}=${operator_hooks}"
   if [[ "$(git -C "$work_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)" != "$run_branch" ]]; then
     log "stage ${stage_id} ${reason_label}: ${work_dir} is not on ${run_branch}; preservation skipped and worktree left standing"
     return 1
@@ -2991,11 +3181,12 @@ _process_verifier_artefact() {
           rebased:*) push_note="stage ${stage_id}: rebased ${run_branch} could not fast-forward ${base_branch}; ${run_branch} left standing" ;;
           *) push_note="stage ${stage_id}: ${base_branch} moved since dispatch; ${run_branch} left standing" ;;
         esac
-        if (cd "$repo_root" && git push origin "$run_branch" >/dev/null 2>&1); then
+        local push_result
+        if push_result="$(push_awaiting_run_branch "$repo_root" "$run_branch")"; then
           pushed=true
           push_note="${push_note}, pushed to origin/${run_branch} for manual integration"
         else
-          push_note="${push_note}; push to origin also failed, integrate locally"
+          push_note="${push_note}; push held (${push_result#held: }), integrate locally"
         fi
         record_stage_integration "$state_yaml" "$stage_id" \
           "$(integration_record awaiting "$base_branch" "$run_branch" "$run_tip" "$pushed")"
@@ -3018,6 +3209,30 @@ _process_verifier_artefact() {
   log "stage ${stage_id} PASS: committed worker output as ${commit_sha:-unknown} with --author=${worker_identity}"
 }
 
+# Record when the harness first saw this dispatch's verifier finish. The report's
+# own ran_at is model-authored and can precede the file by minutes, so
+# freshness and chronology use this observation instead. The receipt names the
+# dispatch (attempt and start) and the report it was taken from; a replay of
+# the same dispatch keeps its first receipt untouched, even if the report bytes
+# are replaced afterwards (the reader then rejects the mismatched digest); only a
+# new dispatch records its own first receipt.
+stamp_verifier_completion() {
+  local repo_root="$1" state_yaml="$2" stage_id="$3" artefact="$4"
+  local reported_at digest
+  reported_at="$(jq -r '.ran_at // empty' "$repo_root/$artefact" 2>/dev/null || true)"
+  digest="$(shasum -a 256 < "$repo_root/$artefact" 2>/dev/null | awk '{print $1}')"
+  state_apply_json "$state_yaml" \
+    '(.stages[] | select(.id == $id)) |= (
+       ((.verifier_attempts // 0 | tostring) + ":" + (.verifier_started_at // "")) as $dispatch
+       | if (.verifier_completed_at // "") != "" and .verifier_completed_receipt.dispatch == $dispatch
+         then .
+         else .verifier_completed_at = $now
+              | .verifier_completed_receipt = {dispatch: $dispatch, artefact: $artefact, reported_at: ($reported // null), sha256: $digest}
+         end)' \
+    --arg id "$stage_id" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg artefact "$artefact" --arg reported "$reported_at" --arg digest "$digest" || true
+}
+
 # Consume one completed verifier artefact using the same accounting and
 # pipeline-resolution sequence whether it is the displayed current stage or
 # an in-progress stage found by the verdict backstop.
@@ -3026,12 +3241,19 @@ consume_verifier_artefact() {
   local verifier_log_path verifier_work_dir_acct verifier_start_epoch
   local verifier_identity_acct verifier_family_acct verifier_overall verifier_result
 
+  stamp_verifier_completion "$repo_root" "$state_yaml" "$stage_id" "$artefact"
+
   verifier_log_path="$repo_root/state/logs/${stage_id}-verifier.log"
   verifier_work_dir_acct="$(worktree_path_for_stage "$repo_root" "$stage_id")"
   verifier_start_epoch="$(role_started_epoch "$state_yaml" "$stage_id" verifier)"
   verifier_identity_acct="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
     '.stages[] | select(.id == $id) | .verifier // empty')"
   verifier_family_acct="$(costlog_family_for_identity "$verifier_identity_acct")"
+  # A panel's synthesis log carries the sum of its three panellists. Any one
+  # panellist's transcript in the run worktree would be charged alone.
+  if jq -e 'has("panellists")' "$repo_root/$artefact" >/dev/null 2>&1; then
+    verifier_work_dir_acct=""
+  fi
   budget_account_tokens_from_dispatch "$repo_root" "$verifier_log_path" "verifier" \
     "$verifier_work_dir_acct" "$verifier_start_epoch" "$verifier_family_acct" || true
   stage_snapshot_tokens "$repo_root" "$state_yaml" "$stage_id" "$verifier_log_path" "verifier" \
@@ -3041,7 +3263,7 @@ consume_verifier_artefact() {
     PASS) verifier_result="pass" ;;
     *)    verifier_result="fail" ;;
   esac
-  costlog_emit_verifier "$repo_root" "$state_yaml" "$stage_id" "$verifier_result"
+  costlog_emit_verifier "$repo_root" "$state_yaml" "$stage_id" "$verifier_result" "$verifier_work_dir_acct"
   _process_verifier_artefact "$repo_root" "$state_yaml" "$stage_id" "$artefact" "$manifest_path"
 
   local pair_head pair_tail
@@ -3174,8 +3396,16 @@ process_repo() {
   warn_if_vendor_stale "$repo_root" || true
   profile_lap "$profile_repo" "vendor-stale"
 
-  local rc=0
-  _process_repo_locked "$repo_root" "$manifest_path" || rc=$?
+  # Never `_process_repo_locked ... || rc=$?`: bash suspends errexit for a
+  # function called in a condition, all the way down through every subshell
+  # it starts, so a failing step would carry on to dispatch. The subshell
+  # keeps errexit live inside and confines its exit to this repo's fire.
+  local rc=0 caller_errexit=false
+  [[ "$-" != *e* ]] || caller_errexit=true
+  set +e
+  ( set -e; _process_repo_locked "$repo_root" "$manifest_path" )
+  rc=$?
+  [[ "$caller_errexit" != true ]] || set -e
   profile_lap "$profile_repo" "dispatch"
 
   escalations_scan "$repo_root" || true
@@ -3239,9 +3469,19 @@ warn_if_vendor_stale() {
 # Best-effort: walk the per-agent liveness registry and surface stalls /
 # overruns into state/heartbeat.json. Never fatal; the heartbeat itself
 # is a watchdog, not a gate.
+#
+# The build check is controller-wide, so one fire computes it once. Each
+# subscriber runs in its own subshell (see main), where a variable set here
+# would not outlive the subscriber, so main names a file the first
+# subscriber's result is shared through.
 heartbeat_build_check_json=""
+heartbeat_build_check_share=""
 refresh_heartbeat_build_check() {
   [[ -n "$heartbeat_build_check_json" ]] && return 0
+  if [[ -n "$heartbeat_build_check_share" && -s "$heartbeat_build_check_share" ]]; then
+    heartbeat_build_check_json="$(cat "$heartbeat_build_check_share" 2>/dev/null || true)"
+    [[ -n "$heartbeat_build_check_json" ]] && return 0
+  fi
   heartbeat_build_check_json="$("$script_dir/heartbeat.sh" --build-check-json 2>/dev/null || true)"
   if ! printf '%s' "$heartbeat_build_check_json" | jq -e '
     (.status == "current" or .status == "stale" or .status == "unreadable") and
@@ -3251,6 +3491,9 @@ refresh_heartbeat_build_check() {
     (.checked_at | type == "string")' >/dev/null 2>&1; then
     heartbeat_build_check_json="$(jq -nc --arg checked_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
       '{status:"unreadable",stale:false,installed_sha:null,checkout_sha:null,checked_at:$checked_at}')"
+  fi
+  if [[ -n "$heartbeat_build_check_share" ]]; then
+    printf '%s\n' "$heartbeat_build_check_json" > "$heartbeat_build_check_share" 2>/dev/null || true
   fi
 }
 
@@ -3436,6 +3679,16 @@ _process_repo_locked() {
   local state_yaml="$repo_root/state/state.yaml"
 
   if ! ensure_yq_or_halt "$repo_root"; then
+    return 1
+  fi
+
+  # Budget-integrity guard: never dispatch against a budget that cannot be
+  # read. A missing, empty or corrupt budget.json reads as "no cap hit" to
+  # every jq comparison, so it would otherwise lift every cap at once. The
+  # file is left exactly as found (not repaired, moved or recreated) and
+  # this repo sits out every fire until the operator restores it.
+  if ! budget_readable "$repo_root"; then
+    log "budget-integrity: $(budget_file "$repo_root") is missing, empty or not a JSON object; dispatch refused (manual recovery required)"
     return 1
   fi
 
@@ -3756,25 +4009,64 @@ _process_repo_locked() {
           return 0
         fi
 
-        # Provider refusal: the worker exited immediately without attempting
-        # the stage. Rewind it to pending so the next unpaused tick dispatches
-        # it fresh, rather than counting a failure for work never done. The
-        # run worktree is left standing to be reused.
+        # Provider refusal: the worker exited without a dispatch envelope and
+        # its log matches a provider limit message. Rewind it to pending so
+        # the next unpaused tick dispatches it fresh, rather than counting a
+        # failure for work never done. The run worktree is not reused: the
+        # next dispatch re-cuts it from the base branch.
+        #
+        # Only an exit whose log was last written within
+        # USAGE_LIMIT_INSTANT_SECONDS of started_at is a refusal that never
+        # started, rewound untouched and uncounted. The pattern is broad, so a
+        # later match may be the worker's own output (promo-flow stage 35,
+        # 2026-10-22, lost 72 minutes of work that way). Its work is pinned
+        # on a wip ref before the rewind, at most USAGE_LIMIT_MAX_REWINDS
+        # times per stage; after that, or if the work cannot be pinned, the
+        # exit takes the ordinary missing-envelope path below.
         #
         # Gated on the absence of a dispatch envelope. A worker that finished
         # its stage has written one, and a stage whose subject matter is rate
         # limiting would otherwise match the refusal pattern from its own
         # output, get rewound, and loop forever losing completed work.
         if [[ ! -f "$expected_worker_envelope" ]] \
-           && handle_limit_refusal "$repo_root" "$current_stage" worker "$worker_log_path"; then
-          state_apply_json "$state_yaml" \
-            '(.stages[] | select(.id == $id)).status = "pending"
-             | (.stages[] | select(.id == $id)).worker_pid = null
-             | (.stages[] | select(.id == $id)).started_at = null
-             | .current_stage = null' \
-            --arg id "$current_stage"
-          commit_state_branch "$repo_root"
-          return 0
+           && usage_limit_hit "$worker_log_path" >/dev/null; then
+          local limit_elapsed limit_when limit_rewinds=0 limit_rewind=false limit_preserved=false
+          limit_elapsed="$(log_written_seconds_after_start "$worker_log_path" "$started_at")" \
+            || limit_elapsed=""
+          limit_when="${limit_elapsed:+${limit_elapsed}s}"
+          limit_when="${limit_when:-an unknown time} after dispatch"
+          if [[ "$limit_elapsed" =~ ^-?[0-9]+$ ]] \
+             && (( limit_elapsed >= 0 && limit_elapsed <= USAGE_LIMIT_INSTANT_SECONDS )); then
+            limit_rewind=true
+          else
+            limit_rewinds="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
+              '.stages[] | select(.id == $id) | .limit_rewinds // 0')"
+            [[ "$limit_rewinds" =~ ^[0-9]+$ ]] || limit_rewinds="$USAGE_LIMIT_MAX_REWINDS"
+            if (( limit_rewinds >= USAGE_LIMIT_MAX_REWINDS )); then
+              log "stage ${current_stage} worker matched a provider limit ${limit_when}, but ${limit_rewinds} limit rewinds is the bound (USAGE_LIMIT_MAX_REWINDS); not rewound"
+            elif ! preserve_failed_work "$repo_root" "$state_yaml" "$current_stage" "" \
+                   "provider limit message ${limit_when}, no dispatch envelope" \
+                   "provider limit"; then
+              log "stage ${current_stage} worker matched a provider limit ${limit_when}, but its work could not be pinned; not rewound"
+            else
+              limit_preserved=true
+              limit_rewind=true
+            fi
+          fi
+          if [[ "$limit_rewind" == true ]]; then
+            account_interrupted_role "$repo_root" "$state_yaml" "$current_stage" worker refused || return 1
+            handle_limit_refusal "$repo_root" "$current_stage" worker "$worker_log_path" || return 1
+            state_apply_json "$state_yaml" \
+              '(.stages[] | select(.id == $id)).status = "pending"
+               | (.stages[] | select(.id == $id)).worker_pid = null
+               | (.stages[] | select(.id == $id)).started_at = null
+               | if $preserved then (.stages[] | select(.id == $id)).limit_rewinds = $n else . end
+               | .current_stage = null' \
+              --arg id "$current_stage" --argjson preserved "$limit_preserved" \
+              --argjson n "$((limit_rewinds + 1))"
+            commit_state_branch "$repo_root"
+            return 0
+          fi
         fi
 
         if [[ ! -f "$expected_worker_envelope" ]] \
@@ -3975,7 +4267,9 @@ _process_repo_locked() {
         # the next unpaused tick re-dispatches it, but do not consume one of
         # its three attempts and do not record a failure. The worker's output
         # is untouched and still waiting to be verified.
-        if handle_limit_refusal "$repo_root" "$current_stage" verifier "$stale_verifier_log_path"; then
+        if usage_limit_hit "$stale_verifier_log_path" >/dev/null; then
+          account_interrupted_role "$repo_root" "$state_yaml" "$current_stage" verifier refused || return 1
+          handle_limit_refusal "$repo_root" "$current_stage" verifier "$stale_verifier_log_path" || return 1
           state_apply_json "$state_yaml" \
             '(.stages[] | select(.id == $id)).verifier_pid = null' \
             --arg id "$current_stage"
@@ -4002,14 +4296,10 @@ _process_repo_locked() {
         stale_verifier_identity_acct="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" \
           '.stages[] | select(.id == $id) | .verifier // empty')"
         stale_verifier_family_acct="$(costlog_family_for_identity "$stale_verifier_identity_acct")"
-        budget_account_tokens_from_dispatch "$repo_root" "$stale_verifier_log_path" "verifier" \
-          "$stale_work_dir_acct" "$stale_start_epoch" "$stale_verifier_family_acct" || true
+        account_interrupted_role "$repo_root" "$state_yaml" "$current_stage" verifier aborted || return 1
         # Per-stage snapshot (stage 11).
         stage_snapshot_tokens "$repo_root" "$state_yaml" "$current_stage" "$stale_verifier_log_path" "verifier" \
           "$stale_work_dir_acct" "$stale_start_epoch" "$stale_verifier_family_acct"
-        # Cost-log: a verifier died without an artefact. Record its spend
-        # against this stage with result=aborted before we re-dispatch.
-        costlog_emit_verifier "$repo_root" "$state_yaml" "$current_stage" "aborted"
         state_apply_json "$state_yaml" \
           '(.stages[] | select(.id == $id)).verifier_pid = null' \
           --arg id "$current_stage"
@@ -4021,6 +4311,10 @@ _process_repo_locked() {
       # attempts and stall the stage when the cap is reached so a human can
       # look at it.
       local verifier_attempts verifier_attempt_cap=3
+      if ! verifier_attempt_cap="$(verifier_attempt_cap_for_stage "$state_yaml" "$current_stage")"; then
+        log "invalid verifier attempt cap for ${current_stage}; no dispatch"
+        return 1
+      fi
       verifier_attempts="$(state_json "$state_yaml" | jq -r --arg id "$current_stage" '.stages[] | select(.id == $id) | .verifier_attempts // 0')"
       if (( verifier_attempts >= verifier_attempt_cap )); then
         log "verifier attempt cap (${verifier_attempt_cap}) reached for ${current_stage} without artefact, marking stalled"
@@ -4072,7 +4366,9 @@ _process_repo_locked() {
       # can estimate verifier wall-clock when the artefact lands next tick.
       state_apply_json "$state_yaml" \
         '(.stages[] | select(.id == $id)).verifier_attempts = ((.stages[] | select(.id == $id) | .verifier_attempts // 0) + 1)
-         | (.stages[] | select(.id == $id)).verifier_started_at = $now' \
+         | (.stages[] | select(.id == $id)).verifier_started_at = $now
+         | (.stages[] | select(.id == $id)).verifier_completed_at = null
+         | (.stages[] | select(.id == $id)).verifier_completed_receipt = null' \
         --arg id "$current_stage" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       local verifier_work_dir
       verifier_work_dir="$(worktree_path_for_stage "$repo_root" "$current_stage")"
@@ -4155,6 +4451,12 @@ main() {
   # Failure becomes explicit unknown data and never blocks the queue.
   quota_refresh_tick || true
   quota_log_tick_readings
+  local clearance
+  if clearance="$(python3 "$script_dir/quota-window.py" observe-claude-reset <<<"$AUTOMETTA_QUOTA_TICK_JSON")"; then
+    [[ -z "$clearance" ]] || log "$clearance"
+  else
+    log "could not record the Claude five-hour window observation"
+  fi
   profile_lap "global" "quota"
 
   sweep_controller_log_retention
@@ -4169,6 +4471,8 @@ main() {
   local subscriber_list
   subscriber_list="$(sort_subscribers)"
   profile_lap "global" "subscriber-sort"
+
+  heartbeat_build_check_share="$(mktemp "${TMPDIR:-/tmp}/autometta-build-check.XXXXXX" 2>/dev/null || true)"
 
   local subscriber_file
   while IFS= read -r subscriber_file; do
@@ -4185,8 +4489,22 @@ main() {
       log "invalid repo_path in ${subscriber_file}"
       continue
     fi
-    process_repo "$repo_path" "$manifest_path"
+    # One subscriber's failure must not end the fleet fire, and process_repo
+    # must not run in a condition (see process_repo), so it runs in a
+    # subshell with errexit live. The subshell's profile laps do not reach
+    # this shell, so the clock is re-marked after it.
+    local repo_rc
+    set +e
+    ( set -e; process_repo "$repo_path" "$manifest_path" )
+    repo_rc=$?
+    set -e
+    profile_reset
+    if (( repo_rc != 0 )); then
+      log "subscriber ${repo_path} fire ended with rc=${repo_rc}; continuing with the next subscriber"
+    fi
   done <<< "$subscriber_list"
+  [[ -z "$heartbeat_build_check_share" ]] || rm -f "$heartbeat_build_check_share"
+  heartbeat_build_check_share=""
 
   if [[ -f "$controller_home/wakeups/state.json" ]]; then
     python3 "$script_dir/lib/wakeups.py" flush </dev/null 2>/dev/null || true

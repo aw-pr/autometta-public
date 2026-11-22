@@ -24,8 +24,11 @@ Use the `autometta-escalations` skill:
 - Work each escalation: read it, classify it, decide with the operator, act
   through `autometta-oracle`, `autometta-requeue` or `autometta-card-review`,
   then `ack` it.
+- Record what the harness cost you with `autometta-learning-log`.
 
 The verbs in `scripts/phat-controller.sh` (`picture`, `preserve`, `rebrief`,
 `requeue` and the rest) remain, with their guards, as tools an escalation
 playbook step calls. They are not a standing role: nothing here authorises a
-headless pass.
+headless pass. An operator who wants a run attended while they are away asks
+their interactive chat for it with the `yolo` skill, which bounds what that
+chat may decide alone.

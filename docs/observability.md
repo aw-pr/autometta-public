@@ -47,6 +47,8 @@ Print the current controller status:
 autometta status
 ```
 
+To summarise a run at its finish or halt boundary, `scripts/run-summary.sh REPO RUN_ID finished|halted` prints one JSON summary to stdout and writes nothing (see `docs/tick-loop.md`, "Portable run summary").
+
 ### First-attempt history
 
 `scripts/first-attempt-history.sh <repo>` and `autometta first-attempts <repo>`
@@ -309,8 +311,13 @@ For Codex, the same reader may inspect local rollout JSONL because that source
 is not rate limited. It uses the newest local `rate_limits` event and exposes
 the same window shape. An absent, malformed or stale Claude snapshot, or
 missing Codex rollout evidence, is `unknown` with a reason. Unknown is not zero
-utilisation: it is logged, displayed legibly and always fails open, so it costs
-the tick no dispatch and does not pause the queue.
+utilisation: it is logged and displayed legibly. Under a hold reserve, a stale
+or malformed Claude snapshot or a failed reader holds that card for the tick
+without pausing the queue; an absent snapshot (no exporter) admits. Unknown
+Codex evidence holds new Codex cards under the default admission gate and
+admits only under the legacy reserve policy. An observed Claude session reset
+is published once as a fleet-wide notice (see
+[Lifecycle notices](./tick-loop.md#lifecycle-notices)).
 
 ## Per-agent liveness registry
 

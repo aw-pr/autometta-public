@@ -49,6 +49,11 @@ Archive the failed envelope, verifier artefact and logs under a numbered
 the existing preserve verb. Use `--keep-budget` for standing-policy retries,
 so halt/failure/spend gates are not cleared. Never blindly retry worker FAIL.
 
+If the failure, death or halt behind this requeue was the harness's doing,
+or the verifier artefact carries a `HARNESS:` line, record it with
+`autometta-learning-log` after archiving and before running the script: the
+purge removes the live artefact the proposal should cite.
+
 ## Procedure
 
 Run the mechanical script; it enforces both rules:

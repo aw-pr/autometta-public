@@ -35,6 +35,8 @@ filter and retitles itself, and nothing else differs.
 
 ## Reading the page
 
+The page and the browser tab are titled "Autometta Dashboard"; on a page scoped to one repo the scope is appended, as "Autometta Dashboard - <scope>".
+
 The header carries two controls. The repo filter narrows every panel, total and
 chart to the repos ticked; it is drawn only on the fleet page. The range control
 (24h/7d/30d/all) slices the token charts by stage date, and is remembered per
@@ -527,6 +529,7 @@ current rate, not a historical invoice, speed-adjusted debit or conversion to
 included allowance. Other complete rows show the cost log's estimated API
 cost, whose cache-write premiums may be excluded. Neither measure proves a
 subscription charge. Unknown models do not inherit another model's credit rate.
+GPT-6.2 Astra and GPT-6.2 Sol have no credit row, so their rows show the estimated API cost and no credit equivalent.
 
 Subscription allowance shows provider-reported used and remaining percentages,
 reset times and reading age. These are shared account readings observed in each

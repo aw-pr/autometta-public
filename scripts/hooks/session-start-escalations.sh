@@ -87,9 +87,12 @@ main() {
     scope=" for $(basename "$repo_physical")"
   fi
 
-  if [[ "${1:-}" == --repos ]]; then
+  if [[ "${1:-}" == --repos || "${1:-}" == --lifecycle-repos ]]; then
     if [[ -n "$repo_physical" ]]; then
       printf '%s\n' "$repo_physical"
+    elif [[ "${1:-}" == --lifecycle-repos ]] && \
+      repo_physical="$(git -C "${CLAUDE_PROJECT_DIR:-$PWD}" rev-parse --show-toplevel)"; then
+      physical_dir "$repo_physical" || true
     else
       while IFS= read -r file; do
         [[ "$(read_subscriber_field "$file" enabled)" == true ]] || continue

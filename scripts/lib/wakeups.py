@@ -15,7 +15,7 @@ import tempfile
 import time
 import uuid
 
-from lifecycle_events import home, records
+from lifecycle_events import QUOTA_CLEARED, fleet_broadcast, home, records
 from session_context import codex_socket, interactive
 
 
@@ -32,7 +32,7 @@ MAX_ROWS = 8
 MAX_MESSAGE = 3500
 KINDS = {"worker_started", "worker_finished", "verifier_started", "verifier_finished",
          "stage_landed", "stage_awaiting_integration", "stage_finished",
-         "stage_blocked", "run_finished", "run_blocked"}
+         "stage_blocked", "run_finished", "run_blocked", QUOTA_CLEARED}
 
 
 def directory():
@@ -185,7 +185,7 @@ def message(batch_id, events):
         if not history or history[-1] != label:
             history.append(label)
     priority = {"run_blocked": 0, "stage_blocked": 1, "stage_awaiting_integration": 2,
-                "run_finished": 3, "stage_landed": 4, "stage_finished": 4,
+                QUOTA_CLEARED: 2, "run_finished": 3, "stage_landed": 4, "stage_finished": 4,
                 "verifier_finished": 5, "worker_finished": 6, "worker_started": 7, "verifier_started": 7}
     rows = sorted(latest.values(), key=lambda row: (priority.get(row["kind"], 6), -timestamp(row)))
     lines = [f"{PREFIX}{batch_id}] Autometta lifecycle update.",
@@ -235,13 +235,21 @@ def dispatch(state, events, now):
             if record["kind"] not in KINDS or not 0 <= now - created <= MAX_AGE:
                 continue
             scope = record["repo"] if record["repo"] in owners else "fleet"
-            owner = owners.get(scope)
-            if not owner or created <= owner["registered_at"] or record["id"] in owner["seen"]:
-                continue
-            grouped.setdefault(scope, []).append(record)
+            scopes = owners if fleet_broadcast(record) else (scope,)
+            for scope in scopes:
+                owner = owners.get(scope)
+                if owner and created > owner["registered_at"] and record["id"] not in owner["seen"]:
+                    grouped.setdefault(scope, []).append(record)
         except (KeyError, TypeError, ValueError):
             continue
-    for scope, owner in owners.items():
+    # Fixed registration order lets a busy owner consume every global slot.
+    last_sent_by_chat = {}
+    for owner in owners.values():
+        chat = (owner["family"], owner["session"])
+        last_sent_by_chat[chat] = max(last_sent_by_chat.get(chat, 0), owner["last_sent"])
+    ordered = sorted(owners.items(), key=lambda item:
+                     last_sent_by_chat[(item[1]["family"], item[1]["session"])])
+    for scope, owner in ordered:
         owner["seen"] = {key: seen_at for key, seen_at in owner["seen"].items() if now - seen_at <= MAX_AGE}
         events = grouped.get(scope, [])
         same_chat = [o for o in owners.values()
@@ -268,6 +276,9 @@ def dispatch(state, events, now):
                                 created_at=now, message=text)
         owner["last_sent"] = now
         owner["seen"].update({event["id"]: now for event in selected})
+        broadcasts = {event["id"]: now for event in selected if fleet_broadcast(event)}
+        for other in same_chat:
+            other["seen"].update(broadcasts)
         attempts.append(dict(at=now, scope=scope, session=owner["session"], batch=batch_id,
                              cards=sorted({card_key(event) for event in selected})))
         # Reserve before either native side effect. An ambiguous failure must

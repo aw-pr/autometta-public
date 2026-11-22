@@ -112,8 +112,9 @@ drain.
 ## 5. Spend plan
 
 Estimate the batch from `state/cost-log.jsonl` (median per role, and the
-p95 for the headroom rule). Size the drain as the estimate plus one
-outlier, and set its expiry **inside** the current UTC window: a drain that
+p95 for the headroom rule). If the operator authorises a drain, size its
+total cap to cover recorded window spend plus the estimate and one outlier,
+and set its expiry **inside** the current UTC window: a drain that
 spans the boundary converts the self-healing daily reset into a 24-hour
 halt (run-lessons entry, 2026-08-25 morning). A re-brief is not a discount;
 budget attempt 2 at attempt 1's scale unless the re-brief only corrects
@@ -128,6 +129,29 @@ useful preflight that makes one bounded attempt actionable. Preserve independent
 verification and final acceptance instead of paying for a full implementation
 in a preparation session. Explain material differences between dashboard
 predictions and historical estimates before using them for the cost comparison.
+
+Before queue review, run `scripts/readiness-headroom.sh REPO CARD BATCH RETRY`
+for each card against the same batch and retry estimates. CARD estimates one
+worker/verifier attempt. BATCH includes CARD and all planned first attempts;
+RETRY is additional estimated retry demand, not a replacement for BATCH.
+Use nonnegative integer tokens with the same accounting basis as recorded
+window spend in `state/budget.json`. Estimates and retry allowance are planning
+inputs; recorded spend is observed usage, not another estimate.
+
+Report the effective cap, recorded spend, remaining headroom and card, batch
+and batch-plus-retry shortfalls to the operator before queue review. The helper
+resolves an active scoped drain, repo cap, host default and floor in that order,
+without changing any of them, even for an expired drain. Unknown spend or invalid
+inputs exit nonzero and leave readiness unresolved. A valid shortfall exits zero
+as information; it does not authorise dispatch or raising caps. Only the operator
+can authorise cap changes or opening a drain; otherwise reduce the proposed plan.
+
+Worked example: with a 650,000-token cap and 100,000 recorded tokens spent,
+`scripts/readiness-headroom.sh REPO 700000 900000 400000` compares a 700,000
+card estimate, a 900,000 batch estimate including that card and a 400,000 retry
+allowance against 550,000 headroom. Report shortfalls of 150,000 for the card,
+350,000 for the batch and 750,000 for the batch plus retries before queue review.
+The report leaves the cap and recorded spend untouched.
 
 ## Recovery planning
 
@@ -144,3 +168,7 @@ Queue the cards with `add-stage.sh` in gate order, confirm the ticker's
 NEXT section shows the intended order, and hand the queue to the tick and
 the operator's escalation chat. The design session's remaining job is feedback, re-briefs
 and landing-boundary commits, not driving dispatches by hand.
+
+Where the harness got in the way of the design (a gate it cannot express, a
+spend basis the caps cannot hold, a pairing a script refuses), record it with
+`autometta-learning-log` before handing over.

@@ -607,3 +607,44 @@ only when the workload is known to emit regular activity. API outages write `api
 transcript and are judged by the api-error rule, not this one. A system wake
 later than the last write restarts the count, so a sleeping Mac is not
 mistaken for a hung agent. `scripts/silence-kill-smoke.sh` covers it.
+
+## Headless gotcha 23: a limit match mid-run rewound the stage and lost the work
+
+On 2026-10-22 promo-flow stage `35-concept-surface-production` dispatched a
+codex worker at 21:44:45Z. It worked for 72 minutes and exited at 22:56:55Z
+without a dispatch envelope. Its log carried a line of its own output,
+`- when the user asked for "30% session limit saved" by day ...`, which
+matches the deliberately broad provider-limit pattern in
+`scripts/usage-limit.sh`. The tick took that as a refusal and rewound the
+stage to `pending` with its run worktree still dirty. At the next dispatch an
+hour later, `ensure_run_worktree` force-removed the worktree and deleted its
+run branch, and the whole first attempt went with them. The pattern is common
+in ordinary output: 24 of 278 worker logs on this machine matched it, and only
+the envelope those workers wrote kept them off this path.
+
+The rule now has two halves. An exit is an instant refusal only when the
+worker log was last written within `USAGE_LIMIT_INSTANT_SECONDS` (60) of the
+stage's `started_at`, inclusive. That exit is rewound exactly as before: no
+failure, no attempt consumed, a pause, and the run worktree left as it was.
+Anything later has its work pinned on a `wip/<stage>-attempt-N` ref by
+`preserve_failed_work` before it is rewound, and is counted in the stage's
+`limit_rewinds`. After `USAGE_LIMIT_MAX_REWINDS` (2) such rewinds, or when the
+work cannot be pinned, the exit takes the ordinary missing-envelope path and
+records one failure. Separately, `ensure_run_worktree` pins a dirty run
+worktree before re-cutting it, and refuses, removing nothing, when it cannot:
+work it fails to pin, an unreadable status, a real `state/` directory, or
+run-branch commits that neither the base nor a wip ref reaches.
+
+Log size is deliberately not part of the bound. A codex log opens with the
+CLI's echo of the whole worker prompt, several kilobytes, before any model
+output, so a size ceiling such as the 512 bytes of the configuration-fault
+check would call every codex refusal mid-run, including the 2026-09-06
+`ERROR: You've hit your usage limit` refusals. Elapsed time alone separates
+the two, and because a misjudged exit is still preserved, getting the bound
+slightly wrong costs a wip ref rather than an attempt.
+
+`limit_rewinds` survives a requeue: `requeue-stage.sh` does not reset it, so a
+re-briefed stage that has already spent its allowance takes the
+missing-envelope path on its next mid-run limit match. Clear the field by hand
+if a fresh allowance is wanted. `scripts/limit-refusal-keeps-work-smoke.sh`
+covers it.

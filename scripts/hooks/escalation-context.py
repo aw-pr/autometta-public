@@ -12,7 +12,8 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
-from lifecycle_events import home as state_home, records as lifecycle_records
+from lifecycle_events import (home as state_home, records as lifecycle_records,
+                              actionable, completed_history, history_summary)
 from session_context import headless_command, headless_ancestor
 from wakeups import observe
 
@@ -49,14 +50,17 @@ def deliver(payload, family):
         records = [json.loads(line) for line in result.stdout.splitlines() if line]
         try:
             repos = subprocess.run(
-                [str(Path(__file__).with_name("session-start-escalations.sh")), "--repos"],
+                [str(Path(__file__).with_name("session-start-escalations.sh")), "--lifecycle-repos"],
                 cwd=cwd, env=env, capture_output=True, text=True, timeout=5, check=True,
             )
             records.extend(lifecycle_records(repos.stdout.splitlines()))
         except Exception:
             pass
         seen = state.get("seen", {})
-        if event == "SessionStart" and payload.get("source") in ("compact", "clear"):
+        reset = event == "SessionStart" and payload.get("source") in ("compact", "clear")
+        catchup = (state.get("history_version") != 1 or reset
+                   or (event == "SessionStart" and payload.get("source") == "startup"))
+        if reset:
             seen = {}
         pending = {}
         changed = []
@@ -70,10 +74,23 @@ def deliver(payload, family):
             if seen.get(str(file)) != digest:
                 changed.append(record)
         seen = {name: digest for name, digest in seen.items() if name in pending}
-        if changed:
+        condensed = []
+        if catchup:
+            closed = completed_history(records, now)
+            condensed = [record for record in changed if record["path"] in closed]
+            changed = [record for record in changed if record["path"] not in closed]
+            for name in closed:
+                if name in pending:
+                    seen[name] = pending[name]
+            changed.sort(key=lambda record: 0 if record.get("record_type") != "lifecycle"
+                         else 1 if actionable(record) else 2)
+        if changed or condensed:
             escalation_count = sum(record.get("record_type") != "lifecycle" for record in changed)
             lines = [f"Autometta: {escalation_count} new or changed pending escalation(s), "
-                     f"{len(changed) - escalation_count} lifecycle notice(s). Escalations first; oldest first within each group."]
+                     f"{len(changed) - escalation_count} lifecycle notice(s). Escalations first; "
+                     "outstanding actions first during catch-up; oldest first within each group."]
+            if condensed:
+                lines.append(history_summary(condensed))
             for record in changed[:10]:
                 lines.append(json.dumps(record, ensure_ascii=True))
                 seen[record["path"]] = pending[record["path"]]
@@ -88,7 +105,7 @@ def deliver(payload, family):
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": event, "additionalContext": "\n".join(lines),
             }}), flush=True)
-        state = {"checked_at": now, "seen": seen}
+        state = {"checked_at": now, "seen": seen, "history_version": 1}
         fd, temporary = tempfile.mkstemp(dir=cache, prefix=".delivery-")
         try:
             with os.fdopen(fd, "w") as output:

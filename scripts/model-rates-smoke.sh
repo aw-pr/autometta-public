@@ -24,9 +24,16 @@ check 'Sonnet 5.5 at Sonnet 5 price' "$(rate_for_model claude-sonnet-5-5)" '2.0 
 check 'Sol shares T1 but not price'  "$(rate_for_model gpt-5.6-sol)"     '5.0 0.5 30.0'
 check 'cloud default uses current Sol' "$AUTOMETTA_MODEL_CODEX" 'gpt-6.1-sol'
 check 'unnamed Codex uses current Sol' "$(codex_cloud_model_for_identity Codex)" 'gpt-6.1-sol'
-for model in gpt-6-astra gpt-6.1-sol gpt-6-sol gpt-6-luna gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna; do
+for model in gpt-6.2-astra gpt-6.2-sol gpt-6-astra gpt-6.1-sol gpt-6-sol gpt-6-luna gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna; do
   check "$model routes to its own weights" "$(codex_cloud_model_for_identity "$model")" "$model"
 done
+check '6.2 Astra identity routes' "$(codex_cloud_model_for_identity 'GPT-6.2 Astra <gpt-6-2-astra@local>')" 'gpt-6.2-astra'
+check '6.2 Sol identity routes' "$(codex_cloud_model_for_identity 'GPT-6.2 Sol <gpt-6-2-sol@local>')" 'gpt-6.2-sol'
+check '6.0 Astra identity stays pinned' "$(codex_cloud_model_for_identity 'GPT-6 Astra <gpt-6-astra@local>')" 'gpt-6-astra'
+check '6.2 Astra is T0' "$(tier_for_identity 'GPT-6.2 Astra <gpt-6-2-astra@local>')" T0
+check '6.2 Sol is T1' "$(tier_for_identity 'GPT-6.2 Sol <gpt-6-2-sol@local>')" T1
+check '6.2 Astra rate' "$(rate_for_model gpt-6.2-astra)" '8.0 0.4 40.0'
+check '6.2 Sol rate' "$(rate_for_model gpt-6.2-sol)" '2.0 0.1 10.0'
 check 'current Sol identity routes' "$(codex_cloud_model_for_identity 'GPT-6.1 Sol <gpt-6-1-sol@local>')" 'gpt-6.1-sol'
 check 'current Luna identity routes' "$(codex_cloud_model_for_identity 'GPT-6 Luna <gpt-6-luna@local>')" 'gpt-6-luna'
 check 'previous Sol identity stays pinned' "$(codex_cloud_model_for_identity 'GPT-6 Sol <gpt-6-sol@local>')" 'gpt-6-sol'

@@ -110,7 +110,7 @@ cmd_status() {
   local codex_home="${AUTOMETTA_CODEX_HOME:-$HOME/.codex-api-only}"
   if [[ -f "$codex_home/auth.json" ]]; then
     local sibling_mode
-    sibling_mode="$(python3 -c "import json; print(json.load(open('$codex_home/auth.json')).get('auth_mode','?'))" 2>/dev/null || echo '?')"
+    sibling_mode="$(jq -r '.auth_mode // "?"' "$codex_home/auth.json" 2>/dev/null || echo '?')"
     printf 'codex-api home: %s (auth_mode: %s)\n' "$codex_home" "$sibling_mode"
   else
     printf 'codex-api home: %s (NOT initialised — codex api dispatches will fail until set up)\n' "$codex_home"
@@ -237,7 +237,7 @@ cmd_check() {
       exit 1
     fi
     local sibling_mode
-    sibling_mode="$(python3 -c "import json; print(json.load(open('$codex_home/auth.json')).get('auth_mode','?'))" 2>/dev/null || echo '?')"
+    sibling_mode="$(jq -r '.auth_mode // "?"' "$codex_home/auth.json" 2>/dev/null || echo '?')"
     if [[ "$sibling_mode" != "apikey" ]]; then
       printf 'FAIL          %s  sibling CODEX_HOME at %s has auth_mode=%s (need apikey)\n' \
         "$family" "$codex_home" "$sibling_mode" >&2

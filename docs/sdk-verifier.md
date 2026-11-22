@@ -394,6 +394,9 @@ The **variable block** contains per-stage content that changes every run:
 - Stage id, card path, and artefact path.
 - The full stage card content with line numbers.
 - The worker artefacts with line numbers.
+- The contract-check receipt, described next.
+
+Every SDK transport runs the card's required contract check first: `check-contract-test-gate.sh --verify-card` against the card, from the subscriber worktree (`contract_check_context` in `verify-sdk.py`; `--contract-context` prints the same receipt). If the check fails, the verifier aborts before any model call. Otherwise the receipt is appended to the variable part of the prompt, outside the cached block.
 
 ### Reading the log line
 

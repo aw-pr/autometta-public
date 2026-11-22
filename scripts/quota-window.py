@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import math
 import os
@@ -101,7 +102,7 @@ def read_snapshot(family: str) -> dict[str, Any]:
         return unknown(family, "snapshot malformed")
     fetched_epoch = parse_time(payload.get("fetched_at"))
     source = payload.get("source")
-    windows = sanitise_windows(payload.get("windows"), allow_overage=family == "codex")
+    windows = sanitise_windows(payload.get("windows"), allow_overage=True)
     if fetched_epoch is None or not isinstance(source, str) or not source or windows is None:
         return unknown(family, "snapshot malformed")
     try:
@@ -123,6 +124,44 @@ def read_snapshot(family: str) -> dict[str, Any]:
 
 def read_claude() -> dict[str, Any]:
     return read_snapshot("claude")
+
+
+def observe_claude_reset(reading: dict[str, Any]) -> None:
+    """Consume the fleet tick's validated snapshot, in provider observation order."""
+    from lib.lifecycle_events import QUOTA_CLEARED, emit, home
+
+    if reading.get("status") != "known":
+        return
+    window = next((w for w in reading["windows"] if w["label"] == "5-hour"), None)
+    fetched = parse_time(reading.get("fetched_at"))
+    if window is None or fetched is None or not 0 <= now_epoch() - fetched <= DEFAULT_STALE_SECONDS:
+        return
+
+    path = home() / "claude-session-window.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        previous = json.loads(path.read_text()) if path.exists() else {}
+        if fetched <= previous.get("observed_at", 0):
+            return
+        armed = previous.get("exhausted_until")
+        used = window["utilization"]
+        reset = parse_time(window["resets_at"])
+        if used >= 100:
+            armed = reset if reset is not None else armed
+        elif armed is not None and fetched >= armed:
+            summary = f"Claude five-hour session limit cleared ({used:g}% used at {iso(fetched)})"
+            evidence = Path(os.environ.get("AI_QUOTA_DIR", "~/.local/state/ai-quota")).expanduser() / "claude.json"
+            if not emit(None, QUOTA_CLEARED, iso(armed), provider="claude", window="5-hour",
+                        resets_at=iso(armed), observed_at=iso(fetched), utilization=used,
+                        summary=summary, evidence=str(evidence)):
+                raise OSError("could not publish quota clearance")
+            print(summary)
+            armed = None
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(dict(observed_at=fetched, exhausted_until=armed)) + "\n")
+        temporary.replace(path)
+
 
 def find_rate_limits(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
@@ -577,6 +616,9 @@ def read_family(family: str) -> dict[str, Any]:
 
 
 def main() -> int:
+    if sys.argv[1:] == ["observe-claude-reset"]:
+        observe_claude_reset(json.load(sys.stdin)["families"]["claude"])
+        return 0
     if len(sys.argv) == 3 and sys.argv[1] == "pace" and sys.argv[2] in {"claude", "codex"}:
         try:
             reading = json.load(sys.stdin)
@@ -585,7 +627,7 @@ def main() -> int:
         print(json.dumps(pace_admission(sys.argv[2], reading), separators=(",", ":"), sort_keys=True))
         return 0
     if len(sys.argv) != 2 or sys.argv[1] not in {"claude", "codex", "all", "codex-admission"}:
-        print(f"usage: {Path(sys.argv[0]).name} claude|codex|all|codex-admission|pace claude|codex", file=sys.stderr)
+        print(f"usage: {Path(sys.argv[0]).name} claude|codex|all|codex-admission|observe-claude-reset|pace claude|codex", file=sys.stderr)
         return 2
     if sys.argv[1] == "codex-admission":
         try:

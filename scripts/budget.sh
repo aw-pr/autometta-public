@@ -10,8 +10,41 @@ json_check() {
   python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$1"
 }
 
+# json_object_check: the file exists, is non-empty and holds exactly one JSON
+# document, which is an object. Stricter than json_check because jq reads a
+# truncated, empty, array or null budget as something other than an error,
+# and every cap comparison then quietly answers "not hit".
+json_object_check() {
+  [[ -s "$1" ]] || return 1
+  jq -n -e '[inputs] | length == 1 and (.[0] | type == "object")' "$1" >/dev/null 2>&1
+}
+
 budget_file() {
   printf '%s/state/budget.json\n' "$1"
+}
+
+# budget_readable: the one test for "this budget can be trusted". Every
+# function below that reads or writes budget.json refuses by an explicit
+# return when it fails, because its callers run it inside a condition where
+# errexit does not stop anything.
+budget_readable() {
+  json_object_check "$(budget_file "$1")"
+}
+
+# _budget_replace_from: move a freshly written temp file over budget.json only
+# when it is itself a readable budget; otherwise remove it and leave the
+# budget exactly as it was.
+_budget_replace_from() {
+  local tmp_path="$1" budget_path="$2"
+  if ! json_object_check "$tmp_path"; then
+    rm -f "$tmp_path"
+    printf 'budget: refusing to replace %s with a failed write\n' "$budget_path" >&2
+    return 1
+  fi
+  if ! mv "$tmp_path" "$budget_path"; then
+    rm -f "$tmp_path"
+    return 1
+  fi
 }
 
 budget_read() {
@@ -29,10 +62,17 @@ budget_write_atomic() {
   shift 2
   local budget_path tmp_path
   budget_path="$(budget_file "$repo_root")"
+  if ! budget_readable "$repo_root"; then
+    printf 'budget_write_atomic: %s is missing or unreadable; not writing\n' "$budget_path" >&2
+    return 1
+  fi
   tmp_path="${budget_path}.tmp.$$"
-  jq "$@" "$jq_filter" "$budget_path" > "$tmp_path"
-  json_check "$tmp_path"
-  mv "$tmp_path" "$budget_path"
+  if ! jq "$@" "$jq_filter" "$budget_path" > "$tmp_path"; then
+    rm -f "$tmp_path"
+    printf 'budget_write_atomic: jq failed on %s; not writing\n' "$budget_path" >&2
+    return 1
+  fi
+  _budget_replace_from "$tmp_path" "$budget_path"
 }
 
 # ---------------------------------------------------------------------------
@@ -148,7 +188,7 @@ budget_host_token_cap() {
   fi
 }
 
-# budget_drain_active <repo-root>: succeed (0) when a drain is in force for
+# budget_drain_active <repo-root> [--read-only]: succeed (0) when a drain is in force for
 # this repo, printing the cap it grants. Fails (1) and prints nothing
 # otherwise.
 #
@@ -156,7 +196,8 @@ budget_host_token_cap() {
 # run: the first caller past expires_at moves drain.json aside to
 # drain.expired.json and reports no drain. That is the whole reason a drain
 # cannot silently become the permanent setting -- there is no path where the
-# file keeps binding after its own clock.
+# file keeps binding after its own clock. Advisory callers use --read-only to
+# ignore an expired drain without retiring it or acquiring a mutation lock.
 budget_drain_active() {
   local repo_root="${1:-}"
   local drain_path drain_json
@@ -172,6 +213,7 @@ budget_drain_active() {
   local now
   now="$(date -u +%s)"
   if (( now >= expires )); then
+    [[ "${2:-}" != "--read-only" ]] || return 1
     budget_drain_lock_acquire || return 1
     if [[ ! -f "$drain_path" ]]; then
       budget_drain_lock_release
@@ -196,11 +238,19 @@ budget_drain_active() {
   # An empty or absent repos[] means every subscriber; a populated one is an
   # allow-list of absolute repo paths.
   local scoped
-  scoped="$(printf '%s' "$drain_json" | jq -r --arg repo "$repo_root" '
-    if ((.repos // []) | length) == 0 then "all"
-    elif ((.repos // []) | index($repo)) != null then "listed"
-    else "excluded" end
-  ' 2>/dev/null || printf 'excluded')"
+  scoped="$(printf '%s' "$drain_json" | python3 -c '
+import json
+import os
+import sys
+
+def physical(path):
+    return os.path.realpath(path) if os.path.isdir(path) else path
+
+repos = json.load(sys.stdin).get("repos") or []
+repo = physical(sys.argv[1])
+print("all" if not repos else
+      "listed" if any(physical(path) == repo for path in repos) else "excluded")
+' "$repo_root" 2>/dev/null || printf 'excluded')"
   [[ "$scoped" == "excluded" ]] && return 1
   local cap
   cap="$(printf '%s' "$drain_json" | jq -r '.token_cap_total // empty' 2>/dev/null || true)"
@@ -212,13 +262,13 @@ budget_drain_active() {
   return 0
 }
 
-# budget_effective_token_cap <repo-root>: the cap that actually binds, as a
+# budget_effective_token_cap <repo-root> [--read-only]: the cap that actually binds, as a
 # positive integer. Every token comparison in this file goes through it, so
 # there is one resolution order rather than one per call site.
 budget_effective_token_cap() {
   local repo_root="$1"
   local drain_cap
-  if drain_cap="$(budget_drain_active "$repo_root" 2>/dev/null)" && [[ -n "$drain_cap" ]]; then
+  if drain_cap="$(budget_drain_active "$repo_root" "${2:-}" 2>/dev/null)" && [[ -n "$drain_cap" ]]; then
     printf '%s' "$drain_cap"
     return 0
   fi
@@ -289,8 +339,16 @@ budget_check_caps() {
   BUDGET_CHECK_LAST_HIT=""
   BUDGET_CHECK_ALL_HITS=""
 
+  # Neither 0 (dispatch), 1 (cap hit, which would halt by rewriting the file)
+  # nor 2 (already halted): an unreadable budget is its own answer, and
+  # budget_gate_dispatch's fail-closed arm refuses on it.
+  if ! budget_readable "$repo_root"; then
+    printf 'budget_check_caps: %s is missing or unreadable\n' "$budget_path" >&2
+    return 3
+  fi
+
   local halted token_hit wall_hit tick_hit idle_hit fail_hit token_cap
-  halted="$(jq -r '.halted // false' "$budget_path")"
+  halted="$(jq -r '.halted // false' "$budget_path")" || return 3
 
   if [[ "$halted" == "true" ]]; then
     return 2
@@ -524,8 +582,12 @@ budget_ensure_window() {
   local repo_root="$1"
   local budget_path today stored
   budget_path="$(budget_file "$repo_root")"
+  if ! budget_readable "$repo_root"; then
+    printf 'budget_ensure_window: %s is missing or unreadable; not writing\n' "$budget_path" >&2
+    return 1
+  fi
   today="$(date -u +%F)"
-  stored="$(jq -r '.window_started_at // empty' "$budget_path")"
+  stored="$(jq -r '.window_started_at // empty' "$budget_path")" || return 1
   if [[ "$stored" == "$today" ]]; then
     return 0
   fi
@@ -556,7 +618,7 @@ budget_ensure_window() {
         (if .consecutive_failures >= .consecutive_failure_cap then "failure-cap" else empty end)
       ] | join(" ")
     ' "$budget_path")"
-    budget_record_breach "$repo_root" "window-reset" "$over"
+    budget_record_breach "$repo_root" "window-reset" "$over" || return 1
   fi
 
   local tmp_path jq_filter
@@ -580,9 +642,12 @@ budget_ensure_window() {
     # window, do not zero live counters out from under an in-progress run.
     jq_filter='.window_started_at = $today'
   fi
-  jq --arg today "$today" "$jq_filter" "$budget_path" > "$tmp_path"
-  json_check "$tmp_path"
-  mv "$tmp_path" "$budget_path"
+  if ! jq --arg today "$today" "$jq_filter" "$budget_path" > "$tmp_path"; then
+    rm -f "$tmp_path"
+    printf 'budget_ensure_window: jq failed on %s; not writing\n' "$budget_path" >&2
+    return 1
+  fi
+  _budget_replace_from "$tmp_path" "$budget_path" || return 1
   if [[ "$recovered" == "true" ]]; then
     printf 'budget_ensure_window: new window (%s) for %s, auto-resetting halted/at-cap budget (caps unchanged); breach carried over: %s, lifetime tokens %s\n' \
       "$today" "$repo_root" "${over:-none}" \
@@ -700,7 +765,7 @@ budget_halt() {
     | .halted_at = $ts
     | .halt_logged_at = null
     | .halt_logged_reason = null
-  ' --arg reason "$reason" --arg reasons "$reasons" --arg ts "$ts"
+  ' --arg reason "$reason" --arg reasons "$reasons" --arg ts "$ts" || return 1
   if [[ "$previous_halt" != "$(jq -nc --arg reason "$reason" '[true, $reason]')" ]]; then
     python3 "$budget_script_dir/lib/lifecycle_events.py" halt "$repo_root" 2>/dev/null || true
   fi
@@ -815,6 +880,20 @@ budget_add_tokens() {
   ' --arg n "$tokens"
 }
 
+# Keep the receipt and both counters in one replacement. The receipt survives
+# window resets and also contains the row needed to repair a missing ledger.
+budget_record_dispatch_charge() {
+  local repo_root="$1" dispatch_id="$2" row="$3"
+  budget_write_atomic "$repo_root" '
+    if (.dispatch_charges // {} | has($id)) then .
+    else
+      .tokens_spent = ((.tokens_spent // 0) + ($row.total_tokens // 0))
+      | .lifetime_tokens_spent = ((.lifetime_tokens_spent // 0) + ($row.total_tokens // 0))
+      | .dispatch_charges[$id] = $row
+    end
+  ' --arg id "$dispatch_id" --argjson row "$row"
+}
+
 # budget_transcript_dir: map a dispatch working directory to the Claude Code
 # transcript directory for that cwd. Claude Code slugifies the absolute path
 # by replacing every non-alphanumeric character with '-'.
@@ -831,9 +910,10 @@ budget_transcript_dir() {
 #
 # Codex's final `tokens used` log value is fresh input plus output. It omits
 # cached input, so it is not the dispatch total and cannot drive the budget.
-# Session `token_count` events carry the full cumulative breakdown. For every
-# session started in work_dir at or after since_epoch, take the last cumulative
-# value and sum the sessions. input_tokens includes cached_input_tokens in the
+# Session `token_count` and `token_usage_record` events carry cumulative usage.
+# With a dispatch start, select the first session started in work_dir at or
+# after since_epoch, then take its last valid cumulative value. Unscoped legacy
+# callers retain the sum of matching sessions. input_tokens includes cached_input_tokens in the
 # Codex event, so subtract cached input for the cost-log triple before returning
 # it. The three returned fields still sum to total_tokens.
 #
@@ -874,9 +954,25 @@ def epoch(value):
         return None
 
 
+def coherent(usage):
+    if not isinstance(usage, dict):
+        return None
+    values = [usage.get("input_tokens"), usage.get("cached_input_tokens", 0),
+              usage.get("output_tokens")]
+    if any(type(n) is not int or n < 0 for n in values):
+        return None
+    total_input, cached_input, output = values
+    if cached_input > total_input:
+        return None
+    if "total_tokens" in usage:
+        total = usage["total_tokens"]
+        if type(total) is not int or total != total_input + output:
+            return None
+    return total_input - cached_input, cached_input, output
+
+
 seen_paths = set()
-inp = cached = out = 0
-found = False
+sessions = []
 
 for raw_root in roots_raw.split(":"):
     if not raw_root:
@@ -907,8 +1003,12 @@ for raw_root in roots_raw.split(":"):
                         rec = json.loads(line)
                     except ValueError:
                         continue
+                    if not isinstance(rec, dict):
+                        continue
                     if rec.get("type") == "session_meta":
                         payload = rec.get("payload") or {}
+                        if not isinstance(payload, dict):
+                            break
                         started = epoch(payload.get("timestamp") or rec.get("timestamp"))
                         matched = payload.get("cwd") == work_dir
                         if since and (started is None or started < since):
@@ -916,33 +1016,31 @@ for raw_root in roots_raw.split(":"):
                         if not matched:
                             break
                         continue
-                    if not matched or rec.get("type") != "event_msg":
+                    if not matched:
                         continue
                     payload = rec.get("payload") or {}
-                    if payload.get("type") != "token_count":
+                    if not isinstance(payload, dict):
                         continue
-                    info = payload.get("info") or {}
-                    usage = info.get("total_token_usage")
-                    if isinstance(usage, dict):
-                        last = usage
+                    usage = None
+                    if rec.get("type") == "event_msg" and payload.get("type") == "token_count":
+                        info = payload.get("info") or {}
+                        if isinstance(info, dict):
+                            usage = info.get("total_token_usage")
+                    elif rec.get("type") == "token_usage_record" or payload.get("type") == "token_usage_record":
+                        usage = payload.get("thread_token_usage")
+                    valid = coherent(usage)
+                    if valid is not None:
+                        last = valid
 
-            if last is None:
-                continue
-            try:
-                total_input = int(last["input_tokens"])
-                cached_input = int(last.get("cached_input_tokens", 0) or 0)
-                output = int(last["output_tokens"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if min(total_input, cached_input, output) < 0 or cached_input > total_input:
-                continue
-            inp += total_input - cached_input
-            cached += cached_input
-            out += output
-            found = True
+            if matched:
+                sessions.append((started or 0, path, last))
 
-if found:
-    print(f"{inp} {cached} {out}" + (" 0" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
+if sessions:
+    selected = [min(sessions, key=lambda item: (item[0], item[1]))] if since else sessions
+    valid = [item[2] for item in selected if item[2] is not None]
+    if valid:
+        inp, cached, out = (sum(values) for values in zip(*valid))
+        print(f"{inp} {cached} {out}" + (" 0" if os.environ.get("AUTOMETTA_TOKEN_CACHE_WRITES") == "1" else ""))
 PY
 }
 

@@ -60,6 +60,14 @@ publication, deployment, force-push or merge-conflict authority follows from
 this policy. Readiness/reference work is still charged to preparation; changing
 models, chats or run IDs does not reset the same stage allowance.
 
+When the operator leaves the chat to attend a run alone, the `yolo` skill
+governs: it keeps this policy, says which of the decisions below may be taken
+without them, and parks the rest.
+
+Whatever the harness cost you along the way (a halt, a failure it caused, a
+workaround, a signal that never came) is recorded as it happens with
+`autometta-learning-log`, so the weekly review can tune it out.
+
 
 ## Procedure
 
@@ -109,29 +117,23 @@ models, chats or run IDs does not reset the same stage allowance.
    - Fix or re-review a card: `autometta-card-review`.
 6. **Ack.** `scripts/escalations.sh ack <id> "<note>"`, where the note is one
    line naming the commit or the decision (for example the landing sha, or
-   "card amended, operator approved 2026-10-23"). Ack only after the action
-   has landed or the decision is recorded.
+   "card amended, operator approved 2026-10-23"). When step 7 applies, do it
+   first and name the proposal id in the note. Ack only after the action has
+   landed or the decision is recorded.
 7. **Log the harness lesson.** If the diagnosis in step 3 or the repair in
    step 5 showed that the harness itself needs changing (a template, skill,
-   script, schema, doc or policy, not this stage's code), record it before
-   moving on:
-
-   ```sh
-   scripts/proposals.sh add --agent "$(agent-whoami --model '<your model id>')" \
-     --title "<the change, not the symptom>" --kind <script|skill|template|schema|doc|policy> \
-     --target <repo-relative path>[,<path>] \
-     --change "<what to change and why, a few sentences>" \
-     --evidence <escalation id>,<stage id>[,<facts subject or path#anchor>] \
-     --repo <subscriber basename> --stage <stage-id> --run <run-id>
-   ```
-
-   Also lift any `HARNESS:` line from the verifier artefact's
-   `additional_findings` the same way, citing the artefact path as evidence.
-   A proposal is not a fix: do not edit the harness now unless the recovery
-   policy already authorises that repair for this stage. The weekly review
-   (`autometta-weekly-review`) decides. Skip this step when the episode was
-   plain implementation or quota; a ledger that records every incident is
-   as unreadable as one that records none.
+   script, schema, doc or policy, not this stage's code), or the episode was
+   a halt, record it before moving on, following `autometta-learning-log`:
+   one `autometta proposals add` line citing the escalation id and stage, and
+   the escalation id in your ack note. Lift any `HARNESS:` line from the
+   verifier artefact's `additional_findings` the same way, before a requeue
+   purges it. A proposal is not a fix: do not edit the harness now unless the
+   recovery policy already authorises that repair for this stage. The weekly
+   review (`autometta-weekly-review`) decides. Skip this step when the
+   episode was plain implementation, or a quota hold that resolved as
+   expected; a ledger that records every incident is as unreadable as one
+   that records none. When the batch is done, run that skill's end-of-chat
+   sweep.
 
 ## Preserving a failed attempt's work
 

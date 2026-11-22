@@ -22,7 +22,7 @@
 The repo ticker's FRESHNESS panel reads `last tick 2115h13m ago -- STALE
 (threshold 20m00s)`. The tick had run four minutes earlier.
 
-![the repo ticker reporting a tick 88 days old, minutes after a real tick](../../docs/incidents/images/2026-08-25-repo-ticker-freshness-stuck.png)
+![the repo ticker reporting a tick 88 days old, minutes after a real tick](../docs/incidents/images/2026-08-25-repo-ticker-freshness-stuck.png)
 
 `state/state.yaml` carries `last_tick_at: "2026-05-29T09:21:18Z"` and
 `tick_count: 0`. Neither has moved since 29 May. **Nothing writes either

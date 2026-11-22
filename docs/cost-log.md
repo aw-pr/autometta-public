@@ -24,7 +24,7 @@ rules.
 `<repo>/state/cost-log.jsonl`, alongside `budget.json` and `logs/`. Like the
 rest of `state/` runtime content it is gitignored (`state/**`), so it is a
 local on-disk record, not a committed artefact. A dashboard reads it directly
-from disk. It is append-only: the loop never rewrites earlier lines.
+from disk. Each write goes through a temporary file and an atomic replacement of the ledger: earlier complete lines are kept verbatim, and only an incomplete final line left by an older writer may be dropped.
 
 ## Schema
 
@@ -61,7 +61,7 @@ below. Historical rows are retained without backfilling.
 | `role` | string | `worker` or `verifier`. Historical rows may contain `phat-controller`, the retired scheduled role. |
 | `identity` | string | The full agent identity string from the stage card / state. |
 | `tier` | string | Capability tier derived from the identity (`T0`, `T1`, `T2`, `T4`, `T5`), matching the agent-orchestrator tier table. Supplies the fallback rate when the model has no explicit rate. |
-| `auth_route` | string | `subscription`, `api`, or `local` (codex only), resolved the same way as the dispatch (env override, then `.autometta.local.yaml`, then subscription default). |
+| `auth_route` | string | `subscription`, `api`, or `local` (codex only), resolved per role, the same way the dispatch resolves it (`scripts/auth-route.sh --print-mode --role`): per-role env override `AUTOMETTA_<FAMILY>_MODE_<ROLE>`, family env override `AUTOMETTA_<FAMILY>_MODE`, per-role manifest key `auth.<family>.<role>.mode`, family manifest key `auth.<family>.mode`, then subscription. A resolution failure records `subscription`. |
 | `input_tokens` | int or null | Fresh (non-cached) input tokens. Cache-creation (write) tokens are folded in here, see below. Null when no full breakdown was recovered. |
 | `cached_input_tokens` | int or null | Input tokens served from the prompt cache (the cache-read count). Null when no full breakdown was recovered. |
 | `output_tokens` | int or null | Generated output tokens. Null when no full breakdown was recovered. |
@@ -70,7 +70,8 @@ below. Historical rows are retained without backfilling.
 | `wall_clock_s` | int | Estimated wall-clock seconds for the role. |
 | `cost_usd_est` | float or null | Estimated USD equivalent from model rates, falling back to tier rates. Null when the breakdown is unavailable, because assigning a total to one rate would fabricate a cost. |
 | `cache_hit_rate` | float or null | `cached_input_tokens / (input_tokens + cached_input_tokens)`, 0 when recorded input was genuinely zero, null when the breakdown is unavailable. |
-| `result` | string | The loop's terminal verdict for this role: `pass`, `fail`, `partial`, `stalled`, or `aborted`. |
+| `result` | string | The loop's terminal verdict for this role: `pass`, `fail`, `partial`, `stalled`, `aborted`, or `refused` for a provider limit rewind. |
+| `dispatch_id` | string, optional | Durable interrupted-role identity: stage, role, PID and original role start time. Historical and ordinary completion rows may omit it. |
 
 ### Worker vs verifier
 
@@ -86,6 +87,48 @@ per dispatched pass. Those historical rows remain part of the ledger. The
 current deterministic verbs dispatch no controller model and produce no
 controller-role cost line. The itemised cost log never replaces the budget
 ledger.
+
+### Interrupted dispatch accounting
+
+A quota-refused worker is accounted before its PID and original `started_at`
+are cleared for rewind. The existing provider pause, work preservation and
+retry policy still apply. A dead verifier without a verdict is accounted with
+`result: "aborted"` before its PID is cleared for another attempt. Provider
+refusals use `result: "refused"`. A refusal can have measured usage; it does
+not imply zero tokens or a stage failure.
+
+These paths use `stage_id:role:pid:original_start` as `dispatch_id`. A replay
+with the same PID and original start has the same identity. A new PID or start
+is a separate dispatch, even on the same stage and in the same worktree.
+The verifier uses `verifier_started_at`; the worker uses `started_at`.
+
+Under the tick's repo lock, the producer first checks both the budget receipt
+and the cost log for this identity. An existing receipt takes precedence;
+otherwise an existing row supplies the final measurement. Only when neither
+exists does it parse the transcript or log. This freezes usage, including its
+cache components and `usage_status`, before evidence can be replaced by a
+subsequent dispatch.
+
+The write order is:
+
+1. Atomically replace `budget.json`, incrementing `tokens_spent` and
+   `lifetime_tokens_spent` once and saving the complete row at
+   `dispatch_charges[dispatch_id]` in that same replacement. Unknown usage
+   saves a receipt without adding tokens; a measured zero remains numeric zero.
+2. Install one matching cost row using a temporary file, flush, `fsync` and
+   atomic replacement of the ledger. Earlier complete lines are retained.
+   An incomplete final append from an older writer may be discarded; malformed
+   complete lines stop recovery for inspection.
+3. Clear or rewind the role's state only after both writes succeed. A failed
+   accounting write leaves the PID and original start available for replay.
+
+If only the budget write survived, the receipt restores the missing cost row
+without adding tokens again. If only the row exists, its stored usage supplies
+the missing charge and receipt without appending a duplicate row. Replaying
+both stores changes neither charge nor row count. Receipts survive budget
+window resets, so a replay cannot charge the same dispatch to a later window.
+They must be preserved with the budget during recovery. Historical rows without
+dispatch identities are not guessed or retroactively matched.
 
 ### `wall_clock_s` is an estimate
 
@@ -111,7 +154,7 @@ run.
 
 | Route | Usage signal | What we get |
 |---|---|---|
-| Codex CLI (`codex exec`) | Last cumulative `total_token_usage` in the matching Codex session JSONL | Full breakdown. Codex `input_tokens` includes cached input, so the producer records fresh input as `input_tokens - cached_input_tokens`, cached input separately, and output as emitted. The three fields reconcile to Codex `total_tokens`. |
+| Codex CLI (`codex exec`) | Latest valid cumulative `total_token_usage` or `thread_token_usage` in the matching Codex session JSONL | Full breakdown. Codex `input_tokens` includes cached input, so the producer records fresh input as `input_tokens - cached_input_tokens`, cached input separately, and output as emitted. The three fields reconcile to Codex `total_tokens`. |
 | Claude CLI (`claude -p`) | Per-message usage in the matching Claude Code transcript | Full breakdown, deduplicated by request and summed from dispatch start. Cache creation is folded into fresh input and cache reads remain separate. |
 | SDK verifier (`verify-sdk.py`) | `cache: write=W read=R input=I output=O` | Full breakdown. `input_tokens = I + W`, `cached_input_tokens = R`, `output_tokens = O`. |
 | Claude CLI with stream JSON output | The final `result` line's `usage` object with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` | Full breakdown when present in stdout. `claude-token-log.sh` also reads that result line to write `Total tokens: N`; this is a fallback when the matching Claude transcript is unavailable. |
@@ -121,6 +164,22 @@ run.
 Zero remains a measured fact. A complete transcript that reports zero records
 numeric zeroes and `usage_status: "recorded"`. Missing data never becomes zero.
 Historical rows retain the older schema and are not rewritten.
+
+For Codex, `event_msg` / `token_count` supplies `info.total_token_usage`;
+`token_usage_record` supplies `thread_token_usage`. Both are cumulative thread
+totals. Read them in transcript order and retain the latest coherent record,
+even when a later record is malformed. Components must be non-negative integers,
+cached input cannot exceed input, and a supplied total must equal input plus
+output. Per-response `usage` is a delta and never substitutes for the thread
+total or gets summed with it.
+
+Selection requires the session metadata's working directory to match and its
+start to be at or after the role's original start. The first such session is
+the dispatch session; later sessions in the same worktree are excluded, as are
+older sessions and other working directories. Legacy `token_count`-only
+transcripts and log-only dispatches retain their fallbacks. Unscoped legacy
+callers without a dispatch start retain their sum of matching sessions; the
+tick supplies the role start to isolate each dispatch.
 
 ### Cache-creation folding
 

@@ -187,7 +187,11 @@ subscriber_repo_paths() {
 # HARNESS: lines in subscriber verifier artefacts that no proposed or
 # dismissed event cites. A citation names the artefact as repo-relative
 # evidence under the same repo, and counts only if it was recorded after the
-# artefact's ran_at: a stage re-verified since its line was lifted is new.
+# artefact's completion time: a stage re-verified since its line was lifted is
+# new. That time is the harness observation recorded in the stage's
+# verifier_completed_receipt when it names this dispatch and the SHA-256 of this
+# report's bytes, else the report's own ran_at (a legacy report, or one
+# rewritten since it was observed).
 list_unlifted() {
   local repos=()
   local path
@@ -195,7 +199,7 @@ list_unlifted() {
     [[ -n "$path" ]] && repos+=("$path")
   done < <(subscriber_repo_paths)
   python3 - "$ledger_path" "$(basename "$repo_root")" "${repos[@]}" <<'PY'
-import json, sys
+import hashlib, json, subprocess, sys
 from datetime import datetime
 from pathlib import Path
 
@@ -206,6 +210,32 @@ def when(value):
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+
+def stage_receipts(root_path):
+    state = root_path / "state" / "state.yaml"
+    if not state.is_file():
+        return {}
+    try:
+        doc = json.loads(subprocess.run(["yq", "-o=json", ".", str(state)], capture_output=True,
+                                        text=True, check=True).stdout)
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        try:
+            doc = json.loads(state.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+    stages = doc.get("stages") if isinstance(doc, dict) else None
+    return {s["id"]: s for s in stages if isinstance(s, dict) and "id" in s} if isinstance(stages, list) else {}
+
+def completed_at(stage, rel, data, digest):
+    stage = stage or {}
+    receipt = stage.get("verifier_completed_receipt")
+    observed = when(stage.get("verifier_completed_at"))
+    dispatch = f"{stage.get('verifier_attempts') or 0}:{stage.get('verifier_started_at') or ''}"
+    if isinstance(receipt, dict) and observed is not None and receipt.get("artefact") == rel \
+            and receipt.get("dispatch") == dispatch and receipt.get("sha256") == digest \
+            and receipt.get("reported_at") == data.get("ran_at"):
+        return observed
+    return when(data.get("ran_at"))
 
 citations = []
 if ledger.is_file():
@@ -235,11 +265,14 @@ for root in roots:
         continue
     seen.add(root_path.resolve())
     repo = root_path.name
+    receipts = stage_receipts(root_path)
     for artefact in sorted((root_path / "state" / "verifiers").glob("*.json")):
         try:
-            data = json.loads(artefact.read_text(encoding="utf-8"))
+            raw = artefact.read_bytes()
+            data = json.loads(raw.decode("utf-8"))
         except (OSError, ValueError):
             continue
+        digest = hashlib.sha256(raw).hexdigest()
         if not isinstance(data, dict):
             continue
         findings = data.get("additional_findings")
@@ -249,9 +282,9 @@ for root in roots:
             continue
         harness = [line.strip() for line in findings.splitlines() if line.strip().startswith("HARNESS:")]
         rel = f"state/verifiers/{artefact.name}"
-        if not harness or is_cited(repo, rel, when(data.get("ran_at"))):
-            continue
         stage = data.get("stage_id") or artefact.stem
+        if not harness or is_cited(repo, rel, completed_at(receipts.get(stage), rel, data, digest)):
+            continue
         for line in harness:
             print(f"{repo}\t{stage}\t{rel}\t{line}")
 PY

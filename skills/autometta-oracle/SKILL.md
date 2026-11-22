@@ -133,6 +133,10 @@ exemption for a card with executable acceptance.
    it checks that the block names this card, carries no NONE marker and
    matches the recorded digest. Then `scripts/add-stage.sh <<repo>> <<card>>`.
 
+An oracle or harness defect found while freezing or re-freezing (a gate that
+misreads the test, a fixture the seat cannot reach) is recorded with
+`autometta-learning-log`, whether or not the recovery policy let you repair it.
+
 ## Done when
 
 - Every criterion and constraint maps to a frozen assertion or an explicitly

@@ -102,6 +102,20 @@ class WakeupTests(unittest.TestCase):
         self.assertIsNotNone(fleet["pending"])
         self.assertEqual(len(self.state["attempts"]), 2)
 
+    def test_quota_broadcast_reaches_each_chat_once_within_fleet_limits(self):
+        wakeups.register(self.state, "fleet", "codex", "chat", self.now - 100, self.socket_path)
+        other = wakeups.register(self.state, str(self.other), "claude", "other-chat", self.now - 100)
+        event = self.event(repo="fleet", kind="quota_window_cleared", stage="")
+        jobs = self.dispatch([event])
+        self.assertEqual([job["session"] for job in jobs], ["chat"])
+        self.assertIsNone(other["pending"])
+        self.owner["pending"] = None
+        self.dispatch([event], self.now + wakeups.COOLDOWN)
+        self.assertIn("quota_window_cleared", other["pending"]["message"])
+        other["pending"] = None
+        self.dispatch([event], self.now + 2 * wakeups.COOLDOWN)
+        self.assertEqual(len(self.state["attempts"]), 2)
+
     def test_coalescing_keeps_role_transitions_and_latest_card_outcome(self):
         events = [self.event(), self.event(1, at=self.now - 15, kind="stage_landed"),
                   self.event(2, kind="verifier_started"), self.event(3, kind="worker_finished")]
@@ -334,6 +348,32 @@ class WakeupTests(unittest.TestCase):
         state = wakeups.load()
         self.assertIsNone(state["owners"][str(self.repo)]["pending"])
         self.assertEqual(len(state["attempts"]), 1)
+
+    def test_busy_fleet_and_repo_take_turns_across_restarts(self):
+        fleet = wakeups.register(self.state, "fleet", "claude", "fleet-chat", self.now - 100)
+        self.state["owners"] = {"fleet": fleet, str(self.repo): self.owner}
+        for n, expected in enumerate(["fleet", str(self.repo), "fleet", str(self.repo)]):
+            now = self.now + n * 121
+            events = [self.event(f"repo-{n}", at=now - 20),
+                      self.event(f"fleet-{n}", at=now - 20, repo=self.other)]
+            self.dispatch(events, now)
+            self.assertEqual(self.state["attempts"][-1]["scope"], expected)
+            self.assertEqual(len(self.state["attempts"]), n + 1)
+            self.state["owners"][expected]["pending"] = None
+            wakeups.save(self.state)
+            self.state = wakeups.load()
+
+    def test_multiple_scopes_do_not_give_one_chat_extra_priority(self):
+        self.owner["last_sent"] = self.now - 121
+        wakeups.register(self.state, "fleet", "codex", "chat", self.now - 100,
+                         self.socket_path)
+        other = wakeups.register(self.state, str(self.other), "claude", "other-chat", self.now - 100)
+        events = [self.event(), self.event(1, repo=self.root / "third"),
+                  self.event(2, repo=self.other)]
+        self.dispatch(events)
+        self.assertEqual(self.state["attempts"][-1]["scope"], str(self.other))
+        self.assertIsNotNone(other["pending"])
+        self.assertIsNone(self.owner["pending"])
 
     def test_global_cooldown_prevents_a_fleet_wide_burst(self):
         other = wakeups.register(self.state, str(self.other), "claude", "other-chat", self.now - 100)

@@ -33,7 +33,7 @@ A tick is a single non-interactive invocation of `autometta tick`, which delegat
    verifier N is live, the tick may dispatch worker N+1 and record both
    flights by stage id. It never starts a third stage.
 5. Updates `state.yaml` and `budget.json` atomically. "Atomically" means: write to a temp file in the same directory, then `mv` into place. The `mv` is the atomicity primitive on POSIX filesystems given same-directory restraint.
-6. Snapshots the state update onto the `autometta/state` ref, using the per-agent author attribution from the global dev rules. It does this with git plumbing and never checks the branch out: see (j).
+6. Snapshots the state update onto the `autometta/state` ref, authored as `Phat Controller <phat-controller@local>`: the loop writes the snapshot, not a model, and `agent-whoami` would name whichever family's config it fell through to. The committer is whatever git is configured with. It does this with git plumbing and never checks the branch out: see (j).
 7. Exits. The next tick is the next cron fire.
 
 A tick makes one transition per stage, not two transitions on the same stage
@@ -147,6 +147,10 @@ claimed stages become a pipeline pair only when the claimed paths are disjoint,
 their worker **dispatch targets** differ, and remaining token headroom covers
 twice the repo's p95 historical dispatch cost from `state/cost-log.jsonl`.
 
+A card that declares `Dispatch: serial` is never admitted to a pair, as head or
+tail, even if it also declares path claims. The refusal is logged as
+`pipeline pair HEAD + TAIL refused: head|tail STAGE declares serial dispatch`.
+
 The dispatch target is the vendor family by default, so the rule reads exactly
 as it always did: two Codex workers do not pair, a Codex and a Claude worker
 may. A repo can widen it with `pipeline.pair_on: target` in
@@ -200,8 +204,11 @@ the head resolves.
 Landing is strict queue order. If N fails, dev has not moved and N+1 follows the
 ordinary fast-forward path. If N passes, the tick compares the actual changed
 file names in N's landed commit with N+1's tracked and untracked work. A
-file-disjoint tail is stashed, reset onto the new base, and restored before its
-verifier runs. Any overlap or restore conflict halts with
+file-disjoint tail has its uncommitted and untracked work saved privately (never
+on the shared stash list), any commits its worker made rebased onto the new base,
+and that work restored before its verifier runs. If the rebase or the restore
+fails, the tail is put back as the worker left it, on its own commit with its
+work restored, before the tick escalates. Any overlap or restore conflict halts with
 `controller-escalation`; the tick does not resolve a conflict. A failure in
 either member drops the current pair to serial but does not disable pairing for
 the repo. Only a claim collision found from the actual diffs or a tail rebase
@@ -252,6 +259,10 @@ Any cap exhaustion writes a stall marker and exits the tick cleanly; the loop do
 
 **Where the caps are enforced.** Two places, and the distinction is load-bearing. `budget_check_caps` runs once at the top of each tick and decides whether the tick does anything at all. `budget_gate_dispatch` runs immediately before *every* worker and verifier spawn and decides whether that spawn happens. Only the second one binds: a tick reaps finished agents and charges their tokens partway through its own run, so the top-of-tick read is stale by one dispatch by the time a spawn is reached. Enforcing only at the top of the tick is what let `emergence-lab-gpu` spend 149,752,682 tokens against a 1,000,000 cap on 2026-08-15 (gotcha 13 in [`lessons.md`](./lessons.md)). Any new dispatch path must call `budget_gate_dispatch` or it is outside the only safety in the design.
 
+A `state/budget.json` that is missing, empty or not a JSON object refuses that repo's dispatch on every fire: the tick never dispatches against a budget it cannot read. The file is left as found, not repaired or recreated, and the tick logs `budget-integrity: <path> is missing, empty or not a JSON object; dispatch refused (manual recovery required)`. It is a per-fire refusal, not a latched halt: nothing is written to `halted` or `halt_reason`, and the repo resumes once the file is restored. A failure in one repo's fire is logged and the fleet fire continues with the next subscriber.
+
+Each dispatch is charged once. `budget_record_dispatch_charge` writes a per-dispatch receipt under `dispatch_charges` in `budget.json` in the same replacement that adds the tokens, and skips the charge if the receipt already exists, so a replayed or interrupted dispatch cannot be charged twice. The window reset does not touch the receipts.
+
 **What a cap can and cannot promise.** Token and wall-clock spend are measured after the fact, per dispatched process, so the guarantee is "stops within one dispatch's spend of the cap", never "stops at the cap". On the incident repo the mean dispatch cost 4,830,731 tokens and the largest 19,019,631, so a 1,000,000-token cap could only ever stop at roughly 5.7x itself. Set a cap you can afford to exceed by one worker or one verifier, whichever is dearer. The clock-tick cap has no such slack, which is why it is the primary safety.
 
 **Breach retention.** `budget_ensure_window` deliberately resets a halted-or-at-cap budget at a UTC day boundary so a new day can resume a repo that halted for a real reason. Because that reset zeroes exactly the counters that evidence a breach, `budget_record_breach` writes an append-only `breaches[]` entry (counters, caps and reasons as they stood) before the reset touches anything, and again whenever a cap halts the loop. `halt_reasons` records every cap that was over, not just the first one tested. Without these a 149x overrun reads as a healthy repo the next morning.
@@ -277,6 +288,21 @@ Per [`decision-verifier-handoff-naming`](../memory/decision-verifier-handoff-nam
   "overall": "PASS|FAIL"
 }
 ```
+
+`ran_at` is the reported time: the verifier model writes it, and it can precede
+the file by minutes. The observed time is `verifier_completed_at` in the stage
+record, a UTC ISO timestamp the tick stamps in `consume_verifier_artefact` the
+first time it sees that dispatch's verifier finished, for PASS and FAIL alike
+and for an orphan found by the in-progress scan. Once a dispatch has its
+first receipt, every later consume leaves the whole receipt and stamp untouched,
+even if the report bytes are replaced at the same path; a fresh verifier dispatch, a requeue and a
+resume-to-verifier reset it. `verifier_completed_receipt` records the dispatch
+(`attempts:started_at`), the artefact, the report's `ran_at` and the SHA-256 of
+the report bytes it was taken from. The reader accepts it only when the stage's
+current dispatch and the bytes on disk both match, so a receipt is never bound
+to a replaced report or a later dispatch. Finding freshness
+(`proposals.sh unlifted`) and report chronology use the observed time; a
+report without a matching receipt falls back to its own `ran_at`.
 
 The tick reads this file when promoting a stage from `in_progress` to
 `completed` or `failed`, but only after the verifier PID recorded for that same
@@ -344,7 +370,9 @@ The next tick respects `consecutive_failure_cap` and halts the loop if exceeded.
 
 **Automatic retry.** After the budget, halt and pause checks, the tick retries a `stalled` worker once if its pid is absent or dead and neither `state/envelopes/<id>.json` nor `state/handoffs/<id>.json` exists. An empty stall marker qualifies; `dispatch_configuration_fault:*`, `run_worktree_failed`, `dispatch_base_tip_unresolved` and `card_missing` do not. It first calls `preserve_failed_work`, aborting on preservation failure, then `requeue-stage.sh --keep-budget` and records `auto_retries: 1` (absent means 0). This leaves budget and failure counters untouched; the pending stage still passes every ordinary dispatch gate, including quota reserve and schedule stop. An operator requeue resets `auto_retries` to 0. Before a mechanical retry, the tick checks card metadata `Recovery attempt` against `Recovery attempts` (defaults1 and3 for older cards); exhausted or malformed explicit values hold the retry. The orchestration chat advances the recorded attempt when authorising a repaired dispatch. This per-attempt field is not the recovery allowance: the standard orchestration-chat policy records three total worker attempts on the card, including mechanical retries, and preserves that count across requeues. Ordinary failed/verifier-failed episodes are diagnosed and repaired by that chat on failure hooks, under existing limits; the tick does not blindly restart them. A second death, worker FAIL, verifier failure, deterministic fault or halt stays in its alert status and goes to the escalation folder for a decision.
 
-**Verifier stall.** The same wall-clock rule and process-tree termination apply. A verifier process that has not written its output file within its declared budget plus grace is terminated before the stage is marked stalled. The transcript API-error rule applies only to Claude workers.
+**Provider-limit refusal.** A worker that exits with no envelope and a log matching a provider limit pattern is treated as an instant refusal, rewound to `pending` with nothing counted, only if the log was last written within `USAGE_LIMIT_INSTANT_SECONDS` (60) of `started_at`. A later exit has its work pinned on `wip/<stage>-attempt-N` before the stage is rewound, and after `USAGE_LIMIT_MAX_REWINDS` (2) such rewinds the exit takes the ordinary missing-envelope path. See [gotcha 23](./lessons.md#headless-gotcha-23-a-limit-match-mid-run-rewound-the-stage-and-lost-the-work) for the account.
+
+**Verifier stall.** The same wall-clock rule and process-tree termination apply. A verifier process that has not written its output file within its declared budget plus grace is terminated before the stage is marked stalled. The transcript API-error rule applies only to Claude workers. A verifier that exits without its artefact is re-dispatched until the stage's `verifier_attempts` reaches the cap, then the stage is marked `stalled`. The default cap is 3. A stage record may carry an approved `verifier_attempt_cap` (an integer from 1 to 1000) only together with a non-empty `verifier_attempt_cap_reason`; an invalid cap or a missing reason means no dispatch, and the tick logs `invalid verifier attempt cap for <stage>; no dispatch`.
 
 **Dispatch configuration fault.** A worker or verifier that exits within two seconds, writes no completion artefact, leaves only a tiny log (at most 512 bytes), and reports a recognised CLI usage, missing-executable, or auth-route error has not attempted its role. The tick marks the stage `stalled`, records `dispatch_configuration_fault:<role>` on the stage, and halts the repo with `dispatch-configuration-fault` so an operator fixes the command or credentials. For a verifier, the attempt reserved before spawn is returned. The halt prevents an uncounted fault from looping forever. A crash or genuine verification failure that does not satisfy the full conjunction retains its attempt and follows the existing retry cap of three.
 
@@ -390,10 +418,17 @@ Claude Code and Codex orchestration chats receive advisory context through
 `SessionStart`, `UserPromptSubmit` and `PostToolUse`. The legacy invocation
 without `--live` still prints a plain-text snapshot for manual use.
 
-The reader uses the hook payload's working directory, filtered to the deepest
-enabled subscriber containing that directory. Outside a subscriber it shows
-the fleet. It delivers only new or changed pending files, oldest first, at most
-ten per invocation; overflow remains unseen until a later eligible hook.
+The reader uses the hook payload's physical working directory, filtered to the
+deepest enabled subscriber containing that directory. Outside a subscriber,
+routine lifecycle evidence belongs to the current Git project, including a
+linked worktree. A directory outside any Git project receives the enabled
+subscriber fleet view. Fleet quota notices remain visible in every scope.
+Pending escalation visibility retains its existing rule: the matching
+subscriber, or the fleet outside subscribers. The `--repos` reader used by
+the native wake broker retains that rule; `--lifecycle-repos` supplies the
+active chat's lifecycle scope.
+The reader delivers only new or changed pending files, oldest first, at most
+ten detailed records per invocation; overflow remains unseen until a later eligible hook.
 Tool-triggered checks are throttled to once per 15 seconds. Session starts and
 user prompts bypass the throttle. Compaction and clear re-deliver pending items
 to restore context; an ordinary resume preserves the delivery record.
@@ -436,17 +471,45 @@ The same hooks deliver routine lifecycle notices after pending escalations:
   integration. Run membership uses `run_id`; historic failures in another run
   do not hide completion. Superseded members need no work; pending, active or
   failed members prevent a finished notice. Legacy records form a separate group.
+- A fleet-wide `quota_window_cleared` notice when Claude's five-hour session
+  was observed at 100% or above and a later reading falls below 100% at or
+  after that window's advertised reset. The tick uses VibeMenu's existing
+  snapshot and checks its observation time. Readings older than ten minutes,
+  future readings and unavailable data leave the last observation in place.
+  The next reset time can be empty. One notice covers each observed reset,
+  including when the fleet has no queued work. Each chat checks its own
+  run, reserve and stop time before resuming.
 
 `scripts/lib/lifecycle_events.py` publishes complete JSON files atomically under
 `$AUTOMETTA_HOME/lifecycle-events/`, with deterministic episode ids. Events last
 seven days; later writes collect expired files. This preserves intermediate
 transitions even when a conversation misses the entire dispatch. It does not
-backfill historical runs. Hook scope follows the enabled subscriber registry,
-including when the pending-escalation folder does not exist. Session delivery
-deduplicates both kinds of record, shares the ten-item cap and 15-second tool
-throttle, and restores context after compaction or clear. Escalations take
-priority; each group is oldest first. Evidence paths point to runtime records
-or logs. Lifecycle notices need no acknowledgement and never change policy.
+backfill historical runs. Lifecycle scope is resolved even when the
+pending-escalation folder does not exist. New stage transitions carry their
+run identity when available. Agent events use their registration's run identity
+or the current stage's recorded run identity when available.
+Session delivery deduplicates both kinds of record and shares the ten-item
+cap and 15-second tool throttle.
+
+On first delivery, startup, compaction or clear, catch-up condenses closed
+lifecycle history older than 15 minutes into one brief account of the notice,
+project, finished-run and landed-stage counts. The first invocation after an
+upgrade also applies this to an already-open chat with a partially drained
+delivery cache. All condensed rows are marked seen together. A later landing
+closes earlier stage evidence only within the same project, stage and run
+identity. A finished run can fold its routine notices; it cannot hide an
+unresolved stage failure or awaiting integration. Missing run identities form
+a separate legacy group and never borrow closure from another run finishing.
+Unconfirmed or unresolved evidence stays detailed. Fleet quota broadcasts are
+never folded into completed history.
+
+Pending escalations take priority, followed during catch-up by outstanding
+failures and integrations, then routine notices. Each group is oldest first.
+Recent events and subsequent fresh changes retain detailed delivery and normal
+pagination. Compaction and clear restore pending context; unchanged user
+prompts remain quiet. Evidence paths point to runtime records or logs.
+Lifecycle notices need no acknowledgement and never change policy. Catch-up
+does not alter native wake reservations or ownership.
 
 ### Bounded native idle wake-ups
 
@@ -456,7 +519,10 @@ session from `CODEX_THREAD_ID`. Add `--fleet` to register a fleet fallback, or
 `--repo <path>` for a particular enabled subscriber. Claude and Codex primary
 chats can also register automatically at startup or their next genuine user
 prompt once the host is enabled. A repo owner takes precedence over a fleet
-owner, so one event never fans out to both. A live owner is not silently replaced.
+owner for repo events. A quota clearance is visible in every repo and can wake
+each already registered chat once, subject to the same cooldown, expiry and
+caps. The tick keeps the window observation across restarts without recording
+which chats are waiting for quota. A live owner is not silently replaced.
 Explicit registration accepts `claude|codex` and `--session <id>`; Codex requires
 the owning local server's socket, discovered from its process ancestry or
 provided with `--socket <path>`. There is no fallback to another daemon.
@@ -465,8 +531,11 @@ The broker runs once at the end of the existing fleet tick. Worker and verifier
 starts and finishes, stalled or failed stages, integration outcomes and run
 completion or halts qualify. The first event waits ten seconds for batching,
 then events for the same card share a row with their transitions and latest
-outcome. A retry start does not hide an earlier stalled or failed transition. Delivery is normally
-at the next eligible tick; a long tick adds its own runtime to that latency.
+outcome. Eligible chats take turns by their most recent delivery, oldest first,
+so a busy fleet owner cannot repeatedly take the slot ahead of repo owners.
+A chat owning multiple scopes shares one place in that ordering. A retry start
+does not hide an earlier stalled or failed transition. Delivery is normally at
+the next eligible tick; a long tick adds its own runtime to that latency.
 
 - **Claude Code:** native
   [`asyncRewake`](https://code.claude.com/docs/en/hooks#command-hook-fields)
@@ -576,9 +645,9 @@ This gives the operator an attachable cockpit without creating a resident contro
 
 The replacement builds the commit with plumbing: `git add` into a throwaway `GIT_INDEX_FILE`, `git write-tree`, `git commit-tree`, one `git update-ref` with the previous tip as its compare-and-swap guard. No checkout, no HEAD move, no write to `repo_root`'s index or working tree, and nothing for a concurrent operator commit to race with. A dedicated worktree for the ref would also have kept HEAD still, but it is a fixture to create, maintain and reap, and the state files live in `repo_root/state`, so it would have to copy them across on every tick.
 
-**What a snapshot holds.** `state/state.yaml` and `state/budget.json`, plus whatever of `state/verifiers`, `state/envelopes` and `state/handoffs` (the legacy path a stale subscriber still writes, see `docs/dispatch-contract.md` envelope migration) the repo does not ignore. Not `state/logs`, `state/cost-log.jsonl`, `state/active-agents`, `state/recent-agents` or `state/heartbeat.json`. The commit body names exactly what was captured, so the ref never claims more than it holds, and an unchanged state adds no commit.
+**What a snapshot holds.** `state/state.yaml` and `state/budget.json`, the pending facts spool `state/facts-pending.jsonl` when present, plus whatever of `state/verifiers`, `state/envelopes` and `state/handoffs` (the legacy path a stale subscriber still writes, see `docs/dispatch-contract.md` envelope migration) the repo does not ignore. Not `state/logs`, `state/cost-log.jsonl`, `state/active-agents`, `state/recent-agents` or `state/heartbeat.json`. The commit body names exactly what was captured, so the ref never claims more than it holds, and an unchanged state adds no commit.
 
-`state.yaml` and `budget.json` are gitignored in every subscriber, so the snapshot stages them with `git add -f`. That is deliberate. Before this, the plain `git add state/state.yaml` was a silent no-op (`docs/lessons.md` gotcha 10) and the ref held only the repo tree it had been reset to: the branch documented here as "committed state snapshots" had never contained one line of state. Forcing them onto this ref does not make them tracked on any working branch, `.gitignore` still governs every operator commit, and whether `state.yaml` should be tracked remains an open question this did not answer. The snapshot is local: the loop never pushes the ref, and nothing else should.
+Subscribers vary in whether they track the queue and budget on their working branch. The tick force-adds both files to the local snapshot using its private index, including when the subscriber ignores them (see `docs/lessons.md` gotcha 10). At chat handoff, leave routine tick updates in place and commit the session's own changes by path. Runtime churn alone requires no commit decision. Keep the snapshot ref local. Stage cards, frozen tests and changes to tracked configuration follow the repo's normal commit policy.
 
 `state/state.yaml.bak`, the rolling copy `state_apply_json` writes, stays. It recovers the previous good state within the same tick; the snapshot ref recovers a history of them.
 
@@ -598,9 +667,52 @@ integration:
   recorded_at: 2026-08-23T14:02:11Z
 ```
 
+The tick pushes the run branch to `origin` only on a `git-push-check` `PUSH` verdict (`push_awaiting_run_branch`, the only push the tick makes). Any other verdict, a failed push or a missing helper records `pushed: false`, and the tick log line says `push held` with the reason, so a run branch whose `origin` is public or watched by a pipeline waits for a human.
+
 `autometta status` prints an `awaiting integration` line per outstanding stage under the repo's row. `phat-controller merge-awaiting` remains the route for a parked branch that can later be merged cleanly.
 
 **Reaping.** `scripts/reap-worktrees.sh` runs after every tick as part of `sweep_repo_retention`, and by hand with `--dry-run`. It removes a run worktree whose stage is finished with it, through `requeue-stage.sh --worktree-only` so that removal has one implementation. It refuses to remove a worktree whose stage is `in_progress`, one holding uncommitted work that is not the known `state/` symlink artefact (a verifier FAIL leaves the worker's diff uncommitted by design, and that diff is what the operator inspects), one whose run branch holds commits that are not on base, and one whose stage it cannot find in `state.yaml`. Those it reports instead, on every tick until someone deals with them. When a person merges an `awaiting` branch by hand, the next sweep notices the containment, closes the record out to `merged`, and collects the worktree.
+
+### Portable run summary
+
+At a finish or halt boundary, run `scripts/run-summary.sh REPO RUN_ID finished|halted`
+against the checkout holding the run evidence. The command uses Python 3 with
+PyYAML and emits one UTF-8 JSON object on stdout. It reads repository-local
+state and receipts. Unknown runs, unsafe identifiers and unsupported outcomes
+exit nonzero with empty stdout. The caller supplies the boundary outcome and
+can retain the result with the project history.
+
+Version 1 has four keys, `version` (the integer `1`), `run_id`, `outcome` and
+`stages`. The report preserves the order of the requested run's stages in
+`state.yaml`. Each entry has `id`, `status`, `verdict`, `worker_attempts`,
+`retries`, `total_tokens` and `landed_commit`. Logs, paths, identities,
+host timings, budget balances and free text are excluded.
+
+- Dispatch receipts come from `state/cost-log.jsonl` and the durable dispatch
+  charges in `state/budget.json`. Where both record the same dispatch ID, the
+  durable receipt supplies the total once. A receipt naming another run is
+  excluded. Untagged receipts must fit the stage's membership and UTC run
+  start from `run-YYYYMMDD-HHMMSS`, up to any recorded stage completion or
+  halt attributable to that run. The run start includes attempts that
+  predate a requeue's replacement of the worker start time. Overlapping
+  memberships can leave an untagged receipt ambiguous.
+- `worker_attempts` counts attributed worker receipts, and `retries` counts
+  those beyond the first. `total_tokens` sums cache-inclusive worker and
+  verifier totals across those receipts, including failed dispatches. A
+  legacy row without a total can supply a complete input, cached input and
+  output breakdown. Missing evidence, ambiguous attribution and explicitly
+  unknown usage produce `null` for the affected measures.
+- `verdict` is `PASS` or `FAIL` from a stage-matched independent verifier
+  report that can be tied to the run. The stage's artefact reference, an
+  explicit run ID, and recorded verification times provide that link.
+  Missing or ambiguous verdict evidence yields `null`.
+- A merged integration supplies `landed_commit` from `rebased_tip`, then
+  `head`, then the stage's recorded commit. Legacy completed stages without
+  integration evidence can supply their recorded commit. Awaiting integration
+  yields `null` for the landed commit even when the verdict is `PASS`.
+
+The renderer performs no writes and makes no Git, network or model calls.
+Identical evidence and arguments produce identical bytes.
 
 ## (k) The controller is retired
 
@@ -719,8 +831,15 @@ Claude before starting any new card that names a subscription Claude worker or
 verifier, so a Codex worker cannot commit the queue to a Claude verifier after
 the session line has already been crossed.
 
-Explicit zero or `action: off` disables that reserve; unknown Claude readings
-retain the existing fail-open behaviour. Scheduled reserve and curfew settings
+Explicit zero or `action: off` disables that reserve. Under a hold reserve, a
+Claude reading the tick cannot trust holds Claude dispatch: a stale snapshot
+(older than `AI_QUOTA_STALE_SECONDS`), a malformed one, or a reader that failed
+holds that card for the tick with a `reading unknown: <reason> ... held` log
+line and no pause, so dispatch resumes on the first tick with a fresh reading.
+Only `snapshot absent` (a host with no exporter) admits, as do reserve off,
+`action: observe` and an `--ignore-reserve` drain. A Claude window reported
+above 100% is kept as a known, exhausted reading and holds to its reset like
+any other window inside the reserve. Scheduled reserve and curfew settings
 are unchanged. A model-scoped window, keyed `<period>-<name>` such as
 `weekly-fable`, holds only seats whose model id has that name as a hyphen-delimited
 segment. An unnamed seat sees every window. The mandate template retains those
@@ -772,8 +891,9 @@ avoids): with the curfew armed, the tick reads the clock on every fire and,
 outside the declared window, refuses to start a *new* worker at all.
 
 The stop is a separate gate sitting above the reserve, and it deliberately
-reads no quota. The reserve is reading-driven: it binds only when a known
-window is near exhaustion, and an unknown reading fails open by design. That
+reads no quota. The reserve is reading-driven: it binds when a known window
+is near exhaustion or a Claude reading is stale or malformed, and an absent
+snapshot or an unknown codex reading on the legacy reserve policy admits. That
 is right for a guard against spending the last of a window and useless as a
 stop, because the case a stop exists for -- an overnight run that must not
 still be dispatching at nine the next morning -- is exactly the case where

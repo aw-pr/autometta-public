@@ -193,18 +193,16 @@ fi
 for agent_file in "$repo_root"/state/active-agents/*.json; do
   [ -f "$agent_file" ] || continue
   card_path="$(jq -r '.card_path // ""' "$agent_file")"
-  case "$card_path" in
-    *"$stage_id"*)
-      pid="$(jq -r '.pid // 0' "$agent_file")"
-      if [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
-        kill "$pid" 2>/dev/null || true
-        sleep 1
-        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
-        echo "requeue: killed live agent pid $pid for $stage_id"
-      fi
-      rm -f "$agent_file"
-      ;;
-  esac
+  if [ -n "$card_path" ] && [ "$(basename "$card_path" .md)" = "$stage_id" ]; then
+    pid="$(jq -r '.pid // 0' "$agent_file")"
+    if [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      sleep 1
+      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+      echo "requeue: killed live agent pid $pid for $stage_id"
+    fi
+    rm -f "$agent_file"
+  fi
 done
 
 # Trap 1: purge every per-stage artefact the tick could misread as progress.
@@ -226,6 +224,8 @@ yq -o=json '.' "$state_yaml" | jq --arg id "$stage_id" '
           | .verifier_attempts = 0
           | .completed_at = null
           | .verifier_started_at = null
+          | .verifier_completed_at = null
+          | .verifier_completed_receipt = null
           | .started_at = null
           | .worker_pid = null
           | .verifier_pid = null
@@ -235,7 +235,11 @@ yq -o=json '.' "$state_yaml" | jq --arg id "$stage_id" '
           | .stall_marker = null
           | .worker_envelope = null
         else . end ]' > "$tmp_json"
-yq -P '.' "$tmp_json" > "$tmp_yaml"
+if ! yq -P '.' "$tmp_json" > "$tmp_yaml" || [ ! -s "$tmp_yaml" ]; then
+  rm -f "$tmp_json" "$tmp_yaml"
+  echo "requeue: yq render of the reset state failed or was empty; $state_yaml left untouched" >&2
+  exit 1
+fi
 mv "$tmp_yaml" "$state_yaml"
 rm -f "$tmp_json"
 
