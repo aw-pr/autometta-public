@@ -13,7 +13,7 @@
 - **Verifier effort:** medium
 - **Verifier panel:** false
 - **Recovery attempts:** 3
-- **Recovery attempt:** 2
+- **Recovery attempt:** 3
 - **Dispatch:** serial
 - **Gate:** stage-completed: 179-serial-claims
 - **Pairing rationale:** Sonnet implements the cross-run state handling. Codex independently checks timestamp provenance, replay and old records.
@@ -70,6 +70,7 @@ Write the worker envelope under `state/envelopes/180-verifier-clock.json`. Recor
 ## Recovery log
 
 1. Attempt 1 started 2026-11-22 09:01:46 UTC on 16121a2. Worker PASS, independent verifier FAIL on criteria 2 and 3. The verifier reproduced two false suppressions. Attempt cost 2,651,275 cache-inclusive tokens. WIP a5ea76ddfaca5454144e705f07a57097eed0a9d6 and archived evidence in `state/uat/180-verifier-clock/attempt-1/`. Attempt 2 is a narrow implementation repair with the same cross-family pair at medium effort.
+2. Attempt 2 started 2026-11-22 09:14:56 UTC on bbd8a99. Worker PASS, verifier FAIL on criteria 2 and 3. The reader rejected both earlier stale-receipt cases. Repeated consumption overwrote the first receipt with a changed report from the same dispatch. The attempt cost 754,046 cache-inclusive tokens. WIP c6d3863f9195df1a705f97eb271df313460e2a26 and independent commands and output are preserved under `state/uat/180-verifier-clock/attempt-2/`. Attempt 3 is the final worker attempt.
 
 ## Re-brief for attempt 2
 
@@ -78,3 +79,13 @@ Adopt the nine preserved deliverables before editing. From the run worktree exec
 At first observation bind the receipt to the bytes of the report, e.g. a SHA-256 digest, and to the stage's current verifier dispatch (attempt and start). Validate both when choosing the observation in the freshness reader. Compute the digest and parse findings from the same bytes in the reader. Preserve the first observation on a genuine replay. A missing, incomplete or mismatched receipt uses the historical fallback. Treat a replacement after observation as a different report; replay of the same dispatch must never legitimise the replacement using the old stamp. Update the receipt schema, documentation and the non-frozen regression fixture to match.
 
 Both seats run the two original acceptance commands. The verifier independently repeats these controls through real consume and unlifted entry points in a temporary repo. After observing a future-ran_at report and dismissing its finding, show that an unchanged replay stays suppressed. Replace the file with different verdict/finding bytes at the same path and ran_at, and show the new finding is listed. Separately start from an unchanged report with its matched receipt, change only current attempt/start, and show the obsolete receipt is rejected. Exercise a receipt without a digest, a valid fresh dispatch and orphan consumption. Save reproducible commands and observed output under the stage UAT directory for attempt 2. Re-run reset and clock regressions for any shared-code changes. Apply all three original criteria.
+
+## Re-brief for attempt 3
+
+Use the attempt-2 implementation as the starting point. This supersedes the earlier restore instruction. Run `git restore --source=c6d3863f9195df1a705f97eb271df313460e2a26 --worktree -- docs/learning-log.md docs/tick-loop.md schemas/state.yaml.json scripts/phat-controller.sh scripts/proposals.sh scripts/requeue-reset-smoke.sh scripts/requeue-stage.sh scripts/tick.sh scripts/verifier-clock-smoke.sh` in the new worktree. Preserve the current card and frozen oracle.
+
+In stamp_verifier_completion use the current dispatch identity to decide whether its first observation already exists. Once the first receipt for that dispatch exists, leave the entire receipt and timestamp untouched on every subsequent consume, including after replacement bytes arrive at the same path. A genuinely new attempt/start records its own first receipt. Keep the strict reader checks on both the current dispatch and exact report bytes. Align the documentation with that distinction. Preserve all previous successful checks.
+
+Extend the non-frozen clock smoke to consume an observed and cited report, replace its bytes at identical path and ran_at, and consume the replacement again in the same dispatch. Assert exact equality of the entire first receipt and timestamp across both subsequent consumes. Confirm the replacement finding stays listed before and after reconsumption until handled under the matching/fallback rules. Assert the digest still belongs to the original bytes. Then start a new dispatch and confirm the new receipt legitimately names its own report. Use recorded values and explicit citation times so a fast or slow machine cannot mask the failure.
+
+Both seats reproduce the failing case on the restored files and run the original acceptance and nearby regressions after repair. Use independent observations through the production entry points for replay, replacement, mismatch, missing digest, fresh attempt and orphan PASS/FAIL. The verifier may embed the reproducible commands and observed outputs directly in its verdict. The orchestration chat archives that original artefact and its evidence in the attempt UAT directory. This assigns the file copy to the permitted seat and preserves independent evidence.
