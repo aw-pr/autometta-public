@@ -50,6 +50,8 @@ tier_for_identity() {
   # resolved from the model id emitted on verify-sdk's `advisor:` line.
   case "$identity" in
     *Fable*|*fable*)   printf 'T0\n' ;;
+    *GPT-6.2\ Astra*|*gpt-6.2-astra*|*gpt-6-2-astra@local*) printf 'T0\n' ;;
+    *GPT-6.2\ Sol*|*gpt-6.2-sol*|*gpt-6-2-sol@local*) printf 'T1\n' ;;
     *GPT-6\ Astra*|*gpt-6-astra*) printf 'T0\n' ;;
     *GPT-6.1\ Sol*|*gpt-6.1-sol*|*gpt-6-1-sol@local*|*GPT-6\ Sol*|*gpt-6-sol*) printf 'T1\n' ;;
     *GPT-6\ Luna*|*gpt-6-luna*) printf 'T4\n' ;;
@@ -80,6 +82,8 @@ rate_for_model() {
     claude-sonnet-5-5|claude-sonnet-5)     printf '2.0 0.2 10.0\n' ;;
     claude-sonnet-4-6)                     printf '3.0 0.3 15.0\n' ;;
     claude-haiku-4-5|claude-haiku-4-5-20251001) printf '1.0 0.1 5.0\n' ;;
+    gpt-6.2-astra)                         printf '8.0 0.4 40.0\n' ;;
+    gpt-6.2-sol)                           printf '2.0 0.1 10.0\n' ;;
     gpt-6-astra)                           printf '10.0 1.0 50.0\n' ;;
     gpt-6.1-sol)                           printf '2.0 0.1 10.0\n' ;;
     gpt-6-sol)                             printf '2.0 0.2 10.0\n' ;;

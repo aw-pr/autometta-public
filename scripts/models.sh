@@ -91,6 +91,8 @@ codex_local_model_for_identity() {
 # this dispatching exactly as it did.
 codex_cloud_model_for_identity() {
   case "$1" in
+    *GPT-6.2\ Astra*|*gpt-6.2-astra*|*gpt-6-2-astra@local*) printf 'gpt-6.2-astra' ;;
+    *GPT-6.2\ Sol*|*gpt-6.2-sol*|*gpt-6-2-sol@local*) printf 'gpt-6.2-sol' ;;
     *GPT-6\ Astra*|*gpt-6-astra*)     printf 'gpt-6-astra' ;;
     *GPT-6.1\ Sol*|*gpt-6.1-sol*|*gpt-6-1-sol@local*) printf 'gpt-6.1-sol' ;;
     *GPT-6\ Sol*|*gpt-6-sol*)         printf 'gpt-6-sol' ;;
