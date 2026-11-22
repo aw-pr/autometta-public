@@ -124,6 +124,11 @@
             },
             "description": "Optional ordered full stage IDs whose landed commits must be on this stage's dispatch base before it can run. Structural graph validation is performed by scripts/dependency-graph.sh."
           },
+          "dispatch": {
+            "type": "string",
+            "enum": ["serial"],
+            "description": "Explicit serial dispatch intent retained from the source card at queue time, independently of path_claims. Either member declaring serial prevents a pipeline pair. Historic rows without this field fall back to the source card declaration."
+          },
           "path_claims": {
             "type": "array",
             "minItems": 1,
@@ -132,7 +137,7 @@
               "type": "string",
               "pattern": "^[A-Za-z0-9._/-]+$"
             },
-            "description": "Optional repo-relative file or directory claims parsed at queue time. Two adjacent claimed stages may pipeline only when these claims are disjoint."
+            "description": "Optional repo-relative file or directory claims parsed at queue time. Two adjacent claimed stages may pipeline only when these claims are disjoint and neither declares serial dispatch."
           },
           "pairing_failures": {
             "type": "integer",

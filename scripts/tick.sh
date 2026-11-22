@@ -1286,6 +1286,20 @@ pipeline_claims_require_serial() {
   ' >/dev/null
 }
 
+pipeline_stage_declares_serial() {
+  local repo_root="$1" state_yaml="$2" stage_id="$3" manifest_path="$4"
+  local dispatch card_path
+  dispatch="$(state_json "$state_yaml" | jq -r --arg id "$stage_id" \
+    '[.stages[] | select(.id == $id)][0].dispatch // empty')"
+  if [[ -n "$dispatch" ]]; then
+    [[ "$dispatch" == "serial" ]]
+    return
+  fi
+  # Historic rows did not retain dispatch metadata at admission.
+  card_path="$(stage_card_for_id "$repo_root" "$stage_id" "$manifest_path")"
+  [[ -n "$card_path" ]] && grep -Fxq -- '- **Dispatch:** serial' "$card_path"
+}
+
 pipeline_record_pairing_failure() {
   local state_yaml="$1" stage_id="$2" cause="$3" failures
   state_apply_json "$state_yaml" '
@@ -1497,6 +1511,14 @@ pipeline_try_dispatch_tail() {
 
   # No claims means serial by default and, deliberately, no pairing log.
   [[ "$(jq 'length' <<<"$head_claims")" != "0" && "$(jq 'length' <<<"$tail_claims")" != "0" ]] || return 1
+  if pipeline_stage_declares_serial "$repo_root" "$state_yaml" "$head_stage" "$manifest_path"; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: head ${head_stage} declares serial dispatch"
+    return 1
+  fi
+  if pipeline_stage_declares_serial "$repo_root" "$state_yaml" "$tail_stage" "$manifest_path"; then
+    log "pipeline pair ${head_stage} + ${tail_stage} refused: tail ${tail_stage} declares serial dispatch"
+    return 1
+  fi
   pipeline_pairing_disabled_refresh "$state_yaml" || true
   head_failures="$(state_json "$state_yaml" | jq -r --arg id "$head_stage" \
     '[.stages[] | select(.id == $id)][0].pairing_failures // 0')"

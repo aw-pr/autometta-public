@@ -41,6 +41,7 @@ log() {
 
 quota_gate_role_dispatch() { return 0; }
 budget_gate_dispatch() { return 0; }
+network_preflight_ok() { return 0; }
 budget_drain_active() { return 1; }
 commit_state_branch() { return 0; }
 ensure_yq_or_halt() { return 0; }
@@ -198,6 +199,61 @@ formation_and_ordered_landing_smoke() {
     completed,completed "both paired stages did not complete"
   assert_eq "$(git -C "$fixture_repo" log -2 --format=%s | tail -n1 | cut -d: -f1)" \
     01-head "ordered landing did not put head before tail"
+}
+
+serial_dispatch_smoke() {
+  local member stage_id card head_pid tail_pid
+  for member in eligible head tail; do
+    new_fixture "admitted-serial-${member}"
+    stage_id="01-head"
+    [[ "$member" != tail ]] || stage_id="02-tail"
+    card="$fixture_repo/docs/stages/${stage_id}.md"
+    if [[ "$member" != eligible ]]; then
+      printf '%s\n' '- **Dispatch:** serial' >>"$card"
+    fi
+    state_apply_json "$fixture_repo/state/state.yaml" '.stages = [] | .current_stage = null'
+    "$repo_source/scripts/add-stage.sh" "$fixture_repo" "$fixture_repo/docs/stages/01-head.md" >/dev/null
+    "$repo_source/scripts/add-stage.sh" "$fixture_repo" "$fixture_repo/docs/stages/02-tail.md" >/dev/null
+    if [[ "$member" != eligible ]]; then
+      assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r --arg id "$stage_id" \
+        '.stages[] | select(.id == $id) | .dispatch')" serial \
+        "${member} serial intent was not retained at admission"
+    fi
+    assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -c '[.stages[].path_claims]')" \
+      '[["head.txt"],["tail.txt"]]' "serial admission changed the original claims"
+
+    sed '/^- \*\*Dispatch:\*\* serial$/d' "$card" >"${card}.tmp"
+    mv "${card}.tmp" "$card"
+    state_apply_json "$fixture_repo/state/state.yaml" \
+      '.current_stage = "01-head" | .stages[0].status = "in_progress"'
+    start_head_verifier "$fixture_repo"
+    head_pid="$started_pid"
+    write_verdict "$fixture_repo" 01-head PASS
+    _process_repo_locked "$fixture_repo" ""
+    if [[ "$member" == eligible ]]; then
+      assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.pipeline_pair.tail')" \
+        02-tail "normal tick path did not form an eligible admitted pair"
+      tail_pid="$(state_json "$fixture_repo/state/state.yaml" | jq -r '.stages[1].worker_pid')"
+      kill -0 "$tail_pid" 2>/dev/null || fail "eligible tail worker did not spawn"
+      stop_pid "$tail_pid"
+      stop_pid "$head_pid"
+      printf 'PASS: normal tick path dispatched an admitted claims-only pair\n'
+      continue
+    fi
+    assert_log "refused: ${member} ${stage_id} declares serial dispatch"
+    assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.pipeline_pair // empty')" \
+      "" "admitted serial intent allowed a pair after the card declaration was removed"
+    assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.stages[1].status')" \
+      pending "tail did not remain pending behind an admitted serial ${member}"
+    assert_eq "$(state_json "$fixture_repo/state/state.yaml" | jq -r '.stages[1].worker_pid // empty')" \
+      "" "tail worker spawned behind an admitted serial ${member}"
+    [[ ! -d "$(worktree_path_for_stage "$fixture_repo" 02-tail)" ]] \
+      || fail "tail worktree created behind an admitted serial ${member}"
+    assert_eq "$(cat "$fixture_repo/tail.txt")" 'base tail' \
+      "tail spawn stub ran behind an admitted serial ${member}"
+    stop_pid "$head_pid"
+    printf 'PASS: admitted serial %s survived card removal; tail pending without a spawn\n' "$member"
+  done
 }
 
 refusal_smoke() {
@@ -554,9 +610,10 @@ c113_serial_rule_applies_to_the_head
 
 queue_parser_smoke
 formation_and_ordered_landing_smoke
+serial_dispatch_smoke
 refusal_smoke
 head_fail_fast_forward_smoke
 conflict_escalation_smoke
 orphaned_verdict_scan_smoke
 
-printf 'PASS: pipeline pair queue parsing, formation, refusals, pid checks, ordered landing, rebasing, fast-forward, conflict escalation, serial fallback, and orphaned verdict recovery\n'
+printf 'PASS: pipeline pair queue parsing, formation, admitted serial intent, refusals, pid checks, ordered landing, rebasing, fast-forward, conflict escalation, serial fallback, and orphaned verdict recovery\n'

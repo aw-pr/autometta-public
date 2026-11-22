@@ -189,6 +189,7 @@ main() {
   IFS=$'\t' read -r gate_type gate_stage_id < <(extract_gate "$stage_card_path")
   path_claims_json="$(extract_path_claims "$stage_card_path")"
   depends_on_json="$(extract_depends_on "$stage_card_path")"
+  dispatch_line="$(grep -m1 -E '^- \*\*Dispatch' "$stage_card_path" || true)"
   if [[ "$(jq 'length' <<<"$depends_on_json")" != "0" ]]; then
     if [[ -n "$gate_type" ]]; then
       log_msg 'refusing dependency card with Gate metadata; Depends on replaces legacy gates'
@@ -198,13 +199,11 @@ main() {
       log_msg 'refusing dependency card with Path claims; dependency graphs dispatch serially'
       exit 1
     fi
-    dispatch_line="$(grep -m1 -E '^- \*\*Dispatch' "$stage_card_path" || true)"
     if [[ "$dispatch_line" != '- **Dispatch:** serial' ]]; then
       log_msg 'refusing dependency card without "- **Dispatch:** serial"'
       exit 1
     fi
   elif [[ "$(jq 'length' <<<"$path_claims_json")" == "0" ]]; then
-    dispatch_line="$(grep -m1 -E '^- \*\*Dispatch' "$stage_card_path" || true)"
     if [[ "$dispatch_line" != '- **Dispatch:** serial' ]]; then
       log_msg 'refusing card without a dispatch declaration: add "- **Path claims:** path/to/file" or "- **Dispatch:** serial"'
       exit 1
@@ -244,7 +243,7 @@ main() {
   fi
 
   STAGE_ID="$stage_id" WORKER="$worker_identity" VERIFIER="$verifier_identity" \
-    RUN_ID="$run_id" GATE_JSON="$gate_json" PATH_CLAIMS_STATE_JSON="$path_claims_state_json" DEPENDS_ON_JSON="$depends_on_json" yq -i \
+    RUN_ID="$run_id" GATE_JSON="$gate_json" PATH_CLAIMS_STATE_JSON="$path_claims_state_json" DEPENDS_ON_JSON="$depends_on_json" DISPATCH_LINE="$dispatch_line" yq -i \
     '.stages += [({
       "id": strenv(STAGE_ID),
       "run_id": strenv(RUN_ID),
@@ -259,6 +258,7 @@ main() {
       "completed_at": null
     } + (strenv(GATE_JSON) | from_json)
       + (strenv(PATH_CLAIMS_STATE_JSON) | from_json)
+      + (if strenv(DISPATCH_LINE) == "- **Dispatch:** serial" then {"dispatch": "serial"} else {} end)
       + ((strenv(DEPENDS_ON_JSON) | from_json) as $depends
          | if ($depends | length) > 0 then {"depends_on": $depends} else {} end))]' "$state_path"
   log_msg "added: ${stage_id}"
