@@ -28,7 +28,7 @@ lands on: `autometta attach` opens window 0, and window 0 is the fleet.
 
 What that window shows today:
 
-![the fleet ticker's totals and repos tables](../../docs/incidents/images/2026-08-25-fleet-ticker-totals-and-repos.png)
+![the fleet ticker's totals and repos tables](../docs/incidents/images/2026-08-25-fleet-ticker-totals-and-repos.png)
 
 The top half is good and should survive: TOTALS with today's tokens and
 estimated cost against the window, and a REPOS table with one row per
@@ -37,7 +37,7 @@ binds. That is progress at a glance.
 
 Then it keeps going:
 
-![the fleet ticker's unbounded failures table, scrolling past the pane](../../docs/incidents/images/2026-08-25-fleet-ticker-unbounded-failures.png)
+![the fleet ticker's unbounded failures table, scrolling past the pane](../docs/incidents/images/2026-08-25-fleet-ticker-unbounded-failures.png)
 
 FAILURES lists every stage and non-pass dispatch across every subscriber, back
 to `90d` and `never`, thirty-odd rows and growing with the age of the fleet.
@@ -63,7 +63,7 @@ captures:
    survives as a deliberately reached view (another window or a flag), not
    the landing view.
 
-   ![the fleet window, full page, fleet-wide in a per-repo session](../../docs/incidents/images/2026-08-25-fleet-window-full-page.png)
+   ![the fleet window, full page, fleet-wide in a per-repo session](../docs/incidents/images/2026-08-25-fleet-window-full-page.png)
 
 2. **The REPOS table does not belong on the repo-scoped page.** Its row for
    the session's own repo is the page's whole subject; the other rows are
@@ -75,14 +75,14 @@ captures:
    identities, and they are the columns an operator reads first. They render
    whole; the ellipsis budget belongs to trailing detail columns only.
 
-   ![role and result columns truncated to uselessness](../../docs/incidents/images/2026-08-25-failures-truncated-columns.png)
+   ![role and result columns truncated to uselessness](../docs/incidents/images/2026-08-25-failures-truncated-columns.png)
 
 4. **Column edges drift out of line.** Vertical rules in the REPOS table do
    not line up between header and body; the page reads as broken even where
    the figures are right. Likely a width-accounting defect (wide glyphs,
    colour codes, or padding counted inconsistently).
 
-   ![REPOS table with misaligned column edges](../../docs/incidents/images/2026-08-25-repos-table-misaligned.png)
+   ![REPOS table with misaligned column edges](../docs/incidents/images/2026-08-25-repos-table-misaligned.png)
 
 ## Inputs (read these in your own context)
 
