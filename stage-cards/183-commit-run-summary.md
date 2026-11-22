@@ -12,7 +12,7 @@
 - **Verifier effort:** medium
 - **Verifier panel:** false
 - **Recovery attempts:** 3
-- **Recovery attempt:** 2
+- **Recovery attempt:** 3
 - **Dispatch:** serial
 - **Gate:** stage-completed: 182-portable-run-summary
 - **Pairing rationale:** Sonnet implements the Git integration and tick boundary. Sol independently inspects commit trees, index contents and recovery.
@@ -77,6 +77,8 @@ Worker evidence goes in `state/envelopes/183-commit-run-summary.json`. The indep
 
 1. Attempt 1 started 2026-11-22 15:46:20 UTC from 3b5fe88. Worker PASS, independent verifier FAIL on all three criteria. WIP 12d6624cb751a7f8217fd00cb40942edeb23fb39 preserves the five deliverables. Archive `state/uat/183-commit-run-summary/attempt-1/` holds the exact verdict, envelope, logs, costs, original card and oracle, and the before/after fixture runs. Attempt cost was 3,779,947 cache-inclusive tokens and 1,354 role seconds. Attempt 2 uses the same cross-family pair and both roles at medium effort. One further attempt is available only after a new diagnosis and within the existing gates.
 
+2. Attempt 2 started 2026-11-22 16:11:40 UTC from 54edf59. Worker PASS, independent verifier FAIL on all three criteria. Five deliverables preserved at 73562f0b809a9a823156ab6a945f547b6a0284b4. See `state/uat/183-commit-run-summary/attempt-2/verifier.json` for observed failures and successful controls. Cost 2,299,208 cache-inclusive tokens and 679 role seconds. Attempt 3 is the final worker start.
+
 The final branch refusal in the original fixture reused a handled halt timestamp. The orchestrator gave this case a fresh run and halt. On the same preserved implementation, the original fixture passed without a publish refusal; the corrected fixture observed the publish refusal and the earlier successful private commits. The corrected fixture remains red on the base where summary commits are absent. Original assertions digest sha256:61024339657ab71a83da8b78748cee7da76cabdd492359424eeec003cae078b4, replacement sha256:02d4361bab30ac06f435f8327f5d12bda20559bfb9b7e69dcd858aff9c38e0ef. Criteria and independent evidence requirements remain as originally approved.
 
 ## Re-brief for attempt 2
@@ -88,3 +90,13 @@ Adopt the five deliverables first using `git restore --source=12d6624cb751a7f821
 3. Preserve both operator file content and Git metadata throughout commit, retry and recovery. A mode-only edit is an edit. On contention, preserve newer staged entries and independent worktree changes. Avoid unconditional restoration of earlier bytes or index entries. Record enough transaction provenance and boundary content before a partial write to reconcile after interruption even if newer run evidence arrives. Demonstrate halt then finish survive interruption and converge once, with operator data intact. Exercise competing branch and destination changes, executable mode, fresh-clone visibility and repeat ticks. All fixtures are disposable and offline.
 
 Both seats run the corrected frozen command and focused regressions. The verifier supplies independent before/after branch refs, staged blobs, worktree content/mode, summary commit counts and restart outcomes for every previously failed case. Confirm a real eligible boundary reaches each refusal control and record its reason. Preserve all existing branch, opt-in, no-push and operator-scope constraints. Record commands and evidence in the verdict.
+
+## Re-brief for attempt 3
+
+Start from attempt 2. This supersedes the earlier restoration instruction. In the new worktree run `git restore --source=73562f0b809a9a823156ab6a945f547b6a0284b4 --worktree -- docs/setup.md docs/tick-loop.md scripts/commit-run-summary.sh scripts/lib/lifecycle_events.py scripts/tick.sh`. Retain the current card and frozen oracle. Use the attempt-2 verdict as the evidence inventory. The baseline, pinned halt attribution, content journal and interrupted-ref recovery all made verified progress. Keep those behaviours.
+
+1. Make the eligibility decision effective at the ref update. Coordinate policy reads with changes to the repository policy and use a prepared Git reference transaction. Revalidate the destination's actual ref type, old tip and applicable protection while the transaction holds the destination lock, before committing it. Abort and retry or refuse if eligibility cannot be established. Preserve symbolic ref identity as well as object IDs. A repeated unlocked check still leaves the race. Retain positive private-branch operation and literal mirror-path coverage.
+2. Preserve the complete opt-in baseline while runs remain represented by authoritative stage state. Never evict an unfinished journal entry, an unresolved current halt or a still-relevant closed ID to meet a fixed list length. Test 199, 200, 201 and a larger population with repeated idle ticks and restart. Historical runs yield no commits, followed by exactly one summary for a genuinely new boundary.
+3. Protect checkout reconciliation. Hold the actual Git index lock across reading the current index, conditional path-only reconciliation and installation; preserve every unrelated entry and any new destination edit. Handle contention through the journal and release only locks owned by this invocation. Validate the output directory and target before the ref move and before reconciliation. Use operations anchored to a verified directory which do not follow symlink ancestors. Refuse an unsafe or ambiguous path and leave external data intact. Preserve worktree bytes, executable mode and independent staged bytes; never overwrite an edit to complete bookkeeping. Exercise the ref-pending recovery path, including an interrupted halt followed by finish. Update the recovery documentation to describe the final ordering and refusal semantics.
+
+Use the approved offline verifier seat. Record observed refs and their types, index entries and hashes, worktree content and mode, summary counts and old/new run IDs for the failed boundaries and positive controls. Exercise normal process_repo, the frozen smoke, restart and fresh-clone checks. Keep earlier successful cases as regressions. Missing evidence fails the relevant criterion. The scope is private working-branch summaries; do not enable the feature on a subscriber. A third verifier failure parks the card.
