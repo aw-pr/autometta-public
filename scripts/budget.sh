@@ -238,11 +238,19 @@ budget_drain_active() {
   # An empty or absent repos[] means every subscriber; a populated one is an
   # allow-list of absolute repo paths.
   local scoped
-  scoped="$(printf '%s' "$drain_json" | jq -r --arg repo "$repo_root" '
-    if ((.repos // []) | length) == 0 then "all"
-    elif ((.repos // []) | index($repo)) != null then "listed"
-    else "excluded" end
-  ' 2>/dev/null || printf 'excluded')"
+  scoped="$(printf '%s' "$drain_json" | python3 -c '
+import json
+import os
+import sys
+
+def physical(path):
+    return os.path.realpath(path) if os.path.isdir(path) else path
+
+repos = json.load(sys.stdin).get("repos") or []
+repo = physical(sys.argv[1])
+print("all" if not repos else
+      "listed" if any(physical(path) == repo for path in repos) else "excluded")
+' "$repo_root" 2>/dev/null || printf 'excluded')"
   [[ "$scoped" == "excluded" ]] && return 1
   local cap
   cap="$(printf '%s' "$drain_json" | jq -r '.token_cap_total // empty' 2>/dev/null || true)"

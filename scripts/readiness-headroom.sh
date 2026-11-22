@@ -11,8 +11,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./budget.sh
 source "$script_dir/budget.sh"
 
-cap="$(budget_effective_token_cap "$1" --read-only)"
-python3 - "$(budget_file "$1")" "$cap" "$2" "$3" "$4" <<'PY'
+repo_root="$(CDPATH= cd -- "$1" && pwd -P)" || exit 2
+cap="$(budget_effective_token_cap "$repo_root" --read-only)"
+python3 - "$(budget_file "$repo_root")" "$cap" "$2" "$3" "$4" <<'PY'
 import json
 import re
 import sys
