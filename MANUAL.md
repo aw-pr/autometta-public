@@ -527,10 +527,11 @@ and smoke tests, set `AUTOMETTA_TUI_CAPTURE=true`; optional
   itself, `status` carries the per-repo ticker an ordinary subscriber shows in
   `repo`, and `fleet` is the fleet-wide page.
 
-A family asymmetry to remember: `claude -p` does not stream its log; the file
-stays at 0 bytes until the run completes. So log-mtime staleness is not a stuck
-signal for the claude family, only over-budget is. The heartbeat encodes this.
-See `docs/observability.md`.
+Both families now stream their logs. Claude dispatches run with
+`--output-format stream-json --verbose` and are registered `log_streams: true`,
+so the heartbeat applies log-mtime staleness to them as it does to Codex. Only
+a legacy Claude registration without that flag is exempt, and for those
+over-budget is the one stuck signal. See `docs/observability.md`.
 
 ---
 
@@ -561,8 +562,12 @@ other repos.
 
 ## 8. Troubleshooting (the headless gotchas)
 
-These are the failure modes that will bite you. Full write-up in
-`docs/lessons.md`; the load-bearing ones are also in `CLAUDE.md`.
+These are the first eight failure modes that will bite you. `docs/lessons.md`
+has the full write-up of all twenty-three, including the later ones this list
+leaves out: state destruction (10), a secret read blocked on a permission
+prompt (11), the argument-splitting fault that killed every verifier (12), the
+budget cap that did not stop dispatch (13) and a provider limit that lost the
+work mid-run (23). The load-bearing ones are also in `CLAUDE.md`.
 
 1. **Stdin hang.** `codex exec` reads stdin after the prompt arg. Always
    redirect `</dev/null` from any wrapping harness.
@@ -576,9 +581,11 @@ These are the failure modes that will bite you. Full write-up in
    the verifier always runs outside the worker sandbox.
 5. **Prior-gate regression.** Re-running acceptance after a later change can
    surface a regression in an earlier stage.
-6. **Claude logs do not stream.** `claude -p` writes its log in a single burst
-   at completion. Log-mtime staleness is not a stuck signal for claude; only
-   over-budget is.
+6. **Claude logs need stream JSON.** Without `--output-format stream-json
+   --verbose`, `claude -p` writes its log in a single burst at completion and a
+   live run looks dead. The loop dispatches with both flags and marks the
+   registration `log_streams: true`, so log-mtime staleness is a stuck signal
+   for Claude as well.
 7. **Claude autonomy flags.** `claude -p` needs `--dangerously-skip-permissions`
    to act autonomously. Combining `-p` with `--permission-mode bypassPermissions`
    exits silently with an empty log.
